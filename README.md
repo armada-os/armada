@@ -157,10 +157,26 @@ desktop. The **Bazaar** app store and the **Armada Installer**
 
 ### Power button and sleep
 
-Pressing the power button does a "fake suspend" (inspired by ROCKNIX) rather than
-real S3 sleep: it blanks the screen and freezes the session, and the same press
-wakes it. Because the device does not truly sleep, idle battery drain is higher
-than it would be with real suspend.
+Pressing the power button suspends the device. Armada automatically selects
+the best suspend mode for your hardware:
+
+- **s2idle (suspend-to-idle):** If the kernel supports it, the device enters a
+  true low-power state — CPUs enter hardware idle, drivers are suspended, and
+  wake is instant via the power button IRQ. Battery drain is significantly lower
+  than fake suspend.
+- **Fake suspend (fallback):** On hardware where s2idle hangs, the device blanks
+  the screen, freezes the session, offlines secondary CPU cores, and waits for a
+  power button press. Battery drain is higher than real suspend but the device
+  remains stable.
+
+The mode can be forced via `suspend_mode` in
+`/etc/armada/power-profiles.conf` under `[general]`:
+
+| Value    | Behavior                                              |
+|----------|-------------------------------------------------------|
+| `auto`   | Use s2idle if available, otherwise fake (default)     |
+| `s2idle` | Always use s2idle                                     |
+| `fake`   | Always use fake suspend                               |
 
 ## Updating
 

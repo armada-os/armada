@@ -39,6 +39,6 @@ systemctl enable armada-flatpak-setup.service
 # `systemctl unmask --now bootc-fetch-apply-updates.timer`.
 systemctl mask bootc-fetch-apply-updates.timer
 
-# systemd-suspend.service is overridden (drop-in) to run fake-suspend; mask the
-# other sleep ops so nothing reaches real suspend (it hangs this SoC).
+# systemd-suspend.service is overridden (drop-in) to use s2idle when available,
+# falling back to fake-suspend. Mask other sleep ops to keep a single path.
 systemctl mask systemd-hibernate.service systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service

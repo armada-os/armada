@@ -1,6 +1,4 @@
 #!/bin/bash
-# Real suspend hangs this SoC. Runs as systemd-suspend.service and blocks until
-# woken, so logind's sleep lifecycle (and Steam's blank) lasts the whole sleep.
 set -uo pipefail
 
 STATE_FLAG="/run/armada/fake-suspend.active"
@@ -15,15 +13,33 @@ SESSION_USER="${ARMADA_SESSION_USER:-armada}"
 SESSION_UID="$(id -u "$SESSION_USER" 2>/dev/null || echo 1000)"
 SESSION_RUNTIME="/run/user/${SESSION_UID}"
 
+resolve_suspend_mode() {
+    local mode="" f
+    for f in /etc/armada/power-profiles.conf /usr/share/armada/power-profiles.conf; do
+        [[ -r "$f" ]] || continue
+        mode=$(sed -n '/^\[general\]/,/^\[/{s/^suspend_mode[[:space:]]*=[[:space:]]*//p;}' "$f" | tail -1)
+        [[ -n "$mode" ]] && break
+    done
+    case "${mode:-auto}" in
+        s2idle) echo s2idle ;;
+        fake)   echo fake ;;
+        *)
+            if grep -q s2idle /sys/power/mem_sleep 2>/dev/null; then
+                echo s2idle
+            else
+                echo fake
+            fi
+            ;;
+    esac
+}
+
 as_session() {
     local s b sock=""
     for s in "${SESSION_RUNTIME}"/gamescope-*; do
         [[ -S "$s" ]] || continue
         b="$(basename "$s")"
-        # gamescope-N, not the -ei input socket.
         [[ "$b" =~ ^gamescope-[0-9]+$ ]] && { sock="$b"; break; }
     done
-    # A wedged gamescope must not hang suspend/resume.
     timeout 8 runuser -u "$SESSION_USER" -- env \
         XDG_RUNTIME_DIR="$SESSION_RUNTIME" \
         ${sock:+GAMESCOPE_WAYLAND_DISPLAY="$sock"} \
@@ -83,8 +99,6 @@ resume_radios() {
 
 runtime_pm_devices() {
     local dev
-    # Leave GPU runtime PM alone here; the GMU is known to wedge under
-    # rapid idle/resume churn on current devices.
     for dev in /sys/devices/platform/soc@0/*.usb; do
         [[ -e "$dev" ]] && printf '%s\n' "$dev"
     done
@@ -120,7 +134,6 @@ resume_runtime_pm() {
     done < <(tac "$SAVE_DIR/power-controls")
 }
 
-# The power key is left ungrabbed by block_input; wait_for_wake grabs it instead.
 INPUT_WHITELIST='pmic_pwrkey'
 
 power_device() {
@@ -137,7 +150,6 @@ block_input() {
     local dev name
     for dev in /dev/input/event*; do
         [[ -e "$dev" ]] || continue
-        # Never grab the lid switch — logind/resume need its events to flow.
         armada_dev_has_lid "$dev" && continue
         name="$(cat "/sys/class/input/$(basename "$dev")/device/name" 2>/dev/null)" || continue
         echo "$name" | grep -qE "^(${INPUT_WHITELIST})$" && continue
@@ -146,12 +158,9 @@ block_input() {
 }
 unblock_input() { pkill -9 -f 'evtest --grab' 2>/dev/null || true; }
 
-# Grab the power key and block until woken, so the wake press resumes us instead
-# of reaching logind/Steam.
 wait_for_wake() {
     rm -f "$WAKE_FLAG"
     local pdev t0 line lidwasclosed; pdev="$(power_device || true)"; t0=$SECONDS
-    # Clamshell: a closed lid blocks the power button (no waking in a bag); lid-open wakes.
     lidwasclosed=0; armada_lid_closed 2>/dev/null && lidwasclosed=1
     if [[ -n "$pdev" ]]; then
         log "waiting for wake (power key ${pdev})"
@@ -168,7 +177,7 @@ wait_for_wake() {
                         if (( SECONDS - t0 >= 1 )) && ! armada_lid_closed 2>/dev/null; then log "wake (power key)"; break; fi ;;
                 esac
             elif (( $? <= 128 )); then
-                sleep 1   # evtest ended (not a read timeout); avoid a busy loop
+                sleep 1
             fi
         done < <(evtest --grab "$pdev" 2>/dev/null)
     else
@@ -183,7 +192,6 @@ wait_for_wake() {
     rm -f "$WAKE_FLAG"
 }
 
-# Values are the 15-char /proc comm.
 SESSION_KEEP_COMMS='gamescope-wl|gamescope-sessi|Xwayland|mangoapp|steam_notif_dae'
 
 session_procs_file() {
@@ -198,7 +206,6 @@ session_procs_file() {
 freeze_processes() {
     local procs p c
 
-    # fake-suspend and armada-powerd run as system services, outside user.slice.
     if systemctl freeze user.slice; then
         touch "$SAVE_DIR/user-slice"
         log "froze user.slice"
@@ -230,23 +237,76 @@ unfreeze_processes() {
     kill -CONT -1 2>/dev/null || true
 }
 
-do_suspend() {
+offline_secondary_cpus() {
+    : > "$SAVE_DIR/cpus-online"
+    local cpu count=0
+    for cpu in /sys/devices/system/cpu/cpu[1-9]*/online; do
+        [[ -w "$cpu" ]] || continue
+        [[ "$(cat "$cpu" 2>/dev/null)" == "1" ]] || continue
+        printf '%s\n' "$cpu" >> "$SAVE_DIR/cpus-online"
+        echo 0 > "$cpu" 2>/dev/null && count=$((count + 1))
+    done
+    log "offlined ${count} secondary CPUs"
+}
+
+online_saved_cpus() {
+    [[ -r "$SAVE_DIR/cpus-online" ]] || return 0
+    local cpu
+    while IFS= read -r cpu; do
+        [[ -w "$cpu" ]] && echo 1 > "$cpu" 2>/dev/null || true
+    done < <(tac "$SAVE_DIR/cpus-online")
+}
+
+enable_wakeup_sources() {
+    local wakeup
+    for wakeup in /sys/devices/platform/soc@0/*/pon@*/pwrkey/input/input*/device/power/wakeup \
+                  /sys/devices/platform/soc@0/*spmi*/*/*/pon@*/pwrkey/input/input*/device/power/wakeup; do
+        [[ -w "$wakeup" ]] && echo enabled > "$wakeup" 2>/dev/null
+    done
+}
+
+do_s2idle() {
+    log "entering s2idle"
+    mkdir -p "$SAVE_DIR"
+    touch "$STATE_FLAG"
+
+    mute_audio
+    display_off
+    timeout 10 /usr/bin/armada-power suspend || log "armada-power suspend timed out"
+    enable_wakeup_sources
+    echo s2idle > /sys/power/mem_sleep 2>/dev/null
+
+    if echo freeze > /sys/power/state 2>/dev/null; then
+        log "resumed from s2idle"
+    else
+        log "s2idle failed (rc=$?), system did not enter suspend"
+    fi
+
+    timeout 10 /usr/bin/armada-power resume || log "armada-power resume timed out"
+    unmute_audio
+    display_on
+    rm -f "$STATE_FLAG"
+    rm -rf "$SAVE_DIR"
+}
+
+do_fake_suspend() {
     log "entering fake suspend"
     mkdir -p "$SAVE_DIR"
     touch "$STATE_FLAG"
     mute_audio
     block_input
-    display_off   # gamescope drm_sleep (game) / bl_power (desktop); after Steam's animation
+    display_off
     freeze_processes
     suspend_radios
     timeout 10 /usr/bin/armada-power suspend || log "armada-power suspend timed out"
-    # Do this after the final GPU devfreq writes in armada-power suspend.
     suspend_runtime_pm
+    offline_secondary_cpus
 }
-do_resume() {
-    # Idempotent: a trap-fired resume after the explicit one is a no-op.
+
+do_fake_resume() {
     [[ -f "$STATE_FLAG" ]] || return 0
     log "leaving fake suspend"
+    online_saved_cpus
     resume_runtime_pm
     timeout 10 /usr/bin/armada-power resume || log "armada-power resume timed out"
     resume_radios
@@ -261,12 +321,22 @@ do_resume() {
 case "${1:-sleep}" in
     sleep|suspend)
         [[ -f "$STATE_FLAG" ]] && exit 0
-        # If killed (e.g. unit stopped / timeout), always resume so nothing is stranded.
-        trap 'do_resume; exit 0' INT TERM
-        do_suspend
-        wait_for_wake
-        do_resume
-        trap - INT TERM
+        mode="$(resolve_suspend_mode)"
+        log "suspend mode: ${mode}"
+        case "$mode" in
+            s2idle)
+                trap 'rm -f "$STATE_FLAG"; rm -rf "$SAVE_DIR"; exit 0' INT TERM
+                do_s2idle
+                trap - INT TERM
+                ;;
+            *)
+                trap 'do_fake_resume; exit 0' INT TERM
+                do_fake_suspend
+                wait_for_wake
+                do_fake_resume
+                trap - INT TERM
+                ;;
+        esac
         ;;
     wake|resume)  touch "$WAKE_FLAG" ;;
     toggle|power) if [[ -f "$STATE_FLAG" ]]; then touch "$WAKE_FLAG"; else exec "$0" sleep; fi ;;
