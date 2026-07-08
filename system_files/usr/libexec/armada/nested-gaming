@@ -24,6 +24,9 @@ if [[ -n "${ARMADA_PANEL_REFRESH_RATES:-}" ]]; then
     if (( ${#_rates[@]} > 1 )); then
         export STEAM_DISPLAY_REFRESH_LIMITS="${_rates[0]},${_rates[-1]}"
     fi
+    # Advertised to Steam via gamescope_control (armada gamescope patch);
+    # the Wayland backend cannot enumerate the host output's modes itself.
+    export GAMESCOPE_NESTED_REFRESH_RATES="$ARMADA_PANEL_REFRESH_RATES"
     /usr/libexec/armada/nested-refresh-bridge &
 fi
 
