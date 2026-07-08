@@ -30,5 +30,11 @@ if [[ -n "${ARMADA_PANEL_REFRESH_RATES:-}" ]]; then
     /usr/libexec/armada/nested-refresh-bridge &
 fi
 
-exec gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam -- \
+# --prefer-output pins the fullscreen window to the primary screen (armada
+# gamescope patch: the Wayland backend passes it to the fullscreen request;
+# otherwise the host compositor picks whichever output was last active).
+prefer_output=()
+[[ -n "${ARMADA_PRIMARY_CONNECTOR:-}" ]] && prefer_output=(--prefer-output "$ARMADA_PRIMARY_CONNECTOR")
+
+exec gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam "${prefer_output[@]}" -- \
     /usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck -noverifyfiles
