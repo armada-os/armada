@@ -30,6 +30,13 @@ if [[ -n "${ARMADA_SECONDARY_TOUCHSCREEN:-}" ]]; then
     /usr/libexec/armada/touchscreen-inhibit "$ARMADA_SECONDARY_TOUCHSCREEN" 0 2>/dev/null || true
 fi
 
+# Nested-gaming devices boot into this session with gaming on the primary
+# screen; a fresh session start is either boot or an explicit return to
+# gamemode (Switch to Desktop keeps the session and never re-runs this).
+if [[ ${ARMADA_GAMING_SESSION:-} == nested ]] && ! pgrep -x gamescope-wl >/dev/null; then
+    systemd-run --user --collect /usr/libexec/armada/nested-gaming 2>/dev/null || true
+fi
+
 display_connector="${ARMADA_PRIMARY_CONNECTOR:-}"
 panel_orientation="${ARMADA_PANEL_ORIENTATION:-normal}"
 
