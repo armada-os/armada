@@ -246,7 +246,38 @@ class ArmadaSteamOSManager:
             return
         raise KeyError(prop)
 
+    @staticmethod
+    def _process_running(name):
+        return (
+            subprocess.run(
+                ["pgrep", "-x", name], stdout=subprocess.DEVNULL
+            ).returncode
+            == 0
+        )
+
     def switch_session(self, target):
+        # On dual-screen devices the desktop compositor stays up and hosts
+        # gaming mode as a nested gamescope on the primary screen; switching
+        # starts or stops that gamescope instead of swapping SDDM sessions.
+        # Only the session-bus instance can manage the user's session.
+        if (
+            self.env.get("ARMADA_GAMING_SESSION") == "nested"
+            and os.geteuid() != 0
+            and self._process_running("kwin_wayland")
+        ):
+            if target == "desktop":
+                if self._process_running("gamescope-wl"):
+                    subprocess.run(["pkill", "-x", "gamescope-wl"], timeout=10)
+                return
+            if target == "gamemode":
+                subprocess.run(
+                    ["systemd-run", "--user", "--collect",
+                     "/usr/libexec/armada/nested-gaming"],
+                    check=True,
+                    timeout=10,
+                )
+                return
+
         commands = {
             "desktop": "switch-desktop",
             "gamemode": "switch-gamemode",

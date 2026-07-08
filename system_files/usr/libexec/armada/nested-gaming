@@ -1,0 +1,21 @@
+#!/usr/bin/bash
+# Gaming mode on dual-screen devices (ARMADA_GAMING_SESSION=nested): run
+# gamescope+Steam as a nested fullscreen window on the primary screen of the
+# already-running desktop session. steamos-manager starts and stops this;
+# see docs/superpowers/specs/2026-07-07-thor-second-screen-phase2-design.md.
+set -euo pipefail
+
+pgrep -x gamescope-wl >/dev/null && exit 0
+
+eval "$(/usr/libexec/armada/device-env)"
+
+# The desktop shows rotated panels in landscape; gamescope renders landscape.
+width="${ARMADA_PANEL_NATIVE_WIDTH:-1080}"
+height="${ARMADA_PANEL_NATIVE_HEIGHT:-1920}"
+case "${ARMADA_PANEL_ORIENTATION:-normal}" in
+    left|right) gs_w="$height" gs_h="$width" ;;
+    *)          gs_w="$width"  gs_h="$height" ;;
+esac
+
+exec gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam -- \
+    /usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck -noverifyfiles
