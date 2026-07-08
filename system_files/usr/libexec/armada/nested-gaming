@@ -17,5 +17,15 @@ case "${ARMADA_PANEL_ORIENTATION:-normal}" in
     *)          gs_w="$width"  gs_h="$height" ;;
 esac
 
+# Expose the refresh range so Steam offers per-game refresh switching;
+# nested-refresh-bridge applies requests to the host compositor.
+if [[ -n "${ARMADA_PANEL_REFRESH_RATES:-}" ]]; then
+    IFS=',' read -r -a _rates <<< "$ARMADA_PANEL_REFRESH_RATES"
+    if (( ${#_rates[@]} > 1 )); then
+        export STEAM_DISPLAY_REFRESH_LIMITS="${_rates[0]},${_rates[-1]}"
+    fi
+    /usr/libexec/armada/nested-refresh-bridge &
+fi
+
 exec gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam -- \
     /usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck -noverifyfiles
