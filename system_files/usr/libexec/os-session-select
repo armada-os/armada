@@ -15,7 +15,10 @@ fi
 if [[ ${ARMADA_GAMING_SESSION:-} == nested ]] && pgrep -x kwin_wayland >/dev/null; then
     case "${1:-gamescope}" in
         desktop|plasma)
-            exec systemctl --user --no-block stop armada-nested-gaming.service ;;
+            systemctl --user --no-block stop armada-nested-gaming.service
+            # Same stray-gamescope safety net as steamos-manager.
+            pkill -x gamescope-wl || true
+            exit 0 ;;
         gamescope)
             systemctl --user reset-failed armada-nested-gaming.service 2>/dev/null || true
             exec systemctl --user start armada-nested-gaming.service ;;

@@ -274,6 +274,10 @@ class ArmadaSteamOSManager:
                     check=True,
                     timeout=10,
                 )
+                # Safety net for a gamescope the unit does not own (stale
+                # instance, manual launch): without this it survives the
+                # stop and Steam hangs on "Switching to desktop...".
+                subprocess.run(["pkill", "-x", "gamescope-wl"], timeout=10)
                 return
             if target == "gamemode":
                 # A crash-looped unit stays failed (start limit) until reset.
