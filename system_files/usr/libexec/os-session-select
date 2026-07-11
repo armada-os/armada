@@ -1,6 +1,26 @@
 #!/usr/bin/bash
-# Terra's steamos-session-select execs this hook (Steam "Switch to Desktop").
+# Terra's steamos-session-select execs this hook (Steam "Switch to Desktop",
+# desktop "Return to Game Mode" icon).
 set -euo pipefail
+
+if command -v /usr/libexec/armada/device-env >/dev/null 2>&1; then
+    eval "$(/usr/libexec/armada/device-env)"
+fi
+
+# Nested-gaming devices keep the desktop session running and host gaming
+# mode as a user unit; switch by starting/stopping it instead of the
+# logout+relogin cycle (mirrors steamos-manager switch_session()). The
+# unit start/stop is idempotent, so repeated taps on the desktop icon
+# while Steam is still coming up are harmless.
+if [[ ${ARMADA_GAMING_SESSION:-} == nested ]] && pgrep -x kwin_wayland >/dev/null; then
+    case "${1:-gamescope}" in
+        desktop|plasma)
+            exec systemctl --user --no-block stop armada-nested-gaming.service ;;
+        gamescope)
+            systemctl --user reset-failed armada-nested-gaming.service 2>/dev/null || true
+            exec systemctl --user start armada-nested-gaming.service ;;
+    esac
+fi
 
 case "${1:-gamescope}" in
     desktop|plasma) exec sudo /usr/libexec/armada/session-control switch-desktop ;;

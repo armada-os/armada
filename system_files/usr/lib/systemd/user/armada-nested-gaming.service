@@ -1,0 +1,18 @@
+[Unit]
+Description=Nested gaming mode (gamescope + Steam on the desktop session)
+# Steam exits to apply client updates and expects its wrapper to bring it
+# back (the embedded session gets this from SDDM Relogin); Restart=always
+# is that wrapper here. Stopping this unit is the one clean way to leave
+# gaming mode (steamos-manager and os-session-select do that), so an
+# explicit stop is never restarted. PartOf ties it to the desktop session:
+# logout stops it instead of leaving it thrashing without a compositor.
+PartOf=graphical-session.target
+After=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+ExecStart=/usr/libexec/armada/nested-gaming
+Restart=always
+RestartSec=2
+TimeoutStopSec=15

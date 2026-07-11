@@ -1,11 +1,16 @@
 #!/usr/bin/bash
 # Gaming mode on dual-screen devices (ARMADA_GAMING_SESSION=nested): run
 # gamescope+Steam as a nested fullscreen window on the primary screen of the
-# already-running desktop session. steamos-manager starts and stops this;
-# see docs/superpowers/specs/2026-07-07-thor-second-screen-phase2-design.md.
+# already-running desktop session. Runs as armada-nested-gaming.service (user
+# unit); steamos-manager and os-session-select start/stop that unit; see
+# docs/superpowers/specs/2026-07-07-thor-second-screen-phase2-design.md.
+#
+# Steam runs as our child rather than gamescope's so that its exit ends the
+# unit and Restart= brings the whole stack back up. Steam applies client
+# updates by exiting and relying on its wrapper to relaunch it, sometimes
+# twice in a row (the embedded session gets the same effect from SDDM
+# Relogin restarting the whole gamescope session).
 set -euo pipefail
-
-pgrep -x gamescope-wl >/dev/null && exit 0
 
 eval "$(/usr/libexec/armada/device-env)"
 
@@ -36,5 +41,33 @@ fi
 prefer_output=()
 [[ -n "${ARMADA_PRIMARY_CONNECTOR:-}" ]] && prefer_output=(--prefer-output "$ARMADA_PRIMARY_CONNECTOR")
 
-exec gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam "${prefer_output[@]}" -- \
-    /usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck -noverifyfiles
+# Readiness handshake: gamescope writes its X and Wayland display names to
+# the -R pipe once it is up (same mechanism gamescope-session-plus uses).
+socket=$(mktemp --tmpdir -u armada-nested-gaming.XXXXXX.socket)
+mkfifo -- "$socket"
+trap 'rm -f -- "$socket"' EXIT
+
+gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam "${prefer_output[@]}" \
+    -R "$socket" &
+gamescope_pid=$!
+
+if ! read -r -t 15 x_display wl_display <>"$socket"; then
+    echo "nested-gaming: gamescope not ready after 15s, giving up" >&2
+    kill -9 "$gamescope_pid" 2>/dev/null || true
+    exit 1
+fi
+
+# Match the environment gamescope gives a child it launches itself: X11
+# clients target the nested Xwayland, and WAYLAND_DISPLAY must not leak the
+# host compositor to games.
+export DISPLAY="$x_display"
+export GAMESCOPE_WAYLAND_DISPLAY="$wl_display"
+unset WAYLAND_DISPLAY
+
+status=0
+/usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck -noverifyfiles || status=$?
+
+# Steam is gone (client-update restart or crash); take gamescope down with
+# us so the unit restart brings up a fresh pair.
+kill "$gamescope_pid" 2>/dev/null || true
+exit "$status"
