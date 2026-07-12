@@ -14,6 +14,10 @@ set -euo pipefail
 
 eval "$(/usr/libexec/armada/device-env)"
 
+# The host desktop session is Wayland, but clients inside nested Gamescope use
+# Xwayland. This also prevents GLFW applications from selecting host Wayland.
+export XDG_SESSION_TYPE=x11
+
 # Advertise the external MangoApp overlay path and the layouts supported by
 # the installed MangoHud package. These mirror gamescope-session-steam.
 export STEAM_USE_MANGOAPP=1
@@ -81,9 +85,6 @@ unset WAYLAND_DISPLAY
 # one overlay failure does not require restarting Steam or Gamescope.
 if command -v mangoapp >/dev/null; then
     (
-        until xprop -display "$DISPLAY" -root >/dev/null 2>&1; do
-            sleep 0.1
-        done
         while true; do
             mangoapp || true
             sleep 1
