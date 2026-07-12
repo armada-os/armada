@@ -25,5 +25,8 @@ require 'session exports its MangoHud config' 'export MANGOHUD_CONFIGFILE'
 require 'MangoApp starts hidden' 'echo "no_display" >"$MANGOHUD_CONFIGFILE"'
 # shellcheck disable=SC2016
 require 'session removes the private MangoHud config' 'trap '\''rm -f -- "$socket" "$MANGOHUD_CONFIGFILE"'\'' EXIT'
+# shellcheck disable=SC2016
+require 'MangoApp waits for nested Xwayland' 'until xprop -display "$DISPLAY" -root >/dev/null 2>&1; do'
 require 'MangoApp is supervised' 'while true; do'
-require 'MangoApp is launched' 'mangoapp'
+require 'MangoApp failures do not defeat supervision' 'mangoapp || true'
+require 'MangoApp restart is rate limited' 'sleep 1'

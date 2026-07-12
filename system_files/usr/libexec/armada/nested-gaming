@@ -80,9 +80,15 @@ unset WAYLAND_DISPLAY
 # MangoApp must target Gamescope's nested Xwayland. Restart it if it exits so
 # one overlay failure does not require restarting Steam or Gamescope.
 if command -v mangoapp >/dev/null; then
-    (while true; do
-        mangoapp
-    done) &
+    (
+        until xprop -display "$DISPLAY" -root >/dev/null 2>&1; do
+            sleep 0.1
+        done
+        while true; do
+            mangoapp || true
+            sleep 1
+        done
+    ) &
 fi
 
 status=0
