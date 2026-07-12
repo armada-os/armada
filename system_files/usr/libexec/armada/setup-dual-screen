@@ -1,15 +1,22 @@
 #!/usr/bin/python3
 """One-time desktop layout for dual-screen devices, run by desktop-bootstrap.
 
-Places the secondary output below the primary (centered), makes the primary
-the priority-1 output, and pins each touchscreen to its own output so taps
-land on the screen being touched.
+Makes the secondary (bottom) output the desktop's priority-1 display — the
+panel and desktop icons belong on the lower touch screen, since gaming mode
+covers the top screen — scaled and centered below the primary, and pins each
+touchscreen to its own output so taps land on the screen being touched.
 """
 import glob
 import json
 import shlex
 import subprocess
 import sys
+
+# Matches the primary-output scale applied by desktop-bootstrap.
+SECONDARY_SCALE = 1.5
+
+# KScreen rotation flags.
+ROTATIONS = {"normal": 1, "left": 2, "inverted": 4, "right": 8}
 
 
 def device_env():
@@ -24,7 +31,9 @@ def device_env():
     return env
 
 
-def logical_size(output):
+def logical_size(output, scale=None, rotation=None):
+    """Logical size of an output, with optional overrides for a scale and
+    rotation that are about to be applied rather than currently in effect."""
     mode = next(
         (m for m in output.get("modes", [])
          if str(m.get("id")) == str(output.get("currentModeId"))),
@@ -34,10 +43,13 @@ def logical_size(output):
         return None
     width = mode["size"]["width"]
     height = mode["size"]["height"]
+    if rotation is None:
+        rotation = output.get("rotation")
     # KScreen rotation flags: 2 (left) and 8 (right) swap the axes.
-    if output.get("rotation") in (2, 8):
+    if rotation in (2, 8):
         width, height = height, width
-    scale = output.get("scale") or 1
+    if scale is None:
+        scale = output.get("scale") or 1
     return round(width / scale), round(height / scale)
 
 
@@ -105,19 +117,27 @@ def main():
               file=sys.stderr)
         return 1
 
+    orientation = env.get("ARMADA_SECONDARY_ORIENTATION") or "normal"
     primary_size = logical_size(by_name[primary])
-    secondary_size = logical_size(by_name[secondary])
+    secondary_size = logical_size(
+        by_name[secondary],
+        scale=SECONDARY_SCALE,
+        rotation=ROTATIONS.get(orientation, 1),
+    )
     if primary_size is None or secondary_size is None:
         return 1
     x = max(0, round((primary_size[0] - secondary_size[0]) / 2))
-    subprocess.run(
-        ["kscreen-doctor",
-         f"output.{primary}.priority.1",
-         f"output.{secondary}.priority.2",
-         f"output.{primary}.position.0,0",
-         f"output.{secondary}.position.{x},{primary_size[1]}"],
-        check=True,
-    )
+    command = [
+        "kscreen-doctor",
+        f"output.{secondary}.priority.1",
+        f"output.{primary}.priority.2",
+        f"output.{secondary}.scale.{SECONDARY_SCALE}",
+        f"output.{primary}.position.0,0",
+        f"output.{secondary}.position.{x},{primary_size[1]}",
+    ]
+    if orientation in ("left", "right", "inverted"):
+        command.append(f"output.{secondary}.rotation.{orientation}")
+    subprocess.run(command, check=True)
 
     devices = input_devices()
     primary_ok = pin_touchscreen(
