@@ -65,3 +65,13 @@ bash -n "$libexec/hud-toggle"
 require "$libexec/hud-toggle" 'toggle is gated on gaming mode' 'is-active armada-nested-gaming.service || exit 0'
 require "$libexec/hud-toggle" 'bottom toggles back to top' 'unit=armada-hud-top.service'
 require "$libexec/hud-toggle" 'anything else lands on bottom' 'unit=armada-hud-bottom.service'
+
+# --- button listener ---
+bash -n "$libexec/hud-toggle-listener"
+require "$libexec/hud-toggle-listener" 'listener is inert without a configured button' '|| exit 0'
+require "$libexec/hud-toggle-listener" 'listener reads the device by stable path' '/dev/input/by-path/${ARMADA_HUD_TOGGLE_BUTTON_DEV}'
+require "$libexec/hud-toggle-listener" 'evtest output is line-buffered' 'stdbuf -oL evtest'
+require "$libexec/hud-toggle-listener" 'a press runs the toggle' '/usr/libexec/armada/hud-toggle || true'
+require "$units/armada-ayn-button.service" 'listener lives with the session' 'PartOf=graphical-session.target'
+require "$units/armada-ayn-button.service" 'clean no-button exit is final' 'Restart=on-failure'
+require "$libexec/desktop-bootstrap" 'listener is started at desktop login' 'systemctl --user start armada-ayn-button.service'

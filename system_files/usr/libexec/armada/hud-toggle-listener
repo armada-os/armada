@@ -1,0 +1,30 @@
+#!/usr/bin/bash
+# Watch the device's HUD-toggle button (the AYN button on the Thor) and run
+# hud-toggle on each press. Purely passive: no evdev grab, so other keys on
+# the same device (volume-up shares gpio-keys) keep working. The keycode
+# also still reaches the focused client; harmless for F24-class keys.
+set -euo pipefail
+
+eval "$(/usr/libexec/armada/device-env)"
+
+[[ -n ${ARMADA_HUD_TOGGLE_BUTTON_DEV:-} && -n ${ARMADA_HUD_TOGGLE_BUTTON_KEY:-} ]] || exit 0
+
+dev="/dev/input/by-path/${ARMADA_HUD_TOGGLE_BUTTON_DEV}"
+# Tolerate udev still settling at session start.
+for _ in $(seq 1 30); do
+    [[ -e $dev ]] && break
+    sleep 1
+done
+[[ -e $dev ]] || exit 1
+
+# stdbuf: evtest block-buffers when piped, which would delay presses forever.
+# Key-down lines look like:
+#   Event: time 1783912432.241849, type 1 (EV_KEY), code 194 (KEY_F24), value 1
+stdbuf -oL evtest "$dev" \
+    | while read -r line; do
+          case "$line" in
+              *"(${ARMADA_HUD_TOGGLE_BUTTON_KEY}), value 1")
+                  /usr/libexec/armada/hud-toggle || true
+                  ;;
+          esac
+      done

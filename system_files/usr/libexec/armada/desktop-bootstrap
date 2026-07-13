@@ -36,6 +36,9 @@ fi
 if [[ ${ARMADA_GAMING_SESSION:-} == nested ]]; then
     systemctl --user reset-failed armada-nested-gaming.service 2>/dev/null || true
     systemctl --user start armada-nested-gaming.service 2>/dev/null || true
+    # The AYN-button HUD toggle only applies to nested gaming; the listener
+    # exits on its own unless the device conf names a button.
+    systemctl --user start armada-ayn-button.service 2>/dev/null || true
 fi
 
 display_connector="${ARMADA_PRIMARY_CONNECTOR:-}"
