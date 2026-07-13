@@ -30,6 +30,18 @@ if [[ -n "${ARMADA_SECONDARY_TOUCHSCREEN:-}" ]]; then
     /usr/libexec/armada/touchscreen-inhibit "$ARMADA_SECONDARY_TOUCHSCREEN" 0 2>/dev/null || true
 fi
 
+# KWin's rulebook only reads the per-user config. Merge Armada's packaged
+# rules there before any managed windows are created, then reload the rules.
+if [[ -x /usr/libexec/armada/install-kwin-rules ]] && \
+    /usr/libexec/armada/install-kwin-rules; then
+    for qdbus in qdbus-qt6 qdbus6 qdbus /usr/lib64/qt6/bin/qdbus; do
+        if command -v "${qdbus}" >/dev/null 2>&1; then
+            "${qdbus}" org.kde.KWin /KWin org.kde.KWin.reconfigure 2>/dev/null || true
+            break
+        fi
+    done
+fi
+
 # Nested-gaming devices boot into this session with gaming on the primary
 # screen. reset-failed clears a start-limit lockout from a previous session
 # (e.g. restart churn while the compositor was going down at logout).

@@ -5,6 +5,7 @@ Description=Performance overlay inside nested gamescope (top screen)
 Conflicts=armada-hud-bottom.service
 # Started by nested-gaming after its gamescope handshake; dies with it.
 PartOf=armada-nested-gaming.service
+BindsTo=armada-nested-gaming.service
 After=armada-nested-gaming.service
 # mangoapp exits immediately while gamescope is restarting (dead display);
 # retry forever, as the old inline restart-loop did.

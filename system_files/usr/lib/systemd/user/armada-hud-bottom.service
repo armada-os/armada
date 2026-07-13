@@ -5,7 +5,9 @@ Description=Full-stats performance HUD on the bottom screen
 Conflicts=armada-hud-top.service
 # Only hud-toggle (the AYN button) starts this; it dies with gaming mode.
 PartOf=armada-nested-gaming.service
+BindsTo=armada-nested-gaming.service
 After=graphical-session.target
+After=armada-nested-gaming.service
 # Conflicts= implies no ordering; this edge makes systemd stop one HUD
 # before starting the other, in both toggle directions.
 After=armada-hud-top.service

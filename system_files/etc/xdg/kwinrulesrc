@@ -4,15 +4,19 @@ rules=steam-keyboard,armada-hud-bottom
 
 [armada-hud-bottom]
 Description=Pin the bottom-screen HUD fullscreen on the secondary output
+acceptfocus=false
+acceptfocusrule=2
 above=true
 aboverule=2
 fullscreen=true
-fullscreenrule=2
-screen=1
-screenrule=2
+fullscreenrule=4
+position=226,720
+positionrule=4
+screen=0
+screenrule=4
 skiptaskbar=true
 skiptaskbarrule=2
-wmclass=mangoapp
+wmclass=mangoapp overlay window
 wmclasscomplete=false
 wmclassmatch=1
 
