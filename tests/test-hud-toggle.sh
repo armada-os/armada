@@ -47,6 +47,7 @@ forbid() {
 # --- bottom HUD unit (full stats on the desktop's bottom screen) ---
 bash -n "$libexec/hud-bottom"
 require "$units/armada-hud-bottom.service" 'bottom HUD conflicts with the top HUD' 'Conflicts=armada-hud-top.service'
+require "$units/armada-hud-bottom.service" 'HUD swap is ordered stop-before-start' 'After=armada-hud-top.service'
 require "$units/armada-hud-bottom.service" 'bottom HUD dies with gaming mode' 'PartOf=armada-nested-gaming.service'
 require "$units/armada-hud-bottom.service" 'bottom HUD is supervised' 'Restart=always'
 require "$libexec/hud-bottom" 'bottom HUD needs the desktop display' '[[ -n ${DISPLAY:-} ]] || exit 1'
@@ -68,7 +69,7 @@ require "$libexec/hud-toggle" 'anything else lands on bottom' 'unit=armada-hud-b
 
 # --- button listener ---
 bash -n "$libexec/hud-toggle-listener"
-require "$libexec/hud-toggle-listener" 'listener is inert without a configured button' '|| exit 0'
+require "$libexec/hud-toggle-listener" 'listener is inert without a configured button' '[[ -n ${ARMADA_HUD_TOGGLE_BUTTON_DEV:-} && -n ${ARMADA_HUD_TOGGLE_BUTTON_KEY:-} ]] || exit 0'
 require "$libexec/hud-toggle-listener" 'listener reads the device by stable path' '/dev/input/by-path/${ARMADA_HUD_TOGGLE_BUTTON_DEV}'
 require "$libexec/hud-toggle-listener" 'evtest output is line-buffered' 'stdbuf -oL evtest'
 require "$libexec/hud-toggle-listener" 'a press runs the toggle' '/usr/libexec/armada/hud-toggle || true'
