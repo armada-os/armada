@@ -1,0 +1,16 @@
+[Unit]
+Description=Performance overlay inside nested gamescope (top screen)
+# gamescope feeds mangoapp over a single-consumer message queue; Conflicts
+# lets systemd guarantee only one HUD unit ever runs (hud-toggle swaps them).
+Conflicts=armada-hud-bottom.service
+# Started by nested-gaming after its gamescope handshake; dies with it.
+PartOf=armada-nested-gaming.service
+After=armada-nested-gaming.service
+# mangoapp exits immediately while gamescope is restarting (dead display);
+# retry forever, as the old inline restart-loop did.
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/libexec/armada/hud-top
+Restart=always
+RestartSec=1

@@ -1,0 +1,23 @@
+#!/usr/bin/bash
+# MangoApp overlay inside the nested gamescope (top screen); Steam's
+# performance-overlay slider drives it by rewriting MANGOHUD_CONFIGFILE.
+# nested-gaming writes the nested DISPLAY and that config path to the env
+# file after its gamescope handshake. Refusing to run without the file
+# matters: the user manager has the desktop DISPLAY in its environment, and
+# mangoapp there would still steal gamescope's stats queue. Supervision is
+# armada-hud-top.service (Restart=always).
+set -euo pipefail
+
+env_file="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/armada-nested-gaming.env"
+[[ -r $env_file ]] || exit 1
+set -a
+# shellcheck disable=SC1090
+source "$env_file"
+set +a
+[[ -n ${DISPLAY:-} && -n ${MANGOHUD_CONFIGFILE:-} ]] || exit 1
+
+# Target the nested Xwayland, never the host compositor.
+export XDG_SESSION_TYPE=x11
+unset WAYLAND_DISPLAY
+
+exec mangoapp

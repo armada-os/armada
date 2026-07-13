@@ -25,7 +25,7 @@ require 'session exports its MangoHud config' 'export MANGOHUD_CONFIGFILE'
 # shellcheck disable=SC2016
 require 'MangoApp starts hidden' 'echo "no_display" >"$MANGOHUD_CONFIGFILE"'
 # shellcheck disable=SC2016
-require 'session removes the private MangoHud config' 'trap '\''rm -f -- "$socket" "$MANGOHUD_CONFIGFILE"'\'' EXIT'
-require 'MangoApp is supervised' 'while true; do'
-require 'MangoApp failures do not defeat supervision' 'mangoapp || true'
-require 'MangoApp restart is rate limited' 'sleep 1'
+require 'session removes its runtime files' 'trap '\''rm -f -- "$socket" "$MANGOHUD_CONFIGFILE" "$hud_env"'\'' EXIT'
+# shellcheck disable=SC2016
+require 'session hands the HUD unit its config' 'printf '\''MANGOHUD_CONFIGFILE=%s\n'\'' "$MANGOHUD_CONFIGFILE"'
+require 'session starts the top HUD unit' 'systemctl --user start --no-block armada-hud-top.service'

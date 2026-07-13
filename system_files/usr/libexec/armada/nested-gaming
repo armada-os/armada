@@ -31,6 +31,9 @@ MANGOHUD_CONFIGFILE=$(mktemp /tmp/mangohud.XXXXXXXX)
 export MANGOHUD_CONFIGFILE
 echo "no_display" >"$MANGOHUD_CONFIGFILE"
 
+# Handed to armada-hud-top.service once gamescope is up (see hud-top).
+hud_env="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/armada-nested-gaming.env"
+
 # The desktop shows rotated panels in landscape; gamescope renders landscape.
 width="${ARMADA_PANEL_NATIVE_WIDTH:-1080}"
 height="${ARMADA_PANEL_NATIVE_HEIGHT:-1920}"
@@ -62,7 +65,7 @@ prefer_output=()
 # the -R pipe once it is up (same mechanism gamescope-session-plus uses).
 socket=$(mktemp --tmpdir -u armada-nested-gaming.XXXXXX.socket)
 mkfifo -- "$socket"
-trap 'rm -f -- "$socket" "$MANGOHUD_CONFIGFILE"' EXIT
+trap 'rm -f -- "$socket" "$MANGOHUD_CONFIGFILE" "$hud_env"' EXIT
 
 gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam "${prefer_output[@]}" \
     -R "$socket" &
@@ -81,15 +84,17 @@ export DISPLAY="$x_display"
 export GAMESCOPE_WAYLAND_DISPLAY="$wl_display"
 unset WAYLAND_DISPLAY
 
-# MangoApp must target Gamescope's nested Xwayland. Restart it if it exits so
-# one overlay failure does not require restarting Steam or Gamescope.
+# The top-screen MangoApp runs as armada-hud-top.service so the AYN-button
+# HUD toggle can swap it for the bottom-screen HUD (the units Conflict).
+# Hand it the nested display and the Steam-managed config; starting it here
+# also resets the toggle to the top overlay on every session start.
+{
+    printf 'DISPLAY=%s\n' "$x_display"
+    printf 'MANGOHUD_CONFIGFILE=%s\n' "$MANGOHUD_CONFIGFILE"
+} >"$hud_env"
 if command -v mangoapp >/dev/null; then
-    (
-        while true; do
-            mangoapp || true
-            sleep 1
-        done
-    ) &
+    systemctl --user reset-failed armada-hud-top.service 2>/dev/null || true
+    systemctl --user start --no-block armada-hud-top.service 2>/dev/null || true
 fi
 
 status=0

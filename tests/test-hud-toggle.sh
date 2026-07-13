@@ -24,3 +24,14 @@ require "$devices/ayn-thor.conf" 'Thor names the AYN button device' 'ARMADA_HUD_
 require "$devices/ayn-thor.conf" 'Thor names the AYN button key' 'ARMADA_HUD_TOGGLE_BUTTON_KEY=KEY_F24'
 require "$libexec/device-env" 'device-env exports the button device' 'ARMADA_HUD_TOGGLE_BUTTON_DEV'
 require "$libexec/device-env" 'device-env exports the button key' 'ARMADA_HUD_TOGGLE_BUTTON_KEY'
+
+# --- top HUD unit (Steam-controlled overlay inside nested gamescope) ---
+bash -n "$libexec/hud-top"
+require "$units/armada-hud-top.service" 'top HUD conflicts with the bottom HUD' 'Conflicts=armada-hud-bottom.service'
+require "$units/armada-hud-top.service" 'top HUD dies with gaming mode' 'PartOf=armada-nested-gaming.service'
+require "$units/armada-hud-top.service" 'top HUD is supervised' 'Restart=always'
+require "$units/armada-hud-top.service" 'top HUD retries forever like the old loop' 'StartLimitIntervalSec=0'
+require "$libexec/hud-top" 'top HUD reads the session env file' 'armada-nested-gaming.env'
+require "$libexec/hud-top" 'top HUD refuses to run without the nested display' '[[ -n ${DISPLAY:-} && -n ${MANGOHUD_CONFIGFILE:-} ]] || exit 1'
+require "$libexec/hud-top" 'top HUD avoids the host compositor' 'unset WAYLAND_DISPLAY'
+require "$libexec/hud-top" 'top HUD runs mangoapp' 'exec mangoapp'
