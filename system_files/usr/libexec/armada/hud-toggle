@@ -1,0 +1,21 @@
+#!/usr/bin/bash
+# AYN-button action: swap the performance HUD between the nested-gamescope
+# overlay (top screen, Steam's slider in control) and the bottom-screen
+# full-stats HUD. State is simply which unit is active; Conflicts= in the
+# units stops the other side, keeping gamescope's stats queue
+# single-consumer.
+set -euo pipefail
+
+# The HUDs only mean something while gaming mode is up.
+systemctl --user --quiet is-active armada-nested-gaming.service || exit 0
+
+if systemctl --user --quiet is-active armada-hud-bottom.service; then
+    unit=armada-hud-top.service
+else
+    # Covers top-active and the transient neither-active (mid Steam
+    # restart): both land on bottom, the state the press is asking for.
+    unit=armada-hud-bottom.service
+fi
+
+systemctl --user reset-failed "$unit" 2>/dev/null || true
+exec systemctl --user start "$unit"

@@ -59,3 +59,9 @@ forbid "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD must never star
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window rule is registered' 'rules=steam-keyboard,armada-hud-bottom'
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window is matched by class' 'wmclass=mangoapp'
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window is forced fullscreen' 'fullscreenrule=2'
+
+# --- toggle action ---
+bash -n "$libexec/hud-toggle"
+require "$libexec/hud-toggle" 'toggle is gated on gaming mode' 'is-active armada-nested-gaming.service || exit 0'
+require "$libexec/hud-toggle" 'bottom toggles back to top' 'unit=armada-hud-top.service'
+require "$libexec/hud-toggle" 'anything else lands on bottom' 'unit=armada-hud-bottom.service'
