@@ -35,3 +35,27 @@ require "$libexec/hud-top" 'top HUD reads the session env file' 'armada-nested-g
 require "$libexec/hud-top" 'top HUD refuses to run without the nested display' '[[ -n ${DISPLAY:-} && -n ${MANGOHUD_CONFIGFILE:-} ]] || exit 1'
 require "$libexec/hud-top" 'top HUD avoids the host compositor' 'unset WAYLAND_DISPLAY'
 require "$libexec/hud-top" 'top HUD runs mangoapp' 'exec mangoapp'
+
+forbid() {
+    local file=$1 contract=$2 literal=$3
+    ! grep -Fq -- "$literal" "$file" || {
+        printf 'violated HUD-toggle contract (%s): %s\n' "${file##*/}" "$contract" >&2
+        exit 1
+    }
+}
+
+# --- bottom HUD unit (full stats on the desktop's bottom screen) ---
+bash -n "$libexec/hud-bottom"
+require "$units/armada-hud-bottom.service" 'bottom HUD conflicts with the top HUD' 'Conflicts=armada-hud-top.service'
+require "$units/armada-hud-bottom.service" 'bottom HUD dies with gaming mode' 'PartOf=armada-nested-gaming.service'
+require "$units/armada-hud-bottom.service" 'bottom HUD is supervised' 'Restart=always'
+require "$libexec/hud-bottom" 'bottom HUD needs the desktop display' '[[ -n ${DISPLAY:-} ]] || exit 1'
+require "$libexec/hud-bottom" 'bottom HUD avoids the host compositor' 'unset WAYLAND_DISPLAY'
+require "$libexec/hud-bottom" 'bottom HUD uses the static config' 'MANGOHUD_CONFIGFILE=/usr/share/armada/mangohud-bottom.conf'
+require "$libexec/hud-bottom" 'bottom HUD runs mangoapp' 'exec mangoapp'
+require "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD shows fps' 'fps'
+require "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD shows the frametime graph' 'frame_timing'
+forbid "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD must never start hidden' 'no_display'
+require "${sf}/etc/xdg/kwinrulesrc" 'HUD window rule is registered' 'rules=steam-keyboard,armada-hud-bottom'
+require "${sf}/etc/xdg/kwinrulesrc" 'HUD window is matched by class' 'wmclass=mangoapp'
+require "${sf}/etc/xdg/kwinrulesrc" 'HUD window is forced fullscreen' 'fullscreenrule=2'

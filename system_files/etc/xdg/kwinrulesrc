@@ -1,6 +1,20 @@
 [General]
-count=1
-rules=steam-keyboard
+count=2
+rules=steam-keyboard,armada-hud-bottom
+
+[armada-hud-bottom]
+Description=Pin the bottom-screen HUD fullscreen on the secondary output
+above=true
+aboverule=2
+fullscreen=true
+fullscreenrule=2
+screen=1
+screenrule=2
+skiptaskbar=true
+skiptaskbarrule=2
+wmclass=mangoapp
+wmclasscomplete=false
+wmclassmatch=1
 
 [steam-keyboard]
 Description=Window settings for Steam Keyboard

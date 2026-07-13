@@ -1,0 +1,18 @@
+#!/usr/bin/bash
+# Full-stats MangoApp on the desktop session (the Thor's bottom screen). It
+# reads the same gamescope stats queue as the top overlay; the two units
+# Conflict so only one consumer ever runs. Placement is the armada-hud-bottom
+# KWin rule; supervision is armada-hud-bottom.service (Restart=always).
+set -euo pipefail
+
+# The desktop DISPLAY comes from the user manager environment (imported by
+# desktop-bootstrap); without it there is nowhere to draw yet.
+[[ -n ${DISPLAY:-} ]] || exit 1
+
+# Land on the desktop Xwayland: GLFW would pick host Wayland otherwise, and
+# mangoapp's window hints are X11-only.
+export XDG_SESSION_TYPE=x11
+unset WAYLAND_DISPLAY
+
+export MANGOHUD_CONFIGFILE=/usr/share/armada/mangohud-bottom.conf
+exec mangoapp
