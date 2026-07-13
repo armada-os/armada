@@ -45,6 +45,22 @@ forbid() {
     }
 }
 
+require_line() {
+    local file=$1 contract=$2 literal=$3
+    grep -Fxq -- "$literal" "$file" || {
+        printf 'missing HUD-toggle contract (%s): %s\n' "${file##*/}" "$contract" >&2
+        exit 1
+    }
+}
+
+forbid_line() {
+    local file=$1 contract=$2 literal=$3
+    ! grep -Fxq -- "$literal" "$file" || {
+        printf 'violated HUD-toggle contract (%s): %s\n' "${file##*/}" "$contract" >&2
+        exit 1
+    }
+}
+
 # --- bottom HUD unit (full stats on the desktop's bottom screen) ---
 bash -n "$libexec/hud-bottom"
 require "$units/armada-hud-bottom.service" 'bottom HUD conflicts with the top HUD' 'Conflicts=armada-hud-top.service'
@@ -57,10 +73,68 @@ require "$libexec/hud-bottom" 'bottom HUD needs the desktop display' '[[ -n ${DI
 require "$libexec/hud-bottom" 'bottom HUD avoids the host compositor' 'unset WAYLAND_DISPLAY'
 require "$libexec/hud-bottom" 'bottom HUD uses the static config' 'MANGOHUD_CONFIGFILE=/usr/share/armada/mangohud-bottom.conf'
 require "$libexec/hud-bottom" 'bottom HUD runs mangoapp' 'exec mangoapp'
-require "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD shows fps' 'fps'
-require "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD shows the frametime graph' 'frame_timing'
-require "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD shows VRAM usage' 'vram'
-forbid "${sf}/usr/share/armada/mangohud-bottom.conf" 'bottom HUD must never start hidden' 'no_display'
+hud_config="${sf}/usr/share/armada/mangohud-bottom.conf"
+required_bottom_hud_lines=(
+    'table_columns=3'
+    'font_size=32'
+    'background_alpha=0.8'
+    'position=top-left'
+    'fps'
+    'frametime'
+    'frame_timing'
+    'frame_timing_detailed'
+    'debug'
+    'fps_metrics=avg,0.01'
+    'refresh_rate'
+    'show_fps_limit'
+    'present_mode'
+    'resolution'
+    'hdr'
+    'fsr'
+    'cpu_stats'
+    'cpu_mhz'
+    'cpu_temp'
+    'core_load'
+    'cpu_power'
+    'gpu_stats'
+    'gpu_core_clock'
+    'gpu_temp'
+    'gpu_name'
+    'gpu_mem_clock'
+    'gpu_power'
+    'gpu_power_limit'
+    'gpu_junction_temp'
+    'gpu_mem_temp'
+    'gpu_fan'
+    'gpu_voltage'
+    'ram'
+    'vram'
+    'ram_temp'
+    'swap'
+    'procmem'
+    'proc_vram'
+    'io_read'
+    'io_write'
+    'dx_api'
+    'vulkan_driver'
+    'wine'
+    'winesync'
+    'arch'
+    'battery'
+    'battery_watt'
+    'battery_time'
+    'device_battery=gamepad'
+    'network=1'
+    'time'
+)
+
+for line in "${required_bottom_hud_lines[@]}"; do
+    require_line "$hud_config" "bottom HUD includes ${line}" "$line"
+done
+
+forbid_line "$hud_config" 'bottom HUD must never start hidden' 'no_display'
+forbid_line "$hud_config" 'bottom HUD uses explicit metrics, not a preset' 'preset=4'
+forbid_line "$hud_config" 'bottom HUD does not implicitly enable every metric' 'full'
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window rule is registered' 'rules=steam-keyboard,armada-hud-bottom'
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window matches the live MangoApp class' 'wmclass=mangoapp overlay window'
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window is pinned to the bottom output index' 'screen=0'
