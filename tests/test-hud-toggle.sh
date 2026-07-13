@@ -83,7 +83,6 @@ required_bottom_hud_lines=(
     'frametime'
     'frame_timing'
     'frame_timing_detailed'
-    'debug'
     'fps_metrics=avg,0.01'
     'refresh_rate'
     'show_fps_limit'
@@ -95,24 +94,13 @@ required_bottom_hud_lines=(
     'cpu_mhz'
     'cpu_temp'
     'core_load'
-    'cpu_power'
     'gpu_stats'
     'gpu_core_clock'
     'gpu_temp'
     'gpu_name'
-    'gpu_mem_clock'
-    'gpu_power'
-    'gpu_power_limit'
-    'gpu_junction_temp'
-    'gpu_mem_temp'
-    'gpu_fan'
-    'gpu_voltage'
     'ram'
-    'vram'
-    'ram_temp'
     'swap'
     'procmem'
-    'proc_vram'
     'io_read'
     'io_write'
     'dx_api'
@@ -132,9 +120,27 @@ for line in "${required_bottom_hud_lines[@]}"; do
     require_line "$hud_config" "bottom HUD includes ${line}" "$line"
 done
 
-forbid_line "$hud_config" 'bottom HUD must never start hidden' 'no_display'
-forbid_line "$hud_config" 'bottom HUD uses explicit metrics, not a preset' 'preset=4'
-forbid_line "$hud_config" 'bottom HUD does not implicitly enable every metric' 'full'
+forbidden_bottom_hud_lines=(
+    'no_display'
+    'preset=4'
+    'full'
+    'debug'
+    'cpu_power'
+    'gpu_mem_clock'
+    'gpu_power'
+    'gpu_power_limit'
+    'gpu_junction_temp'
+    'gpu_mem_temp'
+    'gpu_fan'
+    'gpu_voltage'
+    'vram'
+    'proc_vram'
+    'ram_temp'
+)
+
+for line in "${forbidden_bottom_hud_lines[@]}"; do
+    forbid_line "$hud_config" "bottom HUD excludes ${line}" "$line"
+done
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window rule is registered' 'rules=steam-keyboard,armada-hud-bottom'
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window matches the live MangoApp class' 'wmclass=mangoapp overlay window'
 require "${sf}/etc/xdg/kwinrulesrc" 'HUD window is pinned to the bottom output index' 'screen=0'
