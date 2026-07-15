@@ -21,6 +21,7 @@ check:
     done
     echo "Checking syntax: Justfile"
     just --unstable --fmt --check -f Justfile
+    bash tests/run.sh
 
 [group('Just')]
 fix:

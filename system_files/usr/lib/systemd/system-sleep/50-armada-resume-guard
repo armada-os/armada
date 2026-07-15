@@ -1,0 +1,175 @@
+#!/bin/bash
+# Arm before suspend and finalize after resume while user.slice is normally frozen.
+
+set -uo pipefail
+
+RUNTIME_DIR=${ARMADA_RESUME_RUNTIME_DIR:-/run/armada}
+MARKER=${ARMADA_RESUME_MARKER:-${RUNTIME_DIR}/last-resume}
+UUID_FILE=${ARMADA_RESUME_UUID_FILE:-/proc/sys/kernel/random/uuid}
+BOOT_ID_FILE=${ARMADA_RESUME_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
+UPTIME_FILE=${ARMADA_RESUME_UPTIME_FILE:-/proc/uptime}
+SESSION_USER=${ARMADA_SESSION_USER:-armada}
+POWERBUTTON_PATH=${ARMADA_POWERBUTTON_PATH:-/usr/libexec/armada/powerbuttond}
+PROC_ROOT=${ARMADA_PROC_ROOT:-/proc}
+resume_guard_temporary=
+
+log() {
+    logger -t armada-resume-guard -- "$*" || true
+}
+
+guard_now_ms() {
+    local uptime seconds fraction
+    read -r uptime _ <"$UPTIME_FILE" || return 1
+    [[ $uptime =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+    seconds=${uptime%%.*}
+    if [[ $uptime == *.* ]]; then
+        fraction=${uptime#*.}000
+        fraction=${fraction:0:3}
+    else
+        fraction=000
+    fi
+    printf '%s\n' "$((10#$seconds * 1000 + 10#$fraction))"
+}
+
+cleanup_resume_generation() {
+    [[ -n $resume_guard_temporary ]] && rm -f -- "$resume_guard_temporary"
+}
+
+read_exact_record() {
+    local path=$1 raw record sentinel=$'\034'
+    raw=$(cat "$path" && printf '%s' "$sentinel") || return 1
+    [[ $raw == *"$sentinel" ]] || return 1
+    raw=${raw%"$sentinel"}
+    [[ $raw == *$'\n' ]] || return 1
+    record=${raw%$'\n'}
+    [[ -n $record && $record != *$'\n'* ]] || return 1
+    printf '%s' "$record"
+}
+
+publish_resume_phase() {
+    local phase=$1 generation=$2 boot_id=$3 phase_ms
+    phase_ms=$(guard_now_ms) || return 1
+    install -d -o root -g root -m 0755 "$RUNTIME_DIR" || return 1
+    resume_guard_temporary=$(mktemp "${RUNTIME_DIR}/.last-resume.XXXXXX") || return 1
+    trap cleanup_resume_generation EXIT
+    printf 'v1 %s %s %s %s %s\n' \
+        "$generation" "$boot_id" "$phase" "$phase_ms" "$(date --iso-8601=ns)" \
+        >"$resume_guard_temporary" || return 1
+    chown root:root "$resume_guard_temporary" || return 1
+    chmod 0644 "$resume_guard_temporary" || return 1
+    mv -f -- "$resume_guard_temporary" "$MARKER" || return 1
+    resume_guard_temporary=
+    trap - EXIT
+    log "published resume generation $generation phase=$phase"
+}
+
+prepared_generation() {
+    local expected_boot=$1 version generation boot_id phase phase_ms timestamp extra metadata owner mode record
+    [[ -f $MARKER && ! -L $MARKER ]] || return 1
+    metadata=$(stat -c '%u %a' "$MARKER" 2>/dev/null) || return 1
+    read -r owner mode extra <<<"$metadata"
+    [[ $owner == 0 && $mode == 644 && -z $extra ]] || return 1
+    record=$(read_exact_record "$MARKER") || return 1
+    read -r version generation boot_id phase phase_ms timestamp extra <<<"$record"
+    [[ $version == v1 && $boot_id == "$expected_boot" && $phase == prepared \
+        && $phase_ms =~ ^[0-9]+$ && -n $timestamp && -z $extra ]] || return 1
+    [[ $generation =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || return 1
+    printf '%s\n' "$generation"
+}
+
+new_generation() {
+    local generation
+    generation=$(<"$UUID_FILE") || return 1
+    [[ $generation =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || return 1
+    printf '%s\n' "$generation"
+}
+
+powerbuttond_pids() {
+    local session_uid proc pid ppid key real first second third fourth arg0 arg1 parent0 parent1
+    session_uid=$(id -u "$SESSION_USER" 2>/dev/null || true)
+    [[ $session_uid =~ ^[0-9]+$ ]] || return 0
+    for proc in "$PROC_ROOT"/[0-9]*; do
+        [[ -r $proc/status && -r $proc/cmdline ]] || continue
+        real=
+        first=
+        ppid=
+        while read -r key first second third fourth; do
+            case $key in
+                Uid:) real=$first ;;
+                PPid:) ppid=$first ;;
+            esac
+        done <"$proc/status"
+        [[ $real == "$session_uid" ]] || continue
+        arg0=
+        arg1=
+        exec 8<"$proc/cmdline" || continue
+        IFS= read -r -d '' -u 8 arg0 || true
+        IFS= read -r -d '' -u 8 arg1 || true
+        exec 8<&-
+        if [[ $arg0 == "$POWERBUTTON_PATH" \
+            || ( $arg0 == */bash && $arg1 == "$POWERBUTTON_PATH" ) ]]; then
+            # A lid watcher is a Bash subshell with the same argv as its main
+            # daemon. Signal only top-level owners, not their script children.
+            if [[ $ppid =~ ^[0-9]+$ && -r $PROC_ROOT/$ppid/cmdline ]]; then
+                parent0=
+                parent1=
+                exec 9<"$PROC_ROOT/$ppid/cmdline" || continue
+                IFS= read -r -d '' -u 9 parent0 || true
+                IFS= read -r -d '' -u 9 parent1 || true
+                exec 9<&-
+                if [[ $parent0 == "$POWERBUTTON_PATH" \
+                    || ( $parent0 == */bash && $parent1 == "$POWERBUTTON_PATH" ) ]]; then
+                    continue
+                fi
+            fi
+            # The daemon installs its USR1 trap before opening fd 3 for the
+            # power-key stream. A matching process without fd 3 is still
+            # starting; signaling it would invoke Bash's default USR1 action.
+            [[ -e $proc/fd/3 ]] || continue
+            pid=${proc##*/}
+            [[ $pid =~ ^[0-9]+$ ]] && printf '%s\n' "$pid"
+        fi
+    done
+}
+
+signal_powerbuttond() {
+    local pid
+    while IFS= read -r pid; do
+        kill -USR1 "$pid" 2>/dev/null || true
+    done < <(powerbuttond_pids)
+}
+
+armada_resume_guard_main() {
+    local stage=${1:-} operation=${2:-} generation boot_id
+    [[ $operation == suspend ]] || return 0
+    boot_id=$(<"$BOOT_ID_FILE") || return 1
+    [[ $boot_id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
+        || return 1
+
+    case $stage in
+        pre)
+            generation=$(new_generation) || return 1
+            publish_resume_phase prepared "$generation" "$boot_id" || {
+                log "pre-suspend wake-key guard publication failed"
+                return 1
+            }
+            ;;
+        post)
+            generation=$(prepared_generation "$boot_id" 2>/dev/null || true)
+            [[ -n $generation ]] || generation=$(new_generation) || return 1
+            publish_resume_phase resumed "$generation" "$boot_id" || {
+                log "post-resume wake-key guard publication failed"
+                return 1
+            }
+            # Wake a daemon blocked on evtest so it consumes the post marker
+            # before any queued key line, without an awake-time polling loop.
+            signal_powerbuttond
+            ;;
+    esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    armada_resume_guard_main "$@"
+fi

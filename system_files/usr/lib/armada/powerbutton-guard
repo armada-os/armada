@@ -1,0 +1,226 @@
+#!/bin/bash
+# Resume-generation guard shared by powerbuttond and its replay tests.
+
+ARMADA_RESUME_MARKER=${ARMADA_RESUME_MARKER:-/run/armada/last-resume}
+ARMADA_RESUME_GUARD_MS=${ARMADA_RESUME_GUARD_MS:-1500}
+ARMADA_RESUME_GUARD_HARD_MS=${ARMADA_RESUME_GUARD_HARD_MS:-5000}
+ARMADA_UPTIME_FILE=${ARMADA_UPTIME_FILE:-/proc/uptime}
+ARMADA_BOOT_ID_FILE=${ARMADA_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
+
+armada_resume_identity=
+armada_resume_generation=
+armada_resume_phase=
+armada_resume_guard_active=0
+armada_resume_guard_seen_event=0
+armada_resume_guard_release_seen=0
+armada_resume_guard_until_ms=0
+armada_resume_guard_hard_until_ms=0
+
+armada_guard_now_ms() {
+    local uptime seconds fraction
+    read -r uptime _ <"$ARMADA_UPTIME_FILE" || return 1
+    [[ $uptime =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+    seconds=${uptime%%.*}
+    if [[ $uptime == *.* ]]; then
+        fraction=${uptime#*.}000
+        fraction=${fraction:0:3}
+    else
+        fraction=000
+    fi
+    printf '%s\n' "$((10#$seconds * 1000 + 10#$fraction))"
+}
+
+armada_read_exact_record() {
+    local path=$1 raw record sentinel=$'\034'
+    raw=$(cat "$path" && printf '%s' "$sentinel") || return 1
+    [[ $raw == *"$sentinel" ]] || return 1
+    raw=${raw%"$sentinel"}
+    [[ $raw == *$'\n' ]] || return 1
+    record=${raw%$'\n'}
+    [[ -n $record && $record != *$'\n'* ]] || return 1
+    printf '%s' "$record"
+}
+
+# Prints: generation phase phase_monotonic_ms
+armada_resume_marker_fields() {
+    local version generation boot_id phase phase_ms timestamp extra metadata owner mode current_boot record
+    [[ -f $ARMADA_RESUME_MARKER && ! -L $ARMADA_RESUME_MARKER ]] || return 1
+    metadata=$(stat -c '%u %a' "$ARMADA_RESUME_MARKER" 2>/dev/null) || return 1
+    read -r owner mode extra <<<"$metadata"
+    [[ $owner == 0 && $mode == 644 && -z $extra ]] || return 1
+    record=$(armada_read_exact_record "$ARMADA_RESUME_MARKER") || return 1
+    read -r version generation boot_id phase phase_ms timestamp extra <<<"$record"
+    [[ $version == v1 && -n $timestamp && -z $extra ]] || return 1
+    [[ $generation =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] \
+        || return 1
+    [[ $boot_id =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] \
+        || return 1
+    [[ $phase == prepared || $phase == resumed ]] || return 1
+    [[ $phase_ms =~ ^[0-9]+$ ]] || return 1
+    read -r current_boot <"$ARMADA_BOOT_ID_FILE" || return 1
+    [[ $boot_id == "$current_boot" ]] || return 1
+    printf '%s %s %s\n' "$generation" "$phase" "$((10#$phase_ms))"
+}
+
+armada_resume_guard_reset() {
+    armada_resume_guard_active=0
+    armada_resume_guard_seen_event=0
+    armada_resume_guard_release_seen=0
+    armada_resume_guard_until_ms=0
+    armada_resume_guard_hard_until_ms=0
+}
+
+armada_resume_guard_init() {
+    local fields generation phase phase_ms extra
+    armada_resume_identity=
+    armada_resume_generation=
+    armada_resume_phase=
+    armada_resume_guard_reset
+    # Cache any marker that predates this daemon without arming it. A daemon
+    # restart creates a fresh evdev descriptor, so it has no historical queue;
+    # treating an old prepared marker as live would instead eat a future press.
+    fields=$(armada_resume_marker_fields 2>/dev/null || true)
+    read -r generation phase phase_ms extra <<<"$fields"
+    if [[ -n $generation && -n $phase && -n $phase_ms && -z $extra ]]; then
+        armada_resume_identity=${generation}:${phase}
+        armada_resume_generation=$generation
+        armada_resume_phase=$phase
+    fi
+}
+
+# Returns success only when a new, usable root-published phase is observed.
+# A prepared phase remains usable across arbitrarily long suspend dwell. A
+# completed phase must be recent, which prevents a Steam relaunch hours later
+# from swallowing the next legitimate power press.
+armada_resume_guard_refresh() {
+    local force=${1:-0} fields generation phase phase_ms extra identity now age
+    local prepared_continuation=0
+    fields=$(armada_resume_marker_fields 2>/dev/null || true)
+    read -r generation phase phase_ms extra <<<"$fields"
+    [[ -n $generation && -n $phase && -n $phase_ms && -z $extra ]] || return 1
+    identity=${generation}:${phase}
+    if [[ $identity == "$armada_resume_identity" ]]; then
+        [[ $force == 1 && $armada_resume_guard_active == 0 ]] || return 1
+    fi
+    now=$(armada_guard_now_ms) || return 1
+    if [[ $phase == resumed && $armada_resume_phase == prepared \
+        && $armada_resume_generation == "$generation" \
+        && $armada_resume_guard_active == 1 ]]; then
+        prepared_continuation=1
+    fi
+
+    armada_resume_identity=$identity
+    armada_resume_generation=$generation
+    armada_resume_phase=$phase
+    armada_resume_guard_reset
+
+    if [[ $phase == resumed ]]; then
+        if (( prepared_continuation == 0 )) && [[ $force != 1 ]]; then
+            (( now >= phase_ms )) || return 1
+            age=$((now - phase_ms))
+            (( age < ARMADA_RESUME_GUARD_HARD_MS )) || return 1
+        fi
+    fi
+
+    armada_resume_guard_active=1
+    if [[ $phase == resumed ]]; then
+        if (( prepared_continuation == 1 )) || [[ $force == 1 ]]; then
+            armada_resume_guard_until_ms=$((now + ARMADA_RESUME_GUARD_MS))
+            armada_resume_guard_hard_until_ms=$((now + ARMADA_RESUME_GUARD_HARD_MS))
+        else
+            armada_resume_guard_until_ms=$((phase_ms + ARMADA_RESUME_GUARD_MS))
+            armada_resume_guard_hard_until_ms=$((phase_ms + ARMADA_RESUME_GUARD_HARD_MS))
+        fi
+    fi
+}
+
+# Returns 0 when pressed, 1 when released, and 2 when state cannot be proven.
+armada_power_key_pressed() {
+    local device=$1 result
+    timeout 1 evtest --query "$device" EV_KEY KEY_POWER >/dev/null 2>&1
+    result=$?
+    case $result in
+        10) return 0 ;;
+        0) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+# Update expiry after each guarded timed read. powerbuttond replaces its evtest
+# descriptor on every new phase, so a released query is evaluated only after
+# the old descriptor and its historical queue have been discarded.
+armada_resume_guard_tick() {
+    local device=$1 now query_result
+    (( armada_resume_guard_active == 1 )) || return 1
+    # A prepared phase may be observed before kernel entry. It stays pending
+    # without timers across any suspend dwell until post publishes "resumed"
+    # or the first wake-key event establishes the boundary on the fresh fd.
+    if [[ $armada_resume_phase == prepared \
+        && $armada_resume_guard_seen_event == 0 ]]; then
+        return 0
+    fi
+    now=$(armada_guard_now_ms) || return 0
+    if (( now >= armada_resume_guard_hard_until_ms )); then
+        armada_resume_guard_active=0
+        return 1
+    fi
+    (( now >= armada_resume_guard_until_ms )) || return 0
+
+    if (( armada_resume_guard_release_seen == 1 )); then
+        armada_resume_guard_active=0
+        return 1
+    fi
+
+    if armada_power_key_pressed "$device"; then
+        armada_resume_guard_seen_event=1
+        return 0
+    else
+        query_result=$?
+    fi
+
+    if (( query_result == 1 )); then
+        armada_resume_guard_active=0
+        return 1
+    fi
+    return 0
+}
+
+# Returns success when a KEY_POWER event must be swallowed. The hard deadline
+# is checked here as well as on timer ticks so scheduler stalls cannot extend it.
+armada_resume_guard_swallow() {
+    local line=$1 now
+    (( armada_resume_guard_active == 1 )) || return 1
+    now=$(armada_guard_now_ms) || return 0
+    if [[ $armada_resume_phase == prepared \
+        && $armada_resume_guard_seen_event == 0 ]]; then
+        case $line in
+            *"(KEY_POWER), value 0"*)
+                armada_resume_guard_seen_event=1
+                armada_resume_guard_release_seen=1
+                ;;
+            *"(KEY_POWER), value 1"*|*"(KEY_POWER), value 2"*)
+                armada_resume_guard_seen_event=1
+                ;;
+            *) return 1 ;;
+        esac
+        armada_resume_guard_until_ms=$((now + ARMADA_RESUME_GUARD_MS))
+        armada_resume_guard_hard_until_ms=$((now + ARMADA_RESUME_GUARD_HARD_MS))
+        return 0
+    fi
+    if (( now >= armada_resume_guard_hard_until_ms )); then
+        armada_resume_guard_active=0
+        return 1
+    fi
+    case $line in
+        *"(KEY_POWER), value 0"*)
+            armada_resume_guard_seen_event=1
+            armada_resume_guard_release_seen=1
+            return 0
+            ;;
+        *"(KEY_POWER), value 1"*|*"(KEY_POWER), value 2"*)
+            armada_resume_guard_seen_event=1
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
