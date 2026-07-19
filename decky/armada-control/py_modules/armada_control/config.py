@@ -1,4 +1,5 @@
 from .controller import CONTROLLER_TYPES, controller_type
+from .lighting import stick_led_state
 from .power import factory_power_defaults, parse_power
 from .steam import installed_games
 from .system import cpu_device_class, os_version, ssh_enabled
@@ -18,4 +19,5 @@ def build_config(include_games=True):
         "sshEnabled": ssh_enabled(),
         "controllerType": controller_type(),
         "controllerTypes": [{"data": key, "label": label} for key, label in CONTROLLER_TYPES.items()],
+        "stickLed": stick_led_state(),
     }

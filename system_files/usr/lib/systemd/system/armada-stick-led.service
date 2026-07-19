@@ -1,0 +1,15 @@
+[Unit]
+Description=Armada stick RGB LED control (Retroid Pocket Mini V2)
+# Only this device has the l:/r: HTR3212 LED zones; harmless no-op elsewhere,
+# but skip the unit entirely rather than run a pointless loop on every boot.
+ConditionPathExists=/sys/class/leds/l:r1
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/stick-led-color daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

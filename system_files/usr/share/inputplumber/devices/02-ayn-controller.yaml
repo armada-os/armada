@@ -54,6 +54,19 @@ source_devices:
       phys_path: rsinput-gamepad/input0
       handler: event*
     capability_map_id: ayn_mcu
+    # Lets armada-stick-led's "reactive" LED mode (Retroid Pocket 6 shares
+    # the same HTR3212 stick RGB hardware as Retroid Pocket Mini V2) open a
+    # second, non-exclusive reader of this same node - same fix as Mini V2's
+    # own composite device config (01-retroid-controller.yaml), see its
+    # comment for the full story. Lower risk here than it was there: this
+    # device node is mode 0000 (root-only, confirmed on real Retroid Pocket 6
+    # hardware), so leaving it ungrabbed doesn't expose it to Steam/SDL the
+    # way Mini V2's mode-0666 node did - no udev tag change needed to avoid
+    # a ghost controller. Also affects every other device sharing this
+    # composite device config (AYN Odin 2/Mini/Portal/Thor) - unverified on
+    # that hardware, but the same reasoning about grab behavior applies
+    # regardless of which exact device is behind the node.
+    passthrough: true
 
 # Optional configuration for the composite device
 options:

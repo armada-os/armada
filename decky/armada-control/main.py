@@ -9,6 +9,13 @@ from armada_control.calibration import (
 )
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
+from armada_control.lighting import (
+    set_stick_led_color,
+    set_stick_led_flash_color,
+    set_stick_led_mode,
+    set_stick_led_param,
+    set_stick_led_screen_link,
+)
 from armada_control.power import save_power_config
 from armada_control.steam import installed_games
 from armada_control.system import set_ssh_enabled
@@ -42,6 +49,21 @@ class Plugin:
 
     async def set_controller_type(self, value):
         return await asyncio.to_thread(set_controller_type, value)
+
+    async def set_stick_led_color(self, value):
+        return await asyncio.to_thread(set_stick_led_color, value)
+
+    async def set_stick_led_mode(self, mode):
+        return await asyncio.to_thread(set_stick_led_mode, mode)
+
+    async def set_stick_led_screen_link(self, enabled):
+        return await asyncio.to_thread(set_stick_led_screen_link, enabled)
+
+    async def set_stick_led_param(self, param, mode, value):
+        return await asyncio.to_thread(set_stick_led_param, param, mode, value)
+
+    async def set_stick_led_flash_color(self, button, value):
+        return await asyncio.to_thread(set_stick_led_flash_color, button, value)
 
     async def get_controller_state(self):
         return await asyncio.to_thread(controller_state)

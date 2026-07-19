@@ -70,6 +70,15 @@ export interface GameRef {
   name: string;
 }
 
+export interface StickLedState {
+  supported: boolean;
+  mode: string;
+  color: string;
+  screenLink: boolean;
+  params: Record<string, number>;
+  flashColors: Record<string, string>;
+}
+
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
@@ -84,6 +93,7 @@ export interface Config {
   calibration?: CalibrationState;
   game?: GameRef | null;
   selectedGame?: GameRef | null;
+  stickLed: StickLedState;
 }
 
 export type Capture = Record<string, { center: number; min: number; max: number; range: number }>;

@@ -39,3 +39,15 @@ fi
 if [[ "${ARMADA_SOC_CLASS:-}" == "SM8550" ]]; then
     echo 1 >/sys/devices/system/cpu/cpu0/cpuidle/state1/disable
 fi
+
+# HTR3212-driven stick RGB (4 zones per stick, r/g/b each) has no userspace
+# owner and sits off since boot otherwise. Apply the saved static color or
+# battery-reactive color (see stick-led-color and the armada-stick-led
+# service that keeps battery mode tracking the charge level). Confirmed on
+# real Retroid Pocket 6 hardware to have the identical /sys/class/leds/l:r1
+# etc. zone layout.
+case "${ARMADA_DEVICE_ID:-}" in
+    retroid-pocket-6)
+        /usr/libexec/armada/stick-led-color apply || true
+        ;;
+esac

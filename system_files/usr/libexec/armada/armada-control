@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -107,6 +108,96 @@ def action_get_controller_type(request):
     return {"value": result}
 
 
+def action_set_stick_led_color(request):
+    value = str(request.get("value", ""))
+    if not re.fullmatch(r"[0-9A-Fa-f]{6}", value):
+        raise ValueError("invalid color")
+    run(["/usr/libexec/armada/stick-led-color", "set", value], timeout=5)
+    return _stick_led_state()
+
+
+def action_set_stick_led_mode(request):
+    mode = str(request.get("mode", ""))
+    if mode not in ("static", "breathing", "battery", "battery-breathing", "rainbow", "chase", "alternating", "reactive", "multidot", "ambilight"):
+        raise ValueError("invalid stick led mode")
+    run(["/usr/libexec/armada/stick-led-color", "set-mode", mode], timeout=5)
+    return _stick_led_state()
+
+
+def action_set_stick_led_screen_link(request):
+    enabled = bool(request.get("enabled"))
+    run(["/usr/libexec/armada/stick-led-color", "set-screen-link", "on" if enabled else "off"], timeout=5)
+    return _stick_led_state()
+
+
+STICK_LED_PARAM_MODES = {
+    "speed": {"breathing", "chase", "rainbow", "alternating", "multidot", "ambilight"},
+    "intensity": {"breathing", "alternating", "chase", "multidot", "reactive"},
+    "size": {"chase", "multidot"},
+}
+
+
+def action_set_stick_led_param(request):
+    param = str(request.get("param", ""))
+    mode = str(request.get("mode", ""))
+    allowed = STICK_LED_PARAM_MODES.get(param)
+    if not allowed or mode not in allowed:
+        raise ValueError("invalid stick led param/mode")
+    try:
+        value = float(request.get("value"))
+    except (TypeError, ValueError):
+        raise ValueError("invalid stick led param value")
+    run(["/usr/libexec/armada/stick-led-color", "set-param", param, mode, str(value)], timeout=5)
+    return _stick_led_state()
+
+
+def action_get_stick_led(request):
+    return _stick_led_state()
+
+
+STICK_LED_PARAMS = ("speed", "intensity", "size")
+FLASH_BUTTONS = (
+    "south", "east", "north", "west",
+    "l1", "r1", "l3", "r3", "l4", "r4",
+    "start", "select",
+    "dpad_up", "dpad_down", "dpad_left", "dpad_right",
+    "other",
+)
+
+
+def action_set_stick_led_flash_color(request):
+    button = str(request.get("button", ""))
+    value = str(request.get("value", ""))
+    if button not in FLASH_BUTTONS:
+        raise ValueError("invalid flash button")
+    if not re.fullmatch(r"[0-9A-Fa-f]{6}", value):
+        raise ValueError("invalid color")
+    run(["/usr/libexec/armada/stick-led-color", "set-flash-color", button, value.upper()], timeout=5)
+    return _stick_led_state()
+
+
+def _stick_led_state():
+    result = subprocess.check_output(["/usr/libexec/armada/stick-led-color", "get"], text=True, timeout=5)
+    state = {"mode": "static", "color": "0050FF", "screen_link": "0", "params": {}, "flashColors": {}}
+    for line in result.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key, value = key.strip(), value.strip()
+        if key in ("mode", "color", "screen_link"):
+            state[key] = value
+        elif key.startswith("flash_") and key[len("flash_"):] in FLASH_BUTTONS:
+            if re.fullmatch(r"[0-9A-Fa-f]{6}", value or ""):
+                state["flashColors"][key[len("flash_"):]] = value.upper()
+        elif "_" in key and key.split("_", 1)[0] in STICK_LED_PARAMS:
+            try:
+                state["params"][key] = float(value)
+            except ValueError:
+                pass
+    state["screen_link"] = state["screen_link"] == "1"
+    return state
+
+
 def action_set_ssh_enabled(request):
     enabled = bool(request.get("enabled"))
     action = "enable" if enabled else "disable"
@@ -160,6 +251,12 @@ ACTIONS = {
     "inputplumber_intercept": action_inputplumber_intercept,
     "set_ssh_enabled": action_set_ssh_enabled,
     "write_config": action_write_config,
+    "get_stick_led": action_get_stick_led,
+    "set_stick_led_color": action_set_stick_led_color,
+    "set_stick_led_mode": action_set_stick_led_mode,
+    "set_stick_led_screen_link": action_set_stick_led_screen_link,
+    "set_stick_led_param": action_set_stick_led_param,
+    "set_stick_led_flash_color": action_set_stick_led_flash_color,
 }
 
 
