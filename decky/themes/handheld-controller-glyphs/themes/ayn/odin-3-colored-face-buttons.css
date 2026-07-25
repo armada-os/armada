@@ -1,0 +1,7 @@
+:root {
+    /* Armada preserves cardinal positions, so these use Odin's physical labels. */
+    --button-a-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/b-color.png");
+    --button-b-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/a-color.png");
+    --button-x-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/y-color.png");
+    --button-y-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/x-color.png");
+}

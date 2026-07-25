@@ -8,6 +8,15 @@ TWEAKS_CONFIG = Path("/etc/armada/game-tweaks.json")
 COMPAT_APPLIED_STATE = Path("/var/lib/armada/compat-applied.json")
 FEX_PROFILES_CONFIG = Path("/usr/share/armada/fex-profiles.json")
 PLUGIN_FEX_PROFILES_CONFIG = Path(__file__).resolve().parent.parent / "fex-profiles.json"
+CONTROLLER_GLYPH_STYLES = {"monochrome", "rainbow"}
+
+
+def normalize_controller_glyph_style(value):
+    return (
+        value
+        if isinstance(value, str) and value in CONTROLLER_GLYPH_STYLES
+        else "monochrome"
+    )
 
 
 def load_fex_contract():
@@ -52,6 +61,9 @@ def load_tweaks():
         for gid, game in data["games"].items()
         if isinstance(game, dict) and game.get("enabled") is not False
     }
+    data["global"]["controllerGlyphStyle"] = normalize_controller_glyph_style(
+        data["global"].get("controllerGlyphStyle")
+    )
     return data
 
 
@@ -62,7 +74,10 @@ def sanitize_tweaks(data):
         raise ValueError("tweaks payload too large")
     clean = {"global": {}, "games": {}}
     if isinstance(data.get("global"), dict):
-        clean["global"] = data["global"]
+        clean["global"] = dict(data["global"])
+    clean["global"]["controllerGlyphStyle"] = normalize_controller_glyph_style(
+        clean["global"].get("controllerGlyphStyle")
+    )
     raw_games = data.get("games")
     if isinstance(raw_games, dict):
         for gid, game in raw_games.items():

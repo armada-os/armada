@@ -1,0 +1,5 @@
+:root {
+    --controller-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/controller.png");
+    --controller-left-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/controller-left.png");
+    --controller-right-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/controller-right.png");
+}

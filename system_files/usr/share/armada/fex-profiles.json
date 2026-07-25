@@ -1,6 +1,7 @@
 {
   "defaults": {
     "global": {
+      "controllerGlyphStyle": "monochrome",
       "thunks": {
         "Vulkan": true,
         "GL": true,

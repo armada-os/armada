@@ -23,6 +23,7 @@ WORKDIR /build
 COPY decky/armada-control/package.json decky/armada-control/package-lock.json ./
 RUN npm ci
 COPY decky/armada-control/ ./
+COPY decky/themes/handheld-controller-glyphs/ /themes/handheld-controller-glyphs/
 RUN npm run build
 
 FROM scratch AS ctx

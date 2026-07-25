@@ -4,6 +4,10 @@ import type { ReactNode } from "react";
 import { getConfig, getInstalledGames, savePowerConfig, saveTweaks } from "./backend";
 import { useDebouncedSave } from "./hooks/useDebouncedSave";
 import { tabIcons } from "./icons";
+import {
+  applyControllerGlyphTheme,
+  normalizeControllerGlyphStyle,
+} from "./lib/controllerGlyphs";
 import { currentGame } from "./lib/games";
 import { styles } from "./styles";
 import { Compatibility } from "./tabs/Compatibility";
@@ -33,6 +37,18 @@ export function Content() {
   useEffect(() => {
     load();
   }, [load]);
+  useEffect(() => {
+    if (!config) return;
+    applyControllerGlyphTheme(
+      config.controllerGlyphVariant,
+      normalizeControllerGlyphStyle(
+        config.tweaks?.global?.controllerGlyphStyle,
+      ),
+    );
+  }, [
+    config?.controllerGlyphVariant,
+    config?.tweaks?.global?.controllerGlyphStyle,
+  ]);
   useEffect(() => {
     if (!config || installedGamesRequested.current) return;
     installedGamesRequested.current = true;

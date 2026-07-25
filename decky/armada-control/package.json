@@ -1,10 +1,10 @@
 {
   "name": "armada-control",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "build": "shx rm -rf dist && rollup -c",
-    "watch": "rollup -c -w"
+    "build": "shx rm -rf dist && rollup -c && node tools/build-controller-glyph-theme.mjs",
+    "watch": "rollup -c -w --watch.onBundleEnd \"node tools/build-controller-glyph-theme.mjs\""
   },
   "dependencies": {
     "@decky/api": "1.1.3",
