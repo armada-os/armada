@@ -45,7 +45,7 @@ Includes:
 | AYANEO Pocket ACE | SM8550 | ✅ Tested |
 | AYANEO Pocket DS | SM8550 | ✅ Tested |
 | AYANEO Pocket DMG | SM8550 | ✅ Tested |
-| AYANEO Pocket S 1K | SM8550 | ⚪ Untested |
+| AYANEO Pocket S 1K | SM8550 | ✅ Tested |
 | AYANEO Pocket S 2K | SM8550 | ⚪ Untested |
 
 ## Flash to SD card
