@@ -13,7 +13,7 @@ ROOT_MIN_MIB=$((32 * 1024))
 ANDROID_MIN_MIB=$((8 * 1024))
 destructive=0
 TARGET=""
-BTRFS_OPTS="noatime,compress=zstd:1,discard=async,space_cache=v2"
+BTRFS_OPTS="noatime,compress=zstd:1,discard=async"
 ASSUME_YES=0
 UD_GIB=""
 OPERATION=install

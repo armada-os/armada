@@ -1,2 +1,7 @@
 # Steam needs group access to the deck-uhid hidraw node.
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", KERNELS=="0003:28DE:12F0.*", GROUP="input", MODE="0660"
+
+# InputPlumber shares the raw AYN gamepad with Waydroid. Keep desktop input
+# consumers on the virtual deck-uhid device instead of the raw event node.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="2020", ATTRS{id/product}=="3001", ATTRS{phys}=="rsinput-gamepad/input0", ENV{ARMADA_WAYDROID_GAMEPAD}="1", ENV{LIBINPUT_IGNORE_DEVICE}="1", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_JOYSTICK}="", TAG-="uaccess", MODE="0000"
+SUBSYSTEM=="input", KERNEL=="js*", ATTRS{id/vendor}=="2020", ATTRS{id/product}=="3001", ATTRS{phys}=="rsinput-gamepad/input0", ENV{ID_INPUT_JOYSTICK}="", TAG-="uaccess", MODE="0000"

@@ -6,7 +6,6 @@ kargs = [
     "console=tty0",
     "rhgb",
     "quiet",
-    "plymouth.enable=1",
     "loglevel=3",
 
     "enforcing=0",
@@ -17,6 +16,8 @@ kargs = [
 
     "irqaffinity=0-1",
 
+    "psi=1",
+    "cgroup_disable=pressure",
     "cgroup.memory=nokmem,nosocket",
 
     "cpufreq.default_governor=schedutil",

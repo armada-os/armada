@@ -13,7 +13,7 @@ default:
     @just --list
 
 [group('Just')]
-check:
+check: test
     #!/usr/bin/bash
     find . -type f -name "*.just" | while read -r file; do
     	echo "Checking syntax: $file"
@@ -21,6 +21,16 @@ check:
     done
     echo "Checking syntax: Justfile"
     just --unstable --fmt --check -f Justfile
+
+[group('Test')]
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    for test_file in tests/*-test.sh; do
+        echo "Running test: ${test_file}"
+        bash "${test_file}"
+    done
 
 [group('Just')]
 fix:

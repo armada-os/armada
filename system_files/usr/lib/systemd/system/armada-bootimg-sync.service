@@ -5,7 +5,7 @@ DefaultDependencies=no
 RequiresMountsFor=/sysroot /boot /boot/efi
 # Reverse stop order: ordered before finalize so our ExecStop runs after it,
 # against the finalized next-boot deployment.
-After=local-fs.target
+After=local-fs.target systemd-journal-flush.service
 Before=ostree-finalize-staged.service final.target
 Conflicts=final.target
 
@@ -14,8 +14,9 @@ Type=oneshot
 RemainAfterExit=yes
 # No-op start so the oneshot activates and its ExecStop fires at shutdown.
 ExecStart=/bin/true
-# Rollback on regen failure so we never boot a stale /KERNEL on the new default.
-ExecStop=/bin/sh -c '/usr/libexec/armada/armada-bootimg-update || bootc rollback'
+# Keep manual rollback and other non-staged BLS changes in sync. Staged-update
+# failure handling belongs to the OSTree finalization hook.
+ExecStop=/usr/libexec/armada/armada-bootimg-update
 
 [Install]
 WantedBy=multi-user.target

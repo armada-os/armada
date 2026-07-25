@@ -9,7 +9,11 @@ fi
 STEAM_BOOTSTRAP_HOME="${STEAM_BOOTSTRAP_HOME:-/var/lib/armada/steam-bootstrap-home}"
 STEAM="${STEAM_BOOTSTRAP_HOME}/.local/share/Steam"
 DOT_STEAM="${STEAM_BOOTSTRAP_HOME}/.steam"
-STEAM_ARM_RUNTIME_URL="https://repo.steampowered.com/steamrt3c/images/latest-public-beta/steam-runtime-steamrt-arm64.tar.xz"
+STEAM_ARM_RUNTIME_BASE="https://repo.steampowered.com/steamrt3c/images"
+STEAM_ARM_RUNTIME_CHANNEL="${STEAM_ARM_RUNTIME_CHANNEL:-latest-public-beta}"
+STEAM_ARM_RUNTIME_SNAPSHOT="${STEAM_ARM_RUNTIME_SNAPSHOT:-$(curl -fsSL "${STEAM_ARM_RUNTIME_BASE}/${STEAM_ARM_RUNTIME_CHANNEL}.txt" | tr -d '[:space:]')}"
+[[ -n "${STEAM_ARM_RUNTIME_SNAPSHOT}" ]] || { echo "ERROR: could not resolve ${STEAM_ARM_RUNTIME_CHANNEL} to a steamrt3c snapshot" >&2; exit 1; }
+STEAM_ARM_RUNTIME_URL="${STEAM_ARM_RUNTIME_BASE}/${STEAM_ARM_RUNTIME_SNAPSHOT}/steam-runtime-steamrt-arm64.tar.xz"
 STEAM_ARM_CHANNEL="steamdeck_publicbeta"
 STEAM_ARM_CDN="https://client-update.steamstatic.com"
 STEAM_ARM_MANIFEST_NAME="steam_client_${STEAM_ARM_CHANNEL}_linuxarm64"

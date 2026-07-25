@@ -1,0 +1,19 @@
+#!/bin/bash
+# Regenerate /KERNEL after OSTree finalizes a staged deployment, rolling back
+# the BLS default on failure while preserving the updater's failure status.
+set -uo pipefail
+
+if /usr/libexec/armada/armada-bootimg-update; then
+    exit 0
+else
+    update_status=$?
+fi
+
+echo "armada-bootimg-finalize: boot image update failed (${update_status}); rolling back deployment" >&2
+if /usr/bin/bootc rollback; then
+    echo "armada-bootimg-finalize: deployment rollback succeeded" >&2
+else
+    rollback_status=$?
+    echo "armada-bootimg-finalize: deployment rollback failed (${rollback_status})" >&2
+fi
+exit "${update_status}"

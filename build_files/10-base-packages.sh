@@ -26,10 +26,12 @@ dnf5 -y install --setopt=install_weak_deps=False \
     python3-gobject \
     python3-websocket-client \
     polkit \
+    upower \
     sudo \
     rsync \
     curl \
     jq \
+    htop \
     lsof \
     unzip \
     evtest \
@@ -75,14 +77,25 @@ dnf5 -y install --setopt=install_weak_deps=False \
     plasma-workspace \
     plasma-desktop \
     plasma-pa \
+    plasma-nm \
+    bluedevil \
     maliit-keyboard \
     libappindicator-gtk3 \
     libdbusmenu-gtk3 \
     kdialog \
     kio-extras \
+    libsmbclient \
+    cifs-utils \
+    waydroid \
     kscreen \
     konsole \
-    dolphin
+    dolphin \
+    ark \
+    gwenview \
+    kwrite
+
+dnf5 -y install --setopt=install_weak_deps=False \
+    heroic-games-launcher
 
 dnf5 -y install --setopt=install_weak_deps=False \
     --repofrompath 'copr-ublue-os-packages,https://download.copr.fedorainfracloud.org/results/ublue-os/packages/fedora-$releasever-$basearch/' \

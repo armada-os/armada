@@ -10,6 +10,11 @@ on:
     paths-ignore:
       - '**/README.md'
   workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to build. Leave empty to use the workflow ref."
+        type: string
+        default: ""
 
 env:
   IMAGE_DESC: "Armada: a gaming-focused, SteamOS-like Fedora bootc image for ARM64 handhelds"
@@ -20,7 +25,7 @@ env:
   DEFAULT_TAG: "testing"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.brand_name}}-${{ inputs.stream_name }}
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.branch }}
   cancel-in-progress: false
 
 jobs:
@@ -44,6 +49,25 @@ jobs:
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
 
+      - name: Resolve manual build ref
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          INPUT_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          branch="${INPUT_BRANCH}"
+          if [ -z "${branch}" ]; then
+            exit 0
+          fi
+          branch="${branch#refs/heads/}"
+          if ! [[ "${branch}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Branch '${branch}' cannot be used as a matching container tag. Use letters, numbers, dots, underscores, or dashes."
+            exit 1
+          fi
+
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+
       - name: Ensure container tools
         run: |
           set -euxo pipefail
@@ -56,7 +80,7 @@ jobs:
           [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
 
       - name: Require signing key before publishing a channel
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: github.event_name != 'pull_request'
         run: |
           if [ -z "${{ secrets.SIGNING_SECRET }}" ]; then
             echo "::error::SIGNING_SECRET is not set — refusing to publish an unsigned image (devices verify ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }})."
@@ -65,6 +89,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.manual.outputs.branch || github.ref }}
 
       - name: Check build recipes
         uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3
@@ -76,11 +102,11 @@ jobs:
           echo "version=$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Image Metadata
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: metadata
         with:
           tags: |
-            type=raw,value=${{ env.DEFAULT_TAG }}
+            type=raw,value=${{ steps.manual.outputs.branch || env.DEFAULT_TAG }}
             type=sha,enable=${{ github.event_name == 'pull_request' }}
             type=ref,event=pr
           labels: |
@@ -132,7 +158,7 @@ jobs:
 
       - name: Push to GHCR
         id: push
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: github.event_name != 'pull_request'
         run: |
           set -euxo pipefail
           echo "${{ secrets.GITHUB_TOKEN }}" | sudo skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -157,14 +183,14 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && env.HAVE_SIGNING_SECRET == 'true'
+        if: github.event_name != 'pull_request' && env.HAVE_SIGNING_SECRET == 'true'
         env:
           HAVE_SIGNING_SECRET: ${{ secrets.SIGNING_SECRET != '' }}
         with:
           cosign-release: 'v2.6.3'
 
       - name: Sign container image
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && env.HAVE_SIGNING_SECRET == 'true'
+        if: github.event_name != 'pull_request' && env.HAVE_SIGNING_SECRET == 'true'
         run: |
           IMAGE_FULL="${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}"
           # cosign runs rootless and has its own auth store — the push step's

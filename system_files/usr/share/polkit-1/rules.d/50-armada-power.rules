@@ -1,4 +1,10 @@
 polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.inhibit-handle-power-key" ||
+         action.id == "org.freedesktop.login1.inhibit-handle-suspend-key" ||
+         action.id == "org.freedesktop.login1.inhibit-handle-lid-switch") &&
+        subject.user == "armada") {
+        return polkit.Result.YES;
+    }
     if (action.id == "org.freedesktop.policykit.exec" &&
         action.lookup("program") == "/usr/bin/steamos-polkit-helpers/steamos-priv-write" &&
         subject.active && subject.isInGroup("wheel")) {

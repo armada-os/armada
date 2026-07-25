@@ -177,6 +177,10 @@ def main():
     if not args:
         raise SystemExit("usage: armada-game-launch COMMAND [ARGS...]")
 
+    # Proton-CachyOS enables its shader compiler HUD unless DXVK_HUD is already
+    # set. Keep Armada's default clean while preserving an explicit user HUD.
+    os.environ.setdefault("DXVK_HUD", "none")
+
     game_id = appid()
     try:
         contract = load_fex_contract()

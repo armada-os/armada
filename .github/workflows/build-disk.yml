@@ -5,10 +5,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Channel to build the flashable disk image from"
+        description: "Known container tag/channel to build the flashable disk image from"
         type: choice
         options: [beta, stable, testing]
         default: beta
+      custom_tag:
+        description: "Optional custom container tag. Overrides the dropdown when set."
+        type: string
+        default: ""
 
 env:
   IMAGE_NAME: ${{ github.event.repository.name }}
@@ -57,6 +61,23 @@ jobs:
       - name: Log in to ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
+      - name: Resolve container tag
+        id: tag
+        env:
+          CUSTOM_TAG: ${{ inputs.custom_tag }}
+          SELECTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${CUSTOM_TAG}"
+          if [ -z "${tag}" ]; then
+            tag="${SELECTED_TAG}"
+          fi
+          if ! [[ "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Tag '${tag}' is not a valid container tag. Use letters, numbers, dots, underscores, or dashes."
+            exit 1
+          fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
       - name: Build Armada image
         run: |
           set -euxo pipefail
@@ -65,7 +86,7 @@ jobs:
           # Build the disk FROM the published container so the disk and the ghcr
           # image are identical content and the installed system's bootc origin
           # points at ghcr (so OTA works). The Justfile pulls the ref for BIB.
-          sudo "${JUST_BIN}" build-armada-image "${IMAGE_REGISTRY}/${IMAGE_NAME}" "${{ inputs.tag }}"
+          sudo "${JUST_BIN}" build-armada-image "${IMAGE_REGISTRY}/${IMAGE_NAME}" "${{ steps.tag.outputs.tag }}"
           sudo chown -R "$(id -u):$(id -g)" output
           IMG=$(find output -maxdepth 1 -name 'armada-*.img.gz' -type f -print -quit)
           sha256sum "${IMG}" > "${IMG}.sha256"

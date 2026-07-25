@@ -72,5 +72,32 @@ if [[ "$WRITE_PATH" == /sys/class/hwmon/hwmon*/power*_cap ]]; then
     exit 1
 fi
 
+if [[ "$WRITE_PATH" =~ ^/sys/class/backlight/([[:alnum:]_:-][[:alnum:]_.:-]*)/brightness$ ]]; then
+    src_name="${BASH_REMATCH[1]}"
+    [[ "$WRITE_VALUE" =~ ^[0-9]+$ ]] || exit 1
+    # Steam adjusts the first backlight it finds; on dual-screen devices
+    # that can be the secondary panel. Steer writes to the primary
+    # backlight, rescaling between the two devices' brightness ranges.
+    eval "$(/usr/libexec/armada/device-env)"
+    src_dir="/sys/class/backlight/${src_name}"
+    [[ -e "$src_dir/brightness" ]] || exit 1
+    tgt_dir="$src_dir"
+    if [[ -n "${ARMADA_PRIMARY_BACKLIGHT:-}" ]]; then
+        tgt_dir="/sys/class/backlight/${ARMADA_PRIMARY_BACKLIGHT}"
+    fi
+    [[ -e "$tgt_dir/brightness" ]] || exit 1
+    val="$WRITE_VALUE"
+    if [[ "$tgt_dir" != "$src_dir" && -e "$src_dir/max_brightness" ]]; then
+        src_max="$(cat "$src_dir/max_brightness")"
+        tgt_max="$(cat "$tgt_dir/max_brightness")"
+        if [[ "$src_max" -gt 0 && "$src_max" -ne "$tgt_max" ]]; then
+            val=$(( val * tgt_max / src_max ))
+        fi
+    fi
+    echo "$val" > "$tgt_dir/brightness"
+    log "backlight: $WRITE_VALUE -> $tgt_dir/brightness ($val)"
+    exit 0
+fi
+
 echo "refusing unsupported write: $WRITE_VALUE -> $WRITE_PATH" >&2
 exit 1

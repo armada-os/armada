@@ -196,16 +196,22 @@ session_procs_file() {
 }
 
 freeze_processes() {
-    local procs p c
+    local procs p c cg freeze_file
 
-    # fake-suspend and armada-powerd run as system services, outside user.slice.
-    if systemctl freeze user.slice; then
-        touch "$SAVE_DIR/user-slice"
-        log "froze user.slice"
-        return
+    cg="$(as_session systemctl --user show app.slice -P ControlGroup 2>/dev/null)"
+    if [[ -n "$cg" ]]; then
+        freeze_file="/sys/fs/cgroup${cg}/cgroup.freeze"
+        if [[ -w "$freeze_file" ]]; then
+            printf '%s\n' "$cg" > "$SAVE_DIR/app-cgroup"
+            if echo 1 > "$freeze_file" 2>/dev/null; then
+                log "froze app.slice"
+                return
+            fi
+            rm -f "$SAVE_DIR/app-cgroup"
+        fi
     fi
 
-    log "failed to freeze user.slice; falling back to process freezer"
+    log "failed to freeze app.slice; falling back to process freezer"
     procs="$(session_procs_file)" || { log "no session cgroup; skipping freeze"; return; }
     [[ -r "$procs" ]] || { log "session procs unreadable; skipping freeze"; return; }
     : > "$SAVE_DIR/processes"
@@ -218,9 +224,11 @@ freeze_processes() {
     log "froze $(wc -l < "$SAVE_DIR/processes" 2>/dev/null || echo 0) processes"
 }
 unfreeze_processes() {
-    if [[ -f "$SAVE_DIR/user-slice" ]]; then
-        systemctl thaw user.slice || log "failed to thaw user.slice"
-        rm -f "$SAVE_DIR/user-slice"
+    if [[ -r "$SAVE_DIR/app-cgroup" ]]; then
+        local cg
+        read -r cg < "$SAVE_DIR/app-cgroup"
+        echo 0 > "/sys/fs/cgroup${cg}/cgroup.freeze" 2>/dev/null || log "failed to thaw app.slice"
+        rm -f "$SAVE_DIR/app-cgroup"
         return
     fi
 
