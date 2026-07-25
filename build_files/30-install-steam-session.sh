@@ -20,6 +20,11 @@ dnf5 -y install --setopt=install_weak_deps=False \
 # armada-gamescope carries ROCKNIX's --use-rotation-shader patch.
 dnf5 -y install --setopt=install_weak_deps=False /packages/gamescope/gamescope-[0-9]*.aarch64.rpm
 
+# Odin 3 HDR requires the opt-in composited client-format policy from the
+# patched package. Validate package metadata and the installed payload without
+# executing a file-capability-bearing binary inside the rootless image build.
+/bin/bash --noprofile --norc /ctx/build_files/validate-gamescope-hdr-package.sh
+
 # Patched InputPlumber: dpad signed-axis fix
 dnf5 -y install --setopt=install_weak_deps=False /packages/inputplumber/inputplumber-*.rpm
 
@@ -50,6 +55,54 @@ sed -i '/^set -x$/d' /usr/share/gamescope-session-plus/gamescope-session-plus
 sed -i \
     's/read -r -t 5 response_x_display response_wl_display/read -r -t 15 response_x_display response_wl_display/' \
     /usr/share/gamescope-session-plus/gamescope-session-plus
+
+# Finalize the immutable Odin HDR policy after gamescope-session-plus has read
+# both system and user environment.d files.  This keeps existing configuration
+# behavior on every other device while preventing a stale user override
+# from bypassing the production wrapper on the real Odin 3.
+python3 - /usr/share/gamescope-session-plus/gamescope-session-plus <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+environment_block = '''# Source user configuration from /etc/environment.d and ~/.config/environment.d
+set -a
+for i in /etc/environment.d/*.conf; do
+\t[[ -f "${i}" ]] && . "${i}"
+done
+for i in "${HOME}"/.config/environment.d/*.conf; do
+\t[[ -f "${i}" ]] && . "${i}"
+done
+set +a
+'''
+production_block = environment_block + '''
+# Armada's immutable helper is silent on other hardware. On the real Odin 3
+# it first emits an SDR baseline, then promotes HDR only when the exact DSI-1
+# profile and all patched production artifacts are present.
+if ! armada_hdr_policy=$(
+\t/usr/bin/env -i PATH=/usr/bin:/usr/sbin:/bin:/sbin \\
+\t\tXDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \\
+\t\t/bin/bash --noprofile --norc -p /usr/libexec/armada/hdr-session-finalize
+); then
+\tprintf 'Armada HDR: production session finalization failed; refusing Gaming Mode\\n' >&2
+\texit 1
+fi
+if ! builtin eval -- "$armada_hdr_policy"; then
+\tprintf 'Armada HDR: invalid production session policy; refusing Gaming Mode\\n' >&2
+\texit 1
+fi
+builtin unset armada_hdr_policy
+'''
+
+if text.count(environment_block) != 1:
+    raise SystemExit(
+        "ERROR: gamescope-session-plus environment.d block changed; inspect before patching"
+    )
+if "hdr-session-finalize" in text:
+    raise SystemExit("ERROR: gamescope-session-plus already contains Armada HDR finalization")
+path.write_text(text.replace(environment_block, production_block), encoding="utf-8")
+PY
 
 dnf5 -y install --setopt=install_weak_deps=False \
     erofs-fuse \

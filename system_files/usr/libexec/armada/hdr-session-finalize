@@ -1,0 +1,167 @@
+#!/bin/bash
+set -u
+
+# Emit trusted shell assignments for the immutable Odin 3 HDR session.  This
+# helper is also the production capability contract consumed by Armada Control:
+# only a fully qualified image emits the exact ARMADA_HDR_CAPABLE=1 export.
+
+readonly TRUSTED_PATH=/usr/bin:/usr/sbin:/bin:/sbin
+readonly MODEL_PATH=/sys/firmware/devicetree/base/model
+readonly DEVICE_ENV=/usr/libexec/armada/device-env
+readonly GAMESCOPE=/usr/bin/gamescope
+readonly GAMESCOPE_WRAPPER=/usr/libexec/armada/gamescope-odin3-hdr
+readonly GAMESCOPE_CAPABILITIES=/usr/lib/armada/gamescope-hdr-capabilities
+readonly POLICY_SCRIPT=/usr/share/gamescope/scripts/00-armada-session-policy.lua
+readonly PROFILE_SCRIPT=/usr/share/gamescope/scripts/10-armada/ayn.odin3.oled.lua
+readonly EDID_SEED=/usr/share/armada/hdr/ayn-odin-3.edid.bin
+readonly EDID_SHA256=a6ee4ff0c7f43723c093ea2575221a52668e7d610c13738274bf0cef61c96695
+readonly PANEL_POLICY=ayn-odin-3:DSI-1
+
+emit_unset() {
+    local name
+    for name in "$@"; do
+        printf 'builtin unset -- %s || exit 1\n' "$name"
+    done
+}
+
+emit_export() {
+    local name=$1 value=$2
+    printf 'builtin export -- %s=%q || exit 1\n' "$name" "$value"
+}
+
+emit_odin_baseline() {
+    # Remove every client/session input that could advertise, redirect, or
+    # force HDR.  A rejected policy therefore starts the real Odin 3 in SDR.
+    emit_unset \
+        ENABLE_GAMESCOPE_HDR ENABLE_GAMESCOPE_WSI ENABLE_HDR_WSI DXVK_HDR \
+        PROTON_ENABLE_HDR HDR_ENABLE_PQ DISABLE_GAMESCOPE_WSI \
+        GAMESCOPE_BIN GAMESCOPECMD GAMESCOPE_SCRIPT_PATH \
+        GAMESCOPE_PATCHED_EDID_FILE GAMESCOPE_PATCHED_EDID_SEED \
+        GAMESCOPE_INTERNAL_DISPLAY_ID GAMESCOPE_HDR_NITS \
+        GAMESCOPE_HDR_ITM_TARGET_NITS GAMESCOPE_ARMADA_FIXED_PANEL_POLICY \
+        GAMESCOPE_ARMADA_HDR_PRODUCTION_MODE GAMESCOPE_ARMADA_HDR_VALIDATED \
+        GAMESCOPE_ARMADA_PANEL_NATIVE_WIDTH_MM \
+        GAMESCOPE_ARMADA_PANEL_NATIVE_HEIGHT_MM \
+        GAMESCOPE_ARMADA_HDR_OUTPUT_EOTF \
+        GAMESCOPE_ARMADA_HDR_R_X GAMESCOPE_ARMADA_HDR_R_Y \
+        GAMESCOPE_ARMADA_HDR_G_X GAMESCOPE_ARMADA_HDR_G_Y \
+        GAMESCOPE_ARMADA_HDR_B_X GAMESCOPE_ARMADA_HDR_B_Y \
+        GAMESCOPE_ARMADA_HDR_W_X GAMESCOPE_ARMADA_HDR_W_Y \
+        GAMESCOPE_ARMADA_HDR_MAX_CLL GAMESCOPE_ARMADA_HDR_MAX_FALL \
+        GAMESCOPE_ARMADA_HDR_MIN_CLL GAMESCOPE_ARMADA_HDR_SDR_WHITE \
+        gamescope_hdr_enabled gamescope_script_use_local_scripts \
+        gamescope_script_use_user_scripts
+
+    # Restore fixed-panel identity from the immutable profile, even if a user
+    # environment tried to redirect device-env before this trusted stage.
+    emit_export ARMADA_DEVICE_ID ayn-odin-3
+    emit_export ARMADA_DEVICE_NAME 'AYN Odin 3'
+    emit_export ARMADA_PRIMARY_CONNECTOR DSI-1
+    emit_export ARMADA_PANEL_TYPE internal
+    emit_export OUTPUT_CONNECTOR DSI-1
+    emit_export PANEL_TYPE internal
+    emit_export ARMADA_HDR_CAPABLE 0
+}
+
+refuse() {
+    printf 'Armada HDR: %s; keeping the Odin 3 session in SDR\n' "$*" >&2
+    exit 0
+}
+
+model=
+if [[ -r "$MODEL_PATH" ]]; then
+    model=$(/usr/bin/tr -d '\0' <"$MODEL_PATH" 2>/dev/null || true)
+fi
+
+# Other devices keep the ordinary gamescope-session-plus environment exactly
+# as assembled by their existing profile and user configuration.
+if [[ "$model" != 'AYN Odin 3' ]]; then
+    exit 0
+fi
+
+emit_odin_baseline
+
+if ! device_policy=$(
+    /usr/bin/env -i PATH="$TRUSTED_PATH" \
+        /bin/bash --noprofile --norc -p "$DEVICE_ENV"
+); then
+    refuse 'immutable device policy could not be read'
+fi
+
+# device-env emits quoted assignments sourced only from the root image inside
+# the sterile command above.  Validate every HDR field before exporting any
+# capability to Gamescope, Steam, DXVK, or VKD3D-Proton.
+builtin eval -- "$device_policy"
+builtin unset device_policy
+
+[[ "${ARMADA_DEVICE_ID:-}" == ayn-odin-3 ]] || refuse 'device id mismatch'
+[[ "${ARMADA_DEVICE_NAME:-}" == 'AYN Odin 3' ]] || refuse 'device name mismatch'
+[[ "${ARMADA_PRIMARY_CONNECTOR:-}" == DSI-1 ]] || refuse 'connector mismatch'
+[[ "${ARMADA_PANEL_TYPE:-}" == internal ]] || refuse 'panel type mismatch'
+[[ "${ARMADA_HDR_PROFILE:-}" == ayn-odin-3-oled-gamma22-v1 ]] || refuse 'profile mismatch'
+[[ "${ARMADA_HDR_CAPABLE:-}" == 0 ]] || refuse 'profile bypassed capability finalization'
+[[ "${ARMADA_HDR_OUTPUT_EOTF:-}" == gamma22 ]] || refuse 'output EOTF mismatch'
+[[ "${ARMADA_HDR_R_X:-}" == 0.6800 && "${ARMADA_HDR_R_Y:-}" == 0.3200 ]] || refuse 'red primary mismatch'
+[[ "${ARMADA_HDR_G_X:-}" == 0.2650 && "${ARMADA_HDR_G_Y:-}" == 0.6900 ]] || refuse 'green primary mismatch'
+[[ "${ARMADA_HDR_B_X:-}" == 0.1500 && "${ARMADA_HDR_B_Y:-}" == 0.0600 ]] || refuse 'blue primary mismatch'
+[[ "${ARMADA_HDR_W_X:-}" == 0.3127 && "${ARMADA_HDR_W_Y:-}" == 0.3290 ]] || refuse 'white point mismatch'
+[[ "${ARMADA_HDR_MAX_CLL:-}" == 650 ]] || refuse 'peak luminance mismatch'
+[[ "${ARMADA_HDR_MAX_FALL:-}" == 650 ]] || refuse 'frame-average luminance mismatch'
+[[ "${ARMADA_HDR_MIN_CLL:-}" == 0.0020000000949949 ]] || refuse 'minimum luminance mismatch'
+[[ "${ARMADA_HDR_SDR_WHITE:-}" == 203 ]] || refuse 'SDR reference white mismatch'
+[[ "${ARMADA_HDR_PANEL_NATIVE_WIDTH_MM:-}" == 75 ]] || refuse 'panel width mismatch'
+[[ "${ARMADA_HDR_PANEL_NATIVE_HEIGHT_MM:-}" == 133 ]] || refuse 'panel height mismatch'
+[[ "${ARMADA_HDR_EDID_SHA256:-}" == "$EDID_SHA256" ]] || refuse 'EDID policy digest mismatch'
+
+[[ -x "$GAMESCOPE" && ! -L "$GAMESCOPE" ]] || refuse 'patched Gamescope is unavailable'
+[[ -x "$GAMESCOPE_WRAPPER" && ! -L "$GAMESCOPE_WRAPPER" ]] || refuse 'Gamescope policy wrapper is unavailable'
+[[ -f "$POLICY_SCRIPT" && ! -L "$POLICY_SCRIPT" ]] || refuse 'Gamescope script policy is unavailable'
+[[ -f "$PROFILE_SCRIPT" && ! -L "$PROFILE_SCRIPT" ]] || refuse 'Gamescope display profile is unavailable'
+[[ -f "$EDID_SEED" && ! -L "$EDID_SEED" ]] || refuse 'patched EDID seed is unavailable'
+[[ -f "$GAMESCOPE_CAPABILITIES" && ! -L "$GAMESCOPE_CAPABILITIES" ]] || refuse 'Gamescope capability marker is unavailable'
+[[ "$(<"$GAMESCOPE_CAPABILITIES")" == expose-client-sampleable-formats-v1 ]] || refuse 'patched Gamescope capability is incomplete'
+
+actual_edid_sha=$(/usr/bin/sha256sum -- "$EDID_SEED" 2>/dev/null | /usr/bin/awk '{print $1}')
+[[ "$actual_edid_sha" == "$EDID_SHA256" ]] || refuse 'patched EDID seed failed verification'
+
+uid=$(/usr/bin/id -u)
+runtime_dir=${XDG_RUNTIME_DIR:-/run/user/$uid}
+if [[ ! "$runtime_dir" =~ ^/run/user/[0-9]+$ ]]; then
+    runtime_dir=/run/user/$uid
+fi
+patched_edid_file=${runtime_dir}/armada-hdr/odin3-edid.bin
+
+emit_export ARMADA_HDR_CAPABLE 1
+emit_export GAMESCOPE_BIN "$GAMESCOPE_WRAPPER"
+emit_export GAMESCOPE_SCRIPT_PATH /usr/share/gamescope/scripts
+emit_export GAMESCOPE_PATCHED_EDID_SEED "$EDID_SEED"
+emit_export GAMESCOPE_PATCHED_EDID_FILE "$patched_edid_file"
+emit_export GAMESCOPE_ARMADA_FIXED_PANEL_POLICY "$PANEL_POLICY"
+emit_export GAMESCOPE_ARMADA_HDR_PRODUCTION_MODE immutable-image
+emit_export GAMESCOPE_ARMADA_HDR_VALIDATED 1
+emit_export GAMESCOPE_INTERNAL_DISPLAY_ID ayn-odin-3
+emit_export GAMESCOPE_ARMADA_PANEL_NATIVE_WIDTH_MM "$ARMADA_HDR_PANEL_NATIVE_WIDTH_MM"
+emit_export GAMESCOPE_ARMADA_PANEL_NATIVE_HEIGHT_MM "$ARMADA_HDR_PANEL_NATIVE_HEIGHT_MM"
+emit_export GAMESCOPE_ARMADA_HDR_OUTPUT_EOTF "$ARMADA_HDR_OUTPUT_EOTF"
+emit_export GAMESCOPE_ARMADA_HDR_R_X "$ARMADA_HDR_R_X"
+emit_export GAMESCOPE_ARMADA_HDR_R_Y "$ARMADA_HDR_R_Y"
+emit_export GAMESCOPE_ARMADA_HDR_G_X "$ARMADA_HDR_G_X"
+emit_export GAMESCOPE_ARMADA_HDR_G_Y "$ARMADA_HDR_G_Y"
+emit_export GAMESCOPE_ARMADA_HDR_B_X "$ARMADA_HDR_B_X"
+emit_export GAMESCOPE_ARMADA_HDR_B_Y "$ARMADA_HDR_B_Y"
+emit_export GAMESCOPE_ARMADA_HDR_W_X "$ARMADA_HDR_W_X"
+emit_export GAMESCOPE_ARMADA_HDR_W_Y "$ARMADA_HDR_W_Y"
+emit_export GAMESCOPE_ARMADA_HDR_MAX_CLL "$ARMADA_HDR_MAX_CLL"
+emit_export GAMESCOPE_ARMADA_HDR_MAX_FALL "$ARMADA_HDR_MAX_FALL"
+emit_export GAMESCOPE_ARMADA_HDR_MIN_CLL "$ARMADA_HDR_MIN_CLL"
+emit_export GAMESCOPE_ARMADA_HDR_SDR_WHITE "$ARMADA_HDR_SDR_WHITE"
+emit_export GAMESCOPE_HDR_NITS "$ARMADA_HDR_SDR_WHITE"
+emit_export GAMESCOPE_HDR_ITM_TARGET_NITS "$ARMADA_HDR_MAX_CLL"
+emit_export ENABLE_GAMESCOPE_WSI 1
+emit_export ENABLE_HDR_WSI 1
+emit_export DXVK_HDR 1
+emit_export gamescope_hdr_enabled false
+emit_export gamescope_script_use_local_scripts false
+emit_export gamescope_script_use_user_scripts false
+
+exit 0

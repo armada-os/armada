@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit",
     "watch": "rollup -c -w"
   },
   "dependencies": {

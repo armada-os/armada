@@ -77,6 +77,7 @@ export interface Config {
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
   cpuDeviceClass: string;
+  hdrCapable: boolean;
   osVersion: string;
   sshEnabled: boolean;
   controllerType: string;
@@ -84,6 +85,16 @@ export interface Config {
   calibration?: CalibrationState;
   game?: GameRef | null;
   selectedGame?: GameRef | null;
+}
+
+export interface HdrRuntimeState {
+  available: boolean;
+  display: string | null;
+  supportsHdr: boolean;
+  enabled: boolean;
+  outputFeedback: boolean;
+  sdrContentBrightnessNits: number | null;
+  reason: string;
 }
 
 export type Capture = Record<string, { center: number; min: number; max: number; range: number }>;

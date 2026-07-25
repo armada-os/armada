@@ -1,7 +1,16 @@
 import { call } from "@decky/api";
-import type { CalibrationState, Capture, Config, InstalledGame, PowerConfig, Tweaks } from "./types";
+import type {
+  CalibrationState,
+  Capture,
+  Config,
+  HdrRuntimeState,
+  InstalledGame,
+  PowerConfig,
+  Tweaks,
+} from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
+export const getHdrRuntimeState = () => call<[], HdrRuntimeState>("get_hdr_runtime_state");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
 export const savePowerConfig = (data: PowerConfig) => call<[PowerConfig], Config>("save_power_config", data);
 export const saveTweaks = (data: Tweaks) => call<[Tweaks], Config>("save_tweaks", data);

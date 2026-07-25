@@ -11,7 +11,7 @@ from armada_control.config import build_config
 from armada_control.controller import set_controller_type
 from armada_control.power import save_power_config
 from armada_control.steam import installed_games
-from armada_control.system import set_ssh_enabled
+from armada_control.system import get_hdr_runtime_state, set_ssh_enabled
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
 
 
@@ -22,6 +22,9 @@ class Plugin:
 
     async def get_installed_games(self):
         return await asyncio.to_thread(installed_games)
+
+    async def get_hdr_runtime_state(self):
+        return await asyncio.to_thread(get_hdr_runtime_state)
 
     async def save_power_config(self, data):
         await asyncio.to_thread(save_power_config, data)

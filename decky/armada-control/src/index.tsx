@@ -1,6 +1,7 @@
 import { definePlugin } from "@decky/api";
 import { getCompatApplied, getConfig, getInstalledGames, saveCompatApplied } from "./backend";
 import { Content } from "./Content";
+import { registerDisplayHdrRoutePatch } from "./lib/displayHdrRoutePatch";
 import {
   configureCompatPolicy,
   handledGameAppids,
@@ -10,14 +11,39 @@ import {
 
 export default definePlugin(() => {
   let unregisterDownloadWatcher = () => {};
+  let unregisterDisplayHdrRoutePatch = () => {};
   const persistHandledGames = () => {
     saveCompatApplied(handledGameAppids()).catch(() => {});
   };
   let cancelled = false;
+  const configPromise = getConfig();
+  const discoverHdrCapability = async () => {
+    const retryDelaysMs = [0, 250, 500, 1000, 2000, 4000, 8000];
+    for (let attempt = 0; attempt < retryDelaysMs.length && !cancelled; attempt += 1) {
+      const delayMs = retryDelaysMs[attempt];
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+      }
+      if (cancelled) return;
+      try {
+        const config = attempt === 0 ? await configPromise : await getConfig();
+        if (cancelled) return;
+        if (!config.hdrCapable) continue;
+        unregisterDisplayHdrRoutePatch = registerDisplayHdrRoutePatch();
+        return;
+      } catch (error) {
+        console.warn("[Armada Control] HDR capability discovery retry", error);
+      }
+    }
+    if (!cancelled) {
+      console.warn("[Armada Control] HDR controls unavailable after bounded capability discovery");
+    }
+  };
+  void discoverHdrCapability();
   const handledRequest = getCompatApplied()
     .then((appids) => ({ appids, loaded: true }))
     .catch(() => ({ appids: [] as string[], loaded: false }));
-  Promise.all([getConfig(), getInstalledGames(), handledRequest])
+  Promise.all([configPromise, getInstalledGames(), handledRequest])
     .then(([config, games, handled]) => {
       if (cancelled) return;
       configureCompatPolicy(
@@ -40,6 +66,7 @@ export default definePlugin(() => {
     content: <Content />,
     onDismount() {
       cancelled = true;
+      unregisterDisplayHdrRoutePatch();
       unregisterDownloadWatcher();
     },
     icon: (

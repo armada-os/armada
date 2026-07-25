@@ -95,6 +95,9 @@ jobs:
       - name: Check build recipes
         uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3
 
+      - name: Test Odin 3 HDR production policy
+        run: bash tests/odin3-hdr-production-test.sh
+
       - name: Get image version
         id: version
         run: |

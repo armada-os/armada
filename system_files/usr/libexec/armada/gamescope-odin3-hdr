@@ -1,0 +1,145 @@
+#!/bin/bash
+set -euo pipefail
+
+readonly gamescope=/usr/bin/gamescope
+readonly capability_marker=/usr/lib/armada/gamescope-hdr-capabilities
+readonly expected_seed=/usr/share/armada/hdr/ayn-odin-3.edid.bin
+readonly expected_edid_sha256=a6ee4ff0c7f43723c093ea2575221a52668e7d610c13738274bf0cef61c96695
+
+if [[ ! -x "$gamescope" ]]; then
+    printf 'Armada HDR: patched Gamescope binary is unavailable\n' >&2
+    exit 127
+fi
+
+# gamescope-session-plus probes GAMESCOPE_BIN with --help while constructing
+# its command.  Diagnostics and all non-Steam invocations remain pass-through.
+session=0
+for argument in "$@"; do
+    if [[ "$argument" == --steam ]]; then
+        session=1
+        break
+    fi
+done
+if (( session == 0 )); then
+    exec "$gamescope" "$@"
+fi
+
+if [[ "${ARMADA_HDR_CAPABLE:-0}" != 1 ||
+      "${ARMADA_DEVICE_ID:-}" != ayn-odin-3 ||
+      "${ARMADA_PRIMARY_CONNECTOR:-}" != DSI-1 ||
+      "${GAMESCOPE_ARMADA_FIXED_PANEL_POLICY:-}" != ayn-odin-3:DSI-1 ||
+      "${GAMESCOPE_ARMADA_HDR_PRODUCTION_MODE:-}" != immutable-image ||
+      "${GAMESCOPE_ARMADA_HDR_VALIDATED:-}" != 1 ||
+      "${GAMESCOPE_INTERNAL_DISPLAY_ID:-}" != ayn-odin-3 ]]; then
+    printf 'Armada HDR: refusing qualified Gamescope options outside the Odin 3 DSI-1 policy\n' >&2
+    exit 64
+fi
+
+if [[ "${GAMESCOPE_SCRIPT_PATH:-}" != /usr/share/gamescope/scripts ||
+      "${GAMESCOPE_PATCHED_EDID_SEED:-}" != "$expected_seed" ||
+      "${GAMESCOPE_HDR_ITM_TARGET_NITS:-}" != 650 ||
+      "${GAMESCOPE_ARMADA_HDR_MAX_CLL:-}" != 650 ||
+      "${GAMESCOPE_ARMADA_HDR_MAX_FALL:-}" != 650 ||
+      "${GAMESCOPE_ARMADA_HDR_OUTPUT_EOTF:-}" != gamma22 ||
+      "${ENABLE_GAMESCOPE_WSI:-}" != 1 ||
+      "${ENABLE_HDR_WSI:-}" != 1 ||
+      "${DXVK_HDR:-}" != 1 ]]; then
+    printf 'Armada HDR: refusing incomplete Gamescope or client HDR policy\n' >&2
+    exit 64
+fi
+
+if [[ ! -f "$capability_marker" || -L "$capability_marker" ||
+      "$(<"$capability_marker")" != expose-client-sampleable-formats-v1 ]]; then
+    printf 'Armada HDR: patched Gamescope capability marker is unavailable\n' >&2
+    exit 69
+fi
+
+if ! gamescope_help=$("$gamescope" --help 2>&1) ||
+   ! /usr/bin/grep -Fq -- '--expose-client-sampleable-formats' <<<"$gamescope_help"; then
+    printf 'Armada HDR: installed Gamescope lacks composited client-format support\n' >&2
+    exit 69
+fi
+unset gamescope_help
+
+runtime_dir=${XDG_RUNTIME_DIR:-}
+if [[ ! "$runtime_dir" =~ ^/run/user/[0-9]+$ || ! -d "$runtime_dir" ||
+      -L "$runtime_dir" || ! -O "$runtime_dir" ]]; then
+    printf 'Armada HDR: refusing unsafe XDG runtime directory %q\n' "$runtime_dir" >&2
+    exit 73
+fi
+
+readonly edid_dir=${runtime_dir}/armada-hdr
+readonly edid_file=${edid_dir}/odin3-edid.bin
+if [[ "${GAMESCOPE_PATCHED_EDID_FILE:-}" != "$edid_file" ]]; then
+    printf 'Armada HDR: patched EDID path escaped the qualified runtime directory\n' >&2
+    exit 73
+fi
+if [[ ! -f "$expected_seed" || -L "$expected_seed" ||
+      "$(/usr/bin/sha256sum -- "$expected_seed" | /usr/bin/awk '{print $1}')" != "$expected_edid_sha256" ]]; then
+    printf 'Armada HDR: immutable patched EDID seed failed verification\n' >&2
+    exit 74
+fi
+
+if [[ -e "$edid_dir" && ( ! -d "$edid_dir" || -L "$edid_dir" || ! -O "$edid_dir" ) ]]; then
+    printf 'Armada HDR: refusing unsafe patched EDID runtime directory\n' >&2
+    exit 73
+fi
+/usr/bin/install -d -m 0700 -- "$edid_dir"
+readonly staged_edid=${edid_file}.seed.$$
+cleanup() {
+    /usr/bin/rm -f -- "$staged_edid"
+}
+trap cleanup EXIT HUP INT TERM
+/usr/bin/install -m 0600 -- "$expected_seed" "$staged_edid"
+/usr/bin/mv -f -- "$staged_edid" "$edid_file"
+trap - EXIT HUP INT TERM
+
+target_count=0
+target_value=
+client_format_count=0
+arguments=("$@")
+for (( index = 0; index < ${#arguments[@]}; index++ )); do
+    case "${arguments[index]}" in
+        --hdr-itm-target-nits)
+            if (( index + 1 >= ${#arguments[@]} )); then
+                printf 'Armada HDR: missing value after --hdr-itm-target-nits\n' >&2
+                exit 64
+            fi
+            target_count=$((target_count + 1))
+            target_value=${arguments[index + 1]}
+            ;;
+        --hdr-itm-target-nits=*)
+            target_count=$((target_count + 1))
+            target_value=${arguments[index]#*=}
+            ;;
+        --expose-client-sampleable-formats)
+            client_format_count=$((client_format_count + 1))
+            ;;
+        --hdr-enabled|--hdr-itm-enable)
+            printf 'Armada HDR: Steam owns HDR state; refusing force-enable option %s\n' \
+                "${arguments[index]}" >&2
+            exit 64
+            ;;
+    esac
+done
+
+if (( target_count > 1 || client_format_count > 1 )); then
+    printf 'Armada HDR: refusing duplicate qualified Gamescope options\n' >&2
+    exit 64
+fi
+if (( target_count == 1 )) && [[ "$target_value" != 650 ]]; then
+    printf 'Armada HDR: refusing ITM target %q (expected 650)\n' "$target_value" >&2
+    exit 64
+fi
+
+qualified_options=()
+if (( target_count == 0 )); then
+    qualified_options+=(--hdr-itm-target-nits 650)
+fi
+if (( client_format_count == 0 )); then
+    qualified_options+=(--expose-client-sampleable-formats)
+fi
+
+# No HDR enable option is injected.  Steam's saved Game Mode setting and its
+# normal Gamescope control atom remain the sole owner of on/off state.
+exec "$gamescope" "${qualified_options[@]}" "$@"
