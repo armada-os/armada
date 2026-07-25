@@ -6,7 +6,7 @@
     ],
     "transports": {
         "docker": {
-            "ghcr.io/virtudude/armada": [
+            "ghcr.io/gryoza/armada": [
                 {
                     "type": "sigstoreSigned",
                     "keyPaths": ["/etc/pki/containers/armada.pub", "/etc/pki/containers/armada-backup.pub"],
