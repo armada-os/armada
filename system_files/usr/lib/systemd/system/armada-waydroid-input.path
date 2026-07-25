@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for Waydroid Android session startup
+
+[Path]
+PathChanged=/run/waydroid-lxc/network_up
+Unit=armada-waydroid-input.service
+
+[Install]
+WantedBy=multi-user.target

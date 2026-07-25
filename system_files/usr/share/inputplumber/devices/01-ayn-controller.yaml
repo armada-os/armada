@@ -29,6 +29,7 @@ source_devices:
       phys_path: rsinput-gamepad/input0
       handler: event*
     capability_map_id: ayn_mcu
+    passthrough: true
 
 # Optional configuration for the composite device
 options:

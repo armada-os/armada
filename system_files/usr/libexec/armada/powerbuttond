@@ -1,16 +1,20 @@
 #!/bin/bash
-# Power button + lid -> Steam's sleep flow (steam://shortpowerpress), launched by
-# launch-steam as the user. fake-suspend owns wake.
+# Power button + lid -> Steam's sleep flow while Game Mode owns the keys.
 set -uo pipefail
+
 SESSION_USER="${ARMADA_SESSION_USER:-armada}"
 STEAM_DIR="/var/home/${SESSION_USER}/.local/share/Steam/steamrtarm64"
 STEAM_BIN="${STEAM_DIR}/steam"
+LONG_MS="${ARMADA_POWERBUTTON_LONG_MS:-1000}"
+POWER_DEVICE_WAIT_SEC="${ARMADA_POWERBUTTON_DEVICE_WAIT_SEC:-15}"
+PID_FILE="${ARMADA_POWERBUTTON_PID_FILE:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/armada-powerbuttond.pid}"
+
 log() { logger -t armada-powerbuttond -- "$*"; }
 source /usr/lib/armada/input-lib 2>/dev/null || true
 
 steam_uri() {
-    [[ -x "$STEAM_BIN" ]] || return 1
-    LD_LIBRARY_PATH="$STEAM_DIR" "$STEAM_BIN" -ifrunning "steam://$1" >/dev/null 2>&1
+    [[ -x "$STEAM_BIN" ]] || return 0
+    LD_LIBRARY_PATH="$STEAM_DIR" "$STEAM_BIN" -ifrunning "steam://$1" >/dev/null 2>&1 || true
 }
 
 power_device() {
@@ -18,55 +22,157 @@ power_device() {
     for dev in /dev/input/event*; do
         [[ -e "$dev" ]] || continue
         name="$(cat "/sys/class/input/$(basename "$dev")/device/name" 2>/dev/null)" || continue
-        case "$name" in *pwrkey*|*[Pp]ower\ [Bb]utton*) echo "$dev"; return 0 ;; esac
+        case "$name" in
+            *pwrkey*|*[Pp]ower\ [Bb]utton*) printf '%s\n' "$dev"; return 0 ;;
+        esac
     done
     return 1
 }
 
-# Lid (clamshell only): close -> Steam sleep. Lid-open wake is fake-suspend's job.
-lidpid=""
-liddev="$(armada_find_lid_dev || true)"
-if [[ -n "$liddev" ]]; then
-    log "watching lid $liddev"
-    ( evtest "$liddev" 2>/dev/null | while read -r l; do
-        case "$l" in
-            *"(SW_LID), value 1"*) log "lid close -> shortpowerpress"; steam_uri shortpowerpress ;;
-        esac
-      done ) &
-    lidpid=$!
-fi
-trap '[[ -n "$lidpid" ]] && kill "$lidpid" 2>/dev/null' EXIT INT TERM
+wait_for_power_device() {
+    local waited=0
+    while :; do
+        power_device && return 0
+        (( waited >= POWER_DEVICE_WAIT_SEC )) && return 1
+        sleep 1
+        waited=$((waited + 1))
+    done
+}
 
-pdev="$(power_device || true)"
-[[ -n "$pdev" ]] || exit 0
-log "watching $pdev"
-# Long-press fires while still held, not on release.
-LONG_MS=1000
-exec 3< <(evtest "$pdev" 2>/dev/null)
-state=idle; press_ms=0
-while :; do
-    case "$state" in
-        held)
-            rem=$(( LONG_MS - ( $(date +%s%3N) - press_ms ) ))
-            if (( rem <= 0 )); then
-                log "long press -> longpowerpress"; steam_uri longpowerpress; state=draining; continue
-            fi
-            if IFS= read -r -u 3 -t "$(printf '%d.%03d' $(( rem / 1000 )) $(( rem % 1000 )))" line; then
-                case "$line" in
-                    *"(KEY_POWER), value 0"*) log "short press -> shortpowerpress"; steam_uri shortpowerpress; state=idle ;;
+lidpid=
+power_event_pid=
+
+powerbutton_stop_watchers() {
+    exec 3<&- || true
+    if [[ -n "${power_event_pid:-}" ]]; then
+        kill "$power_event_pid" 2>/dev/null || true
+        wait "$power_event_pid" 2>/dev/null || true
+        power_event_pid=
+    fi
+    if [[ -n "${lidpid:-}" ]]; then
+        pkill -TERM -P "$lidpid" 2>/dev/null || true
+        kill "$lidpid" 2>/dev/null || true
+        wait "$lidpid" 2>/dev/null || true
+        lidpid=
+    fi
+}
+
+powerbutton_cleanup() {
+    powerbutton_stop_watchers
+    if [[ -f "$PID_FILE" ]] && [[ "$(<"$PID_FILE")" == "$$" ]]; then
+        rm -f -- "$PID_FILE"
+    fi
+}
+
+powerbutton_reexec() {
+    trap - USR1
+    powerbutton_stop_watchers
+    exec /bin/bash "$0"
+    exit 1
+}
+
+powerbutton_write_pid() {
+    local pid_dir
+    pid_dir="$(dirname "$PID_FILE")"
+    mkdir -p "$pid_dir" || return 1
+    printf '%s\n' "$$" >"$PID_FILE" || return 1
+    chmod 0600 "$PID_FILE"
+}
+
+powerbutton_main() {
+    local liddev lid_line pdev line rem read_result state press_ms
+
+    pdev="$(wait_for_power_device || true)"
+    if [[ -z "$pdev" ]]; then
+        log "power-button device not found after ${POWER_DEVICE_WAIT_SEC}s"
+        return 0
+    fi
+
+    trap powerbutton_cleanup EXIT
+    trap 'exit 0' INT TERM
+    trap powerbutton_reexec USR1
+    powerbutton_write_pid || return 1
+
+    liddev="$(armada_find_lid_dev 2>/dev/null || true)"
+    if [[ -n "$liddev" ]]; then
+        log "watching lid $liddev"
+        (
+            evtest "$liddev" 2>/dev/null | while read -r lid_line; do
+                case "$lid_line" in
+                    *"(SW_LID), value 1"*)
+                        log "lid close -> shortpowerpress"
+                        steam_uri shortpowerpress
+                        ;;
                 esac
-            elif (( $? <= 128 )); then
-                break   # evtest ended (not a timeout); launch-steam relaunches next session
-            fi ;;
-        draining)  # long press already fired; swallow the release
-            IFS= read -r -u 3 line || break
-            case "$line" in *"(KEY_POWER), value 0"*) state=idle ;; esac ;;
-        *)  # idle: a release here is the tail of a wake press fake-suspend grabbed -> ignore
-            IFS= read -r -u 3 line || break
-            case "$line" in
-                *"(KEY_POWER), value 1"*)
-                    if armada_lid_closed 2>/dev/null; then log "power w/ lid closed -> ignored"
-                    else press_ms=$(date +%s%3N); state=held; fi ;;
-            esac ;;
-    esac
-done
+            done
+        ) &
+        lidpid=$!
+    fi
+
+    log "watching $pdev"
+    exec 3< <(evtest "$pdev" 2>/dev/null)
+    power_event_pid=$!
+    state=idle
+    press_ms=0
+
+    while :; do
+        read_result=0
+        case "$state" in
+            held)
+                rem=$((LONG_MS - ($(date +%s%3N) - press_ms)))
+                if (( rem <= 0 )); then
+                    log "long press -> longpowerpress"
+                    steam_uri longpowerpress
+                    state=draining
+                    continue
+                fi
+                IFS= read -r -u 3 -t "$(printf '%d.%03d' $((rem / 1000)) $((rem % 1000)))" line 2>/dev/null \
+                    || read_result=$?
+                ;;
+            *)
+                IFS= read -r -u 3 line 2>/dev/null || read_result=$?
+                ;;
+        esac
+
+        if (( read_result > 128 )) && [[ "$state" == held ]]; then
+            continue
+        elif (( read_result != 0 )); then
+            log "power-button event stream ended"
+            return 1
+        fi
+
+        case "$state" in
+            held)
+                case "$line" in
+                    *"(KEY_POWER), value 0"*)
+                        log "short press -> shortpowerpress"
+                        steam_uri shortpowerpress
+                        state=idle
+                        ;;
+                esac
+                ;;
+            draining)
+                case "$line" in
+                    *"(KEY_POWER), value 0"*) state=idle ;;
+                esac
+                ;;
+            *)
+                # fake-suspend owns wake and can leave a release while idle.
+                case "$line" in
+                    *"(KEY_POWER), value 1"*)
+                        if armada_lid_closed 2>/dev/null; then
+                            log "power w/ lid closed -> ignored"
+                        else
+                            press_ms=$(date +%s%3N)
+                            state=held
+                        fi
+                        ;;
+                esac
+                ;;
+        esac
+    done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    powerbutton_main "$@"
+fi

@@ -1,0 +1,131 @@
+#!/usr/bin/python3
+"""One-time desktop layout for dual-screen devices, run by desktop-bootstrap.
+
+Places the secondary output below the primary (centered), makes the primary
+the priority-1 output, and pins each touchscreen to its own output so taps
+land on the screen being touched.
+"""
+import glob
+import json
+import shlex
+import subprocess
+import sys
+
+
+def device_env():
+    out = subprocess.run(
+        ["/usr/libexec/armada/device-env"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    env = {}
+    for line in out.splitlines():
+        key, _, value = line.partition("=")
+        env[key] = shlex.split(value)[0] if value else ""
+    return env
+
+
+def logical_size(output):
+    mode = next(
+        (m for m in output.get("modes", [])
+         if str(m.get("id")) == str(output.get("currentModeId"))),
+        None,
+    )
+    if mode is None:
+        return None
+    width = mode["size"]["width"]
+    height = mode["size"]["height"]
+    # KScreen rotation flags: 2 (left) and 8 (right) swap the axes.
+    if output.get("rotation") in (2, 8):
+        width, height = height, width
+    scale = output.get("scale") or 1
+    return round(width / scale), round(height / scale)
+
+
+def input_devices():
+    """Map input device name -> (vendor, product, event node)."""
+    devices = {}
+    for sysdir in glob.glob("/sys/class/input/input*"):
+        try:
+            name = open(f"{sysdir}/name").read().strip()
+            vendor = int(open(f"{sysdir}/id/vendor").read(), 16)
+            product = int(open(f"{sysdir}/id/product").read(), 16)
+            event = next(
+                e.rsplit("/", 1)[-1] for e in glob.glob(f"{sysdir}/event*")
+            )
+        except (OSError, StopIteration, ValueError):
+            continue
+        devices[name] = (vendor, product, event)
+    return devices
+
+
+def pin_touchscreen(name, connector, devices):
+    if not name:
+        return True
+    if name not in devices:
+        print(f"setup-dual-screen: input device not found: {name}",
+              file=sys.stderr)
+        return False
+    vendor, product, event = devices[name]
+    # Persisted mapping, applied by KWin when the device is added.
+    persisted = subprocess.run(
+        ["kwriteconfig6", "--file", "kcminputrc",
+         "--group", "Libinput", "--group", str(vendor),
+         "--group", str(product), "--group", name,
+         "--key", "OutputName", connector],
+        check=False,
+    )
+    # Live mapping for the current session.
+    live = subprocess.run(
+        ["gdbus", "call", "--session", "--dest", "org.kde.KWin",
+         "--object-path", f"/org/kde/KWin/InputDevice/{event}",
+         "--method", "org.freedesktop.DBus.Properties.Set",
+         "org.kde.KWin.InputDevice", "outputName", f"<'{connector}'>"],
+        check=False, capture_output=True,
+    )
+    return persisted.returncode == 0 and live.returncode == 0
+
+
+def main():
+    env = device_env()
+    primary = env.get("ARMADA_PRIMARY_CONNECTOR")
+    secondary = env.get("ARMADA_SECONDARY_CONNECTOR")
+    if not primary or not secondary:
+        return 0
+
+    # Some kscreen-doctor versions append human-readable text after the
+    # JSON document, so parse only the first document.
+    doc = subprocess.run(
+        ["kscreen-doctor", "-j"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    outputs = json.JSONDecoder().raw_decode(doc)[0]["outputs"]
+    by_name = {o["name"]: o for o in outputs}
+    if primary not in by_name or secondary not in by_name:
+        print(f"setup-dual-screen: outputs not found: {primary}, {secondary}",
+              file=sys.stderr)
+        return 1
+
+    primary_size = logical_size(by_name[primary])
+    secondary_size = logical_size(by_name[secondary])
+    if primary_size is None or secondary_size is None:
+        return 1
+    x = max(0, round((primary_size[0] - secondary_size[0]) / 2))
+    subprocess.run(
+        ["kscreen-doctor",
+         f"output.{primary}.priority.1",
+         f"output.{secondary}.priority.2",
+         f"output.{primary}.position.0,0",
+         f"output.{secondary}.position.{x},{primary_size[1]}"],
+        check=True,
+    )
+
+    devices = input_devices()
+    primary_ok = pin_touchscreen(
+        env.get("ARMADA_PRIMARY_TOUCHSCREEN"), primary, devices)
+    secondary_ok = pin_touchscreen(
+        env.get("ARMADA_SECONDARY_TOUCHSCREEN"), secondary, devices)
+    return 0 if primary_ok and secondary_ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

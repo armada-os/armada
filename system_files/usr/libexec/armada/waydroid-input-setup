@@ -1,0 +1,44 @@
+#!/bin/bash
+set -euo pipefail
+
+boot_completed=
+deadline=$((SECONDS + 90))
+while (( SECONDS < deadline )); do
+    boot_completed=$(timeout 3s waydroid shell -- getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+    if [[ "$boot_completed" == "1" ]]; then
+        break
+    fi
+    sleep 1
+done
+
+if [[ "$boot_completed" != "1" ]]; then
+    echo "Android did not finish booting before the controller setup timeout" >&2
+    exit 1
+fi
+
+waydroid shell -- setprop persist.waydroid.uevent true
+
+keylayout_source=/usr/share/armada/waydroid/keylayout
+keylayout_target=/var/home/armada/.local/share/waydroid/data/system/devices/keylayout
+if [[ -d "$keylayout_source" ]]; then
+    install -d -m 0755 "$keylayout_target"
+    for keylayout in "$keylayout_source"/*.kl; do
+        [[ -e "$keylayout" ]] || continue
+        install -m 0644 "$keylayout" "$keylayout_target/$(basename "$keylayout")"
+    done
+fi
+
+found=0
+for event in /sys/class/input/event*; do
+    if ! udevadm info --query=property --path="$event" 2>/dev/null | grep -qx 'ARMADA_WAYDROID_GAMEPAD=1'; then
+        continue
+    fi
+    echo add > "$event/uevent"
+    echo "Exposed $(basename "$event") to Waydroid"
+    found=1
+done
+
+if (( ! found )); then
+    echo "No Waydroid passthrough gamepad found"
+    exit 0
+fi

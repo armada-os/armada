@@ -43,12 +43,14 @@ if [ -f "${KERNEL_OUT}" ] && [ "$(cat "${STAMP}" 2>/dev/null || true)" = "${id}"
     exit 0
 fi
 
-# Fit the header-v0 512-byte cmdline: drop the serial console, put ostree first.
+# Fit the header-v0 512-byte cmdline: drop the serial console and redundant
+# Btrfs defaults, then put ostree first.
 ostree_arg=""; rest=""
 for t in ${options}; do
     case "${t}" in
         console=ttyS0) continue ;;
         ostree=*) ostree_arg="${t}" ;;
+        rootflags=*,space_cache=v2) rest="${rest} ${t%,space_cache=v2}" ;;
         *) rest="${rest} ${t}" ;;
     esac
 done

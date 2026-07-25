@@ -1,0 +1,25 @@
+#!/bin/bash
+# user.slice is frozen here, so USR1 precedes resumed user input.
+set -uo pipefail
+
+[[ "${1:-}" == post && "${2:-}" == suspend ]] || exit 0
+
+eval "$(/usr/libexec/armada/device-env 2>/dev/null)" || exit 0
+[[ "${ARMADA_SUSPEND_MODE:-fake}" != fake ]] || exit 0
+
+session_user="${ARMADA_SESSION_USER:-armada}"
+session_uid="$(id -u "$session_user" 2>/dev/null)" || exit 0
+pid_file="/run/user/${session_uid}/armada-powerbuttond/pid"
+[[ -r "$pid_file" ]] || exit 0
+
+read -r pid <"$pid_file" || exit 0
+[[ "$pid" =~ ^[0-9]+$ && -r "/proc/$pid/status" ]] || exit 0
+
+process_uid="$(sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$pid/status")"
+[[ "$process_uid" == "$session_uid" ]] || exit 0
+
+argv=()
+mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || true
+[[ "${argv[0]:-}" == */bash && "${argv[1]:-}" == /usr/libexec/armada/powerbuttond ]] || exit 0
+
+kill -USR1 "$pid" 2>/dev/null || true

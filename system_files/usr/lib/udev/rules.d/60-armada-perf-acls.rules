@@ -4,5 +4,7 @@ SUBSYSTEM=="cpu", KERNEL=="cpu[0-9]*", \
 SUBSYSTEM=="devfreq", KERNEL=="*.gpu", \
     RUN+="/bin/sh -c 'chgrp wheel /sys/class/devfreq/%k/governor /sys/class/devfreq/%k/max_freq /sys/class/devfreq/%k/min_freq 2>/dev/null; chmod g+w /sys/class/devfreq/%k/governor /sys/class/devfreq/%k/max_freq /sys/class/devfreq/%k/min_freq 2>/dev/null'"
 
-SUBSYSTEM=="backlight", \
-    RUN+="/bin/sh -c 'chgrp wheel /sys/class/backlight/%k/brightness 2>/dev/null; chmod g+w /sys/class/backlight/%k/brightness 2>/dev/null'"
+SUBSYSTEM=="backlight", RUN+="/usr/libexec/armada/backlight-acl %k"
+
+SUBSYSTEM=="input", KERNEL=="input[0-9]*", \
+    RUN+="/bin/sh -c 'chgrp wheel /sys/class/input/%k/inhibited 2>/dev/null; chmod g+w /sys/class/input/%k/inhibited 2>/dev/null'"

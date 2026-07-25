@@ -26,6 +26,7 @@ export LD_LIBRARY_PATH="${steam_ld_path}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 if [[ -d "${steam_runtime_bin}" ]]; then
     export PATH="${steam_runtime_bin}:${PATH}"
 fi
+export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
 
 steamapps_dirs=("${steam_root}/steamapps")
 while IFS= read -r library; do
@@ -81,7 +82,6 @@ for steamapps in "${steamapps_dirs[@]}"; do
 done
 
 touch "${steam_root}/.cef-enable-remote-debugging"
-/usr/libexec/armada/powerbuttond >/dev/null 2>&1 &
 cd "${steam_arm_dir}"
 exec "${steam_arm}" \
     "${steam_args[@]}" \

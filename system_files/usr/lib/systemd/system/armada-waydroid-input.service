@@ -1,0 +1,7 @@
+[Unit]
+Description=Expose passthrough gamepads to Waydroid
+ConditionPathExists=/run/waydroid-lxc/network_up
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/armada/waydroid-input-setup
+TimeoutStartSec=120

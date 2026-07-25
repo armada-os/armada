@@ -20,21 +20,35 @@ else
     systemctl --user import-environment "${activation_env[@]}" 2>/dev/null || true
 fi
 
-config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/armada"
-rotation_done="${config_dir}/desktop-rotation.done"
-scale_done="${config_dir}/desktop-scale.done"
-
-[[ ! -e "${rotation_done}" || ! -e "${scale_done}" ]] || exit 0
-mkdir -p "${config_dir}"
-
 if command -v /usr/libexec/armada/device-env >/dev/null 2>&1; then
     eval "$(/usr/libexec/armada/device-env)"
+fi
+
+# The gaming session inhibits the secondary touchscreen (the desktop is the
+# only session that lights up the secondary panel); re-enable it every start.
+if [[ -n "${ARMADA_SECONDARY_TOUCHSCREEN:-}" ]]; then
+    /usr/libexec/armada/touchscreen-inhibit "$ARMADA_SECONDARY_TOUCHSCREEN" 0 2>/dev/null || true
 fi
 
 display_connector="${ARMADA_PRIMARY_CONNECTOR:-}"
 panel_orientation="${ARMADA_PANEL_ORIENTATION:-normal}"
 
 [[ -n "${display_connector}" ]] || exit 0
+
+config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/armada"
+# Dual-screen enablement can renumber the primary connector. Single-screen
+# devices retain their legacy markers so upgrades preserve user display tweaks.
+if [[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]]; then
+    rotation_done="${config_dir}/desktop-rotation-${display_connector}.done"
+    scale_done="${config_dir}/desktop-scale-${display_connector}.done"
+else
+    rotation_done="${config_dir}/desktop-rotation.done"
+    scale_done="${config_dir}/desktop-scale.done"
+fi
+dual_done="${config_dir}/desktop-dual-screen.done"
+
+[[ ! -e "${rotation_done}" || ! -e "${scale_done}" || ! -e "${dual_done}" ]] || exit 0
+mkdir -p "${config_dir}"
 
 for _ in {1..5}; do
     kscreen-doctor -o >/dev/null 2>&1 && break
@@ -56,4 +70,12 @@ fi
 
 if [[ ! -e "${scale_done}" ]] && kscreen-doctor "output.${display_connector}.scale.1.5" >/dev/null 2>&1; then
     touch "${scale_done}"
+fi
+
+if [[ ! -e "${dual_done}" ]]; then
+    if [[ -z "${ARMADA_SECONDARY_CONNECTOR:-}" ]]; then
+        touch "${dual_done}"
+    elif /usr/libexec/armada/setup-dual-screen; then
+        touch "${dual_done}"
+    fi
 fi
