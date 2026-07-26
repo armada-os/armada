@@ -2,6 +2,11 @@ import { definePlugin } from "@decky/api";
 import { getCompatApplied, getConfig, getInstalledGames, saveCompatApplied } from "./backend";
 import { Content } from "./Content";
 import {
+  applyControllerGlyphTheme,
+  clearControllerGlyphTheme,
+  normalizeControllerGlyphStyle,
+} from "./lib/controllerGlyphs";
+import {
   configureCompatPolicy,
   handledGameAppids,
   registerDownloadWatcher,
@@ -14,10 +19,22 @@ export default definePlugin(() => {
     saveCompatApplied(handledGameAppids()).catch(() => {});
   };
   let cancelled = false;
+  const configPromise = getConfig();
+  configPromise
+    .then((config) => {
+      if (cancelled) return;
+      applyControllerGlyphTheme(
+        config.controllerGlyphVariant,
+        normalizeControllerGlyphStyle(
+          config.tweaks?.global?.controllerGlyphStyle,
+        ),
+      );
+    })
+    .catch(() => {});
   const handledRequest = getCompatApplied()
     .then((appids) => ({ appids, loaded: true }))
     .catch(() => ({ appids: [] as string[], loaded: false }));
-  Promise.all([getConfig(), getInstalledGames(), handledRequest])
+  Promise.all([configPromise, getInstalledGames(), handledRequest])
     .then(([config, games, handled]) => {
       if (cancelled) return;
       configureCompatPolicy(
@@ -40,6 +57,7 @@ export default definePlugin(() => {
     content: <Content />,
     onDismount() {
       cancelled = true;
+      clearControllerGlyphTheme();
       unregisterDownloadWatcher();
     },
     icon: (

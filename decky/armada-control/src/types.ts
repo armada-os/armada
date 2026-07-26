@@ -31,7 +31,9 @@ export interface GameTweak {
 }
 
 export interface Tweaks {
-  global: Record<string, any>;
+  global: Record<string, any> & {
+    controllerGlyphStyle?: "monochrome" | "rainbow";
+  };
   games: Record<string, GameTweak>;
 }
 
@@ -77,6 +79,7 @@ export interface Config {
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
   cpuDeviceClass: string;
+  controllerGlyphVariant: string;
   osVersion: string;
   sshEnabled: boolean;
   controllerType: string;

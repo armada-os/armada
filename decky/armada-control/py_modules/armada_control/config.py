@@ -1,7 +1,12 @@
 from .controller import CONTROLLER_TYPES, controller_type
 from .power import factory_power_defaults, parse_power
 from .steam import installed_games
-from .system import cpu_device_class, os_version, ssh_enabled
+from .system import (
+    controller_glyph_variant,
+    cpu_device_class,
+    os_version,
+    ssh_enabled,
+)
 from .tweaks import fex_profile_labels, load_fex_contract, load_tweaks
 
 
@@ -14,6 +19,7 @@ def build_config(include_games=True):
         "installedGames": installed_games() if include_games else [],
         "fexProfiles": fex_profile_labels(fex_contract),
         "cpuDeviceClass": cpu_device_class(),
+        "controllerGlyphVariant": controller_glyph_variant(),
         "osVersion": os_version(),
         "sshEnabled": ssh_enabled(),
         "controllerType": controller_type(),

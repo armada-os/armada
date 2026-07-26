@@ -1,0 +1,245 @@
+:root {
+    --button-guide-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/home.png");
+    --button-view-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/select.png");
+    --button-menu-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/start.png");
+    --button-qam-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/back.png");
+
+    --swap-guide-with-image: var(--button-view-image);
+    --swap-menu-with-image: var(--button-qam-image);
+    --swap-view-with-image: var(--button-guide-image);
+
+    --button-a-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/b.png");
+    --button-b-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/a.png");
+    --button-x-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/y.png");
+    --button-y-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/x.png");
+
+    --button-l4-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/m1.png");
+    --button-r4-image: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/m2.png");
+}
+
+/* Full controller and controller-settings page artwork. */
+._3TvBVwaH8eIBabTdki35oe .rlz-U2wn9ktH5Z9trfpZa {
+    background-image: var(--controller-image);
+}
+
+.controller_hori_steam svg {
+    display: none;
+}
+
+.controller_hori_steam ._3R2kU_aL39-YxgB3TuRgYc {
+    background: var(--controller-image) center no-repeat;
+    background-size: contain;
+}
+
+img[src*="/images/steamdeck_left"] {
+    content: var(--controller-left-image);
+}
+
+img[src*="/images/steamdeck_right"] {
+    content: var(--controller-right-image);
+}
+
+/* Guide, Select, Start, Return, and Nintendo-layout face buttons. */
+img[src*="xbox_button_logo"],
+img[src*="ps4_button_logo"],
+img[src*="sc_button_steam"] {
+    content: var(--override-guide-image, var(--button-guide-image));
+}
+
+._3Jfd85nK4bKoNf_gCSTX6U:has(> svg) > svg {
+    display: none;
+}
+
+._3Jfd85nK4bKoNf_gCSTX6U:has(> svg) {
+    background: var(--override-guide-image, var(--button-guide-image)) center no-repeat;
+    background-size: contain;
+    width: 25px;
+    height: 25px;
+}
+
+img[src*="ps_button_x"],
+img[src*="shared_button_a"],
+img[src*="shared_color_button_a"] {
+    content: var(--button-a-image);
+}
+
+img[src*="ps_button_circle"],
+img[src*="shared_button_b"],
+img[src*="shared_color_button_b"] {
+    content: var(--button-b-image);
+}
+
+img[src*="ps_button_square"],
+img[src*="shared_button_x"],
+img[src*="shared_color_button_x"] {
+    content: var(--button-x-image);
+}
+
+img[src*="ps_button_triangle"],
+img[src*="shared_button_y"],
+img[src*="shared_color_button_y"] {
+    content: var(--button-y-image);
+}
+
+img[src*="xbox_button_select"],
+img[src*="xbox360_button_select"],
+img[src*="ps5_button_create"],
+img[src*="sd_button_view"] {
+    content: var(--override-view-image, var(--button-view-image));
+}
+
+img[src*="xbox_button_start"],
+img[src*="xbox360_button_start"],
+img[src*="ps5_button_options"],
+img[src*="sd_button_menu"] {
+    content: var(--override-menu-image, var(--button-menu-image));
+}
+
+img[src*="sd_button_qam"],
+img[src*="button_quick_access"],
+img[src*="button_qam"] {
+    content: var(--button-qam-image);
+}
+
+/* D-pad. */
+img[src*="shared_dpad."],
+img[src*="ps_dpad."],
+img[src$="/steaminputglyphs/shared_dpad"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/dpad.png");
+}
+
+img[src*="shared_dpad_up"],
+img[src*="ps_dpad_up"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/dpad-up.png");
+}
+
+img[src*="shared_dpad_down"],
+img[src*="ps_dpad_down"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/dpad-down.png");
+}
+
+img[src*="shared_dpad_left"],
+img[src*="ps_dpad_left"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/dpad-left.png");
+}
+
+img[src*="shared_dpad_right"],
+img[src*="ps_dpad_right"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/dpad-right.png");
+}
+
+/* Left stick. */
+img[src*="shared_lstick_up"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/lstick-up.png");
+}
+
+img[src*="shared_lstick_down"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/lstick-down.png");
+}
+
+img[src*="shared_lstick_left"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/lstick-left.png");
+}
+
+img[src*="shared_lstick_right"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/lstick-right.png");
+}
+
+img[src*="shared_lstick_click"],
+img[src*="shared_l3"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/lstick-click.png");
+}
+
+img[src*="shared_lstick_touch"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/lstick-touch.png");
+}
+
+img[src*="shared_lstick."] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/lstick.png");
+}
+
+/* Right stick. */
+img[src*="shared_rstick_up"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/rstick-up.png");
+}
+
+img[src*="shared_rstick_down"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/rstick-down.png");
+}
+
+img[src*="shared_rstick_left"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/rstick-left.png");
+}
+
+img[src*="shared_rstick_right"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/rstick-right.png");
+}
+
+img[src*="shared_rstick_click"],
+img[src*="shared_r3"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/rstick-click.png");
+}
+
+img[src*="shared_rstick_touch"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/rstick-touch.png");
+}
+
+img[src*="shared_rstick."] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/rstick.png");
+}
+
+/* Shoulder and trigger buttons. */
+img[src*="xbox_lb"],
+img[src*="sd_l1"],
+img[src*="ps_l1"],
+img[src*="ps5_l1"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/l1.png");
+}
+
+img[src*="xbox_rb"],
+img[src*="sd_r1"],
+img[src*="ps_r1"],
+img[src*="ps5_r1"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/r1.png");
+}
+
+img[src*="xbox_lt"],
+img[src*="sd_l2"],
+img[src*="ps_l2"],
+img[src*="ps5_l2"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/l2.png");
+}
+
+img[src*="xbox_rt"],
+img[src*="sd_r2"],
+img[src*="ps_r2"],
+img[src*="ps5_r2"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/r2.png");
+}
+
+img[src*="xbox_lt_soft"],
+img[src*="sd_l2_half"],
+img[src*="ps5_l2_soft"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/l2-soft.png");
+}
+
+img[src*="xbox_rt_soft"],
+img[src*="sd_r2_half"],
+img[src*="ps5_r2_soft"] {
+    content: url("/themes_custom/handheld-controller-glyphs/assets/ayn/odin-3/r2-soft.png");
+}
+
+/* Odin M1 and M2 are exposed through the standard L4 and R4 slots. */
+img[src*="sd_l4"],
+img[src*="xbox_p3"],
+img[src*="ps_lfn"],
+img[src*="hp_l4"] {
+    content: var(--button-l4-image);
+}
+
+img[src*="sd_r4"],
+img[src*="xbox_p1"],
+img[src*="ps_rfn"],
+img[src*="hp_r4"] {
+    content: var(--button-r4-image);
+}

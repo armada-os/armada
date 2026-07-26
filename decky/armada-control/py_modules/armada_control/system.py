@@ -27,6 +27,18 @@ def cpu_device_class():
     return device_env().get("ARMADA_SOC_CLASS", "")
 
 
+def controller_glyph_variant():
+    env = device_env()
+    variant = env.get("ARMADA_CONTROLLER_GLYPH_VARIANT", "")
+    if variant:
+        return variant
+    # Keep plugin-only updates compatible with Odin 3 images that predate the
+    # dedicated profile key.
+    if env.get("ARMADA_DEVICE_ID") == "ayn-odin-3":
+        return "AYN Odin 3"
+    return ""
+
+
 def device_env():
     try:
         env = call("get_device_env").get("env")

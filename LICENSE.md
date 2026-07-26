@@ -24,6 +24,11 @@ projects. Those components keep their upstream licenses. In particular:
 - Device support was adapted from [ROCKNIX](https://github.com/ROCKNIX),
   including kernel patches, input mappings, audio profiles, firmware layout,
   and bootloader.
+- The bundled AYN Odin 3 controller artwork and glyph theme derive from
+  [Handheld Controller Glyphs](https://github.com/victor-borges/handheld-controller-glyphs)
+  and are licensed under the **MIT License**. The upstream copyright and
+  license notice are preserved in
+  `decky/themes/handheld-controller-glyphs/LICENSE`.
 
 Modifications to bundled software are licensed under the terms of the software
 being modified.

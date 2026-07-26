@@ -3,7 +3,16 @@ import type { Dispatch, SetStateAction } from "react";
 import { setControllerType as applyControllerType, setSshEnabled as applySshEnabled } from "../backend";
 import { openCalibration } from "../components/Calibration";
 import { SelectEdit, ToggleRow } from "../components/widgets";
+import {
+  normalizeControllerGlyphStyle,
+  supportsControllerButtonStyle,
+} from "../lib/controllerGlyphs";
 import type { Config } from "../types";
+
+const controllerGlyphStyleOptions = [
+  { data: "monochrome", label: "Monochrome" },
+  { data: "rainbow", label: "Rainbow" },
+];
 
 export function Settings({ config, setConfig }: {
   config: Config;
@@ -31,6 +40,27 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, controllerType: previous } : current));
     }
   };
+  const controllerGlyphStyle = normalizeControllerGlyphStyle(
+    config.tweaks?.global?.controllerGlyphStyle,
+  ).toLowerCase();
+  const setControllerGlyphStyle = (value: string) => {
+    const style = normalizeControllerGlyphStyle(value).toLowerCase() as
+      | "monochrome"
+      | "rainbow";
+    setConfig((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        tweaks: {
+          ...current.tweaks,
+          global: {
+            ...current.tweaks.global,
+            controllerGlyphStyle: style,
+          },
+        },
+      };
+    });
+  };
   return (
     <>
       <PanelSection title="Controller">
@@ -40,6 +70,14 @@ export function Settings({ config, setConfig }: {
           options={config.controllerTypes || []}
           onChange={setControllerType}
         />
+        {supportsControllerButtonStyle(config.controllerGlyphVariant) && (
+          <SelectEdit
+            label="Controller button style"
+            value={controllerGlyphStyle}
+            options={controllerGlyphStyleOptions}
+            onChange={setControllerGlyphStyle}
+          />
+        )}
         <ButtonItem layout="below" onClick={openCalibration}>Launch Calibration</ButtonItem>
       </PanelSection>
       <PanelSection title="System">
