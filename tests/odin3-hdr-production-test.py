@@ -144,6 +144,11 @@ class ProductionPolicyStaticTests(unittest.TestCase):
         installer = INSTALL_STEAM.read_text(encoding="utf-8")
 
         self.assertNotIn("ARMADA_HDR_CAPABLE", session)
+        self.assertIn('[[ -n "${XDG_RUNTIME_DIR:-}" ]]', session)
+        self.assertIn(
+            'GAMESCOPE_LIMITER_FILE="${XDG_RUNTIME_DIR}/gamescope-limiter"',
+            session,
+        )
         self.assertIn("production_block = environment_block +", installer)
         self.assertIn("/usr/libexec/armada/hdr-session-finalize", installer)
         self.assertIn('XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}"', installer)
