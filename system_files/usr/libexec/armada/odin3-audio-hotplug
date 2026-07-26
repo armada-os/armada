@@ -1,0 +1,660 @@
+#!/usr/bin/python3
+"""Route Odin 3 external audio without passing it through speaker HRIR graphs."""
+
+from __future__ import annotations
+
+import json
+import os
+import select
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+TRUSTED_PATH = "/usr/bin:/usr/sbin:/bin:/sbin"
+INTERNAL_SINKS = ("Stereo", "Virtual Surround Sound")
+ODIN_CARD = "alsa_card.platform-sound"
+HEADPHONE_PROFILE = "HiFi (Headphones)"
+SPEAKER_PROFILE = "HiFi (Speaker)"
+HEADPHONE_SINK = "alsa_output.platform-sound.HiFi__Headphones__sink"
+STEAM_RESTORE_UNIT = os.environ.get(
+    "ARMADA_AUDIO_STEAM_RESTORE_UNIT",
+    "armada-odin3-audio-steam-restore.service",
+)
+INTERNAL_PLAYBACK_NODES = {
+    "effect_output.odin3_stereo",
+    "effect_output.odin3_dvs",
+}
+
+
+def log(message: str) -> None:
+    print(f"Armada Odin 3 audio hotplug: {message}", flush=True)
+
+
+def device_matches() -> bool:
+    device_env = os.environ.get(
+        "ARMADA_AUDIO_DEVICE_ENV", "/usr/libexec/armada/device-env"
+    )
+    try:
+        result = subprocess.run(
+            [
+                "/usr/bin/env",
+                "-i",
+                f"PATH={TRUSTED_PATH}",
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-p",
+                device_env,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        log("immutable device policy could not be read")
+        return False
+
+    policy: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            policy[key] = value.strip("'\"").replace("\\ ", " ")
+    return (
+        policy.get("ARMADA_DEVICE_ID") == "ayn-odin-3"
+        and policy.get("ARMADA_DEVICE_NAME") == "AYN Odin 3"
+        and policy.get("ARMADA_SOC_CLASS") == "SM8750"
+    )
+
+
+def profile_name(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return str(value.get("name", ""))
+    return ""
+
+
+def profile_available(card: dict[str, Any], wanted: str) -> bool:
+    def is_available(value: Any) -> bool:
+        return value is True or (
+            isinstance(value, str)
+            and value.strip().lower() in {"yes", "true", "available"}
+        )
+
+    profiles = card.get("profiles", [])
+    if isinstance(profiles, dict):
+        profile = profiles.get(wanted, {})
+        return isinstance(profile, dict) and is_available(
+            profile.get("available")
+        )
+    for profile in profiles if isinstance(profiles, list) else []:
+        if (
+            isinstance(profile, dict)
+            and profile.get("name") == wanted
+            and is_available(profile.get("available"))
+        ):
+            return True
+    return False
+
+
+def bluez_output(sink: dict[str, Any]) -> bool:
+    name = str(sink.get("name", ""))
+    properties = sink.get("properties", {})
+    if not name.startswith("bluez_output.") or not isinstance(properties, dict):
+        return False
+    return (
+        properties.get("device.api") == "bluez5"
+        or properties.get("device.bus") == "bluetooth"
+        or bool(properties.get("api.bluez5.address"))
+    )
+
+
+def external_sink(sink: dict[str, Any]) -> bool:
+    return str(sink.get("name", "")) == HEADPHONE_SINK or bluez_output(sink)
+
+
+def migratable_sink_input(stream: dict[str, Any]) -> bool:
+    properties = stream.get("properties", {})
+    if not isinstance(properties, dict):
+        return False
+    return (
+        properties.get("media.class") != "Stream/Output/Audio/Internal"
+        and properties.get("node.name") not in INTERNAL_PLAYBACK_NODES
+    )
+
+
+def sink_serial(sink: dict[str, Any]) -> int:
+    properties = sink.get("properties", {})
+    candidates = (
+        properties.get("object.serial") if isinstance(properties, dict) else None,
+        sink.get("index"),
+    )
+    for value in candidates:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return -1
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    default: str
+    external: dict[str, dict[str, Any]]
+    sink_inputs: tuple[int, ...]
+    card: dict[str, Any] | None
+
+
+class Pactl:
+    def __init__(self) -> None:
+        self.binary = os.environ.get("ARMADA_AUDIO_PACTL", "/usr/bin/pactl")
+
+    def run(
+        self, *arguments: str, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [self.binary, *arguments],
+            check=check,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+    def json_list(self, kind: str) -> list[dict[str, Any]]:
+        result = self.run("--format=json", "list", kind)
+        value = json.loads(result.stdout)
+        if not isinstance(value, list):
+            raise ValueError(f"pactl {kind} result is not an array")
+        return [item for item in value if isinstance(item, dict)]
+
+    def snapshot(self) -> Snapshot:
+        sinks = self.json_list("sinks")
+        cards = self.json_list("cards")
+        inputs = self.json_list("sink-inputs")
+        default = self.run("get-default-sink").stdout.strip()
+        card = next((item for item in cards if item.get("name") == ODIN_CARD), None)
+        external = {
+            str(item["name"]): item
+            for item in sinks
+            if item.get("name") and external_sink(item)
+        }
+        indexes: list[int] = []
+        for item in inputs:
+            if not migratable_sink_input(item):
+                continue
+            try:
+                indexes.append(int(item["index"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return Snapshot(default, external, tuple(indexes), card)
+
+
+class ReturnChoice:
+    def __init__(self) -> None:
+        home = Path(os.environ.get("HOME", "/var/home/armada"))
+        self.directory = Path(
+            os.environ.get(
+                "ARMADA_AUDIO_STATE_DIR", home / ".local/state/armada"
+            )
+        )
+        self.path = self.directory / "odin3-audio-speaker-default"
+        self.wireplumber_default_nodes = Path(
+            os.environ.get(
+                "ARMADA_AUDIO_WIREPLUMBER_DEFAULT_NODES",
+                home / ".local/state/wireplumber/default-nodes",
+            )
+        )
+
+    def load_valid(self) -> str | None:
+        try:
+            if self.path.is_symlink() or not self.path.is_file():
+                return None
+            value = self.path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError):
+            return None
+        return value if value in INTERNAL_SINKS else None
+
+    def load(self) -> str:
+        return self.load_valid() or "Stereo"
+
+    def seed_from_wireplumber(self) -> None:
+        if self.load_valid() is not None:
+            return
+        source = self.wireplumber_default_nodes
+        try:
+            if source.is_symlink() or not source.is_file():
+                return
+            if source.stat().st_size > 4096:
+                return
+            lines = source.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            return
+        prefix = "default.configured.audio.sink="
+        candidates = [
+            line[len(prefix) :]
+            for line in lines
+            if line.startswith(prefix) and line[len(prefix) :] in INTERNAL_SINKS
+        ]
+        if len(candidates) == 1:
+            self.save(candidates[0])
+            log(f"preserved configured speaker preference {candidates[0]}")
+
+    def save(self, value: str) -> None:
+        if value not in INTERNAL_SINKS:
+            return
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if self.directory.is_symlink() or not self.directory.is_dir():
+            raise RuntimeError(f"unsafe audio state directory: {self.directory}")
+        if self.path.is_symlink():
+            raise RuntimeError(f"refusing symlinked audio state: {self.path}")
+        if self.path.exists() and not self.path.is_file():
+            raise RuntimeError(f"refusing special audio state: {self.path}")
+
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".odin3-audio-speaker-default.", dir=self.directory
+        )
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+            else:
+                os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
+            with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                descriptor = -1
+                handle.write(f"{value}\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.path)
+            if hasattr(os, "O_DIRECTORY"):
+                directory_fd = os.open(
+                    self.directory, os.O_RDONLY | os.O_DIRECTORY
+                )
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+class StereoVolumeMigration:
+    CHANNELS = (
+        "front-left",
+        "front-right",
+        "front-center",
+        "lfe",
+        "rear-left",
+        "rear-right",
+        "side-left",
+        "side-right",
+    )
+
+    def __init__(self, state_directory: Path) -> None:
+        self.state_directory = state_directory
+        self.marker = (
+            state_directory / "odin3-audio-stereo-8ch-volume-v1.done"
+        )
+        self.complete = False
+
+    def _marker_exists(self) -> bool:
+        if self.marker.is_symlink():
+            raise RuntimeError(
+                f"refusing symlinked audio migration state: {self.marker}"
+            )
+        if self.marker.exists() and not self.marker.is_file():
+            raise RuntimeError(
+                f"refusing special audio migration state: {self.marker}"
+            )
+        return self.marker.is_file()
+
+    def _mark_complete(self) -> None:
+        self.state_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if (
+            self.state_directory.is_symlink()
+            or not self.state_directory.is_dir()
+        ):
+            raise RuntimeError(
+                f"unsafe audio state directory: {self.state_directory}"
+            )
+        if self._marker_exists():
+            return
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".odin3-audio-stereo-volume.",
+            dir=self.state_directory,
+        )
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+            else:
+                os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
+            with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                descriptor = -1
+                handle.write("1\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self.marker)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    @classmethod
+    def _values(cls, sink: dict[str, Any]) -> dict[str, int] | None:
+        volume = sink.get("volume")
+        if not isinstance(volume, dict) or set(volume) != set(cls.CHANNELS):
+            return None
+        values: dict[str, int] = {}
+        for channel in cls.CHANNELS:
+            item = volume.get(channel)
+            value = item.get("value") if isinstance(item, dict) else None
+            if not isinstance(value, int) or value < 0:
+                return None
+            values[channel] = value
+        return values
+
+    def reconcile(self, pactl: Pactl) -> None:
+        if self.complete:
+            return
+        if self._marker_exists():
+            self.complete = True
+            return
+        matches = [
+            sink
+            for sink in pactl.json_list("sinks")
+            if sink.get("name") == "Stereo"
+        ]
+        if len(matches) != 1:
+            return
+        values = self._values(matches[0])
+        if values is None:
+            # The graph may still be rebuilding. Do not permanently suppress
+            # migration until the exact eight-channel volume state is visible.
+            return
+        front = values["front-left"]
+        legacy_zero_channels = self.CHANNELS[2:]
+        if (
+            front > 0
+            and values["front-right"] == front
+            and all(values[channel] == 0 for channel in legacy_zero_channels)
+        ):
+            pactl.run("set-sink-volume", "Stereo", str(front))
+            verified = [
+                sink
+                for sink in pactl.json_list("sinks")
+                if sink.get("name") == "Stereo"
+            ]
+            if (
+                len(verified) != 1
+                or self._values(verified[0])
+                != {channel: front for channel in self.CHANNELS}
+            ):
+                raise RuntimeError(
+                    "Stereo 2-to-8-channel volume migration did not verify"
+                )
+            log(
+                "preserved Stereo volume while initializing all eight channels"
+            )
+        self._mark_complete()
+        self.complete = True
+
+
+class HotplugPolicy:
+    def __init__(self, pactl: Pactl, choice: ReturnChoice) -> None:
+        self.pactl = pactl
+        self.choice = choice
+        self.known_external: set[str] | None = None
+        self.active_external: str | None = None
+
+    def _set_card_profile(self, profile: str) -> bool:
+        try:
+            self.pactl.run("set-card-profile", ODIN_CARD, profile)
+            log(f"selected {profile} profile")
+            return True
+        except (OSError, subprocess.SubprocessError) as error:
+            log(f"could not select {profile} profile: {error}")
+            return False
+
+    def _prepare_headphone_profile(self, snapshot: Snapshot) -> bool:
+        card = snapshot.card
+        if card is None:
+            return False
+        active = profile_name(card.get("active_profile"))
+        available = profile_available(card, HEADPHONE_PROFILE)
+        if available and active != HEADPHONE_PROFILE:
+            return self._set_card_profile(HEADPHONE_PROFILE)
+        if not available and active == HEADPHONE_PROFILE:
+            return self._set_card_profile(SPEAKER_PROFILE)
+        return False
+
+    def _steam_is_reachable(self) -> bool:
+        try:
+            with urllib.request.urlopen(
+                "http://127.0.0.1:8080/json", timeout=0.3
+            ) as response:
+                return response.status == 200
+        except (OSError, ValueError):
+            return False
+
+    def _notify_steam(self) -> None:
+        if not self._steam_is_reachable():
+            return
+        try:
+            subprocess.run(
+                [
+                    "/usr/bin/systemctl",
+                    "--user",
+                    "reset-failed",
+                    STEAM_RESTORE_UNIT,
+                ],
+                check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            subprocess.Popen(
+                [
+                    "/usr/bin/systemctl",
+                    "--user",
+                    "--no-block",
+                    "restart",
+                    STEAM_RESTORE_UNIT,
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            log(f"could not notify Steam audio policy: {error}")
+
+    def _activate(self, snapshot: Snapshot, target: str) -> bool:
+        if not target:
+            return False
+        if snapshot.default != target:
+            try:
+                self.pactl.run("set-default-sink", target)
+                selected = self.pactl.run("get-default-sink").stdout.strip()
+            except (OSError, subprocess.SubprocessError) as error:
+                log(f"could not select {target}: {error}")
+                return False
+            if selected != target:
+                log(
+                    f"default-sink verification deferred: wanted {target}, "
+                    f"found {selected or '<empty>'}"
+                )
+                return False
+        for index in snapshot.sink_inputs:
+            try:
+                self.pactl.run(
+                    "move-sink-input", str(index), target, check=False
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue
+        log(f"selected {target}")
+        self._notify_steam()
+        return True
+
+    @staticmethod
+    def _newest(
+        names: set[str], external: dict[str, dict[str, Any]]
+    ) -> str | None:
+        if not names:
+            return None
+        return max(names, key=lambda name: (sink_serial(external[name]), name))
+
+    def reconcile(self) -> None:
+        snapshot = self.pactl.snapshot()
+        if self._prepare_headphone_profile(snapshot):
+            # Card-profile changes rebuild the sink set. Read the settled graph
+            # instead of making a decision from the now-stale snapshot.
+            time.sleep(0.1)
+            snapshot = self.pactl.snapshot()
+
+        current = set(snapshot.external)
+
+        if self.known_external is None:
+            if (
+                snapshot.default in INTERNAL_SINKS
+                and self.choice.load_valid() is None
+            ):
+                self.choice.save(snapshot.default)
+            if snapshot.default in INTERNAL_SINKS and current:
+                target = self._newest(current, snapshot.external)
+                if target and self._activate(snapshot, target):
+                    self.active_external = target
+                    self.known_external = current
+                else:
+                    # Treat the sinks as new again on the next graph event if
+                    # PipeWire was still settling and rejected the switch.
+                    self.known_external = set()
+            elif snapshot.default in current:
+                self.active_external = snapshot.default
+                self.known_external = current
+                self._activate(snapshot, snapshot.default)
+            else:
+                self.known_external = current
+            return
+
+        added = current - self.known_external
+        removed = self.known_external - current
+
+        # Process loss of the output we selected before accepting Pulse's
+        # automatic fallback as a user choice. Otherwise a transient fallback
+        # to Stereo can overwrite a saved Virtual Surround preference.
+        if removed and self.active_external in removed:
+            target = self._newest(current, snapshot.external)
+            if target is None:
+                target = self.choice.load()
+            if self._activate(snapshot, target):
+                self.active_external = target if target in current else None
+                self.known_external = current
+            # On failure, retain the previous set so a later graph event
+            # retries this same removal instead of losing the restore.
+            return
+
+        if added:
+            if (
+                snapshot.default in INTERNAL_SINKS
+                and self.choice.load_valid() is None
+            ):
+                self.choice.save(snapshot.default)
+            target = self._newest(added, snapshot.external)
+            if target and self._activate(snapshot, target):
+                self.active_external = target
+                self.known_external = current
+            # On failure, retain the previous set so the connection remains
+            # new and can be retried after PipeWire finishes creating it.
+            return
+
+        self.known_external = current
+        if snapshot.default in INTERNAL_SINKS:
+            # Respect an explicit return to the speakers while external devices
+            # remain connected.
+            self.choice.save(snapshot.default)
+            self.active_external = None
+            return
+
+        if snapshot.default in current:
+            # Record an explicit user selection between connected externals.
+            self.active_external = snapshot.default
+            return
+
+def watch(
+    policy: HotplugPolicy, volume_migration: StereoVolumeMigration
+) -> int:
+    volume_migration.reconcile(policy.pactl)
+    policy.reconcile()
+    if "--once" in sys.argv[1:]:
+        return 0
+
+    pactl_binary = os.environ.get("ARMADA_AUDIO_PACTL", "/usr/bin/pactl")
+    process = subprocess.Popen(
+        [pactl_binary, "subscribe"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    relevant = ("on sink ", "on sink-input ", "on card ", "on server ")
+    debounce = float(os.environ.get("ARMADA_AUDIO_DEBOUNCE_SECONDS", "0.20"))
+    while True:
+        line = process.stdout.readline()
+        if line == "":
+            return process.wait() or 1
+        if not any(token in line for token in relevant):
+            continue
+
+        deadline = time.monotonic() + max(0.02, debounce)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([process.stdout], [], [], remaining)
+            if not ready:
+                break
+            next_line = process.stdout.readline()
+            if next_line == "":
+                return process.wait() or 1
+            if any(token in next_line for token in relevant):
+                deadline = time.monotonic() + max(0.02, debounce)
+        try:
+            volume_migration.reconcile(policy.pactl)
+            policy.reconcile()
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            log(f"reconciliation deferred after transient error: {error}")
+
+
+def main() -> int:
+    if not device_matches():
+        return 0
+    try:
+        choice = ReturnChoice()
+        choice.seed_from_wireplumber()
+        return watch(
+            HotplugPolicy(Pactl(), choice),
+            StereoVolumeMigration(choice.directory),
+        )
+    except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+        log(str(error))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

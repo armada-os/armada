@@ -7,9 +7,10 @@ component is provided under its own license.
 
 Copyright the Armada contributors.
 
-Original software and scripts written for Armada are licensed under the terms of
-the **GNU General Public License, version 2 or (at your option) any later
-version** (`GPL-2.0-or-later`). License text:
+Original software, scripts, configuration, and bundled assets created for
+Armada are licensed under the terms of the **GNU General Public License,
+version 2 or (at your option) any later version** (`GPL-2.0-or-later`).
+License text:
 [GPL-2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt).
 
 ## Upstream and bundled works

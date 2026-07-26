@@ -1,0 +1,13 @@
+[Unit]
+Description=Initialize the AYN Odin 3 audio sinks once
+After=pipewire.service pipewire-pulse.service wireplumber.service
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/armada/odin3-audio-default
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

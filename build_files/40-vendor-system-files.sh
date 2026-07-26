@@ -15,6 +15,27 @@ EOF
 chmod 0755 /usr/libexec/armada/*
 chmod 0755 /usr/libexec/os-session-select
 
+test -x /usr/libexec/armada/odin3-audio-setup
+test -x /usr/libexec/armada/odin3-audio-default
+test -x /usr/libexec/armada/odin3-audio-steam-restore
+test -x /usr/libexec/armada/odin3-audio-hotplug
+test -f /usr/lib/systemd/system/armada-odin3-audio-setup.service
+test -f /usr/lib/systemd/user/armada-odin3-audio-default.service
+test -f /usr/lib/systemd/user/armada-odin3-audio-steam-restore.service
+test -f /usr/lib/systemd/user/armada-odin3-audio-hotplug.service
+test -f /usr/share/armada/audio/odin3/pipewire.conf.d/50-hrir-7_1.conf
+test -f /usr/share/armada/audio/odin3/pipewire.conf.d/55-odin3-stereo.conf
+test -f /usr/share/armada/audio/odin3/pipewire-pulse.conf.d/10-no-flat.conf
+test -f /usr/share/armada/audio/odin3/pipewire-pulse.conf.d/20-odin3-stereo-downmix.conf
+test -f /usr/share/armada/audio/odin3/wireplumber.conf.d/51-odin3-audio-names.conf
+test -f /usr/share/armada/audio/odin3/wireplumber.conf.d/90-odin3-speaker-route-unity.conf
+test -f /usr/share/armada/audio/odin3/hrir/vss_speaker.wav
+test "$(
+    sha256sum /usr/share/armada/audio/odin3/hrir/vss_speaker.wav |
+        cut -d' ' -f1
+)" = f88ee26f5af80e73365ea1428cea970eeb383c8dfaa1fb77b0fc5a1efb48a7cb
+test -f /usr/share/wireplumber/scripts/odin3-speaker-route-unity.lua
+
 sed -i '/const allPanels/,$d' /usr/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel/contents/layout.js
 sed -i '$r /usr/share/plasma/shells/org.kde.plasma.desktop/contents/updates/armada-pins.js' /usr/share/plasma/layout-templates/org.kde.plasma.desktop.defaultPanel/contents/layout.js
 
@@ -29,6 +50,9 @@ systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
 systemctl enable armada-device-quirks.service
+systemctl enable armada-odin3-audio-setup.service
+systemctl --global enable armada-odin3-audio-default.service
+systemctl --global enable armada-odin3-audio-hotplug.service
 systemctl enable armada-fixups.service
 systemctl enable armada-installer-visibility.service
 systemctl enable armada-steamapps.service

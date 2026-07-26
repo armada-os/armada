@@ -1,0 +1,261 @@
+#!/bin/bash
+set -euo pipefail
+
+readonly TRUSTED_PATH=/usr/bin:/usr/sbin:/bin:/sbin
+readonly DEVICE_ENV=${ARMADA_AUDIO_DEVICE_ENV:-/usr/libexec/armada/device-env}
+readonly TEMPLATE_ROOT=${ARMADA_AUDIO_TEMPLATE_ROOT:-/usr/share/armada/audio/odin3}
+readonly USER_HOME=${ARMADA_AUDIO_USER_HOME:-/var/home/armada}
+readonly AUDIO_USER=${ARMADA_AUDIO_USER:-armada}
+readonly AUDIO_GROUP=${ARMADA_AUDIO_GROUP:-armada}
+readonly STATE_DIR=${ARMADA_AUDIO_STATE_DIR:-${USER_HOME}/.local/state/armada}
+readonly PACKAGED_HRIR=${TEMPLATE_ROOT}/hrir/vss_speaker.wav
+readonly PACKAGED_HRIR_SHA256=f88ee26f5af80e73365ea1428cea970eeb383c8dfaa1fb77b0fc5a1efb48a7cb
+readonly PENDING_MARKER=${STATE_DIR}/odin3-audio-default.pending
+readonly DONE_MARKER=${STATE_DIR}/odin3-audio-default.done
+readonly BACKUP_SUFFIX=.armada-odin3-audio.backup
+
+readonly -a MANAGED_LINKS=(
+    'pipewire.conf.d/50-hrir-7_1.conf|.config/pipewire/pipewire.conf.d/50-hrir-7_1.conf'
+    'pipewire.conf.d/55-odin3-stereo.conf|.config/pipewire/pipewire.conf.d/55-odin3-stereo.conf'
+    'pipewire-pulse.conf.d/10-no-flat.conf|.config/pipewire/pipewire-pulse.conf.d/10-no-flat.conf'
+    'pipewire-pulse.conf.d/20-odin3-stereo-downmix.conf|.config/pipewire/pipewire-pulse.conf.d/20-odin3-stereo-downmix.conf'
+    'wireplumber.conf.d/51-odin3-audio-names.conf|.config/wireplumber/wireplumber.conf.d/51-odin3-audio-names.conf'
+    'wireplumber.conf.d/90-odin3-speaker-route-unity.conf|.config/wireplumber/wireplumber.conf.d/90-odin3-speaker-route-unity.conf'
+)
+
+die() {
+    printf 'Armada Odin 3 audio setup: %s\n' "$*" >&2
+    exit 1
+}
+
+is_odin3() {
+    local policy line ARMADA_DEVICE_ID= ARMADA_DEVICE_NAME= ARMADA_SOC_CLASS=
+    policy=$(
+        /usr/bin/env -i PATH="$TRUSTED_PATH" \
+            /bin/bash --noprofile --norc -p "$DEVICE_ENV"
+    ) || die 'immutable device policy could not be read'
+
+    while IFS= read -r line; do
+        case "$line" in
+            ARMADA_DEVICE_ID=*) ARMADA_DEVICE_ID=${line#*=} ;;
+            ARMADA_DEVICE_NAME=*) ARMADA_DEVICE_NAME=${line#*=} ;;
+            ARMADA_SOC_CLASS=*) ARMADA_SOC_CLASS=${line#*=} ;;
+        esac
+    done <<<"$policy"
+
+    [[ "$ARMADA_DEVICE_ID" == ayn-odin-3 &&
+       "$ARMADA_SOC_CLASS" == SM8750 ]] || return 1
+    case "$ARMADA_DEVICE_NAME" in
+        'AYN Odin 3'|'AYN\ Odin\ 3'|"'AYN Odin 3'") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+ensure_directory() {
+    local path=$1 relative component
+
+    [[ -d "$USER_HOME" && ! -L "$USER_HOME" ]] ||
+        die "user home is not a real directory: $USER_HOME"
+
+    relative=${path#"${USER_HOME}/"}
+    [[ "$relative" != "$path" ]] || die "directory escapes user home: $path"
+    path=$USER_HOME
+    IFS=/ read -r -a components <<<"$relative"
+    for component in "${components[@]}"; do
+        [[ -n "$component" && "$component" != . && "$component" != .. ]] ||
+            die "unsafe directory component in $relative"
+        path=${path}/${component}
+        if [[ -e "$path" || -L "$path" ]]; then
+            [[ -d "$path" && ! -L "$path" ]] ||
+                die "refusing non-directory or symlinked directory: $path"
+        else
+            mkdir -- "$path"
+            chown -- "$AUDIO_USER:$AUDIO_GROUP" "$path"
+        fi
+    done
+}
+
+validate_directory_chain() {
+    local path=$1 relative component
+
+    [[ -d "$USER_HOME" && ! -L "$USER_HOME" ]] ||
+        die "user home is not a real directory: $USER_HOME"
+    relative=${path#"${USER_HOME}/"}
+    [[ "$relative" != "$path" ]] || die "directory escapes user home: $path"
+    path=$USER_HOME
+    IFS=/ read -r -a components <<<"$relative"
+    for component in "${components[@]}"; do
+        [[ -n "$component" && "$component" != . && "$component" != .. ]] ||
+            die "unsafe directory component in $relative"
+        path=${path}/${component}
+        if [[ -e "$path" || -L "$path" ]]; then
+            [[ -d "$path" && ! -L "$path" ]] ||
+                die "refusing non-directory or symlinked directory: $path"
+        fi
+    done
+}
+
+has_saved_audio_state() {
+    local path
+    for path in \
+        "${USER_HOME}/.local/state/wireplumber" \
+        "${USER_HOME}/.config/pulse"; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            return 0
+        fi
+    done
+    [[ -e "$DONE_MARKER" || -L "$DONE_MARKER" ||
+       -e "$PENDING_MARKER" || -L "$PENDING_MARKER" ]]
+}
+
+preflight_install() {
+    local entry source_rel target_rel source target backup packaged_hash _
+    for entry in "${MANAGED_LINKS[@]}"; do
+        IFS='|' read -r source_rel target_rel <<<"$entry"
+        source=${TEMPLATE_ROOT}/${source_rel}
+        target=${USER_HOME}/${target_rel}
+        backup=${target}${BACKUP_SUFFIX}
+
+        [[ -f "$source" && ! -L "$source" ]] ||
+            die "missing immutable template: $source"
+        validate_directory_chain "${target%/*}"
+
+        if [[ -L "$target" ]]; then
+            [[ "$target" -ef "$source" ]] ||
+                die "refusing to replace foreign symlink: $target"
+        elif [[ -e "$target" ]]; then
+            [[ -f "$target" ]] || die "refusing to replace non-regular file: $target"
+            [[ ! -e "$backup" && ! -L "$backup" ]] ||
+                die "one-time backup already exists: $backup"
+        fi
+
+        if [[ -e "$backup" || -L "$backup" ]]; then
+            [[ -f "$backup" && ! -L "$backup" ]] ||
+                die "invalid backup object: $backup"
+        fi
+    done
+
+    [[ -f "$PACKAGED_HRIR" && ! -L "$PACKAGED_HRIR" ]] ||
+        die "missing immutable HRIR: $PACKAGED_HRIR"
+    read -r packaged_hash _ < <(
+        /usr/bin/sha256sum -- "$PACKAGED_HRIR"
+    ) || die "could not checksum immutable HRIR: $PACKAGED_HRIR"
+    [[ "$packaged_hash" == "$PACKAGED_HRIR_SHA256" ]] ||
+        die "immutable HRIR checksum mismatch: $PACKAGED_HRIR"
+}
+
+install_links() {
+    local entry source_rel target_rel source target backup parent
+    for entry in "${MANAGED_LINKS[@]}"; do
+        IFS='|' read -r source_rel target_rel <<<"$entry"
+        source=${TEMPLATE_ROOT}/${source_rel}
+        target=${USER_HOME}/${target_rel}
+        backup=${target}${BACKUP_SUFFIX}
+        parent=${target%/*}
+        ensure_directory "$parent"
+
+        if [[ -L "$target" ]]; then
+            continue
+        fi
+        if [[ -f "$target" ]]; then
+            mv -- "$target" "$backup"
+        fi
+        ln -s -- "$source" "$target"
+    done
+}
+
+preflight_restore() {
+    local entry source_rel target_rel source target backup
+    for entry in "${MANAGED_LINKS[@]}"; do
+        IFS='|' read -r source_rel target_rel <<<"$entry"
+        source=${TEMPLATE_ROOT}/${source_rel}
+        target=${USER_HOME}/${target_rel}
+        backup=${target}${BACKUP_SUFFIX}
+
+        validate_directory_chain "${target%/*}"
+        if [[ -L "$target" ]]; then
+            [[ "$target" -ef "$source" ]] ||
+                die "refusing to remove foreign symlink: $target"
+        elif [[ -e "$target" ]]; then
+            die "refusing to overwrite current user object: $target"
+        fi
+        if [[ -e "$backup" || -L "$backup" ]]; then
+            [[ -f "$backup" && ! -L "$backup" ]] ||
+                die "invalid backup object: $backup"
+        fi
+    done
+}
+
+restore_links() {
+    local entry source_rel target_rel target backup
+    for entry in "${MANAGED_LINKS[@]}"; do
+        IFS='|' read -r source_rel target_rel <<<"$entry"
+        target=${USER_HOME}/${target_rel}
+        backup=${target}${BACKUP_SUFFIX}
+        [[ ! -L "$target" ]] || rm -- "$target"
+        if [[ -f "$backup" ]]; then
+            mv -- "$backup" "$target"
+        fi
+    done
+    if [[ -f "$PENDING_MARKER" && ! -L "$PENDING_MARKER" ]]; then
+        validate_directory_chain "$STATE_DIR"
+        rm -- "$PENDING_MARKER"
+    fi
+}
+
+cleanup_non_odin() {
+    local entry source_rel target_rel source target backup
+    for entry in "${MANAGED_LINKS[@]}"; do
+        IFS='|' read -r source_rel target_rel <<<"$entry"
+        source=${TEMPLATE_ROOT}/${source_rel}
+        target=${USER_HOME}/${target_rel}
+        backup=${target}${BACKUP_SUFFIX}
+
+        validate_directory_chain "${target%/*}"
+        if [[ -L "$target" ]] && [[ "$target" -ef "$source" ]]; then
+            rm -- "$target"
+            if [[ -f "$backup" && ! -L "$backup" ]]; then
+                mv -- "$backup" "$target"
+            fi
+        elif [[ ! -e "$target" && ! -L "$target" &&
+                -f "$backup" && ! -L "$backup" ]]; then
+            mv -- "$backup" "$target"
+        fi
+    done
+    if [[ -f "$PENDING_MARKER" && ! -L "$PENDING_MARKER" ]]; then
+        validate_directory_chain "$STATE_DIR"
+        rm -- "$PENDING_MARKER"
+    fi
+}
+
+if ! is_odin3; then
+    # Persistent home configuration can outlive an image or device-policy
+    # change. Remove only this package's exact managed links on a definitive
+    # non-Odin result so the device gate remains fail-closed across upgrades.
+    cleanup_non_odin
+    printf 'Armada Odin 3 audio setup: device gate did not match; managed profile removed\n'
+    exit 0
+fi
+
+case "${1:-}" in
+    '')
+        clean_state=1
+        if has_saved_audio_state; then
+            clean_state=0
+        fi
+        preflight_install
+        install_links
+        if (( clean_state )); then
+            ensure_directory "$STATE_DIR"
+            : >"$PENDING_MARKER"
+            chown -- "$AUDIO_USER:$AUDIO_GROUP" "$PENDING_MARKER"
+        fi
+        ;;
+    --restore)
+        preflight_restore
+        restore_links
+        ;;
+    *)
+        die "usage: ${0##*/} [--restore]"
+        ;;
+esac

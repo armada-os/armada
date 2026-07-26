@@ -1,0 +1,15 @@
+[Unit]
+Description=Route AYN Odin 3 external audio devices
+After=pipewire.service pipewire-pulse.service wireplumber.service armada-odin3-audio-default.service
+Wants=pipewire.service pipewire-pulse.service wireplumber.service armada-odin3-audio-default.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/libexec/armada/odin3-audio-hotplug
+Restart=on-failure
+RestartSec=1s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
