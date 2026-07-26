@@ -1,0 +1,65 @@
+#!/bin/bash
+# Preserve the selected internal output across real suspend and restore it only
+# after the resumed user audio graph is ready.
+set -uo pipefail
+
+[[ "${2:-}" == suspend ]] || exit 0
+
+eval "$(/usr/libexec/armada/device-env 2>/dev/null)" || exit 0
+[[ "${ARMADA_DEVICE_ID:-}" == ayn-odin-3 ]] || exit 0
+[[ "${ARMADA_DEVICE_NAME:-}" == 'AYN Odin 3' ]] || exit 0
+[[ "${ARMADA_SOC_CLASS:-}" == SM8750 ]] || exit 0
+[[ "${ARMADA_SUSPEND_MODE:-fake}" != fake ]] || exit 0
+
+session_user="${ARMADA_SESSION_USER:-armada}"
+session_uid="$(id -u "$session_user" 2>/dev/null)" || exit 0
+session_gid="$(id -g "$session_user" 2>/dev/null)" || exit 0
+snapshot="/run/armada/odin3-audio-pre-suspend-${session_uid}"
+runtime_dir="/run/user/${session_uid}"
+active_output="$runtime_dir/armada-odin3-audio-active-output"
+resume_marker="$runtime_dir/armada-odin3-audio-resume"
+resume_trigger="$runtime_dir/armada-odin3-audio-resume-trigger"
+
+case "${1:-}" in
+    pre)
+        rm -f "$snapshot"
+        rm -f "$resume_trigger"
+        if [[ ! -f "$active_output" || -L "$active_output" ]]; then
+            rm -f "$resume_marker"
+            exit 0
+        fi
+        read -r active_choice <"$active_output" || exit 0
+        case "$active_choice" in
+            Stereo|'Virtual Surround Sound') ;;
+            *) rm -f "$resume_marker"; exit 0 ;;
+        esac
+        choice="$active_choice"
+        if [[ -f "$resume_marker" && ! -L "$resume_marker" ]]; then
+            read -r pending_choice <"$resume_marker" || pending_choice=
+            case "$pending_choice" in
+                Stereo|'Virtual Surround Sound') choice="$pending_choice" ;;
+                *) rm -f "$resume_marker" ;;
+            esac
+        fi
+        install -d -m 0755 -o root -g root /run/armada
+        umask 077
+        printf '%s\n' "$choice" >"$snapshot"
+        ;;
+    post)
+        if [[ ! -f "$snapshot" || -L "$snapshot" ]]; then
+            rm -f "$resume_marker"
+            rm -f "$resume_trigger"
+            exit 0
+        fi
+        read -r choice <"$snapshot" || exit 0
+        case "$choice" in
+            Stereo|'Virtual Surround Sound') ;;
+            *) rm -f "$snapshot"; exit 0 ;;
+        esac
+        [[ -d "$runtime_dir" ]] || exit 0
+        staged="${snapshot}.resume"
+        install -m 0600 -o "$session_uid" -g "$session_gid" "$snapshot" "$staged"
+        mv -fT "$staged" "$resume_trigger"
+        rm -f "$snapshot"
+        ;;
+esac

@@ -94,9 +94,37 @@ class FakeChoice:
         self.saved.append(value)
 
 
-def snapshot(default: str, *externals: dict, inputs=(7, 8), card=None):
+class FakeRuntime:
+    def __init__(self, pending: str | None = None) -> None:
+        self.pending = pending
+        self.active: str | None = None
+        self.recorded: list[str] = []
+        self.cleared = 0
+
+    def record_active(self, value: str) -> None:
+        self.active = value if value in hotplug.INTERNAL_SINKS else None
+        self.recorded.append(value)
+
+    def load_pending(self) -> str | None:
+        return self.pending
+
+    def clear_pending(self) -> None:
+        self.pending = None
+        self.cleared += 1
+
+
+def snapshot(
+    default: str,
+    *externals: dict,
+    inputs=(7, 8),
+    card=None,
+    internal=hotplug.INTERNAL_SINKS,
+):
     return hotplug.Snapshot(
         default=default,
+        sinks=frozenset(
+            (*internal, *(item["name"] for item in externals))
+        ),
         external={item["name"]: item for item in externals},
         sink_inputs=tuple(inputs),
         card=card,
@@ -208,10 +236,86 @@ class ClassificationTests(unittest.TestCase):
 
 
 class RoutingTests(unittest.TestCase):
-    def policy(self, pactl, choice):
-        policy = hotplug.HotplugPolicy(pactl, choice)
+    def policy(self, pactl, choice, runtime=None):
+        policy = hotplug.HotplugPolicy(
+            pactl, choice, runtime or FakeRuntime()
+        )
         policy._notify_steam = mock.Mock()
         return policy
+
+    def test_pending_virtual_is_restored_before_stereo_can_be_saved(self):
+        pactl = FakePactl([snapshot("Stereo")])
+        choice = FakeChoice("Virtual Surround Sound")
+        runtime = FakeRuntime("Virtual Surround Sound")
+        policy = self.policy(pactl, choice, runtime)
+
+        policy.reconcile()
+
+        self.assertIn(
+            ("set-default-sink", "Virtual Surround Sound"), pactl.commands
+        )
+        self.assertIn(
+            ("move-sink-input", "7", "Virtual Surround Sound"),
+            pactl.commands,
+        )
+        self.assertEqual(choice.saved, ["Virtual Surround Sound"])
+        self.assertIsNone(runtime.pending)
+        self.assertEqual(runtime.cleared, 1)
+        self.assertEqual(runtime.active, "Virtual Surround Sound")
+        policy._notify_steam.assert_called_once()
+
+    def test_failed_pending_restore_keeps_request_and_durable_choice(self):
+        pactl = FailFirstDefaultPactl([snapshot("Stereo")])
+        choice = FakeChoice("Virtual Surround Sound")
+        runtime = FakeRuntime("Virtual Surround Sound")
+        policy = self.policy(pactl, choice, runtime)
+
+        with self.assertRaisesRegex(
+            RuntimeError, "present but could not be activated"
+        ):
+            policy.reconcile()
+
+        self.assertEqual(runtime.pending, "Virtual Surround Sound")
+        self.assertEqual(runtime.cleared, 0)
+        self.assertEqual(choice.saved, [])
+        policy._notify_steam.assert_not_called()
+
+    def test_missing_virtual_keeps_guard_during_safe_stereo_fallback(self):
+        pactl = FakePactl(
+            [
+                snapshot("Stereo", internal=("Stereo",)),
+                snapshot("Stereo"),
+            ]
+        )
+        choice = FakeChoice("Virtual Surround Sound")
+        runtime = FakeRuntime("Virtual Surround Sound")
+        policy = self.policy(pactl, choice, runtime)
+
+        policy.reconcile()
+        self.assertEqual(runtime.pending, "Virtual Surround Sound")
+        self.assertEqual(choice.saved, [])
+        self.assertEqual(choice.value, "Virtual Surround Sound")
+        self.assertEqual(runtime.active, "Stereo")
+        self.assertIn(("move-sink-input", "7", "Stereo"), pactl.commands)
+
+        policy.reconcile()
+        self.assertIsNone(runtime.pending)
+        self.assertEqual(choice.saved, ["Virtual Surround Sound"])
+        self.assertEqual(runtime.active, "Virtual Surround Sound")
+        self.assertIn(
+            ("set-default-sink", "Virtual Surround Sound"), pactl.commands
+        )
+        self.assertEqual(policy._notify_steam.call_count, 2)
+
+    def test_external_active_output_is_not_recorded_as_internal(self):
+        runtime = FakeRuntime()
+        policy = self.policy(
+            FakePactl([snapshot(BT_ONE["name"], BT_ONE)]),
+            FakeChoice("Virtual Surround Sound"),
+            runtime,
+        )
+        policy.reconcile()
+        self.assertIsNone(runtime.active)
 
     def test_startup_external_switches_and_remembers_virtual(self):
         pactl = FakePactl([snapshot("Virtual Surround Sound", BT_ONE)])
@@ -374,7 +478,9 @@ class RoutingTests(unittest.TestCase):
         self.assertIn(("set-default-sink", hotplug.HEADPHONE_SINK), pactl.commands)
 
     def test_steam_retry_limit_is_reset_before_restart(self):
-        policy = hotplug.HotplugPolicy(FakePactl([]), FakeChoice())
+        policy = hotplug.HotplugPolicy(
+            FakePactl([]), FakeChoice(), FakeRuntime()
+        )
         policy._steam_is_reachable = mock.Mock(return_value=True)
         calls = mock.Mock()
         run = mock.Mock()
@@ -419,6 +525,27 @@ class RoutingTests(unittest.TestCase):
 
 
 class StateAndArtifactTests(unittest.TestCase):
+    def test_runtime_active_output_is_atomic_and_internal_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            active = Path(temporary) / "active"
+            pending = Path(temporary) / "pending"
+            with mock.patch.dict(
+                hotplug.os.environ,
+                {
+                    "ARMADA_AUDIO_ACTIVE_OUTPUT": str(active),
+                    "ARMADA_AUDIO_RESUME_PREFERENCE": str(pending),
+                },
+                clear=False,
+            ):
+                state = hotplug.RuntimeOutputState()
+                state.record_active("Virtual Surround Sound")
+                self.assertEqual(
+                    active.read_text(encoding="ascii"),
+                    "Virtual Surround Sound\n",
+                )
+                state.record_active(BT_ONE["name"])
+                self.assertFalse(active.exists())
+
     def test_state_is_bounded_and_atomic(self):
         with tempfile.TemporaryDirectory() as temporary:
             with mock.patch.dict(
@@ -542,6 +669,9 @@ class StateAndArtifactTests(unittest.TestCase):
             "os.replace",
             "effect_output.odin3_stereo",
             "odin3-audio-stereo-8ch-volume-v1.done",
+            "armada-odin3-audio-active-output",
+            "armada-odin3-audio-resume",
+            "restored pre-suspend output",
         ):
             self.assertIn(value, source)
 

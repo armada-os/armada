@@ -41,6 +41,16 @@ DEFAULT_UNIT = (
 STEAM_RESTORE_UNIT = (
     SYSTEM / "usr/lib/systemd/user/armada-odin3-audio-steam-restore.service"
 )
+RESUME_PATH_UNIT = (
+    SYSTEM / "usr/lib/systemd/user/armada-odin3-audio-resume.path"
+)
+RESUME_SERVICE_UNIT = (
+    SYSTEM / "usr/lib/systemd/user/armada-odin3-audio-resume.service"
+)
+RESUME_HELPER = SYSTEM / "usr/libexec/armada/odin3-audio-resume"
+RESUME_HOOK = (
+    SYSTEM / "usr/lib/systemd/system-sleep/60-armada-odin3-audio-resume"
+)
 HOTPLUG_UNIT = (
     SYSTEM / "usr/lib/systemd/user/armada-odin3-audio-hotplug.service"
 )
@@ -117,10 +127,14 @@ class ArtifactContractTests(unittest.TestCase):
             DEFAULT,
             STEAM_RESTORE,
             HOTPLUG,
+            RESUME_HELPER,
             SETUP_UNIT,
             DEFAULT_UNIT,
             STEAM_RESTORE_UNIT,
             HOTPLUG_UNIT,
+            RESUME_PATH_UNIT,
+            RESUME_SERVICE_UNIT,
+            RESUME_HOOK,
         ):
             self.assertTrue(path.is_file(), path.relative_to(ROOT))
 
@@ -173,6 +187,17 @@ class ArtifactContractTests(unittest.TestCase):
             vendor,
         )
         self.assertIn(
+            "test -f /usr/lib/systemd/user/armada-odin3-audio-resume.path",
+            vendor,
+        )
+        self.assertIn(
+            "test -f /usr/lib/systemd/user/armada-odin3-audio-resume.service",
+            vendor,
+        )
+        self.assertIn(
+            "test -x /usr/libexec/armada/odin3-audio-resume", vendor
+        )
+        self.assertIn(
             "test -x /usr/libexec/armada/odin3-audio-hotplug",
             vendor,
         )
@@ -182,6 +207,14 @@ class ArtifactContractTests(unittest.TestCase):
         )
         self.assertIn(
             "systemctl --global enable armada-odin3-audio-hotplug.service",
+            vendor,
+        )
+        self.assertIn(
+            "systemctl --global enable armada-odin3-audio-resume.path",
+            vendor,
+        )
+        self.assertIn(
+            "chmod 0755 /usr/lib/systemd/system-sleep/60-armada-odin3-audio-resume",
             vendor,
         )
 
@@ -249,6 +282,47 @@ class ArtifactContractTests(unittest.TestCase):
         self.assertRegex(unit, r"(?m)^Restart=on-failure$")
         self.assertRegex(unit, r"(?m)^StartLimitBurst=[1-9]\d*$")
         self.assertNotIn("[Install]", unit)
+
+        resume_path = text(RESUME_PATH_UNIT)
+        resume_service = text(RESUME_SERVICE_UNIT)
+        resume_helper = text(RESUME_HELPER)
+        resume_hook = text(RESUME_HOOK)
+        self.assertIn(
+            "PathExists=%t/armada-odin3-audio-resume-trigger", resume_path
+        )
+        self.assertNotIn("PathChanged=", resume_path)
+        self.assertIn(
+            "Unit=armada-odin3-audio-resume.service", resume_path
+        )
+        self.assertNotIn("steam-restore", resume_path)
+        self.assertRegex(resume_path, r"(?m)^WantedBy=default.target$")
+        self.assertRegex(resume_service, r"(?m)^Type=oneshot$")
+        self.assertIn(
+            "ExecStart=/usr/libexec/armada/odin3-audio-resume",
+            resume_service,
+        )
+        self.assertNotIn("steam-restore", resume_service)
+        self.assertIn("armada-odin3-audio-resume-trigger", resume_helper)
+        self.assertIn("armada-odin3-audio-resume", resume_helper)
+        self.assertIn('mv -fT "$trigger" "$pending"', resume_helper)
+        self.assertIn("--user --no-block restart", resume_helper)
+        self.assertIn("armada-odin3-audio-hotplug.service", resume_helper)
+        self.assertLess(
+            resume_helper.index('mv -fT "$trigger" "$pending"'),
+            resume_helper.index("--user --no-block restart"),
+        )
+        self.assertIn("odin3-audio-active-output", resume_hook)
+        self.assertIn("odin3-audio-resume-trigger", resume_hook)
+        self.assertNotIn("odin3-audio-speaker-default", resume_hook)
+        for value in ("ayn-odin-3", "AYN Odin 3", "SM8750"):
+            self.assertIn(value, resume_hook)
+        self.assertIn('choice="$pending_choice"', resume_hook)
+        self.assertIn("case \"${1:-}\"", resume_hook)
+        self.assertIn("pre)", resume_hook)
+        self.assertIn("post)", resume_hook)
+        self.assertIn("mv -fT", resume_hook)
+        self.assertIn('rm -f "$snapshot"', resume_hook)
+        self.assertIn('rm -f "$resume_marker"', resume_hook)
 
         trigger = (
             "systemctl --user --no-block restart "

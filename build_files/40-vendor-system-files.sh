@@ -14,14 +14,18 @@ EOF
 
 chmod 0755 /usr/libexec/armada/*
 chmod 0755 /usr/libexec/os-session-select
+chmod 0755 /usr/lib/systemd/system-sleep/60-armada-odin3-audio-resume
 
 test -x /usr/libexec/armada/odin3-audio-setup
 test -x /usr/libexec/armada/odin3-audio-default
 test -x /usr/libexec/armada/odin3-audio-steam-restore
 test -x /usr/libexec/armada/odin3-audio-hotplug
+test -x /usr/libexec/armada/odin3-audio-resume
 test -f /usr/lib/systemd/system/armada-odin3-audio-setup.service
 test -f /usr/lib/systemd/user/armada-odin3-audio-default.service
 test -f /usr/lib/systemd/user/armada-odin3-audio-steam-restore.service
+test -f /usr/lib/systemd/user/armada-odin3-audio-resume.path
+test -f /usr/lib/systemd/user/armada-odin3-audio-resume.service
 test -f /usr/lib/systemd/user/armada-odin3-audio-hotplug.service
 test -f /usr/share/armada/audio/odin3/pipewire.conf.d/50-hrir-7_1.conf
 test -f /usr/share/armada/audio/odin3/pipewire.conf.d/55-odin3-stereo.conf
@@ -53,6 +57,7 @@ systemctl enable armada-device-quirks.service
 systemctl enable armada-odin3-audio-setup.service
 systemctl --global enable armada-odin3-audio-default.service
 systemctl --global enable armada-odin3-audio-hotplug.service
+systemctl --global enable armada-odin3-audio-resume.path
 systemctl enable armada-fixups.service
 systemctl enable armada-installer-visibility.service
 systemctl enable armada-steamapps.service

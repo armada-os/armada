@@ -76,6 +76,24 @@ several external outputs are connected, removing the active one selects the
 most recently created remaining output. Removing the final external output
 restores the user's saved **Stereo** or **Virtual Surround Sound** choice.
 
+While running, the hotplug router atomically records an active **Stereo** or
+**Virtual Surround Sound** sink in per-user runtime state and removes that
+record for headphones, Bluetooth, or any other output. Before real suspend,
+the system sleep hook snapshots only that confirmed active internal sink. On
+resume, the hook creates a one-shot trigger. `armada-odin3-audio-resume.path`
+starts a dedicated service whose validated helper atomically consumes that
+trigger into the retained pending-request path before restarting the hotplug
+router. Clearing the pending request therefore cannot retrigger the resume
+service.
+
+The restarted router handles the pending resume choice before ordinary
+preference capture. It restores the exact sink, moves existing streams, updates
+the durable return preference, clears the pending marker, and then requests the
+bounded Steam synchronization. If **Virtual Surround Sound** is still being
+created, **Stereo** can provide temporary audio without replacing the saved
+surround preference; a later sink event completes the requested restore. A
+second sleep during that fallback retains the still-pending surround request.
+
 The router never applies Odin speaker gain, HRIR convolution, hidden-transport
 policy, or the graph-local Stereo downmix to an external sink. Unknown USB,
 HDMI, and unrelated outputs do not trigger this Bluetooth/headphone policy.

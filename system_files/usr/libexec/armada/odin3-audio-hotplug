@@ -148,6 +148,7 @@ def sink_serial(sink: dict[str, Any]) -> int:
 @dataclass(frozen=True)
 class Snapshot:
     default: str
+    sinks: frozenset[str]
     external: dict[str, dict[str, Any]]
     sink_inputs: tuple[int, ...]
     card: dict[str, Any] | None
@@ -186,6 +187,9 @@ class Pactl:
             for item in sinks
             if item.get("name") and external_sink(item)
         }
+        sink_names = frozenset(
+            str(item["name"]) for item in sinks if item.get("name")
+        )
         indexes: list[int] = []
         for item in inputs:
             if not migratable_sink_input(item):
@@ -194,7 +198,7 @@ class Pactl:
                 indexes.append(int(item["index"]))
             except (KeyError, TypeError, ValueError):
                 continue
-        return Snapshot(default, external, tuple(indexes), card)
+        return Snapshot(default, sink_names, external, tuple(indexes), card)
 
 
 class ReturnChoice:
@@ -287,6 +291,85 @@ class ReturnChoice:
                 os.unlink(temporary)
             except FileNotFoundError:
                 pass
+
+
+class RuntimeOutputState:
+    def __init__(self) -> None:
+        runtime = Path(
+            os.environ.get(
+                "XDG_RUNTIME_DIR",
+                f"/run/user/{os.getuid() if hasattr(os, 'getuid') else 1000}",
+            )
+        )
+        self.active = Path(
+            os.environ.get(
+                "ARMADA_AUDIO_ACTIVE_OUTPUT",
+                runtime / "armada-odin3-audio-active-output",
+            )
+        )
+        self.pending = Path(
+            os.environ.get(
+                "ARMADA_AUDIO_RESUME_PREFERENCE",
+                runtime / "armada-odin3-audio-resume",
+            )
+        )
+
+    @staticmethod
+    def _read(path: Path) -> str | None:
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 64:
+                return None
+            value = path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError):
+            return None
+        return value if value in INTERNAL_SINKS else None
+
+    @staticmethod
+    def _write(path: Path, value: str) -> None:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if path.parent.is_symlink() or not path.parent.is_dir():
+            raise RuntimeError(f"unsafe runtime audio directory: {path.parent}")
+        if path.is_symlink():
+            raise RuntimeError(f"refusing symlinked runtime audio state: {path}")
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{path.name}.", dir=path.parent
+        )
+        try:
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+            with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                descriptor = -1
+                handle.write(f"{value}\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    def record_active(self, value: str) -> None:
+        if value in INTERNAL_SINKS:
+            self._write(self.active, value)
+            return
+        self.clear(self.active)
+
+    def load_pending(self) -> str | None:
+        return self._read(self.pending)
+
+    def clear_pending(self) -> None:
+        self.clear(self.pending)
+
+    @staticmethod
+    def clear(path: Path) -> None:
+        try:
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 class StereoVolumeMigration:
@@ -414,11 +497,18 @@ class StereoVolumeMigration:
 
 
 class HotplugPolicy:
-    def __init__(self, pactl: Pactl, choice: ReturnChoice) -> None:
+    def __init__(
+        self,
+        pactl: Pactl,
+        choice: ReturnChoice,
+        runtime: RuntimeOutputState,
+    ) -> None:
         self.pactl = pactl
         self.choice = choice
+        self.runtime = runtime
         self.known_external: set[str] | None = None
         self.active_external: str | None = None
+        self.resume_fallback_activated = False
 
     def _set_card_profile(self, profile: str) -> bool:
         try:
@@ -483,7 +573,9 @@ class HotplugPolicy:
         except (OSError, subprocess.SubprocessError) as error:
             log(f"could not notify Steam audio policy: {error}")
 
-    def _activate(self, snapshot: Snapshot, target: str) -> bool:
+    def _activate(
+        self, snapshot: Snapshot, target: str, *, notify: bool = True
+    ) -> bool:
         if not target:
             return False
         if snapshot.default != target:
@@ -507,7 +599,41 @@ class HotplugPolicy:
             except (OSError, subprocess.SubprocessError):
                 continue
         log(f"selected {target}")
-        self._notify_steam()
+        self.runtime.record_active(target)
+        if notify:
+            self._notify_steam()
+        return True
+
+    def _restore_pending(self, snapshot: Snapshot) -> bool:
+        requested = self.runtime.load_pending()
+        if requested is None:
+            return False
+
+        self.known_external = set(snapshot.external)
+        if requested in snapshot.sinks:
+            if not self._activate(snapshot, requested, notify=False):
+                raise RuntimeError(
+                    f"pending resume output {requested} was present "
+                    "but could not be activated"
+                )
+            self.choice.save(requested)
+            self.runtime.clear_pending()
+            self.resume_fallback_activated = False
+            self._notify_steam()
+            log(f"restored pre-suspend output {requested}")
+            return True
+
+        # VSS can appear after Stereo while PipeWire rebuilds the graph. Keep
+        # the request and durable preference guarded, but provide working audio
+        # through Stereo until a later sink event can complete the restore.
+        if (
+            requested == "Virtual Surround Sound"
+            and "Stereo" in snapshot.sinks
+            and not self.resume_fallback_activated
+        ):
+            if self._activate(snapshot, "Stereo"):
+                self.resume_fallback_activated = True
+                log("using Stereo while Virtual Surround Sound is settling")
         return True
 
     @staticmethod
@@ -527,6 +653,9 @@ class HotplugPolicy:
             snapshot = self.pactl.snapshot()
 
         current = set(snapshot.external)
+        self.runtime.record_active(snapshot.default)
+        if self._restore_pending(snapshot):
+            return
 
         if self.known_external is None:
             if (
@@ -598,9 +727,9 @@ class HotplugPolicy:
 def watch(
     policy: HotplugPolicy, volume_migration: StereoVolumeMigration
 ) -> int:
-    volume_migration.reconcile(policy.pactl)
-    policy.reconcile()
     if "--once" in sys.argv[1:]:
+        volume_migration.reconcile(policy.pactl)
+        policy.reconcile()
         return 0
 
     pactl_binary = os.environ.get("ARMADA_AUDIO_PACTL", "/usr/bin/pactl")
@@ -611,12 +740,17 @@ def watch(
         text=True,
         bufsize=1,
     )
+    # Subscribe before the initial resume reconciliation so a sink created
+    # between the first inventory and the blocking read remains queued.
+    volume_migration.reconcile(policy.pactl)
+    policy.reconcile()
     assert process.stdout is not None
     relevant = ("on sink ", "on sink-input ", "on card ", "on server ")
     debounce = float(os.environ.get("ARMADA_AUDIO_DEBOUNCE_SECONDS", "0.20"))
     while True:
         line = process.stdout.readline()
         if line == "":
+            policy.runtime.record_active("")
             return process.wait() or 1
         if not any(token in line for token in relevant):
             continue
@@ -631,6 +765,7 @@ def watch(
                 break
             next_line = process.stdout.readline()
             if next_line == "":
+                policy.runtime.record_active("")
                 return process.wait() or 1
             if any(token in next_line for token in relevant):
                 deadline = time.monotonic() + max(0.02, debounce)
@@ -638,20 +773,31 @@ def watch(
             volume_migration.reconcile(policy.pactl)
             policy.reconcile()
         except (OSError, ValueError, subprocess.SubprocessError) as error:
+            policy.runtime.record_active("")
             log(f"reconciliation deferred after transient error: {error}")
 
 
 def main() -> int:
     if not device_matches():
         return 0
+    runtime = RuntimeOutputState()
     try:
         choice = ReturnChoice()
         choice.seed_from_wireplumber()
         return watch(
-            HotplugPolicy(Pactl(), choice),
+            HotplugPolicy(Pactl(), choice, runtime),
             StereoVolumeMigration(choice.directory),
         )
-    except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+    except RuntimeError as error:
+        # A confirmed pending selection can fail while the graph is settling.
+        # Preserve its active-output guard and let systemd retry this daemon.
+        log(str(error))
+        return 1
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        try:
+            runtime.record_active("")
+        except OSError:
+            pass
         log(str(error))
         return 1
 

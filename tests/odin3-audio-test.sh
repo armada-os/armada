@@ -10,6 +10,7 @@ PYTHONDONTWRITEBYTECODE=1 \
     python3 "$root/tests/odin3-audio-hotplug-test.py" -v
 PYTHONDONTWRITEBYTECODE=1 \
     python3 "$root/tests/odin3-audio-steam-sync-test.py" -v
+bash "$root/tests/odin3-audio-resume-test.sh"
 
 if command -v spa-json-dump >/dev/null 2>&1; then
     while IFS= read -r fragment; do
