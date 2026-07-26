@@ -1,5 +1,9 @@
 eval "$(/usr/libexec/armada/device-env)"
 
+if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    export GAMESCOPE_LIMITER_FILE="${XDG_RUNTIME_DIR}/gamescope-limiter"
+fi
+
 [[ -n "${ARMADA_PRIMARY_CONNECTOR:-}" ]] && OUTPUT_CONNECTOR="$ARMADA_PRIMARY_CONNECTOR"
 [[ -n "${ARMADA_PANEL_TYPE:-}" ]] && PANEL_TYPE="$ARMADA_PANEL_TYPE"
 [[ -n "${ARMADA_PANEL_ORIENTATION:-}" ]] && ORIENTATION="$ARMADA_PANEL_ORIENTATION"

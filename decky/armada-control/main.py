@@ -11,7 +11,13 @@ from armada_control.config import build_config
 from armada_control.controller import set_controller_type
 from armada_control.power import save_power_config
 from armada_control.steam import installed_games
-from armada_control.system import set_ssh_enabled
+from armada_control.system import (
+    get_auto_hdr_preferences,
+    get_hdr_runtime_state,
+    reconcile_auto_hdr,
+    set_ssh_enabled,
+    update_auto_hdr_preferences,
+)
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
 
 
@@ -22,6 +28,40 @@ class Plugin:
 
     async def get_installed_games(self):
         return await asyncio.to_thread(installed_games)
+
+    async def get_hdr_runtime_state(self):
+        return await asyncio.to_thread(get_hdr_runtime_state)
+
+    async def get_auto_hdr_preferences(
+        self, active_scope="global", active_app_id=None
+    ):
+        return await asyncio.to_thread(
+            get_auto_hdr_preferences, active_scope, active_app_id
+        )
+
+    async def update_auto_hdr_preferences(
+        self,
+        target_scope,
+        target_app_id,
+        active_scope,
+        active_app_id,
+        patch,
+    ):
+        return await asyncio.to_thread(
+            update_auto_hdr_preferences,
+            target_scope,
+            target_app_id,
+            active_scope,
+            active_app_id,
+            patch,
+        )
+
+    async def reconcile_auto_hdr(
+        self, active_scope="global", active_app_id=None
+    ):
+        return await asyncio.to_thread(
+            reconcile_auto_hdr, active_scope, active_app_id
+        )
 
     async def save_power_config(self, data):
         await asyncio.to_thread(save_power_config, data)

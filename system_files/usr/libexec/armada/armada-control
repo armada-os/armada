@@ -17,6 +17,7 @@ CONFIG_PATHS = {
     "tweaks": Path("/etc/armada/game-tweaks.json"),
     "calibration": Path("/etc/armada/input-calibration.json"),
     "compat-applied": Path("/var/lib/armada/compat-applied.json"),
+    "auto-hdr-profiles": Path("/var/lib/armada/auto-hdr-profiles.json"),
 }
 CALIBRATION_PARAMS = (
     "axis_leftx_min",

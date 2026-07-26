@@ -70,6 +70,31 @@ export interface GameRef {
   name: string;
 }
 
+export type AutoHdrMode = 1 | 2;
+export type AutoHdrScope = "global" | "game";
+
+export interface AutoHdrPreference {
+  enabled: boolean;
+}
+
+export interface AutoHdrAppOverride {
+  enabled?: boolean;
+}
+
+export interface AutoHdrPreferencesSnapshot {
+  version: 2;
+  global: AutoHdrPreference;
+  override: AutoHdrAppOverride | null;
+  scope: AutoHdrScope;
+  appId: string | null;
+  resolved: AutoHdrPreference;
+  runtime: HdrRuntimeState;
+}
+
+export interface AutoHdrPreferencePatch {
+  enabled?: boolean | null;
+}
+
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
@@ -77,6 +102,7 @@ export interface Config {
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
   cpuDeviceClass: string;
+  hdrCapable: boolean;
   osVersion: string;
   sshEnabled: boolean;
   controllerType: string;
@@ -86,9 +112,29 @@ export interface Config {
   selectedGame?: GameRef | null;
 }
 
+export interface HdrRuntimeState {
+  available: boolean;
+  display: string | null;
+  displayIsExternal: boolean | null;
+  supportsHdr: boolean;
+  enabled: boolean;
+  outputFeedback: boolean;
+  sdrContentBrightnessNits: number | null;
+  autoHdrSupported: boolean;
+  autoHdrEnabled: boolean;
+  autoHdrSdrNits: number | null;
+  autoHdrTargetNits: number | null;
+  autoHdrSupportedModes: number;
+  autoHdrModeProtocolPresent: boolean;
+  autoHdrModeProtocol: boolean;
+  autoHdrMode: AutoHdrMode | null;
+  autoHdrEffectiveMode: 0 | AutoHdrMode | null;
+  reason: string;
+}
+
 export type Capture = Record<string, { center: number; min: number; max: number; range: number }>;
 
 export interface DropdownChoice {
-  data: string;
+  data: string | number;
   label: string;
 }

@@ -1,6 +1,16 @@
 import { definePlugin } from "@decky/api";
-import { getCompatApplied, getConfig, getInstalledGames, saveCompatApplied } from "./backend";
+import {
+  getCompatApplied,
+  getConfig,
+  getHdrRuntimeState,
+  getInstalledGames,
+  saveCompatApplied,
+} from "./backend";
 import { Content } from "./Content";
+import { registerDisplayHdrRoutePatch } from "./lib/displayHdrRoutePatch";
+import { registerPerformanceHdrQamPatch } from "./lib/performanceHdrQamPatch";
+import { hasHdrControlCapability } from "./lib/hdrCapability";
+import { autoHdrPreferenceState } from "./lib/autoHdrPreferenceCoordinator";
 import {
   configureCompatPolicy,
   handledGameAppids,
@@ -9,15 +19,48 @@ import {
 } from "./lib/steamCompat";
 
 export default definePlugin(() => {
+  autoHdrPreferenceState.start();
   let unregisterDownloadWatcher = () => {};
+  let unregisterDisplayHdrRoutePatch = () => {};
+  let unregisterPerformanceHdrQamPatch = () => {};
   const persistHandledGames = () => {
     saveCompatApplied(handledGameAppids()).catch(() => {});
   };
   let cancelled = false;
+  const configPromise = getConfig();
+  const discoverHdrCapability = async () => {
+    const retryDelaysMs = [0, 250, 500, 1000, 2000, 4000, 8000];
+    for (let attempt = 0; attempt < retryDelaysMs.length && !cancelled; attempt += 1) {
+      const delayMs = retryDelaysMs[attempt];
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+      }
+      if (cancelled) return;
+      try {
+        const [configResult, runtimeResult] = await Promise.allSettled([
+          attempt === 0 ? configPromise : getConfig(),
+          getHdrRuntimeState(),
+        ]);
+        if (cancelled) return;
+        const config = configResult.status === "fulfilled" ? configResult.value : undefined;
+        const runtime = runtimeResult.status === "fulfilled" ? runtimeResult.value : undefined;
+        if (!hasHdrControlCapability(config, runtime)) continue;
+        unregisterDisplayHdrRoutePatch = registerDisplayHdrRoutePatch();
+        unregisterPerformanceHdrQamPatch = registerPerformanceHdrQamPatch();
+        return;
+      } catch (error) {
+        console.warn("[Armada Control] HDR capability discovery retry", error);
+      }
+    }
+    if (!cancelled) {
+      console.warn("[Armada Control] HDR controls unavailable after bounded capability discovery");
+    }
+  };
+  void discoverHdrCapability();
   const handledRequest = getCompatApplied()
     .then((appids) => ({ appids, loaded: true }))
     .catch(() => ({ appids: [] as string[], loaded: false }));
-  Promise.all([getConfig(), getInstalledGames(), handledRequest])
+  Promise.all([configPromise, getInstalledGames(), handledRequest])
     .then(([config, games, handled]) => {
       if (cancelled) return;
       configureCompatPolicy(
@@ -40,6 +83,9 @@ export default definePlugin(() => {
     content: <Content />,
     onDismount() {
       cancelled = true;
+      autoHdrPreferenceState.stop();
+      unregisterPerformanceHdrQamPatch();
+      unregisterDisplayHdrRoutePatch();
       unregisterDownloadWatcher();
     },
     icon: (
