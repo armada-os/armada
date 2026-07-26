@@ -1,0 +1,11 @@
+[Unit]
+Description=HUD-toggle button listener (AYN button)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/libexec/armada/hud-toggle-listener
+# The listener exits 0 on devices without a configured button; on-failure
+# keeps that final while restarting real failures (e.g. evtest dying).
+Restart=on-failure
+RestartSec=5

@@ -1,0 +1,89 @@
+#!/usr/bin/python3
+"""Merge Armada's vendor KWin rules into the current user's rulebook."""
+
+from __future__ import annotations
+
+import configparser
+import os
+from pathlib import Path
+import tempfile
+
+
+def load_config(path: Path) -> configparser.ConfigParser:
+    config = configparser.ConfigParser(interpolation=None, strict=False)
+    config.optionxform = str
+    if path.is_file():
+        with path.open(encoding="utf-8") as config_file:
+            config.read_file(config_file)
+    return config
+
+
+def rule_names(config: configparser.ConfigParser) -> list[str]:
+    if not config.has_section("General"):
+        return []
+    return [
+        name.strip()
+        for name in config.get("General", "rules", fallback="").split(",")
+        if name.strip()
+    ]
+
+
+def main() -> None:
+    vendor = Path(
+        os.environ.get("ARMADA_KWIN_RULES_VENDOR", "/etc/xdg/kwinrulesrc")
+    )
+    target = Path(
+        os.environ.get(
+            "ARMADA_KWIN_RULES_TARGET",
+            str(
+                Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+                / "kwinrulesrc"
+            ),
+        )
+    )
+
+    if not vendor.is_file():
+        return
+
+    vendor_config = load_config(vendor)
+    vendor_rules = rule_names(vendor_config)
+    if not vendor_rules:
+        return
+
+    user_config = load_config(target)
+    existing_rules = [
+        name for name in rule_names(user_config) if name not in vendor_rules
+    ]
+
+    for name in vendor_rules:
+        if not vendor_config.has_section(name):
+            continue
+        if user_config.has_section(name):
+            user_config.remove_section(name)
+        user_config.add_section(name)
+        for key, value in vendor_config.items(name, raw=True):
+            user_config.set(name, key, value)
+
+    merged_rules = existing_rules + [
+        name for name in vendor_rules if vendor_config.has_section(name)
+    ]
+    if not user_config.has_section("General"):
+        user_config.add_section("General")
+    user_config.set("General", "rules", ",".join(merged_rules))
+    user_config.set("General", "count", str(len(merged_rules)))
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    old_mode = target.stat().st_mode & 0o777 if target.exists() else 0o600
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=target.parent, delete=False
+    ) as config_file:
+        temporary = Path(config_file.name)
+        user_config.write(config_file, space_around_delimiters=False)
+        config_file.flush()
+        os.fsync(config_file.fileno())
+    temporary.chmod(old_mode)
+    temporary.replace(target)
+
+
+if __name__ == "__main__":
+    main()
