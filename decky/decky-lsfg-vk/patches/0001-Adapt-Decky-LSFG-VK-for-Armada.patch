@@ -1,0 +1,81 @@
+From 8ba24834a871394ac1308dd8ad575d248a2ee7a2 Mon Sep 17 00:00:00 2001
+From: JPyke3 <github@pyk.ee>
+Date: Mon, 27 Jul 2026 08:49:34 +1000
+Subject: [PATCH] Adapt Decky LSFG-VK for Armada
+
+---
+ plugin.json                         | 2 +-
+ py_modules/lsfg_vk/config_schema.py | 4 ++--
+ py_modules/lsfg_vk/installation.py  | 6 +++---
+ py_modules/lsfg_vk/plugin.py        | 1 +
+ 4 files changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/plugin.json b/plugin.json
+index ea49519..1f59aec 100644
+--- a/plugin.json
++++ b/plugin.json
+@@ -1,5 +1,5 @@
+ {
+-  "name": "Decky LSFG-VK",
++  "name": "Decky LSFG-VK (Armada)",
+   "author": "Kurt Himebauch (xXJSONDeruloXx)",
+   "flags": [],
+   "api_version": 1,
+diff --git a/py_modules/lsfg_vk/config_schema.py b/py_modules/lsfg_vk/config_schema.py
+index 4ab2dcb..ace7f03 100644
+--- a/py_modules/lsfg_vk/config_schema.py
++++ b/py_modules/lsfg_vk/config_schema.py
+@@ -130,8 +130,8 @@ class ConfigurationManager:
+                 logging.getLogger(__name__).debug(f"DLL detection failed: {e}")
+         
+         # If DLL path is still empty, use a reasonable fallback
+-        if not defaults["dll"]:
+-            defaults["dll"] = "/home/deck/.local/share/Steam/steamapps/common/Lossless Scaling/Lossless.dll"
++        if not defaults["dll"] or defaults["dll"] == "/games/Lossless Scaling/Lossless.dll":
++            defaults["dll"] = str(Path.home() / ".local/share/Steam/steamapps/common/Lossless Scaling/Lossless.dll")
+         
+         return defaults
+     
+diff --git a/py_modules/lsfg_vk/installation.py b/py_modules/lsfg_vk/installation.py
+index 4f01be1..3dcfc28 100644
+--- a/py_modules/lsfg_vk/installation.py
++++ b/py_modules/lsfg_vk/installation.py
+@@ -53,7 +53,7 @@ class InstallationService(BaseService):
+             if self._is_arm_architecture():
+                 self.log.info("Detected ARM architecture, using ARM binary")
+                 arm_so_path = plugin_dir / BIN_DIR / ARM_LIB_FILENAME
+-                shutil.copy2(arm_so_path, self.lib_file)
++                shutil.copyfile(arm_so_path, self.lib_file)
+                 self.log.info(f"Overwrote with ARM binary: {self.lib_file}")
+             
+             self._create_config_file()
+@@ -78,7 +78,7 @@ class InstallationService(BaseService):
+         Returns:
+             True if running on ARM (aarch64), False otherwise
+         """
+-        return platform.machine().lower() == 'aarch64'
++        return True
+     
+     def _extract_and_install_files(self, zip_path: Path) -> None:
+         """Extract zip file and install files to appropriate locations
+@@ -117,7 +117,7 @@ class InstallationService(BaseService):
+                             if file_path.suffix == JSON_EXT and file == JSON_FILENAME:
+                                 self._copy_and_fix_json_file(src_file, dst_file)
+                             else:
+-                                shutil.copy2(src_file, dst_file)
++                                shutil.copyfile(src_file, dst_file)
+                             
+                             self.log.info(f"Copied {file} to {dst_file}")
+     
+diff --git a/py_modules/lsfg_vk/plugin.py b/py_modules/lsfg_vk/plugin.py
+index cb59b4f..14c5900 100644
+--- a/py_modules/lsfg_vk/plugin.py
++++ b/py_modules/lsfg_vk/plugin.py
+@@ -418,6 +418,7 @@ class Plugin:
+         Any initialization code should go here.
+         """
+         decky.logger.info("decky-lsfg-vk plugin loaded")
++        self.installation_service.install()
+ 
+     async def _unload(self):
+         """

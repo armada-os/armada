@@ -11,6 +11,27 @@ rm -f /usr/share/decky-plugins/armada-control/dist/*.map
 find /usr/share/decky-plugins/armada-control -name __pycache__ -type d -prune -exec rm -rf {} +
 chmod 0755 /usr/lib/decky-loader/armada-decky-sync
 
+lsfg_version=0.12.5
+lsfg_url=https://github.com/xXJSONDeruloXx/decky-lsfg-vk/releases/download/v${lsfg_version}/Decky.LSFG-VK.zip
+lsfg_sha256=13b8c8de5744a4fcf300e85971cb0c110f0734cb2db508c8de6309bbf8298a07
+lsfg_archive="$(mktemp)"
+lsfg_extract="$(mktemp -d)"
+
+curl --retry 3 --retry-delay 2 -fL -o "${lsfg_archive}" "${lsfg_url}"
+printf '%s  %s\n' "${lsfg_sha256}" "${lsfg_archive}" | sha256sum -c -
+unzip -q "${lsfg_archive}" -d "${lsfg_extract}"
+
+lsfg_src="${lsfg_extract}/Decky LSFG-VK"
+patch --directory="${lsfg_src}" --strip=1 \
+    < /ctx/decky/decky-lsfg-vk/patches/0001-Adapt-Decky-LSFG-VK-for-Armada.patch
+sed -i 's/Decky LSFG-VK/Decky LSFG-VK (Armada)/g' "${lsfg_src}/dist/index.js"
+install -d -m 0755 /usr/share/decky-plugins/decky-lsfg-vk
+cp -a "${lsfg_src}/." /usr/share/decky-plugins/decky-lsfg-vk/
+install -m 0755 /packages/lsfg-vk/liblsfg-vk.so \
+    /usr/share/decky-plugins/decky-lsfg-vk/bin/liblsfg-vk-arm64.so
+rm -rf "${lsfg_extract}"
+rm -f "${lsfg_archive}"
+
 decky_release="$(
     curl --retry 3 --retry-delay 2 -fsSL \
         https://api.github.com/repos/SteamDeckHomebrew/decky-loader/releases |

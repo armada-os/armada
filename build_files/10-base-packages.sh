@@ -31,6 +31,7 @@ dnf5 -y install --setopt=install_weak_deps=False \
     rsync \
     curl \
     jq \
+    patch \
     htop \
     lsof \
     scx-scheds \
