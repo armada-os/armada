@@ -2,10 +2,19 @@
 # zz- sorts after armada.conf so its Session= wins (User=/Relogin= stay there).
 set -euo pipefail
 
+# On nested-gaming devices the desktop session hosts gaming mode as a
+# nested gamescope (launched by desktop-bootstrap), so "gamemode" boots
+# into the plasma session too.
+gamemode_session=gamescope-session-steam.desktop
+if command -v /usr/libexec/armada/device-env >/dev/null 2>&1; then
+    eval "$(/usr/libexec/armada/device-env)"
+    [[ ${ARMADA_GAMING_SESSION:-} == nested ]] && gamemode_session=armada-plasma.desktop
+fi
+
 case "${1:-}" in
     switch-desktop)  session=armada-plasma.desktop ;;
-    switch-gamemode) session=gamescope-session-steam.desktop ;;
-    default-gamemode) session=gamescope-session-steam.desktop; default_only=1 ;;
+    switch-gamemode) session=$gamemode_session ;;
+    default-gamemode) session=$gamemode_session; default_only=1 ;;
     *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode}" >&2; exit 1 ;;
 esac
 

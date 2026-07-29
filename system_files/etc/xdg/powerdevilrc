@@ -1,0 +1,10 @@
+# Armada: no automatic idle suspend. PowerDevil's idle detection does not
+# count gamepad input as activity, so with the persistent desktop session
+# (nested gaming) it would suspend mid-game. Suspend stays available via the
+# power button (powerbuttond -> fake-suspend). Users can still override this
+# per-user in System Settings.
+[AC][SuspendAndShutdown]
+AutoSuspendAction=0
+
+[Battery][SuspendAndShutdown]
+AutoSuspendAction=0

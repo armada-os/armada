@@ -55,3 +55,10 @@ systemctl mask irqbalance.service
 
 # Only plain suspend is supported (via the suspend-dispatch drop-in); mask the rest.
 systemctl mask systemd-hibernate.service systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service
+
+# KWin pops the kscreen screen-layout picker OSD whenever two outputs show up
+# in a combination it has not stored yet - on dual-screen devices that is the
+# very first boot. The layout is handled by desktop-bootstrap; the picker is
+# noise on a handheld. KWin's D-Bus call to the OSD service is fire-and-forget,
+# so masking the service is safe and Display Settings keep working.
+systemctl --global mask plasma-kscreen-osd.service

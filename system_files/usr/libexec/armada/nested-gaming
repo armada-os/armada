@@ -1,0 +1,101 @@
+#!/usr/bin/bash
+# Gaming mode on dual-screen devices (ARMADA_GAMING_SESSION=nested): run
+# gamescope+Steam as a nested fullscreen window on the primary screen of the
+# already-running desktop session. Runs as armada-nested-gaming.service (user
+# unit); steamos-manager and os-session-select start/stop that unit; see
+# docs/superpowers/specs/2026-07-07-thor-second-screen-phase2-design.md.
+#
+# Steam runs as our child rather than gamescope's so that its exit ends the
+# unit and Restart= brings the whole stack back up. Steam applies client
+# updates by exiting and relying on its wrapper to relaunch it, sometimes
+# twice in a row (the embedded session gets the same effect from SDDM
+# Relogin restarting the whole gamescope session).
+set -euo pipefail
+
+eval "$(/usr/libexec/armada/device-env)"
+
+# The host desktop session is Wayland, but clients inside nested Gamescope use
+# Xwayland. This also prevents GLFW applications from selecting host Wayland.
+export XDG_SESSION_TYPE=x11
+
+# Advertise the external MangoApp overlay path and the layouts supported by
+# the installed MangoHud package. These mirror gamescope-session-steam.
+export STEAM_USE_MANGOAPP=1
+export STEAM_MANGOAPP_PRESETS_SUPPORTED=1
+export STEAM_MANGOAPP_HORIZONTAL_SUPPORTED=1
+export STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND=1
+
+# Steam rewrites this file when the performance-overlay level changes. Keep
+# MangoApp hidden until Steam has restored the selected level.
+MANGOHUD_CONFIGFILE=$(mktemp /tmp/mangohud.XXXXXXXX)
+export MANGOHUD_CONFIGFILE
+echo "no_display" >"$MANGOHUD_CONFIGFILE"
+
+# The desktop shows rotated panels in landscape; gamescope renders landscape.
+width="${ARMADA_PANEL_NATIVE_WIDTH:-1080}"
+height="${ARMADA_PANEL_NATIVE_HEIGHT:-1920}"
+case "${ARMADA_PANEL_ORIENTATION:-normal}" in
+    left|right) gs_w="$height" gs_h="$width" ;;
+    *)          gs_w="$width"  gs_h="$height" ;;
+esac
+
+# Expose the refresh range so Steam offers per-game refresh switching;
+# nested-refresh-bridge applies requests to the host compositor.
+if [[ -n "${ARMADA_PANEL_REFRESH_RATES:-}" ]]; then
+    IFS=',' read -r -a _rates <<< "$ARMADA_PANEL_REFRESH_RATES"
+    if (( ${#_rates[@]} > 1 )); then
+        export STEAM_DISPLAY_REFRESH_LIMITS="${_rates[0]},${_rates[-1]}"
+    fi
+    # Advertised to Steam via gamescope_control (armada gamescope patch);
+    # the Wayland backend cannot enumerate the host output's modes itself.
+    export GAMESCOPE_NESTED_REFRESH_RATES="$ARMADA_PANEL_REFRESH_RATES"
+    /usr/libexec/armada/nested-refresh-bridge &
+fi
+
+# --prefer-output pins the fullscreen window to the primary screen (armada
+# gamescope patch: the Wayland backend passes it to the fullscreen request;
+# otherwise the host compositor picks whichever output was last active).
+prefer_output=()
+[[ -n "${ARMADA_PRIMARY_CONNECTOR:-}" ]] && prefer_output=(--prefer-output "$ARMADA_PRIMARY_CONNECTOR")
+
+# Readiness handshake: gamescope writes its X and Wayland display names to
+# the -R pipe once it is up (same mechanism gamescope-session-plus uses).
+socket=$(mktemp --tmpdir -u armada-nested-gaming.XXXXXX.socket)
+mkfifo -- "$socket"
+trap 'rm -f -- "$socket" "$MANGOHUD_CONFIGFILE"' EXIT
+
+gamescope -e --fullscreen -W "$gs_w" -H "$gs_h" --steam "${prefer_output[@]}" \
+    -R "$socket" &
+gamescope_pid=$!
+
+if ! read -r -t 15 x_display wl_display <>"$socket"; then
+    echo "nested-gaming: gamescope not ready after 15s, giving up" >&2
+    kill -9 "$gamescope_pid" 2>/dev/null || true
+    exit 1
+fi
+
+# Match the environment gamescope gives a child it launches itself: X11
+# clients target the nested Xwayland, and WAYLAND_DISPLAY must not leak the
+# host compositor to games.
+export DISPLAY="$x_display"
+export GAMESCOPE_WAYLAND_DISPLAY="$wl_display"
+unset WAYLAND_DISPLAY
+
+# MangoApp must target Gamescope's nested Xwayland. Restart it if it exits so
+# one overlay failure does not require restarting Steam or Gamescope.
+if command -v mangoapp >/dev/null; then
+    (
+        while true; do
+            mangoapp || true
+            sleep 1
+        done
+    ) &
+fi
+
+status=0
+/usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck -noverifyfiles || status=$?
+
+# Steam is gone (client-update restart or crash); take gamescope down with
+# us so the unit restart brings up a fresh pair.
+kill "$gamescope_pid" 2>/dev/null || true
+exit "$status"

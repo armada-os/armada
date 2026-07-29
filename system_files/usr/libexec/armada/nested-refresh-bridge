@@ -1,0 +1,71 @@
+#!/usr/bin/bash
+# Bridge Steam's refresh-rate requests to KWin for the nested gaming session.
+#
+# In the embedded session gamescope owns the display and applies
+# GAMESCOPE_DYNAMIC_REFRESH (set by Steam on gamescope's Xwayland root)
+# itself; nested gamescope cannot modeset the host output. Watch the atom on
+# the nested Xwayland and apply the nearest supported panel rate through
+# kscreen-doctor. Spawned by nested-gaming; exits with the session.
+set -euo pipefail
+
+eval "$(/usr/libexec/armada/device-env)"
+
+[[ ${ARMADA_GAMING_SESSION:-} == nested ]] || exit 0
+[[ -n ${ARMADA_PRIMARY_CONNECTOR:-} && -n ${ARMADA_PANEL_REFRESH_RATES:-} ]] || exit 0
+[[ -n ${ARMADA_PANEL_NATIVE_WIDTH:-} && -n ${ARMADA_PANEL_NATIVE_HEIGHT:-} ]] || exit 0
+
+IFS=',' read -r -a rates <<< "$ARMADA_PANEL_REFRESH_RATES"
+max_rate="${rates[-1]}"
+mode_res="${ARMADA_PANEL_NATIVE_WIDTH}x${ARMADA_PANEL_NATIVE_HEIGHT}"
+
+# The nested gamescope's Xwayland is where Steam sets the atom; find its
+# display number from Steam's environment.
+nested_display=""
+for _ in $(seq 1 60); do
+    steam_pid=$(pgrep -x steam | head -1 || true)
+    if [[ -n "$steam_pid" ]]; then
+        nested_display=$(tr '\0' '\n' < "/proc/${steam_pid}/environ" 2>/dev/null \
+                             | sed -n 's/^DISPLAY=//p' | head -1)
+        [[ -n "$nested_display" ]] && break
+    fi
+    sleep 2
+done
+[[ -n "$nested_display" ]] || exit 0
+
+snap_rate() {
+    local want=$1 best="${rates[0]}" best_delta=-1 rate delta
+    for rate in "${rates[@]}"; do
+        delta=$(( want > rate ? want - rate : rate - want ))
+        # Ties go to the higher rate: rates are listed ascending.
+        if (( best_delta < 0 || delta <= best_delta )); then
+            best=$rate best_delta=$delta
+        fi
+    done
+    printf '%s' "$best"
+}
+
+current=""
+apply() {
+    local hz=$1
+    [[ "$hz" =~ ^[0-9]+$ ]] || hz=0
+    (( hz == 0 )) && hz=$max_rate
+    hz=$(snap_rate "$hz")
+    [[ "$hz" == "$current" ]] && return 0
+    if kscreen-doctor "output.${ARMADA_PRIMARY_CONNECTOR}.mode.${mode_res}@${hz}" >/dev/null 2>&1; then
+        current=$hz
+    fi
+}
+
+# Seed the atom so xprop -spy has a property to watch from the start.
+xprop -display "$nested_display" -root -f GAMESCOPE_DYNAMIC_REFRESH 32c \
+      -set GAMESCOPE_DYNAMIC_REFRESH 0 2>/dev/null || exit 0
+
+# stdbuf: xprop block-buffers when piped, which would delay events forever.
+stdbuf -oL xprop -display "$nested_display" -root -spy GAMESCOPE_DYNAMIC_REFRESH 2>/dev/null \
+    | while read -r line; do
+        apply "${line##*= }"
+    done
+
+# Nested Xwayland is gone (gaming session ended): restore the default rate.
+current=""
+apply "$max_rate"
