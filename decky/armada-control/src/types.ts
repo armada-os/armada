@@ -70,6 +70,11 @@ export interface GameRef {
   name: string;
 }
 
+export interface CpuBoostState {
+  available: boolean;
+  enabled: boolean;
+}
+
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
@@ -77,6 +82,7 @@ export interface Config {
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
   cpuDeviceClass: string;
+  cpuBoost: CpuBoostState;
   osVersion: string;
   sshEnabled: boolean;
   controllerType: string;

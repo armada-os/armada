@@ -80,6 +80,8 @@ def status():
         "fan_rpm",
         "temperature",
         "suspended",
+        "cpu_boost_available",
+        "cpu_boost_enabled",
     ):
         value = data[key].unpack() if hasattr(data[key], "unpack") else data[key]
         print(f"{key}={value}")
@@ -91,7 +93,7 @@ def call_method(name):
 
 def usage():
     print(
-        "Usage: armada-power status|reload|profile [name]|gpu-auto|gpu-manual <mhz>|suspend|resume",
+        "Usage: armada-power status|reload|profile [name]|gpu-auto|gpu-manual <mhz>|boost [on|off]|suspend|resume",
         file=sys.stderr,
     )
     return 2
@@ -118,6 +120,18 @@ def main():
         set_prop("GpuPerformanceLevel", GLib.Variant("s", "manual"))
         set_prop("ManualGpuClock", GLib.Variant("u", int(sys.argv[2])))
         return 0
+    if cmd == "boost":
+        if len(sys.argv) == 2:
+            print("on" if get_prop("CpuBoostEnabled") else "off")
+            return 0
+        value = sys.argv[2].strip().lower()
+        if value in ("1", "on", "true", "yes", "enable", "enabled"):
+            set_prop("CpuBoostEnabled", GLib.Variant("b", True))
+            return 0
+        if value in ("0", "off", "false", "no", "disable", "disabled"):
+            set_prop("CpuBoostEnabled", GLib.Variant("b", False))
+            return 0
+        return usage()
     if cmd == "suspend":
         call_method("Suspend")
         return 0
