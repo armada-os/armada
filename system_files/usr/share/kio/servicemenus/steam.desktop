@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+MimeType=application/x-desktop;application/x-executable;application/vnd.appimage;application/x-shellscript;application/x-sh;application/x-ms-dos-executable;application/x-msdownload;application/vnd.microsoft.portable-executable;text/x-shellscript;
+Actions=addToSteam;
+
+[Desktop Action addToSteam]
+Name=Add to Steam
+Icon=steam
+TryExec=steamos-add-to-steam
+Exec=steamos-add-to-steam -ui %f

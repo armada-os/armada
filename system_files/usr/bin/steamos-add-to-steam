@@ -1,0 +1,70 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Adapted from Valve's steamdeck-kde-presets helper for Armada's ARM client.
+set -euo pipefail
+
+show_dialog=0
+
+usage() {
+    echo "Usage: steamos-add-to-steam [-ui] <file>" >&2
+}
+
+show_error() {
+    if (( show_dialog )) && command -v kdialog >/dev/null 2>&1 &&
+            [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
+        kdialog --title "Add to Steam" --error "$1"
+    else
+        echo "steamos-add-to-steam: $1" >&2
+    fi
+}
+
+if [[ ${1:-} == -ui ]]; then
+    show_dialog=1
+    shift
+fi
+
+if (( EUID == 0 )); then
+    show_error "This command cannot be run as root."
+    exit 1
+fi
+if (( $# != 1 )); then
+    usage
+    exit 2
+fi
+
+if ! file=$(realpath -e -- "$1") || [[ ! -f ${file} ]]; then
+    show_error "File not found: $1"
+    exit 1
+fi
+
+mime=$(kmimetypefinder "${file}")
+case ${mime} in
+    application/x-desktop|application/x-ms-dos-executable|application/x-msdownload|application/vnd.microsoft.portable-executable)
+        ;;
+    application/x-executable|application/vnd.appimage|application/x-shellscript|application/x-sh|text/x-shellscript)
+        if [[ ! -x ${file} ]]; then
+            show_error "The selected file is not executable."
+            exit 1
+        fi
+        ;;
+    *)
+        show_error "Unsupported file type: ${mime}"
+        exit 1
+        ;;
+esac
+
+if [[ ${XDG_SESSION_TYPE:-tty} == tty ]] &&
+        ! pgrep -u "$(id -u)" -f '/steamrtarm64/steam([[:space:]]|$)' >/dev/null 2>&1; then
+    show_error "Steam must be running when this command is used from a terminal session."
+    exit 1
+fi
+
+encoded_url=$(python3 -c \
+    'import sys, urllib.parse; print("steam://addnonsteamgame/" + urllib.parse.quote(sys.argv[1], safe=""))' \
+    "${file}")
+
+# Steam watches this marker while processing the addnonsteamgame URI. The
+# launcher forwards the URI to an existing client or starts the ARM client.
+touch /tmp/addnonsteamgamefile
+nohup /usr/libexec/armada/launch-steam --desktop "${encoded_url}" \
+    </dev/null >/dev/null 2>&1 &
