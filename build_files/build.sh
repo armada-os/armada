@@ -3,6 +3,7 @@ set -euxo pipefail
 
 cd /ctx/build_files
 
+./05-configure-dnf.sh
 ./10-base-packages.sh
 ./20-install-kernel.sh
 ./30-install-steam-session.sh
