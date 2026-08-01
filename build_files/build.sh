@@ -13,4 +13,5 @@ cd /ctx/build_files
 ./55-generate-initramfs.sh
 ./60-set-default-target.sh
 ./70-cleanup.sh
+./75-restore-build-dnf.sh
 ./80-finalize-update-state.sh
