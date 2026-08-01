@@ -1,0 +1,13 @@
+[Unit]
+Description=Armada touchscreen trackpad emulator
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/touchscreen-trackpad
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

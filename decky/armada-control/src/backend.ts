@@ -17,6 +17,8 @@ export const saveCompatApplied = (appids: string[]) => {
 };
 export const setSshEnabled = (enabled: boolean) => call<[boolean], boolean>("set_ssh_enabled", enabled);
 export const setControllerType = (value: string) => call<[string], string>("set_controller_type", value);
+export const setTouchscreenMode = (value: string) =>
+  call<[string], string>("set_touchscreen_mode", value);
 export const getControllerState = () => call<[], CalibrationState>("get_controller_state");
 export const saveCalibration = (capture: Capture) => call<[Capture], CalibrationState>("save_calibration", capture);
 export const resetCalibration = () => call<[], CalibrationState>("reset_calibration");

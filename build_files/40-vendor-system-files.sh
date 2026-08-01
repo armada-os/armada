@@ -35,6 +35,7 @@ systemctl enable sddm.service
 systemctl enable armada-session-default.service
 systemctl enable seatd.service
 systemctl enable armada-input-calibration.service
+systemctl enable armada-touchscreen-trackpad.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
 systemctl enable armada-device-quirks.service

@@ -12,6 +12,7 @@ from armada_control.controller import set_controller_type
 from armada_control.power import save_power_config
 from armada_control.steam import installed_games
 from armada_control.system import set_ssh_enabled
+from armada_control.touchscreen import set_touchscreen_mode
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
 
 
@@ -42,6 +43,9 @@ class Plugin:
 
     async def set_controller_type(self, value):
         return await asyncio.to_thread(set_controller_type, value)
+
+    async def set_touchscreen_mode(self, value):
+        return await asyncio.to_thread(set_touchscreen_mode, value)
 
     async def get_controller_state(self):
         return await asyncio.to_thread(controller_state)

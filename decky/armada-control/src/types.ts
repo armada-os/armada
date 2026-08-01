@@ -81,6 +81,7 @@ export interface Config {
   sshEnabled: boolean;
   controllerType: string;
   controllerTypes: DropdownChoice[];
+  touchscreenMode: string;
   calibration?: CalibrationState;
   game?: GameRef | null;
   selectedGame?: GameRef | null;

@@ -11,6 +11,7 @@ SOCKET = Path("/run/armada/control.sock")
 MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xb360", "ds5"}
+TOUCHSCREEN_MODES = {"direct", "trackpad"}
 INTERCEPT_MODES = {"overlay", "reset"}
 CONFIG_PATHS = {
     "power": Path("/etc/armada/power-profiles.conf"),
@@ -18,6 +19,7 @@ CONFIG_PATHS = {
     "calibration": Path("/etc/armada/input-calibration.json"),
     "compat-applied": Path("/var/lib/armada/compat-applied.json"),
 }
+TOUCHSCREEN_MODE_PATH = Path("/etc/armada/touchscreen-mode.conf")
 CALIBRATION_PARAMS = (
     "axis_leftx_min",
     "axis_leftx_center",
@@ -107,6 +109,27 @@ def action_get_controller_type(request):
     return {"value": result}
 
 
+def touchscreen_mode():
+    try:
+        value = TOUCHSCREEN_MODE_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "direct"
+    return value if value in TOUCHSCREEN_MODES else "direct"
+
+
+def action_set_touchscreen_mode(request):
+    value = str(request.get("value", ""))
+    if value not in TOUCHSCREEN_MODES:
+        raise ValueError("invalid touchscreen mode")
+    atomic_write(TOUCHSCREEN_MODE_PATH, value + "\n")
+    run(["/usr/bin/systemctl", "restart", "armada-touchscreen-trackpad.service"])
+    return {"value": touchscreen_mode()}
+
+
+def action_get_touchscreen_mode(request):
+    return {"value": touchscreen_mode()}
+
+
 def action_set_ssh_enabled(request):
     enabled = bool(request.get("enabled"))
     action = "enable" if enabled else "disable"
@@ -155,6 +178,8 @@ def action_write_config(request):
 ACTIONS = {
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
+    "set_touchscreen_mode": action_set_touchscreen_mode,
+    "get_touchscreen_mode": action_get_touchscreen_mode,
     "get_device_env": action_get_device_env,
     "get_ssh_enabled": action_get_ssh_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
