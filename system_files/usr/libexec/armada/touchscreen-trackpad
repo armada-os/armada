@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""Turn the primary touchscreen into a relative virtual mouse when enabled."""
+
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from evdev import InputDevice, UInput, ecodes, list_devices
+
+sys.path.insert(0, "/usr/lib/armada")
+from touchscreen_trackpad import TouchpadGestureEngine, orient_coordinates  # noqa: E402
+
+
+MODE_FILE = Path("/etc/armada/touchscreen-mode.conf")
+VIRTUAL_DEVICE_NAME = "Armada Touchscreen Trackpad"
+
+
+def configured_mode():
+    try:
+        mode = MODE_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "direct"
+    return mode if mode in {"direct", "trackpad"} else "direct"
+
+
+def device_environment():
+    try:
+        output = subprocess.check_output(
+            ["/usr/libexec/armada/device-env"], text=True, timeout=3
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    environment = {}
+    for line in output.splitlines():
+        if "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        try:
+            parsed = shlex.split(value)
+        except ValueError:
+            environment[name] = value
+        else:
+            environment[name] = parsed[0] if parsed else ""
+    return environment
+
+
+def is_touchscreen(path):
+    try:
+        result = subprocess.run(
+            ["udevadm", "info", "--query=property", "--name", path],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    properties = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    return properties.get("ID_INPUT_TOUCHSCREEN") == "1"
+
+
+def find_touchscreen(preferred_name=""):
+    fallback = None
+    for path in sorted(list_devices()):
+        try:
+            device = InputDevice(path)
+        except OSError:
+            continue
+        if device.name == VIRTUAL_DEVICE_NAME or not is_touchscreen(path):
+            device.close()
+            continue
+        capabilities = device.capabilities(absinfo=False)
+        abs_codes = capabilities.get(ecodes.EV_ABS, [])
+        if not {
+            ecodes.ABS_MT_SLOT,
+            ecodes.ABS_MT_TRACKING_ID,
+            ecodes.ABS_MT_POSITION_X,
+            ecodes.ABS_MT_POSITION_Y,
+        }.issubset(abs_codes):
+            device.close()
+            continue
+        if preferred_name and device.name == preferred_name:
+            if fallback is not None:
+                fallback.close()
+            return device
+        if fallback is None:
+            fallback = device
+        else:
+            device.close()
+    if preferred_name and fallback is not None:
+        fallback.close()
+        return None
+    return fallback
+
+
+class MouseSink:
+    def __init__(self, device):
+        self.device = device
+
+    def move(self, dx, dy):
+        if dx:
+            self.device.write(ecodes.EV_REL, ecodes.REL_X, dx)
+        if dy:
+            self.device.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+        self.device.syn()
+
+    def button(self, name, pressed):
+        code = ecodes.BTN_LEFT if name == "left" else ecodes.BTN_RIGHT
+        self.device.write(ecodes.EV_KEY, code, int(pressed))
+        self.device.syn()
+
+
+def normalize(value, info):
+    size = info.max - info.min
+    if size <= 0:
+        return 0.0
+    return min(1.0, max(0.0, (value - info.min) / size))
+
+
+def run_trackpad(device, orientation):
+    x_info = device.absinfo(ecodes.ABS_MT_POSITION_X)
+    y_info = device.absinfo(ecodes.ABS_MT_POSITION_Y)
+    virtual_mouse = UInput(
+        {
+            ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_RIGHT],
+            ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y],
+        },
+        name=VIRTUAL_DEVICE_NAME,
+        bustype=ecodes.BUS_VIRTUAL,
+        vendor=0x0001,
+        product=0x0001,
+        version=1,
+    )
+    sink = MouseSink(virtual_mouse)
+    engine = TouchpadGestureEngine(sink)
+    slots = {}
+    active_slots = set()
+    current_slot = 0
+    dropping = False
+    grabbed = False
+    try:
+        device.grab()
+        grabbed = True
+        print(f"using {device.path}: {device.name}", flush=True)
+        for event in device.read_loop():
+            if dropping:
+                if event.type == ecodes.EV_SYN and event.code == ecodes.SYN_REPORT:
+                    dropping = False
+                continue
+            if event.type == ecodes.EV_ABS:
+                if event.code == ecodes.ABS_MT_SLOT:
+                    current_slot = event.value
+                    slots.setdefault(
+                        current_slot,
+                        {"tracking": False, "x": None, "y": None, "dirty": False},
+                    )
+                else:
+                    slot = slots.setdefault(
+                        current_slot,
+                        {"tracking": False, "x": None, "y": None, "dirty": False},
+                    )
+                    if event.code == ecodes.ABS_MT_TRACKING_ID:
+                        slot["tracking"] = event.value >= 0
+                        if event.value >= 0:
+                            slot["x"] = None
+                            slot["y"] = None
+                        slot["dirty"] = True
+                    elif event.code == ecodes.ABS_MT_POSITION_X:
+                        slot["x"] = normalize(event.value, x_info)
+                        slot["dirty"] = True
+                    elif event.code == ecodes.ABS_MT_POSITION_Y:
+                        slot["y"] = normalize(event.value, y_info)
+                        slot["dirty"] = True
+            elif event.type == ecodes.EV_SYN and event.code == ecodes.SYN_DROPPED:
+                engine.reset()
+                slots.clear()
+                active_slots.clear()
+                current_slot = 0
+                dropping = True
+            elif event.type == ecodes.EV_SYN and event.code == ecodes.SYN_REPORT:
+                timestamp = time.monotonic()
+                for slot_id, slot in slots.items():
+                    if not slot["dirty"]:
+                        continue
+                    slot["dirty"] = False
+                    if (
+                        slot["tracking"]
+                        and slot["x"] is not None
+                        and slot["y"] is not None
+                    ):
+                        x, y = orient_coordinates(slot["x"], slot["y"], orientation)
+                        if slot_id in active_slots:
+                            engine.touch_move(slot_id, x, y, timestamp)
+                        else:
+                            active_slots.add(slot_id)
+                            engine.touch_down(slot_id, x, y, timestamp)
+                    elif slot_id in active_slots:
+                        active_slots.remove(slot_id)
+                        engine.touch_up(slot_id, timestamp)
+    finally:
+        engine.reset()
+        if grabbed:
+            try:
+                device.ungrab()
+            except OSError:
+                pass
+        virtual_mouse.close()
+
+
+def main():
+    if configured_mode() != "trackpad":
+        print("direct touchscreen mode; waiting", flush=True)
+        while True:
+            time.sleep(3600)
+    environment = device_environment()
+    preferred_name = environment.get("ARMADA_PRIMARY_TOUCHSCREEN", "")
+    orientation = environment.get("ARMADA_PANEL_ORIENTATION", "normal")
+    while True:
+        device = find_touchscreen(preferred_name)
+        if device is None:
+            print("no multi-touch touchscreen found; retrying", flush=True)
+            time.sleep(2)
+            continue
+        try:
+            run_trackpad(device, orientation)
+        except OSError as exc:
+            print(f"touchscreen unavailable: {exc}; retrying", flush=True)
+            time.sleep(2)
+        finally:
+            device.close()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,6 +1,10 @@
 import { ButtonItem, Field, PanelSection } from "@decky/ui";
 import type { Dispatch, SetStateAction } from "react";
-import { setControllerType as applyControllerType, setSshEnabled as applySshEnabled } from "../backend";
+import {
+  setControllerType as applyControllerType,
+  setSshEnabled as applySshEnabled,
+  setTouchscreenMode as applyTouchscreenMode,
+} from "../backend";
 import { openCalibration } from "../components/Calibration";
 import { SelectEdit, ToggleRow } from "../components/widgets";
 import type { Config } from "../types";
@@ -31,8 +35,27 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, controllerType: previous } : current));
     }
   };
+  const setTouchscreenMode = async (enabled: boolean) => {
+    const previous = config.touchscreenMode || "direct";
+    const value = enabled ? "trackpad" : "direct";
+    setConfig((current) => (current ? { ...current, touchscreenMode: value } : current));
+    try {
+      const applied = await applyTouchscreenMode(value);
+      setConfig((current) => (current ? { ...current, touchscreenMode: applied } : current));
+    } catch (error) {
+      setConfig((current) => (current ? { ...current, touchscreenMode: previous } : current));
+    }
+  };
   return (
     <>
+      <PanelSection title="Input">
+        <ToggleRow
+          label="Touchscreen Trackpad"
+          description="Move with one finger, tap to left-click, or tap with two fingers to right-click."
+          value={config.touchscreenMode === "trackpad"}
+          onChange={setTouchscreenMode}
+        />
+      </PanelSection>
       <PanelSection title="Controller">
         <SelectEdit
           label="Emulation"
