@@ -19,6 +19,8 @@ IFACE = "org.armada.Power1"
 LOGIN1_NAME = "org.freedesktop.login1"
 LOGIN1_PATH = "/org/freedesktop/login1"
 LOGIN1_IFACE = "org.freedesktop.login1.Manager"
+# Populated from discovered [profile.*] config sections at load; this literal is
+# only the pre-config fallback.
 PROFILES = ["eco", "balanced", "performance"]
 STATE_FILE = Path("/var/lib/armada/powerd.state")
 FACTORY_CONFIG_FILE = Path("/usr/share/armada/power-profiles.conf")
@@ -241,8 +243,17 @@ class ArmadaPower:
         if not parser.read(config_files):
             raise FileNotFoundError(FACTORY_CONFIG_FILE)
         require_section(parser, "general")
+        profiles = [s.removeprefix("profile.") for s in parser.sections() if s.startswith("profile.")]
+        if not profiles:
+            raise ValueError("no [profile.*] sections")
+        order = parser.get("general", "profile_order", fallback="").strip().lower()
+        if order:
+            wanted = [p.strip() for p in order.split(",") if p.strip()]
+            if sorted(wanted) != sorted(profiles):
+                raise ValueError(f"profile_order does not match [profile.*] sections: {order}")
+            profiles = wanted
         default_profile = parser.get("general", "default_profile").strip().lower()
-        if default_profile not in PROFILES:
+        if default_profile not in profiles:
             raise ValueError(f"invalid default_profile: {default_profile}")
         for section in parser.sections():
             if not section.startswith("underclock."):
@@ -275,7 +286,7 @@ class ArmadaPower:
                 fan_curves[parts[1]] = curve
         if not fan_curves:
             raise ValueError("missing fan curves")
-        for profile in PROFILES:
+        for profile in profiles:
             section = f"profile.{profile}"
             require_section(parser, section)
             fan_curve = parser.get(section, "fan_curve").strip().lower()
@@ -337,7 +348,7 @@ class ArmadaPower:
             "fan_low_pwm": fan_low_pwm,
             "fan_safe_pwm": fan_safe_pwm,
         }
-        return default_profile, underclock_config, fan_curves, profile_config, fan_config, suspend_config
+        return profiles, default_profile, underclock_config, fan_curves, profile_config, fan_config, suspend_config
 
     def load_config(self):
         try:
@@ -346,6 +357,7 @@ class ArmadaPower:
             restore_factory_config(exc)
             parsed = self.parse_config(include_user=False)
         (
+            profiles,
             self.default_profile,
             self.underclock_config,
             self.fan_curves,
@@ -353,6 +365,7 @@ class ArmadaPower:
             self.fan_config,
             self.suspend_config,
         ) = parsed
+        PROFILES[:] = profiles
         self.profile_labels = {p: self.profile_config[p].get("label", p) for p in PROFILES}
 
     def discover_gpu(self):
@@ -446,7 +459,8 @@ class ArmadaPower:
         return int(freqs[-1] * settings["cpu_max"])
 
     def profile_settings(self):
-        return self.profile_config.get(self.profile, self.profile_config["balanced"])
+        settings = self.profile_config.get(self.profile) or self.profile_config.get(self.default_profile)
+        return settings or next(iter(self.profile_config.values()))
 
     def write_governor(self, path, preferred):
         available = read_text(path / "scaling_available_governors").split()

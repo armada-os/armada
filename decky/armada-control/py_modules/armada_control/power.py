@@ -8,11 +8,22 @@ from .privileged import call
 
 POWER_CONFIG = Path("/etc/armada/power-profiles.conf")
 FACTORY_POWER_CONFIG = Path("/usr/share/armada/power-profiles.conf")
+# Fallback list only; the real profile set is discovered from [profile.*] at parse time.
 PROFILES = ("eco", "balanced", "performance")
 
 
 def default_label(name):
     return name.replace("_", " ").title()
+
+
+def profile_order(parser):
+    names = [s.removeprefix("profile.") for s in parser.sections() if s.startswith("profile.")]
+    order = parser.get("general", "profile_order", fallback="").strip()
+    if order:
+        wanted = [p.strip() for p in order.split(",") if p.strip()]
+        if sorted(wanted) == sorted(names):
+            return wanted
+    return names
 
 
 def restore_factory_power_config(reason):
@@ -46,25 +57,29 @@ def parsed_power(parser):
     for section in ("general", "fan"):
         if not parser.has_section(section):
             raise ValueError(f"missing config section [{section}]")
+    names = profile_order(parser)
+    if not names:
+        raise ValueError("no [profile.*] sections")
     data = {
         "general": {"default_profile": parser.get("general", "default_profile")},
+        "order": names,
         "profiles": {},
         "fan_curves": {},
         "fan": {},
         "underclocks": {},
     }
-    for name in PROFILES:
+    for name in names:
         section = f"profile.{name}"
-        if not parser.has_section(section):
-            raise ValueError(f"missing config section [{section}]")
         data["profiles"][name] = {
             "label": parser.get(section, "label", fallback="") or default_label(name),
-            "cpu_governor": parser.get(section, "cpu_governor"),
-            "cpu_max": parser.get(section, "cpu_max"),
-            "cpu_underclock": parser.get(section, "cpu_underclock"),
-            "gpu_max": parser.get(section, "gpu_max"),
-            "gpu_min": parser.get(section, "gpu_min"),
-            "fan_curve": parser.get(section, "fan_curve"),
+            "cpu_governor": parser.get(section, "cpu_governor", fallback="schedutil"),
+            "cpu_max": parser.get(section, "cpu_max", fallback="1.00"),
+            "cpu_underclock": parser.get(section, "cpu_underclock", fallback="none"),
+            "cpu_max_policy0": parser.get(section, "cpu_max_policy0", fallback=""),
+            "cpu_max_policy6": parser.get(section, "cpu_max_policy6", fallback=""),
+            "gpu_max": parser.get(section, "gpu_max", fallback="1.00"),
+            "gpu_min": parser.get(section, "gpu_min", fallback="0.00"),
+            "fan_curve": parser.get(section, "fan_curve", fallback=""),
         }
     for section in parser.sections():
         if section.startswith("fan_curve."):
@@ -84,45 +99,96 @@ def parsed_power(parser):
     return data
 
 
-# Only editable fields are written to /etc; factory-only fields stay in /usr.
-EDITABLE_KEYS = ("cpu_max", "cpu_underclock", "gpu_max", "gpu_min", "fan_curve")
+def _read(path):
+    try:
+        return Path(path).read_text().strip()
+    except OSError:
+        return ""
+
+
+def available_hardware():
+    # Real frequency lists for the UI (CPU per-cluster kHz, GPU OPPs in MHz, governors).
+    cpu = {}
+    base = Path("/sys/devices/system/cpu/cpufreq")
+    for policy in sorted(base.glob("policy*")):
+        try:
+            pid = int(policy.name.removeprefix("policy"))
+        except ValueError:
+            continue
+        freqs = sorted({int(x) for x in _read(policy / "scaling_available_frequencies").split() if x.isdigit()})
+        if freqs:
+            cpu[str(pid)] = freqs
+    governors = _read(base / "policy0" / "scaling_available_governors").split()
+    gpu = []
+    for dev in sorted(Path("/sys/class/devfreq").glob("*")):
+        if "gpu" in dev.name.lower() and (dev / "available_frequencies").exists():
+            gpu = sorted({int(x) // 1000000 for x in _read(dev / "available_frequencies").split() if x.isdigit()})
+            break
+    return {"cpu": cpu, "gpu": gpu, "governors": governors}
+
+
+# Editable fields written to /etc. cpu_governor is user-selectable; explicit per-policy
+# MHz (POLICY_KEYS) override the underclock level in the daemon when present.
+EDITABLE_KEYS = ("cpu_governor", "cpu_max", "cpu_underclock", "gpu_max", "gpu_min", "fan_curve")
 NUMERIC_KEYS = ("cpu_max", "gpu_max", "gpu_min")
+POLICY_KEYS = ("cpu_max_policy0", "cpu_max_policy6")
+
+
+GPU_RATIO_KEYS = ("gpu_max", "gpu_min")
 
 
 def profile_overrides(profile):
     out = {}
     for key in EDITABLE_KEYS:
-        value = profile[key]
-        out[key] = f"{float(value):.2f}" if key in NUMERIC_KEYS else str(value)
+        value = profile.get(key, "")
+        if key in GPU_RATIO_KEYS:
+            # 4 decimals so a UI-picked GPU MHz survives the daemon's int()+snap round-trip.
+            try:
+                out[key] = f"{float(value):.4f}"
+            except (TypeError, ValueError):
+                out[key] = "0.0000"
+        elif key in NUMERIC_KEYS:
+            try:
+                out[key] = f"{float(value):.2f}"
+            except (TypeError, ValueError):
+                out[key] = "0.00"
+        else:
+            out[key] = str(value)
+    for key in POLICY_KEYS:
+        raw = str(profile.get(key, "") or "").strip()
+        out[key] = str(int(raw)) if raw.isdigit() and int(raw) > 0 else ""
     return out
 
 
-def set_or_clear(parser, section, key, value, keep):
-    if keep:
-        if not parser.has_section(section):
-            parser.add_section(section)
-        parser.set(section, key, value)
-    elif parser.has_section(section) and parser.has_option(section, key):
-        parser.remove_option(section, key)
-
-
-def render_power(data, factory):
-    # Preserve hand-edited /etc fields outside the plugin-owned keys.
+def render_power(data, factory=None):
+    # Self-contained render: our /etc fully specifies every profile (not minimal diffs vs
+    # factory), so we always write each profile's editable state and preserve everything else
+    # ([fan], fan_curve.*, underclock.*, labels, profile_order).
     parser = configparser.ConfigParser()
     parser.optionxform = str
     parser.read(POWER_CONFIG)
 
-    set_or_clear(parser, "general", "default_profile", data["general"]["default_profile"],
-                 data["general"]["default_profile"] != factory["general"]["default_profile"])
-    for name in PROFILES:
-        overrides = profile_overrides(data["profiles"][name])
-        edited = overrides != profile_overrides(factory["profiles"][name])
-        for key in EDITABLE_KEYS:
-            set_or_clear(parser, f"profile.{name}", key, overrides[key], edited)
+    if not parser.has_section("general"):
+        parser.add_section("general")
+    parser.set("general", "default_profile", str(data["general"]["default_profile"]))
+    if data.get("order"):
+        parser.set("general", "profile_order", ", ".join(str(n) for n in data["order"]))
 
-    for section in ("general", *(f"profile.{name}" for name in PROFILES)):
-        if parser.has_section(section) and not parser.options(section):
-            parser.remove_section(section)
+    for name, profile in data["profiles"].items():
+        section = f"profile.{name}"
+        if not parser.has_section(section):
+            parser.add_section(section)
+        label = str(profile.get("label", "")).strip()
+        if label:
+            parser.set(section, "label", label)
+        overrides = profile_overrides(profile)
+        for key in EDITABLE_KEYS:
+            parser.set(section, key, overrides[key])
+        for key in POLICY_KEYS:
+            if overrides[key]:
+                parser.set(section, key, overrides[key])
+            elif parser.has_option(section, key):
+                parser.remove_option(section, key)
 
     with tempfile.TemporaryFile("w+", encoding="utf-8") as f:
         parser.write(f)
@@ -141,7 +207,7 @@ def save_power_config(data):
     if not isinstance(data, dict) or not isinstance(data.get("general"), dict):
         raise ValueError("invalid power config")
     data["general"]["default_profile"] = data["general"].get("default_profile", "")
-    if data["general"]["default_profile"] not in PROFILES:
+    if data["general"]["default_profile"] not in (data.get("profiles") or {}):
         raise ValueError("invalid power config")
     try:
         rendered = render_power(data, factory_power_defaults())
