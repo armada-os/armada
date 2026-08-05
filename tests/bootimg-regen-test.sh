@@ -176,6 +176,11 @@ if [[ -z "$stop" ]]; then
     fail "sync unit: no explicit TimeoutStopSec, so the default can kill the regen"
 fi
 (( stop > lock_wait )) || fail "sync unit: TimeoutStopSec ${stop}s does not exceed the ${lock_wait}s lock wait"
+mapfile -t sync_stops < <(sed -n 's/^ExecStop=//p' "$sync_unit")
+assert_eq "sync bootimg ordering" "${sync_stops[0]:-}" \
+    "/usr/libexec/armada/armada-bootimg-update"
+assert_eq "sync ABL ordering" "${sync_stops[1]:-}" \
+    "-/usr/libexec/armada/armada-abl-finalize"
 
 # OSTree already sets 5m for slow media, and it applies to each ExecStop, so the
 # drop-in must never set a smaller value: that would shorten the regen's window.
@@ -183,6 +188,13 @@ dropin="$ROOT/system_files/usr/lib/systemd/system/ostree-finalize-staged.service
 if grep -qE '^[[:space:]]*TimeoutStopSec=' "$dropin"; then
     fail "finalize drop-in: sets TimeoutStopSec; it must inherit OSTree's 5m so the two cannot drift"
 fi
+mapfile -t finalize_stops < <(sed -n 's/^ExecStop=//p' "$dropin")
+assert_eq "finalize bootimg ordering" "${finalize_stops[0]:-}" \
+    "/usr/libexec/armada/armada-bootimg-finalize"
+[[ "${#finalize_stops[@]}" -eq 1 ]] ||
+    fail "finalize drop-in: ABL must run only from the shutdown sync unit"
+[[ -x "$ROOT/system_files/usr/libexec/armada/armada-abl-finalize" ]] ||
+    fail "finalize ABL helper is not executable"
 
 # --- initramfs ostree fallback ----------------------------------------------
 

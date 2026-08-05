@@ -8,6 +8,11 @@ import tempfile
 from pathlib import Path
 
 SOCKET = Path("/run/armada/control.sock")
+ABL_VERSION_TOOL = "/usr/lib/armada/abl-version"
+ABL_PARTITIONS = (
+    ("A", "/dev/disk/by-partlabel/abl_a"),
+    ("B", "/dev/disk/by-partlabel/abl_b"),
+)
 MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xb360", "ds5"}
@@ -93,6 +98,27 @@ def device_env():
     return env
 
 
+def abl_version():
+    versions = []
+    for name, partition in ABL_PARTITIONS:
+        result = subprocess.run(
+            ["/usr/bin/python3", ABL_VERSION_TOOL, partition],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        version = result.stdout.strip() if result.returncode == 0 else ""
+        versions.append((name, version))
+    if versions[0][1] == versions[1][1]:
+        return f"ROCKNIX {versions[0][1]}" if versions[0][1] else "Unknown"
+    return ", ".join(
+        f"{name}: ROCKNIX {version}" if version else f"{name}: Unknown"
+        for name, version in versions
+    )
+
+
 def action_set_controller_type(request):
     value = str(request.get("value", ""))
     if value not in CONTROLLER_TYPES:
@@ -120,6 +146,10 @@ def action_get_ssh_enabled(request):
 
 def action_get_device_env(request):
     return {"env": device_env()}
+
+
+def action_get_abl_version(request):
+    return {"version": abl_version()}
 
 
 def action_inputplumber_intercept(request):
@@ -156,6 +186,7 @@ ACTIONS = {
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
+    "get_abl_version": action_get_abl_version,
     "get_ssh_enabled": action_get_ssh_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
     "set_ssh_enabled": action_set_ssh_enabled,

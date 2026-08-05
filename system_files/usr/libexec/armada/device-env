@@ -21,6 +21,7 @@ case "$model" in
     "AYANEO Pocket S 2K") profile=ayaneo-pocket-s2k ;;
     "AYANEO Pocket S2") profile=ayaneo-pocket-s2 ;;
     "KONKR Pocket FIT") profile=konkr-pocket-fit ;;
+    "KONKR Pocket FIT Elite") profile=konkr-pocket-fit-elite ;;
     "AYN Odin 3") profile=ayn-odin-3 ;;
     "Retroid Pocket 5") profile=retroid-pocket-5 ;;
     "Retroid Pocket Flip2") profile=retroid-pocket-flip2 ;;
@@ -28,6 +29,7 @@ case "$model" in
     "Retroid Pocket Mini V2") profile=retroid-pocket-mini-v2 ;;
     "Retroid Pocket 6") profile=retroid-pocket-6 ;;
     "Retroid Pocket 6 TOP-DPAD") profile=retroid-pocket-6 ;;
+    "Retroid Pocket Nova") profile=retroid-pocket-nova ;;
     *) profile= ;;
 esac
 
@@ -51,7 +53,7 @@ vars=(
     ARMADA_PANEL_NATIVE_WIDTH
     ARMADA_PANEL_NATIVE_HEIGHT
     ARMADA_PANEL_REFRESH_RATES
-    ARMADA_GAMESCOPE_USE_ROTATION_SHADER
+    ARMADA_GAMESCOPE_FORCE_COMPOSITION_ROTATION
     ARMADA_GAMESCOPE_FAKE_OUTPUT_MM
     ARMADA_HDR_CAPABLE
     ARMADA_GAMEPAD_QUIRK

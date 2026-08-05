@@ -1,0 +1,148 @@
+#!/bin/bash
+# Apply an immutable ABL payload only over recognized older ROCKNIX copies.
+set -euo pipefail
+
+target_root=/
+SPLASH=${SPLASH:-/usr/libexec/armada/armada-splash-progress}
+ABL_VERSION_TOOL=${ABL_VERSION_TOOL:-/usr/lib/armada/abl-version}
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --target-root) shift; target_root=${1:?target root required} ;;
+        *) echo "armada-abl-update: unknown argument: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+manifest="${target_root%/}/usr/lib/armada/abl/manifest"
+manifest_get() {
+    sed -n "s/^$1=//p" "${manifest}" | head -1
+}
+is_sha256() { [[ "$1" =~ ^[0-9a-f]{64}$ ]]; }
+is_version() { [[ "$1" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; }
+version_is_older() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]
+}
+abl_version() { python3 "${ABL_VERSION_TOOL}" "$1"; }
+
+[ -r "${manifest}" ] || { echo "armada-abl-update: target has no ABL manifest" >&2; exit 7; }
+testing=${ARMADA_ABL_TESTING:-0}
+if [ "${testing}" = 1 ]; then
+    device_id=${ARMADA_ABL_DEVICE_ID:?test device id required}
+    soc=${ARMADA_ABL_SOC:?test SoC required}
+else
+    eval "$(/usr/libexec/armada/device-env)"
+    device_id=${ARMADA_DEVICE_ID:-}
+    soc=${ARMADA_SOC_CLASS:-}
+fi
+[ -n "${device_id}" ] && [ "${device_id}" != unknown ] || {
+    echo "armada-abl-update: device is not recognized by Armada" >&2; exit 7;
+}
+case "${soc}" in SM8250|SM8550|SM8650|SM8750) ;; *)
+    echo "armada-abl-update: unsupported SoC '${soc:-unknown}'" >&2; exit 7 ;;
+esac
+
+if [ "${testing}" != 1 ]; then
+    compatible=$(tr '\0' '\n' < /sys/firmware/devicetree/base/compatible 2>/dev/null || true)
+    grep -qx "qcom,${soc,,}" <<<"${compatible}" || {
+        echo "armada-abl-update: DT compatible does not confirm ${soc}" >&2
+        exit 7
+    }
+fi
+
+target_hash=$(manifest_get "ARMADA_ABL_SHA256_${soc}")
+version=$(manifest_get ARMADA_ABL_VERSION)
+payload="${target_root%/}/usr/lib/armada/abl/abl_signed-${soc}.elf"
+is_sha256 "${target_hash}" && [ -s "${payload}" ] || {
+    echo "armada-abl-update: invalid target payload metadata" >&2; exit 7;
+}
+[ "$(sha256sum "${payload}" | cut -d' ' -f1)" = "${target_hash}" ] || {
+    echo "armada-abl-update: target payload hash mismatch" >&2; exit 7;
+}
+is_version "${version}" || {
+    echo "armada-abl-update: invalid target version '${version}'" >&2; exit 7;
+}
+target_version=${version}
+payload_version=$(abl_version "${payload}" 2>/dev/null) || {
+    echo "armada-abl-update: target payload is not an identifiable ROCKNIX ABL" >&2; exit 7;
+}
+[ "${payload_version}" = "${target_version}" ] || {
+    echo "armada-abl-update: target payload reports ${payload_version}, expected ${target_version}" >&2; exit 7;
+}
+payload_size=$(stat -c %s "${payload}")
+
+if [ "${testing}" = 1 ]; then
+    abl_a=${ARMADA_ABL_A:?test abl_a required}
+    abl_b=${ARMADA_ABL_B:?test abl_b required}
+else
+    abl_a=/dev/disk/by-partlabel/abl_a
+    abl_b=/dev/disk/by-partlabel/abl_b
+fi
+part_a=$(readlink -f "${abl_a}" 2>/dev/null || true)
+part_b=$(readlink -f "${abl_b}" 2>/dev/null || true)
+[ -n "${part_a}" ] && [ -n "${part_b}" ] && [ "${part_a}" != "${part_b}" ] || {
+    echo "armada-abl-update: ABL partitions are missing or ambiguous" >&2; exit 7;
+}
+if [ "${testing}" != 1 ]; then
+    [ -b "${part_a}" ] && [ -b "${part_b}" ] || { echo "armada-abl-update: ABL targets are not block devices" >&2; exit 7; }
+    [ "$(lsblk -ndo PKNAME "${part_a}")" = "$(lsblk -ndo PKNAME "${part_b}")" ] || {
+        echo "armada-abl-update: ABL partitions are not on the same device" >&2; exit 7;
+    }
+fi
+part_size() { if [ "${testing}" = 1 ]; then stat -c %s "$1"; else blockdev --getsize64 "$1"; fi; }
+[ "$(part_size "${part_a}")" -ge "${payload_size}" ] && [ "$(part_size "${part_b}")" -ge "${payload_size}" ] || {
+    echo "armada-abl-update: target payload is larger than an ABL partition" >&2; exit 7;
+}
+prefix_hash() { head -c "${payload_size}" "$1" | sha256sum | cut -d' ' -f1; }
+hash_a=$(prefix_hash "${part_a}")
+hash_b=$(prefix_hash "${part_b}")
+
+if [ "${hash_a}" = "${target_hash}" ] && [ "${hash_b}" = "${target_hash}" ]; then
+    echo "armada-abl-update: ${version} already installed"
+    exit 0
+fi
+check_installed() {
+    local name=$1 part=$2 hash=$3 installed
+    [ "${hash}" = "${target_hash}" ] && return 0
+    installed=$(abl_version "${part}" 2>/dev/null) || {
+        echo "armada-abl-update: ${name} is not an identifiable ROCKNIX ABL" >&2; exit 7;
+    }
+    if [ "${installed}" = "${target_version}" ]; then
+        echo "armada-abl-update: ${name} reports ${installed} but differs from the approved payload" >&2
+        exit 7
+    fi
+    version_is_older "${installed}" "${target_version}" || {
+        echo "armada-abl-update: ${name} ${installed} is newer than target ${target_version}" >&2
+        exit 7
+    }
+    echo "armada-abl-update: ${name} ${installed} is eligible for ${target_version}"
+}
+check_installed abl_a "${part_a}" "${hash_a}"
+check_installed abl_b "${part_b}" "${hash_b}"
+
+lock=${ARMADA_ABL_LOCK:-/run/armada-abl.lock}
+exec 9>"${lock}"
+flock -n 9 || { echo "armada-abl-update: another ABL update is running" >&2; exit 7; }
+"${SPLASH}" "Updating bootloader. Do not power off..." || true
+
+write_failed() {
+    echo "armada-abl-update: $*" >&2
+    "${SPLASH}" --error "Bootloader update failed. Recovery may be required." || true
+    return 1
+}
+write_one() {
+    local part=$1 sector=512
+    [ "$(prefix_hash "${part}")" = "${target_hash}" ] && return 0
+    [ "${testing}" = 1 ] || sector=$(blockdev --getss "${part}")
+    dd if="${payload}" of="${part}" bs="${sector}" conv=fsync,notrunc status=none ||
+        write_failed "write failed for ${part}"
+    [ "${testing}" = 1 ] || blockdev --flushbufs "${part}" ||
+        write_failed "cache flush failed for ${part}"
+    [ "$(prefix_hash "${part}")" = "${target_hash}" ] ||
+        write_failed "readback failed for ${part}"
+}
+
+# ROCKNIX uses this fixed order; Armada adds a flush and readback between copies.
+write_one "${part_a}"
+write_one "${part_b}"
+sync
+echo "armada-abl-update: installed ${version} for ${device_id} (${soc})"

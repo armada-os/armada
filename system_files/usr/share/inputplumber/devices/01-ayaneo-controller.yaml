@@ -46,6 +46,15 @@ source_devices:
       product_id: "028e"
       handler: event*
     capability_map_id: ayaneo_mcu_xbox
+  # Pocket EVO only: AYA SPACE, =, LC and RC hang off SoC GPIOs, not the MCU, so
+  # they arrive on the separate aya-keys gpio-keys node. Kept out of the main
+  # gpio-keys node on purpose - InputPlumber grabs its source devices, which
+  # would otherwise swallow volume up.
+  - group: keyboard
+    evdev:
+      name: aya-keys
+      handler: event*
+    capability_map_id: ayaneo_pocket_evo_keys
 
 # Optional configuration for the composite device
 options:

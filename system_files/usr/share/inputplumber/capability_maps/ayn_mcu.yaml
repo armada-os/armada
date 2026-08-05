@@ -93,6 +93,15 @@ mapping:
       gamepad:
         button: QuickAccess
 
+  - name: Home Key
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F24
+          value_type: button
+    target_event:
+      keyboard: KeyHome
+
   - name: Right Trigger
     source_events:
       - evdev:

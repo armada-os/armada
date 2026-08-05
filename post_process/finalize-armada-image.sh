@@ -4,7 +4,7 @@
 set -euxo pipefail
 
 RAW_IMAGE="${1:-output/raw/disk.raw}"
-ROCKNIX_ABL_VERSION="${ROCKNIX_ABL_VERSION:-v1.1.7}"
+source "$(dirname "${BASH_SOURCE[0]}")/../abl/release.env"
 OUT="${OUT:-output/armada-$(TZ='America/New_York' date +%Y%m%d).img.gz}"
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
@@ -17,8 +17,9 @@ fi
 WORK=$(mktemp -d)
 trap "sudo umount '${WORK}/mnt' 2>/dev/null || true; sudo losetup -d \"\$(cat ${WORK}/loop 2>/dev/null)\" 2>/dev/null || true; rm -rf '${WORK}'" EXIT
 
-curl -fsSL -o "${WORK}/abl.tar.gz" \
-    "https://github.com/ROCKNIX/abl/releases/download/${ROCKNIX_ABL_VERSION}/rocknix-abl-${ROCKNIX_ABL_VERSION}.tar.gz"
+curl --connect-timeout 30 --retry 3 -fsSL -o "${WORK}/abl.tar.gz" \
+    "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
+printf '%s  %s\n' "${ARMADA_ABL_ARCHIVE_SHA256}" "${WORK}/abl.tar.gz" | sha256sum -c -
 mkdir -p "${WORK}/abl-extracted"
 tar -xzf "${WORK}/abl.tar.gz" -C "${WORK}/abl-extracted"
 

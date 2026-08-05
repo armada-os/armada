@@ -2,11 +2,11 @@ ARG FEX_PKG=ghcr.io/armada-os/armada-packages/fex@sha256:6301fb21fe1d540237b431e
 ARG MESA_PKG=ghcr.io/armada-os/armada-packages/mesa@sha256:7889b00b71ddeb294d3672c1c931663e03e5e35cab44041ce981765a1f449e16
 ARG MESA_ANDROID_PKG=ghcr.io/armada-os/armada-packages/mesa-android@sha256:2ef4f1a325502f9ba695acda0ca995d996ed21bf4eb1e706d15351f73cd2b406
 ARG MANGOHUD_PKG=ghcr.io/armada-os/armada-packages/mangohud@sha256:6ed92b44d267a8d2e1339968b59c2679cfd30e81494d4990dcc2c92e0be4fc10
-ARG GAMESCOPE_PKG=ghcr.io/armada-os/armada-packages/gamescope@sha256:5c8896b2ef14b75e9e887bcea4a3ffd6d046bf9fe6e1a4133812880a76744a1d
-ARG GAMESCOPE_SESSION_PKG=ghcr.io/armada-os/armada-packages/gamescope-session@sha256:d44de289a54eb6d7b2af9b0505fc7580106dbe62318edd4a9a3afd3383351fc8
+ARG GAMESCOPE_PKG=ghcr.io/armada-os/armada-packages/gamescope@sha256:69245763c87a5573926e1c9defb96589e7b8a0a0072a8ea824a38ff1dd37960c
+ARG GAMESCOPE_SESSION_PKG=ghcr.io/armada-os/armada-packages/gamescope-session@sha256:d17006f02124427f91c70e3c841c7819ca1721ad1d4033659f3656a674f8ee35
 ARG KWIN_PKG=ghcr.io/armada-os/armada-packages/kwin:latest
 ARG POWERDEVIL_PKG=ghcr.io/armada-os/armada-packages/powerdevil@sha256:f6d25143dca84f5f71076a3c992e06de87f7ae25fd046cfeb21999df989c4f8b
-ARG KERNEL_PKG=ghcr.io/armada-os/armada-packages/kernel@sha256:aa5b9a46c780f32552e8c9c038825d035b02970c2be0aab502c6c8d9bdfb1460
+ARG KERNEL_PKG=ghcr.io/armada-os/armada-packages/kernel@sha256:d2ee967c77765d82c4bb4ca7f18f2092b66754cc6c4012d4470567fb97683e2f
 ARG INPUTPLUMBER_PKG=ghcr.io/armada-os/armada-packages/inputplumber@sha256:1369b521b95af6b34b434ac930889faea6e1d18f0a4922a7e90bcb6837da1ad7
 ARG EXTEST_PKG=ghcr.io/armada-os/armada-packages/extest@sha256:c68bd452dd8f9a20527862e87fd446045b86811dc222a2a1744ede8d8b858dfa
 ARG NETWORKMANAGER_PKG=ghcr.io/armada-os/armada-packages/networkmanager@sha256:043eae7f6f236945bc66466337391384949f56ad19807f21fe2e9b6f5c488b5f
@@ -36,6 +36,7 @@ COPY decky/armada-control/ ./
 RUN npm run build
 
 FROM scratch AS ctx
+COPY abl /abl/
 COPY build_files /build_files/
 COPY decky /decky/
 COPY system_files /system_files/

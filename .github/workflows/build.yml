@@ -76,7 +76,7 @@ jobs:
           # ubuntu-24.04 dropped these from the runner image; the build action,
           # rechunk, and push all need them.
           need=""
-          for t in buildah jq podman skopeo; do
+          for t in buildah jq podman skopeo systemd-container; do
             command -v "$t" >/dev/null || need="$need $t"
           done
           [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
@@ -140,17 +140,12 @@ jobs:
 
       - name: Rechunk for small OTA deltas
         id: rechunk
+        if: github.event_name != 'pull_request'
         run: |
           set -euxo pipefail
-          # Ubuntu 24.04 blocks the unprivileged user namespaces rootless skopeo needs.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           # build-chunked-oci runs rpm-ostree from inside the image against root
           # containers-storage, so bridge the rootless-built image over first.
-          skopeo copy "containers-storage:localhost/${IMAGE_NAME}:raw" oci-archive:/tmp/raw.tar
-          sudo skopeo copy oci-archive:/tmp/raw.tar containers-storage:localhost/raw-img
-          # Free disk before the encapsulate; both are unused once raw-img exists.
-          rm -f /tmp/raw.tar
-          podman rmi "localhost/${IMAGE_NAME}:raw" 2>/dev/null || true
+          sudo podman image scp ${USER}@localhost::${IMAGE_NAME}:raw root@localhost::raw-img
           sudo podman run --rm --privileged \
             --volume /var/lib/containers:/var/lib/containers \
             localhost/raw-img \

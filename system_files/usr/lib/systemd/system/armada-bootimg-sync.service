@@ -20,6 +20,8 @@ ExecStart=-/usr/bin/ionice -c 2 -n 7 /usr/libexec/armada/armada-bootimg-update -
 # Keep manual rollback and other non-staged BLS changes in sync. Staged-update
 # failure handling belongs to the OSTree finalization hook.
 ExecStop=/usr/libexec/armada/armada-bootimg-update
+# ABL writes are allowed only after /KERNEL sync succeeds.
+ExecStop=-/usr/libexec/armada/armada-abl-finalize
 
 [Install]
 WantedBy=multi-user.target

@@ -40,7 +40,8 @@ for package in \
     armada-jupiter-hw-support \
     armada-splash \
     fex-emu-utils \
-    gamescope \
+    terra-gamescope \
+    terra-gamescope-libs \
     inputplumber \
     mangohud \
     mesa-vulkan-drivers \

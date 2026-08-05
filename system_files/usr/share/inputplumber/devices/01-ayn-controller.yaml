@@ -31,6 +31,12 @@ source_devices:
     capability_map_id: ayn_mcu
     passthrough: true
 
+  - group: gamepad
+    evdev:
+      name: gpio-keys-paddles
+      handler: event*
+    capability_map_id: ayn_mcu
+
 # Optional configuration for the composite device
 options:
   # If true, InputPlumber will automatically try to manage the input device. If

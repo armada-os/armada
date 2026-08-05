@@ -40,7 +40,9 @@ Includes:
 | AYN Thor | SM8550 | ✅ Tested |
 | AYN Odin 3 | SM8750 | ✅ Tested |
 | Retroid Pocket 6 | SM8550 | ✅ Tested |
+| Retroid Pocket Nova | SM8550 | ⚪ Untested |
 | KONKR Pocket FIT (G3 Gen 3) | SM8650 | ✅ Tested |
+| KONKR Pocket FIT Elite | SM8750 | ⚪ Untested |
 | AYANEO Pocket S2 | SM8650 | ✅ Tested |
 | AYANEO Pocket ACE | SM8550 | ✅ Tested |
 | AYANEO Pocket DS | SM8550 | ✅ Tested |

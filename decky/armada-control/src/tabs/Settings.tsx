@@ -45,6 +45,7 @@ export function Settings({ config, setConfig }: {
       <PanelSection title="System">
         <ToggleRow label="Enable SSH" value={!!config.sshEnabled} onChange={setSshEnabled} />
         <Field label="OS Version" description={config.osVersion || "unknown"} />
+        <Field label="ABL Version" description={config.ablVersion || "unknown"} />
       </PanelSection>
     </>
   );

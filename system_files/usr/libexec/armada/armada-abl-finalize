@@ -1,0 +1,23 @@
+#!/bin/bash
+# Apply the default deployment's approved ABL after /KERNEL is committed.
+set -euo pipefail
+
+BOOTROOT=${BOOTROOT:-/boot}
+SYSROOT=${SYSROOT:-/}
+ARGS_FILE=${ARGS_FILE:-/usr/lib/armada/bootimg-args}
+UPDATER=${UPDATER:-/usr/libexec/armada/armada-abl-update}
+
+. "${ARGS_FILE}"
+entry=$(armada_default_bls_entry "${BOOTROOT}")
+[ -n "${entry}" ] || exit 0
+# BLS options require word splitting but must never glob.
+set -f
+options=$(sed -n 's/^options //p' "${entry}" | head -1)
+target_ostree=""
+for token in ${options}; do
+    case "${token}" in ostree=*) target_ostree=${token#ostree=} ;; esac
+done
+[ -n "${target_ostree}" ] || exit 0
+target_root=$(realpath -e "${SYSROOT%/}${target_ostree}" 2>/dev/null) || exit 0
+grep -qx 'ARMADA_ABL_AUTO=1' "${target_root}/usr/lib/armada/abl/manifest" 2>/dev/null || exit 0
+"${UPDATER}" --target-root "${target_root}"

@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+# Schema version number
+version: 2
+
+# The type of configuration schema
+kind: CapabilityMap
+
+# Name for the device event map
+name: AYANEO Pocket EVO GPIO Keys
+
+# Unique identifier of the capability mapping
+id: ayaneo_pocket_evo_keys
+
+# The Pocket EVO wires AYA SPACE, =, LC and RC directly to SoC GPIOs instead of
+# the controller MCU, so they arrive on their own gpio-keys node rather than on
+# the fake-Xbox-360 pad. The F13-F16 codes come from armada's aya-keys device
+# tree node; AYANEO's stock codes (KEY_A, KEY_EQUAL, KEY_LEFT, KEY_RIGHTSHIFT)
+# are deliberately not reused, since those type text if they ever reach a
+# compositor with InputPlumber stopped.
+#
+# Only AYA SPACE is hardcoded: QuickAccess is the one action Steam Input cannot
+# bind. The rest become paddles so they stay remappable per game.
+mapping:
+  - name: AYA SPACE
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F13
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+
+  - name: Menu (=)
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F14
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle2
+
+  - name: LC
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F15
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle1
+
+  - name: RC
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_F16
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle1
+
+# List of events to filter from the source devices
+filtered_events: []

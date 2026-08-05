@@ -1,0 +1,56 @@
+#!/usr/bin/python3
+# Ignore recognizable data outside the ELF's declared load segments.
+import lzma
+import re
+import struct
+import sys
+
+MAX_SIZE = 4 * 1024 * 1024
+with open(sys.argv[1], "rb", buffering=0) as firmware:
+    image = firmware.read(MAX_SIZE)
+if len(image) < 52 or image[:7] != b"\x7fELF\x01\x01\x01":
+    raise SystemExit(1)
+machine = struct.unpack_from("<H", image, 18)[0]
+phoff = struct.unpack_from("<I", image, 28)[0]
+ehsize, phentsize, phnum = struct.unpack_from("<HHH", image, 40)
+if machine != 40 or ehsize != 52 or phentsize != 32 or not 1 <= phnum <= 64:
+    raise SystemExit(1)
+if phoff + phentsize * phnum > len(image):
+    raise SystemExit(1)
+loads = []
+for index in range(phnum):
+    entry = phoff + index * phentsize
+    kind, offset = struct.unpack_from("<II", image, entry)
+    size = struct.unpack_from("<I", image, entry + 16)[0]
+    if offset + size > len(image):
+        raise SystemExit(1)
+    if kind == 1 and size:
+        loads.append((offset, offset + size))
+
+guid = bytes.fromhex("98584eee143959429d6edc7bd79403cf")
+fv = section = -1
+segment_end = 0
+for segment_start, segment_end in loads:
+    fv = image.find(b"_FVH", segment_start, segment_end)
+    if fv >= 0:
+        section = image.find(guid, fv, segment_end)
+        if section >= 0:
+            break
+if section < 4 or section + 18 > segment_end:
+    raise SystemExit(1)
+data_offset = int.from_bytes(image[section + 16:section + 18], "little")
+start = section - 4 + data_offset
+if data_offset < 20 or start >= segment_end:
+    raise SystemExit(1)
+try:
+    stream = lzma.LZMADecompressor(format=lzma.FORMAT_ALONE)
+    volume = stream.decompress(image[start:segment_end], max_length=MAX_SIZE)
+except lzma.LZMAError:
+    raise SystemExit(1)
+marker = volume.find(b"ROCKNIX-ABL\x00")
+if not stream.eof or marker < 0:
+    raise SystemExit(1)
+value = volume[marker + len(b"ROCKNIX-ABL\x00"):].split(b"\x00", 1)[0]
+if not re.fullmatch(rb"[0-9]+\.[0-9]+(?:\.[0-9]+)?", value):
+    raise SystemExit(1)
+print(value.decode("ascii"))

@@ -1,0 +1,4 @@
+# Keep the Pocket FIT Elite WCD939x SoundWire path awake for jack detection.
+ACTION=="bind", SUBSYSTEM=="platform", KERNEL=="6ad0000.soundwire", IMPORT{program}="/usr/libexec/armada/device-env", ENV{ARMADA_DEVICE_ID}=="konkr-pocket-fit-elite", ATTR{power/control}="on"
+ACTION=="bind", SUBSYSTEM=="platform", KERNEL=="7630000.soundwire", IMPORT{program}="/usr/libexec/armada/device-env", ENV{ARMADA_DEVICE_ID}=="konkr-pocket-fit-elite", ATTR{power/control}="on"
+ACTION=="bind", SUBSYSTEM=="soundwire", KERNEL=="sdw:*", IMPORT{program}="/usr/libexec/armada/device-env", ENV{ARMADA_DEVICE_ID}=="konkr-pocket-fit-elite", ATTR{power/control}="on"

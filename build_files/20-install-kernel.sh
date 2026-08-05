@@ -1,16 +1,26 @@
 #!/bin/bash
 set -euxo pipefail
 
-KVER="7.0.11"
-TARBALL="/packages/kernel/armada-kernel-${KVER}.tar.zst"
+shopt -s nullglob
+tarballs=(/packages/kernel/armada-kernel-*.tar.zst)
+if [ "${#tarballs[@]}" -ne 1 ]; then
+    echo "ERROR: expected exactly one kernel tarball, found ${#tarballs[@]}" >&2
+    printf '  %s\n' "${tarballs[@]}" >&2
+    exit 1
+fi
+
+TARBALL="${tarballs[0]}"
+KVER="${TARBALL##*/armada-kernel-}"
+KVER="${KVER%.tar.zst}"
+CHECKSUM="${TARBALL}.sha256"
 
 # bootc expects exactly one kernel under /usr/lib/modules.
 dnf5 -y remove kernel kernel-core kernel-modules kernel-modules-core 2>/dev/null || true
 rm -rf /usr/lib/modules/*
 
-# Verify the shipped checksum.
-[ -f "${TARBALL}" ] || { echo "ERROR: kernel tarball missing at ${TARBALL}"; exit 1; }
-( cd /packages/kernel && sha256sum -c "armada-kernel-${KVER}.tar.zst.sha256" )
+# Verify the checksum shipped beside the selected kernel artifact.
+[ -f "${CHECKSUM}" ] || { echo "ERROR: kernel checksum missing at ${CHECKSUM}"; exit 1; }
+( cd /packages/kernel && sha256sum -c "$(basename "${CHECKSUM}")" )
 
 tar --extract --zstd -f "${TARBALL}" -C /usr/
 depmod -a "${KVER}" -b /

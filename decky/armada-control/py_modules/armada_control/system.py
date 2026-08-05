@@ -63,6 +63,13 @@ def os_version():
     return read_text(OS_VERSION_PATH) or "unknown"
 
 
+def abl_version():
+    try:
+        return str(call("get_abl_version").get("version") or "unknown")
+    except Exception:
+        return "unknown"
+
+
 def read_text(path):
     try:
         return path.read_text(encoding="utf-8", errors="replace").strip()

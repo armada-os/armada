@@ -31,17 +31,17 @@ matches:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
-          value: AYN Thor
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
           value: Retroid Pocket 6
   - udev:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
           value: Retroid Pocket 6 TOP-DPAD
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: Retroid Pocket Nova
 
 # Only allow a single source device per composite device of this type.
 single_source: false
@@ -55,6 +55,19 @@ source_devices:
       handler: event*
     capability_map_id: ayn_mcu
     passthrough: true
+
+  - group: gamepad
+    evdev:
+      name: gpio-keys
+      phys_path: gpio-keys/input0
+      handler: event*
+    capability_map_id: ayn_mcu
+
+  - group: gamepad
+    evdev:
+      name: gpio-keys-paddles
+      handler: event*
+    capability_map_id: ayn_mcu
 
 # Optional configuration for the composite device
 options:

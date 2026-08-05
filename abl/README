@@ -5,10 +5,10 @@ From ROCKNIX (https://github.com/ROCKNIX/abl), GPL-2.0, (c) ROCKNIX contributors
 2. Identify the SoC for your device (flashing the wrong ABL can brick the device,
    so match it carefully):
 
-     SM8250 - Retroid Pocket 5, Pocket Flip2, Pocket Mini, Pocket Mini V2
+     SM8250 - Retroid Pocket 5, Pocket Flip 2, Pocket Mini, Pocket Mini V2
      SM8550 - AYN Odin 2, Odin 2 Mini, Odin 2 Portal, Thor
               AYANEO Pocket EVO, ACE, DMG, DS, S 2K
-              Retroid Pocket 6
+              Retroid Pocket 6, Pocket Nova
      SM8650 - AYANEO Pocket S2
               KONKR Pocket FIT (G3 Gen 3)
      SM8750 - AYN Odin 3
