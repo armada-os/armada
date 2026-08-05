@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
+import os
 import re
+import shlex
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 CONFIG = Path("/etc/armada/controller.conf")
+DEVICE_ENV = "/usr/libexec/armada/device-env"
 SERVICE = "org.shadowblip.InputPlumber"
 IFACE = "org.shadowblip.Input.CompositeDevice"
-DEFAULT_TYPE = "deck-uhid"
+# Used only when the device profile names no controller type of its own.
+FALLBACK_TYPE = "deck-uhid"
 CONTROLLER_TYPES = {
     "deck-uhid": "Steam Deck",
     "xb360": "Xbox 360",
@@ -23,18 +27,42 @@ ARMADA_PROFILE_NAMES = {
 }
 
 
+def device_type():
+    # The target the device profile asks for. Devices whose hardware has no
+    # QuickAccess source want xb360: emulating a Steam Deck tells Steam there
+    # is a hardware QAM button, which suppresses its Guide+A -> QAM fallback
+    # and leaves those devices with no way to open the Quick Access Menu.
+    helper = os.environ.get("ARMADA_DEVICE_ENV", DEVICE_ENV)
+    command = f'eval "$({shlex.quote(helper)})"; printf "%s" "${{ARMADA_CONTROLLER_TYPE:-}}"'
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", command],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return FALLBACK_TYPE
+    value = proc.stdout.strip()
+    return value if value in CONTROLLER_TYPES else FALLBACK_TYPE
+
+
 def load_type():
+    default = device_type()
     try:
         lines = CONFIG.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return DEFAULT_TYPE
+        return default
     value = ""
     for line in lines:
         key, sep, raw = line.partition("=")
         if sep and key.strip() == "controller_type":
             value = raw.strip()
             break
-    return value if value in CONTROLLER_TYPES else DEFAULT_TYPE
+    # A user choice in /etc still wins over the device default.
+    return value if value in CONTROLLER_TYPES else default
 
 
 def save_type(value):

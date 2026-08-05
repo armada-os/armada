@@ -155,9 +155,9 @@ occasional game that needs it.
 
 ### Quick Access Menu and Armada Control
 
-Press the **Steam** button to open the Quick Access Menu (on AYANEO devices the
-QAM is unmapped, so use **Home + A**), then open **Armada Control**. It has three
-tabs:
+Press the **Steam** button to open the Quick Access Menu, then open **Armada
+Control**. On the AYANEO Pocket EVO the QAM is on the **AYA SPACE** button; on
+the Pocket S 2K use **Home + A**. It has three tabs:
 
 - **Power.** Pick a profile: **Eco**, **Balanced**, or **Performance**. Each sets
   a fan curve, CPU underclock, and a GPU clock range. Profiles are editable in
@@ -208,7 +208,9 @@ settings:
   Armada release.
 - **Red tint.** Some devices show a red tint on the panel after Steam
   restart. It is intermittent and a reboot clears it.
-- **QAM is unmapped on Ayaneo devices.** Use Home+A to open the Quick Access Menu.
+- **The on-screen keyboard chord does not work on AYANEO devices.** Steam
+  receives **Steam + X**, but the action never fires. The keyboard still opens
+  by touch.
 
 ## Community
 
