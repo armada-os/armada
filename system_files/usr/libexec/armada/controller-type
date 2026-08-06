@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
+import os
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-CONFIG = Path("/etc/armada/controller.conf")
+CONFIG = Path(os.environ.get("ARMADA_CONTROLLER_CONFIG", "/etc/armada/controller.conf"))
 SERVICE = "org.shadowblip.InputPlumber"
 IFACE = "org.shadowblip.Input.CompositeDevice"
 DEFAULT_TYPE = "deck-uhid"
@@ -25,26 +26,32 @@ ARMADA_PROFILE_NAMES = {
 }
 
 
-def load_type():
+def load_config():
     try:
         lines = CONFIG.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return DEFAULT_TYPE
-    value = ""
+        return {}
+    values = {}
     for line in lines:
         key, sep, raw = line.partition("=")
-        if sep and key.strip() == "controller_type":
-            value = raw.strip()
-            break
+        if sep:
+            values[key.strip()] = raw.strip()
+    return values
+
+
+def load_type():
+    value = load_config().get("controller_type", "")
     return value if value in CONTROLLER_TYPES else DEFAULT_TYPE
 
 
 def save_type(value):
     if value not in CONTROLLER_TYPES:
         raise ValueError(f"invalid controller type: {value}")
+    values = load_config()
+    values["controller_type"] = value
     CONFIG.parent.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG.with_name(f".{CONFIG.name}.tmp")
-    tmp.write_text(f"controller_type={value}\n", encoding="utf-8")
+    tmp.write_text("".join(f"{key}={item}\n" for key, item in values.items()), encoding="utf-8")
     tmp.chmod(0o644)
     tmp.replace(CONFIG)
 

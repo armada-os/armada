@@ -166,8 +166,9 @@ tabs:
   (**Default**, **Fast**, **Compatible**, or **Custom**). The defaults work for
   most titles; change these only if a game misbehaves. Settings are saved per game.
 - **Settings.** Choose the controller emulation type (**Xbox 360**, **Steam
-  Deck**, or **DualSense**), launch stick and trigger **calibration**, and adjust
-  system options.
+  Deck**, or **DualSense**), select an automatic or manual **Xbox/Nintendo
+  button layout**, launch stick and trigger **calibration**, and adjust system
+  options.
 
 ### Desktop mode
 

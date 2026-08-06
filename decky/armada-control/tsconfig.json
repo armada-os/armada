@@ -16,5 +16,6 @@
     "types": ["react", "node", "webpack"],
     "outDir": "dist"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }
