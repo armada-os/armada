@@ -77,6 +77,36 @@ def read_text(path):
         return ""
 
 
+def vpn_enabled():
+    try:
+        return bool(call("get_vpn_enabled").get("enabled"))
+    except Exception:
+        pass
+    active = run_cmd(["/usr/bin/systemctl", "is-active", "sing-box"])
+    active_s = active.stdout.strip() if active else ""
+    return active_s == "active"
+
+
+def vpn_profile():
+    try:
+        return str(call("get_vpn_profile").get("profile") or "1")
+    except Exception:
+        pass
+    try:
+        with open("/etc/sing-box/active") as fh:
+            return fh.read().strip() or "1"
+    except Exception:
+        return "1"
+
+
+def set_vpn_profile(profile):
+    return str(call("set_vpn_profile", profile=str(profile)).get("profile") or "1")
+
+
+def set_vpn_enabled(enabled):
+    return bool(call("set_vpn_enabled", enabled=bool(enabled)).get("enabled"))
+
+
 def set_ssh_enabled(enabled):
     return bool(call("set_ssh_enabled", enabled=bool(enabled)).get("enabled"))
 

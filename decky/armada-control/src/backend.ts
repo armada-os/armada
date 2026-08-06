@@ -16,6 +16,8 @@ export const saveCompatApplied = (appids: string[]) => {
   return request;
 };
 export const setSshEnabled = (enabled: boolean) => call<[boolean], boolean>("set_ssh_enabled", enabled);
+export const setVpnEnabled = (enabled: boolean) => call<[boolean], boolean>("set_vpn_enabled", enabled);
+export const setVpnProfile = (profile: string) => call<[string], string>("set_vpn_profile", profile);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
 export const setControllerType = (value: string) => call<[string], string>("set_controller_type", value);
 export const getControllerState = () => call<[], CalibrationState>("get_controller_state");
@@ -23,3 +25,6 @@ export const saveCalibration = (capture: Capture) => call<[Capture], Calibration
 export const resetCalibration = () => call<[], CalibrationState>("reset_calibration");
 export const beginCalibrationSession = (token: string) => call<[string], boolean>("begin_calibration_session", token);
 export const endCalibrationSession = (token: string) => call<[string], boolean>("end_calibration_session", token);
+export const startVpnImport = (profile: string) => call<[string], { url: string; port: number; profile: string }>("start_vpn_import", profile);
+export const stopVpnImport = () => call<[], { ok: boolean }>("stop_vpn_import");
+export const vpnImportStatus = () => call<[], { running: boolean; profile: string; received: boolean }>("vpn_import_status");

@@ -8,6 +8,7 @@ cd /ctx/build_files
 ./30-install-steam-session.sh
 ./40-vendor-system-files.sh
 ./45-install-decky-plugins.sh
+./46-install-singbox.sh
 ./50-create-user.sh
 ./55-generate-initramfs.sh
 ./60-set-default-target.sh

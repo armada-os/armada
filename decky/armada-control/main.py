@@ -11,8 +11,9 @@ from armada_control.config import build_config
 from armada_control.controller import set_controller_type
 from armada_control.power import save_power_config
 from armada_control.steam import installed_games
-from armada_control.system import reapply_perf, set_ssh_enabled
+from armada_control.system import reapply_perf, set_ssh_enabled, set_vpn_enabled, set_vpn_profile
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
+from armada_control.vpn_import import start as vpn_import_start, status as vpn_import_status, stop as vpn_import_stop
 
 
 class Plugin:
@@ -40,6 +41,20 @@ class Plugin:
     async def set_ssh_enabled(self, enabled):
         return await asyncio.to_thread(set_ssh_enabled, enabled)
 
+    async def set_vpn_enabled(self, enabled):
+        return await asyncio.to_thread(set_vpn_enabled, enabled)
+
+    async def set_vpn_profile(self, profile):
+        return await asyncio.to_thread(set_vpn_profile, profile)
+
+    async def start_vpn_import(self, profile="1"):
+        return await asyncio.to_thread(vpn_import_start, profile)
+
+    async def stop_vpn_import(self):
+        return await asyncio.to_thread(vpn_import_stop)
+
+    async def vpn_import_status(self):
+        return await asyncio.to_thread(vpn_import_status)
     async def reapply_perf(self):
         return await asyncio.to_thread(reapply_perf)
 

@@ -88,6 +88,8 @@ export interface Config {
   osVersion: string;
   ablVersion: string;
   sshEnabled: boolean;
+  vpnEnabled: boolean;
+  vpnProfile: string;
   controllerType: string;
   controllerTypes: DropdownChoice[];
   calibration?: CalibrationState;
