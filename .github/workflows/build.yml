@@ -127,7 +127,7 @@ jobs:
 
       - name: Build Image
         id: build_image
-        uses: redhat-actions/buildah-build@5d8479758cc72ed82df28daba521d27e20ff8c8a # v3.0.0
+        uses: redhat-actions/buildah-build@3a51aade9afa17e5c78256bcbe2e1ee08c7b995b # v3.0.2
         with:
           containerfiles: |
             ./Containerfile
