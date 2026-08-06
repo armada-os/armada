@@ -1,13 +1,62 @@
-type ControllerInfo = {
+export type ControllerInfo = {
+  eControllerType: number;
   nControllerIndex: number;
+  unUniqueID: number;
+  unVendorID: number;
+  unProductID: number;
+  strSerialNumber: string;
 };
 
 type Unregisterable = {
   unregister?: () => void;
 };
 
+const STEAM_CONTROLLER_TYPES: Record<string, number> = {
+  "deck-uhid": 4,
+  xb360: 31,
+  ds5: 45,
+};
+
 let layout = "xbox";
 let builtInControllerIndex: number | null = null;
+let controllerType = "deck-uhid";
+let controllers: ControllerInfo[] = [];
+let awaitingControllerRecreation = false;
+
+function controllerSignature(controller: ControllerInfo) {
+  return [
+    controller.nControllerIndex,
+    controller.eControllerType,
+    controller.unUniqueID,
+    controller.unVendorID,
+    controller.unProductID,
+    controller.strSerialNumber,
+  ].join(":");
+}
+
+function matchesControllerType(controller: ControllerInfo, type: string) {
+  return controller.eControllerType === STEAM_CONTROLLER_TYPES[type];
+}
+
+export function selectBuiltInController(
+  nextControllers: ControllerInfo[],
+  previousControllers: ControllerInfo[],
+  type: string,
+  currentIndex: number | null,
+  awaitNewController: boolean,
+) {
+  const candidates = nextControllers
+    .filter((controller) => matchesControllerType(controller, type))
+    .sort((a, b) => a.nControllerIndex - b.nControllerIndex);
+  if (currentIndex !== null && candidates.some((controller) => controller.nControllerIndex === currentIndex)) {
+    return currentIndex;
+  }
+  if (!awaitNewController) {
+    return candidates[0]?.nControllerIndex ?? null;
+  }
+  const previous = new Set(previousControllers.map(controllerSignature));
+  return candidates.find((controller) => !previous.has(controllerSignature(controller)))?.nControllerIndex ?? null;
+}
 
 function apply() {
   if (builtInControllerIndex === null) return;
@@ -22,24 +71,45 @@ export function applySteamButtonLayout(value: string) {
   apply();
 }
 
-export function registerSteamButtonLayout(value: string) {
+export function beginSteamControllerTypeChange(value: string) {
+  controllerType = value in STEAM_CONTROLLER_TYPES ? value : "deck-uhid";
+  builtInControllerIndex = null;
+  awaitingControllerRecreation = true;
+}
+
+export function restoreSteamControllerType(value: string) {
+  controllerType = value in STEAM_CONTROLLER_TYPES ? value : "deck-uhid";
+  builtInControllerIndex = selectBuiltInController(
+    controllers,
+    [],
+    controllerType,
+    null,
+    false,
+  );
+  awaitingControllerRecreation = false;
+  apply();
+}
+
+export function registerSteamButtonLayout(value: string, type: string) {
   applySteamButtonLayout(value);
+  controllerType = type in STEAM_CONTROLLER_TYPES ? type : "deck-uhid";
   const input = window.SteamClient?.Input;
   if (!input?.RegisterForControllerListChanges) return () => {};
 
   const registrations: Unregisterable[] = [];
-  const controllerList = input.RegisterForControllerListChanges((controllers: ControllerInfo[]) => {
-    const indexes = controllers
-      .map((controller) => controller.nControllerIndex)
-      .filter((index) => Number.isInteger(index) && index >= 0)
-      .sort((a, b) => a - b);
-    if (builtInControllerIndex !== null && indexes.includes(builtInControllerIndex)) {
-      apply();
-      return;
+  const controllerList = input.RegisterForControllerListChanges((nextControllers: ControllerInfo[]) => {
+    const selected = selectBuiltInController(
+      nextControllers,
+      controllers,
+      controllerType,
+      builtInControllerIndex,
+      awaitingControllerRecreation,
+    );
+    controllers = nextControllers;
+    builtInControllerIndex = selected;
+    if (selected !== null) {
+      awaitingControllerRecreation = false;
     }
-    // InputPlumber creates the built-in virtual controller before Steam starts,
-    // so it owns the first stable controller index.
-    builtInControllerIndex = indexes[0] ?? null;
     apply();
   });
   registrations.push(controllerList);
@@ -49,5 +119,7 @@ export function registerSteamButtonLayout(value: string) {
       registration?.unregister?.();
     }
     builtInControllerIndex = null;
+    controllers = [];
+    awaitingControllerRecreation = false;
   };
 }

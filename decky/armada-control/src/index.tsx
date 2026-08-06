@@ -27,7 +27,10 @@ export default definePlugin(() => {
         handled.loaded && config.tweaks?.global?.autoApplyCompat !== false,
         handled.appids,
       );
-      unregisterButtonLayout = registerSteamButtonLayout(config.resolvedButtonLayout);
+      unregisterButtonLayout = registerSteamButtonLayout(
+        config.resolvedButtonLayout,
+        config.controllerType,
+      );
       const persist = handled.loaded ? persistHandledGames : () => {};
       unregisterDownloadWatcher = registerDownloadWatcher(persist);
       window.setTimeout(() => {

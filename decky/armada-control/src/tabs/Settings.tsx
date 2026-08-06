@@ -7,7 +7,11 @@ import {
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
 import { SelectEdit, ToggleRow } from "../components/widgets";
-import { applySteamButtonLayout } from "../lib/steamButtonLayout";
+import {
+  applySteamButtonLayout,
+  beginSteamControllerTypeChange,
+  restoreSteamControllerType,
+} from "../lib/steamButtonLayout";
 import type { Config } from "../types";
 
 export function Settings({ config, setConfig }: {
@@ -28,11 +32,16 @@ export function Settings({ config, setConfig }: {
   };
   const setControllerType = async (value: string) => {
     const previous = config.controllerType || "deck-uhid";
+    if (value === previous) {
+      return;
+    }
     setConfig((current) => (current ? { ...current, controllerType: value } : current));
+    beginSteamControllerTypeChange(value);
     try {
       const applied = await applyControllerType(value);
       setConfig((current) => (current ? { ...current, controllerType: applied } : current));
     } catch (error) {
+      restoreSteamControllerType(previous);
       setConfig((current) => (current ? { ...current, controllerType: previous } : current));
     }
   };
