@@ -5,8 +5,9 @@ import os
 import selectors
 import shlex
 import socket
-import struct
 import subprocess
+from urllib.parse import parse_qs, unquote, urlparse
+import struct
 import sys
 import tempfile
 import time
@@ -143,6 +144,49 @@ def action_get_controller_type(request):
     return {"value": result}
 
 
+def vpn_enabled():
+    result = subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "sing-box"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=5,
+    )
+    return result.stdout.strip() == "active"
+
+
+def vpn_profile():
+    try:
+        with open("/etc/sing-box/active") as fh:
+            return fh.read().strip() or "1"
+    except Exception:
+        return "1"
+
+
+def action_get_vpn_profile(request):
+    return {"profile": vpn_profile()}
+
+
+def action_set_vpn_profile(request):
+    p = str(request.get("profile", "1"))
+    if p not in ("1", "2"):
+        raise ValueError("bad profile")
+    run(["/usr/libexec/armada/sauna-vpn", "use", p], timeout=30)
+    return {"profile": vpn_profile()}
+
+
+def action_set_vpn_enabled(request):
+    enabled = bool(request.get("enabled"))
+    action = "enable" if enabled else "disable"
+    run(["/usr/bin/systemctl", action, "--now", "sing-box"], timeout=30)
+    return {"enabled": vpn_enabled()}
+
+
+def action_get_vpn_enabled(request):
+    return {"enabled": vpn_enabled()}
+
+
 def action_set_ssh_enabled(request):
     enabled = bool(request.get("enabled"))
     action = "enable" if enabled else "disable"
@@ -194,6 +238,143 @@ def action_write_config(request):
     return {"ok": True}
 
 
+_DEFAULT_VPN_TEMPLATE = {
+    "log": {"level": "warn", "timestamp": True},
+    "dns": {
+        "servers": [{"type": "tcp", "tag": "proxy-dns", "server": "8.8.8.8", "detour": "proxy"}],
+        "final": "proxy-dns",
+        "strategy": "ipv4_only",
+    },
+    "inbounds": [{
+        "type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"],
+        "auto_route": True, "strict_route": True, "stack": "mixed",
+    }],
+    "outbounds": [
+        {"type": "vless", "tag": "proxy", "server": "", "server_port": 443, "uuid": "", "flow": "",
+         "tls": {"enabled": True, "server_name": "", "utls": {"enabled": True, "fingerprint": "chrome"}}},
+        {"type": "direct", "tag": "direct"},
+    ],
+    "route": {
+        "rules": [
+            {"action": "sniff"},
+            {"protocol": "dns", "action": "hijack-dns"},
+            {"ip_is_private": True, "outbound": "direct"},
+        ],
+        "final": "proxy",
+        "auto_detect_interface": True,
+    },
+}
+
+
+def _vless_to_config(link, profile):
+    # Convert a vless:// share link into a full sing-box config, reusing the profile's
+    # existing config as a template (preserving its dns/tun/route tuning) and swapping the
+    # proxy outbound. The connection host is pinned to an IP so the server stays reachable
+    # without needing DNS through the not-yet-up tunnel.
+    u = urlparse(link)
+    if u.scheme != "vless" or not u.username or not u.hostname:
+        raise ValueError("not a valid vless:// link")
+    q = {k: v[0] for k, v in parse_qs(u.query).items()}
+    host = u.hostname
+    try:
+        server = socket.gethostbyname(host)
+    except Exception:
+        server = host
+    template = Path("/etc/sing-box/config-%s.json" % profile)
+    if template.exists():
+        cfg = json.loads(template.read_text())
+    else:
+        cfg = json.loads(json.dumps(_DEFAULT_VPN_TEMPLATE))
+    ob = None
+    for candidate in cfg.get("outbounds", []):
+        if candidate.get("type") == "vless" or candidate.get("tag") == "proxy":
+            ob = candidate
+            break
+    if ob is None:
+        raise ValueError("template has no vless/proxy outbound")
+    ob["type"] = "vless"
+    ob["server"] = server
+    ob["server_port"] = int(u.port or 443)
+    ob["uuid"] = u.username
+    ob["flow"] = q.get("flow", "")
+    tls = ob.setdefault("tls", {})
+    tls["enabled"] = True
+    tls["server_name"] = q.get("sni") or q.get("host") or host
+    utls = tls.setdefault("utls", {})
+    utls["enabled"] = True
+    utls["fingerprint"] = q.get("fp", "chrome")
+    alpn = [a for a in q.get("alpn", "").split(",") if a]
+    if alpn:
+        tls["alpn"] = alpn
+    else:
+        tls.pop("alpn", None)
+    if q.get("security") == "reality":
+        reality = tls.setdefault("reality", {})
+        reality["enabled"] = True
+        reality["public_key"] = q.get("pbk", "")
+        reality["short_id"] = q.get("sid", "")
+    else:
+        tls.pop("reality", None)
+    net = q.get("type", "tcp")
+    if net == "grpc":
+        ob["transport"] = {"type": "grpc", "service_name": q.get("serviceName") or q.get("servicename") or ""}
+    elif net == "ws":
+        transport = {"type": "ws"}
+        if q.get("path"):
+            transport["path"] = unquote(q["path"])
+        if q.get("host"):
+            transport["headers"] = {"Host": q["host"]}
+        ob["transport"] = transport
+    elif net in ("http", "httpupgrade"):
+        transport = {"type": "http"}
+        if q.get("path"):
+            transport["path"] = unquote(q["path"])
+        if q.get("host"):
+            transport["host"] = [q["host"]]
+        ob["transport"] = transport
+    else:
+        ob.pop("transport", None)
+    return json.dumps(cfg, indent=2)
+
+
+def action_import_vpn_config(request):
+    p = str(request.get("profile", "1"))
+    text = request.get("text")
+    if p not in ("1", "2") or not isinstance(text, str):
+        raise ValueError("invalid vpn config import")
+    text = text.strip()
+    if len(text.encode("utf-8")) > MAX_REQUEST:
+        raise ValueError("config payload too large")
+    if text.startswith("vless://"):
+        text = _vless_to_config(text, p)
+    try:
+        cfg = json.loads(text)
+    except ValueError:
+        raise ValueError("not valid JSON")
+    if not isinstance(cfg, dict) or "outbounds" not in cfg:
+        raise ValueError("not a sing-box config (missing outbounds)")
+    fd, tmp = tempfile.mkstemp(prefix=".sbcheck.", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        chk = subprocess.run(
+            ["/usr/bin/sing-box", "check", "-c", tmp],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=15,
+        )
+        if chk.returncode != 0:
+            raise ValueError("sing-box check failed: " + (chk.stdout or "").strip()[:300])
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+    dest = Path(f"/etc/sing-box/config-{p}.json")
+    atomic_write(dest, text)
+    os.chmod(dest, 0o600)
+    active = vpn_profile() == p
+    if active and vpn_enabled():
+        run(["/usr/bin/systemctl", "restart", "sing-box"], timeout=30)
+    return {"profile": p, "active": active}
 class PerfManager:
     """Owns the perf state file: global defaults, the per-game override,
     and the pidfd that restores defaults on game exit."""
@@ -359,7 +540,12 @@ ACTIONS = {
     "get_ssh_enabled": action_get_ssh_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
     "set_ssh_enabled": action_set_ssh_enabled,
+    "set_vpn_enabled": action_set_vpn_enabled,
+    "set_vpn_profile": action_set_vpn_profile,
+    "get_vpn_profile": action_get_vpn_profile,
+    "get_vpn_enabled": action_get_vpn_enabled,
     "write_config": action_write_config,
+    "import_vpn_config": action_import_vpn_config,
     "reapply_perf": action_reapply_perf,
 }
 

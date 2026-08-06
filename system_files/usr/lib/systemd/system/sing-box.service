@@ -1,0 +1,17 @@
+[Unit]
+Description=sing-box VPN service
+Documentation=https://sing-box.sagernet.org
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+StateDirectory=sing-box
+ExecStartPre=/usr/bin/mkdir -p /etc/sing-box
+ExecStart=/usr/bin/sing-box -D /var/lib/sing-box -c /etc/sing-box/config.json run
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target

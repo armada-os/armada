@@ -1,0 +1,18 @@
+#!/bin/bash
+set -uo pipefail
+CFG=/etc/sing-box
+case "${1:-}" in
+  use)
+    n="${2:?profile 1 or 2}"
+    [ -f "$CFG/config-$n.json" ] || { echo "no profile $n"; exit 1; }
+    ln -sf "config-$n.json" "$CFG/config.json"
+    echo "$n" > "$CFG/active"
+    if systemctl is-active --quiet sing-box; then systemctl restart sing-box; echo "profile $n (vpn restarted)"; else echo "profile $n (vpn off)"; fi ;;
+  on)  systemctl enable --now sing-box ;;
+  off) systemctl disable --now sing-box ;;
+  status)
+    echo "profile: $(cat $CFG/active 2>/dev/null || echo none)"
+    echo "vpn: $(systemctl is-active sing-box)" ;;
+  ip)  curl -s --max-time 8 https://api.ipify.org; echo ;;
+  *) echo "usage: sauna-vpn use 1|2 | on | off | status | ip"; exit 1 ;;
+esac
