@@ -7,6 +7,7 @@ from armada_control.calibration import (
     reset_calibration_params,
     save_calibration,
 )
+from armada_control.button_layout import set_button_layout
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
 from armada_control.power import save_power_config
@@ -42,6 +43,9 @@ class Plugin:
 
     async def set_controller_type(self, value):
         return await asyncio.to_thread(set_controller_type, value)
+
+    async def set_button_layout(self, value):
+        return await asyncio.to_thread(set_button_layout, value)
 
     async def get_controller_state(self):
         return await asyncio.to_thread(controller_state)

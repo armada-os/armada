@@ -7,9 +7,11 @@ import {
   registerDownloadWatcher,
   sweepInstalledGames,
 } from "./lib/steamCompat";
+import { registerSteamButtonLayout } from "./lib/steamButtonLayout";
 
 export default definePlugin(() => {
   let unregisterDownloadWatcher = () => {};
+  let unregisterButtonLayout = () => {};
   const persistHandledGames = () => {
     saveCompatApplied(handledGameAppids()).catch(() => {});
   };
@@ -25,6 +27,7 @@ export default definePlugin(() => {
         handled.loaded && config.tweaks?.global?.autoApplyCompat !== false,
         handled.appids,
       );
+      unregisterButtonLayout = registerSteamButtonLayout(config.resolvedButtonLayout);
       const persist = handled.loaded ? persistHandledGames : () => {};
       unregisterDownloadWatcher = registerDownloadWatcher(persist);
       window.setTimeout(() => {
@@ -41,6 +44,7 @@ export default definePlugin(() => {
     onDismount() {
       cancelled = true;
       unregisterDownloadWatcher();
+      unregisterButtonLayout();
     },
     icon: (
       <svg

@@ -82,9 +82,17 @@ export interface Config {
   sshEnabled: boolean;
   controllerType: string;
   controllerTypes: DropdownChoice[];
+  buttonLayout: string;
+  resolvedButtonLayout: string;
+  buttonLayouts: DropdownChoice[];
   calibration?: CalibrationState;
   game?: GameRef | null;
   selectedGame?: GameRef | null;
+}
+
+export interface ButtonLayoutState {
+  value: string;
+  resolved: string;
 }
 
 export type Capture = Record<string, { center: number; min: number; max: number; range: number }>;

@@ -16,6 +16,7 @@ ABL_PARTITIONS = (
 MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xb360", "ds5"}
+BUTTON_LAYOUTS = {"auto", "xbox", "nintendo"}
 INTERCEPT_MODES = {"overlay", "reset"}
 CONFIG_PATHS = {
     "power": Path("/etc/armada/power-profiles.conf"),
@@ -133,6 +134,24 @@ def action_get_controller_type(request):
     return {"value": result}
 
 
+def action_set_button_layout(request):
+    value = str(request.get("value", ""))
+    if value not in BUTTON_LAYOUTS:
+        raise ValueError("invalid button layout")
+    run(["/usr/libexec/armada/controller-layout", "set", value])
+    return action_get_button_layout(request)
+
+
+def action_get_button_layout(request):
+    value = subprocess.check_output(
+        ["/usr/libexec/armada/controller-layout", "get"], text=True, timeout=5
+    ).strip()
+    resolved = subprocess.check_output(
+        ["/usr/libexec/armada/controller-layout", "resolve"], text=True, timeout=5
+    ).strip()
+    return {"value": value, "resolved": resolved}
+
+
 def action_set_ssh_enabled(request):
     enabled = bool(request.get("enabled"))
     action = "enable" if enabled else "disable"
@@ -183,6 +202,8 @@ def action_write_config(request):
 
 
 ACTIONS = {
+    "set_button_layout": action_set_button_layout,
+    "get_button_layout": action_get_button_layout,
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
