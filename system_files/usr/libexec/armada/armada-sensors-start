@@ -1,0 +1,24 @@
+#!/bin/sh
+# Armada SSC accel+gyro bring-up for SM8750 handhelds.
+#  1. Stage the Hexagon sensor registry to a writable tmpfs
+#  2. Load the sns_iio IIO bridge kernel module
+#  3. Spawn the ADSP sensorspd static PD (adsprpcd)
+#  4. Stream accel+gyro from QRTR into the IIO bridge (snsfeed)
+HEXFS=/tmp/qcom-hexagon-fs
+
+rm -rf "${HEXFS}"
+mkdir -p "${HEXFS}"
+cp -a /usr/share/qcom-hexagon-fs/. "${HEXFS}/"
+ln -sf . "${HEXFS}/adsp"
+mkdir -p "${HEXFS}/mnt/vendor"
+mountpoint -q "${HEXFS}/mnt/vendor" || mount --bind "${HEXFS}/vendor" "${HEXFS}/mnt/vendor"
+
+modprobe kfifo_buf 2>/dev/null
+modprobe sns_iio 2>/dev/null
+
+ADSP_LIBRARY_PATH="${HEXFS}" /usr/bin/adsprpcd sensorspd adsp &
+ADSPRPCD_PID=$!
+trap "kill ${ADSPRPCD_PID} 2>/dev/null" EXIT
+
+sleep 5
+exec /usr/bin/snsfeed 400
