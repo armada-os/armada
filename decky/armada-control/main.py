@@ -13,9 +13,18 @@ from armada_control.power import save_power_config
 from armada_control.steam import installed_games
 from armada_control.system import reapply_perf, restart_game_mode, set_ssh_enabled
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
+from armada_control.rgb import get_rgb_config, apply_rgb_config, save_rgb_config
 
 
 class Plugin:
+    async def _main(self):
+        try:
+            # Offload the RGB work to a background thread so it doesn't block Decky
+            config = await asyncio.to_thread(get_rgb_config)
+            await asyncio.to_thread(apply_rgb_config, config)
+        except Exception:
+            pass
+
     # Offload blocking work to a thread so a slow call can't stall Decky's asyncio loop.
     async def get_config(self):
         return await asyncio.to_thread(build_config, False)
@@ -29,6 +38,10 @@ class Plugin:
 
     async def save_tweaks(self, data):
         await asyncio.to_thread(save_tweaks, data)
+        return await self.get_config()
+
+    async def save_rgb(self, data):
+        await asyncio.to_thread(save_rgb_config, data)
         return await self.get_config()
 
     async def get_compat_applied(self):
