@@ -1,0 +1,40 @@
+#!/bin/bash
+# The ADSP hosts the battery manager firmware behind pmic_glink. Its firmware
+# request can fire before the rootfs holding /usr/lib/firmware is reachable;
+# remoteproc logs "request_firmware failed: -2" and never retries, so the ADSP
+# stays offline for the whole boot. Every power_supply attribute then reads back
+# empty and the battery looks absent (Steam shows 0%). Losing the race is
+# intermittent, so start it here once the filesystem is definitely up.
+set -uo pipefail
+
+log() { echo "adsp-recover: $*"; }
+
+found=0
+for rp in /sys/class/remoteproc/remoteproc*; do
+    [[ -r "${rp}/name" && -w "${rp}/state" ]] || continue
+    [[ "$(cat "${rp}/name" 2>/dev/null)" == "adsp" ]] || continue
+    found=1
+
+    state="$(cat "${rp}/state" 2>/dev/null)" || continue
+    if [[ "$state" == "running" ]]; then
+        log "adsp already running"
+        exit 0
+    fi
+
+    log "adsp is ${state}; starting it"
+    for attempt in 1 2 3; do
+        echo start > "${rp}/state" 2>/dev/null || true
+        sleep 2
+        if [[ "$(cat "${rp}/state" 2>/dev/null)" == "running" ]]; then
+            log "adsp started (attempt ${attempt})"
+            exit 0
+        fi
+    done
+
+    # Non-fatal: a device without working audio/battery still boots to Steam.
+    log "failed to start adsp after 3 attempts"
+    exit 0
+done
+
+(( found )) || log "no adsp remoteproc present; nothing to do"
+exit 0

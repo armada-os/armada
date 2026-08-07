@@ -1,0 +1,17 @@
+[Unit]
+Description=armada ADSP recovery
+# remoteproc requests the ADSP firmware early and does not retry on failure, so
+# run once the rootfs is definitely mounted. Ordered before the battery and
+# session consumers so they do not read an empty power supply.
+After=sysinit.target local-fs.target
+Before=armada-powerd.service display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/armada/adsp-recover
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
