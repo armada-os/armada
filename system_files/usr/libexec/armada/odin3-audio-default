@@ -1,0 +1,70 @@
+#!/bin/bash
+set -euo pipefail
+
+readonly TRUSTED_PATH=/usr/bin:/usr/sbin:/bin:/sbin
+readonly DEVICE_ENV=${ARMADA_AUDIO_DEVICE_ENV:-/usr/libexec/armada/device-env}
+readonly USER_HOME=${ARMADA_AUDIO_USER_HOME:-${HOME:-/var/home/armada}}
+readonly STATE_DIR=${ARMADA_AUDIO_STATE_DIR:-${USER_HOME}/.local/state/armada}
+readonly PENDING_MARKER=${STATE_DIR}/odin3-audio-default.pending
+readonly DONE_MARKER=${STATE_DIR}/odin3-audio-default.done
+readonly PACTL=${ARMADA_AUDIO_PACTL:-/usr/bin/pactl}
+readonly SLEEP=${ARMADA_AUDIO_SLEEP:-/usr/bin/sleep}
+readonly WAIT_ATTEMPTS=${ARMADA_AUDIO_WAIT_ATTEMPTS:-40}
+readonly WAIT_SECONDS=${ARMADA_AUDIO_WAIT_SECONDS:-0.25}
+
+die() {
+    printf 'Armada Odin 3 audio default: %s\n' "$*" >&2
+    exit 1
+}
+
+is_odin3() {
+    local policy line ARMADA_DEVICE_ID= ARMADA_DEVICE_NAME= ARMADA_SOC_CLASS=
+    policy=$(
+        /usr/bin/env -i PATH="$TRUSTED_PATH" \
+            /bin/bash --noprofile --norc -p "$DEVICE_ENV"
+    ) || die 'immutable device policy could not be read'
+
+    while IFS= read -r line; do
+        case "$line" in
+            ARMADA_DEVICE_ID=*) ARMADA_DEVICE_ID=${line#*=} ;;
+            ARMADA_DEVICE_NAME=*) ARMADA_DEVICE_NAME=${line#*=} ;;
+            ARMADA_SOC_CLASS=*) ARMADA_SOC_CLASS=${line#*=} ;;
+        esac
+    done <<<"$policy"
+
+    [[ "$ARMADA_DEVICE_ID" == ayn-odin-3 &&
+       "$ARMADA_SOC_CLASS" == SM8750 ]] || return 1
+    case "$ARMADA_DEVICE_NAME" in
+        'AYN Odin 3'|'AYN\ Odin\ 3'|"'AYN Odin 3'") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_odin3 || exit 0
+
+# A missing pending marker means the account already had audio/default state,
+# or this one-time initialization has completed. Never infer permission to
+# replace a user's later sink choice.
+[[ -f "$PENDING_MARKER" && ! -L "$PENDING_MARKER" ]] || exit 0
+[[ ! -e "$DONE_MARKER" && ! -L "$DONE_MARKER" ]] || exit 0
+
+[[ "$WAIT_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || die 'invalid wait attempt count'
+
+ready=0
+for (( attempt=1; attempt<=WAIT_ATTEMPTS; attempt++ )); do
+    sinks=$("$PACTL" list short sinks 2>/dev/null || true)
+    if grep -Fq $'\tStereo\t' <<<"$sinks" &&
+       grep -Fq $'\tVirtual Surround Sound\t' <<<"$sinks"; then
+        ready=1
+        break
+    fi
+    "$SLEEP" "$WAIT_SECONDS"
+done
+(( ready )) || die 'Stereo and Virtual Surround Sound sinks did not become ready'
+
+"$PACTL" set-sink-volume Stereo 100%
+"$PACTL" set-sink-volume 'Virtual Surround Sound' 100%
+"$PACTL" set-default-sink Stereo
+
+: >"$DONE_MARKER"
+rm -- "$PENDING_MARKER"

@@ -82,6 +82,7 @@ for steamapps in "${steamapps_dirs[@]}"; do
 done
 
 touch "${steam_root}/.cef-enable-remote-debugging"
+systemctl --user --no-block restart armada-odin3-audio-steam-restore.service || true
 cd "${steam_arm_dir}"
 exec "${steam_arm}" \
     "${steam_args[@]}" \
