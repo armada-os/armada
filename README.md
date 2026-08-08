@@ -187,10 +187,17 @@ desktop. The **Bazaar** app store and the **Armada Installer**
 
 ### Power button and sleep
 
-Pressing the power button does a "fake suspend" (inspired by ROCKNIX) rather than
-real S3 sleep: it blanks the screen and freezes the session, and the same press
-wakes it. Because the device does not truly sleep, idle battery drain is higher
-than it would be with real suspend.
+What the power button does depends on the device.
+
+On the **AYANEO Pocket EVO** it is a real suspend to RAM: the device genuinely
+powers down and the same press wakes it. Standby drain measures roughly 90–170 mA
+against about 283 mA for fake suspend — call it 2 to 4 days of standby rather
+than a little over one. That needs the SM8550 PCIe D3cold patches; without them
+it is about 237 mA.
+
+Everywhere else it is a "fake suspend" (inspired by ROCKNIX): the screen blanks
+and the session freezes, but the device stays powered, so idle battery drain is
+higher than it would be with real suspend.
 
 ## Updating
 
