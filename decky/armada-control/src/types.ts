@@ -91,6 +91,7 @@ export interface Config {
   ablVersion: string;
   sshEnabled: boolean;
   mtpEnabled: boolean;
+  sm8550SleepEnabled: boolean;
   controllerType: string;
   controllerTypes: DropdownChoice[];
   calibration?: CalibrationState;

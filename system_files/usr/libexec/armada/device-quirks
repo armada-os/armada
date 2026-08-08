@@ -33,6 +33,8 @@ esac
 # fake-suspend keeps wifi associated; real suspend needs NM to drop and reconnect.
 if [[ "${ARMADA_SUSPEND_MODE:-fake}" != "fake" ]]; then
     rm -f /etc/NetworkManager/ignore-sleep
+else
+    touch /etc/NetworkManager/ignore-sleep || true
 fi
 
 # SM8550 (A740): CPU0's deep power-collapse C-state wedges the GMU; disable it.

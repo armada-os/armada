@@ -26,6 +26,8 @@ MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xb360", "ds5"}
 INTERCEPT_MODES = {"overlay", "reset"}
+SM8550_SLEEP_KARG = "sm8550.ns=1"
+RPM_OSTREE = "/usr/bin/rpm-ostree"
 CONFIG_PATHS = {
     "power": Path("/etc/armada/power-profiles.conf"),
     "tweaks": Path("/etc/armada/game-tweaks.json"),
@@ -33,6 +35,7 @@ CONFIG_PATHS = {
     "compat-applied": Path("/var/lib/armada/compat-applied.json"),
 }
 PERF = None
+SM8550_SLEEP_ENABLED = None
 CALIBRATION_PARAMS = (
     "axis_leftx_min",
     "axis_leftx_center",
@@ -104,6 +107,21 @@ def mtp_enabled():
         timeout=5,
     )
     return result.stdout.strip() == "active"
+
+
+def sm8550_sleep_enabled():
+    global SM8550_SLEEP_ENABLED
+    if SM8550_SLEEP_ENABLED is None:
+        result = subprocess.run(
+            [RPM_OSTREE, "kargs"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+        SM8550_SLEEP_ENABLED = SM8550_SLEEP_KARG in shlex.split(result.stdout)
+    return SM8550_SLEEP_ENABLED
 
 
 def device_env():
@@ -183,6 +201,22 @@ def action_set_mtp_enabled(request):
 
 def action_get_mtp_enabled(request):
     return {"enabled": mtp_enabled()}
+
+
+def action_get_sm8550_sleep_enabled(request):
+    return {"enabled": sm8550_sleep_enabled()}
+
+
+def action_set_sm8550_sleep_enabled(request):
+    global SM8550_SLEEP_ENABLED
+    enabled = bool(request.get("enabled"))
+    if device_env().get("ARMADA_SOC_CLASS") != "SM8550":
+        raise RuntimeError("SM8550 native sleep is not supported on this device")
+
+    option = "--append-if-missing" if enabled else "--delete-if-present"
+    run([RPM_OSTREE, "kargs", f"{option}={SM8550_SLEEP_KARG}"], timeout=25)
+    SM8550_SLEEP_ENABLED = enabled
+    return {"enabled": enabled}
 
 
 def action_get_device_env(request):
@@ -394,9 +428,11 @@ ACTIONS = {
     "get_abl_version": action_get_abl_version,
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,
+    "get_sm8550_sleep_enabled": action_get_sm8550_sleep_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
+    "set_sm8550_sleep_enabled": action_set_sm8550_sleep_enabled,
     "write_config": action_write_config,
     "reapply_perf": action_reapply_perf,
     "restart_game_mode": action_restart_game_mode,

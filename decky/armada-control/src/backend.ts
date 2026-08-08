@@ -17,6 +17,7 @@ export const saveCompatApplied = (appids: string[]) => {
 };
 export const setSshEnabled = (enabled: boolean) => call<[boolean], boolean>("set_ssh_enabled", enabled);
 export const setMtpEnabled = (enabled: boolean) => call<[boolean], boolean>("set_mtp_enabled", enabled);
+export const setSm8550SleepEnabled = (enabled: boolean) => call<[boolean], boolean>("set_sm8550_sleep_enabled", enabled);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
 export const restartGameMode = () => call<[], boolean>("restart_game_mode");
 export const setControllerType = (value: string) => call<[string], string>("set_controller_type", value);

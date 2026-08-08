@@ -1,6 +1,6 @@
 import { ButtonItem, Field, PanelSection } from "@decky/ui";
 import type { Dispatch, SetStateAction } from "react";
-import { setControllerType as applyControllerType, setMtpEnabled as applyMtpEnabled, setSshEnabled as applySshEnabled } from "../backend";
+import { setControllerType as applyControllerType, setMtpEnabled as applyMtpEnabled, setSm8550SleepEnabled as applySm8550SleepEnabled, setSshEnabled as applySshEnabled } from "../backend";
 import { openCalibration } from "../components/Calibration";
 import { SelectEdit, ToggleRow } from "../components/widgets";
 import type { Config } from "../types";
@@ -43,6 +43,18 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, controllerType: previous } : current));
     }
   };
+  const setSm8550SleepEnabled = async (enabled: boolean) => {
+    if (enabled === !!config.sm8550SleepEnabled) {
+      return;
+    }
+    setConfig((current) => (current ? { ...current, sm8550SleepEnabled: enabled } : current));
+    try {
+      const applied = await applySm8550SleepEnabled(enabled);
+      setConfig((current) => (current ? { ...current, sm8550SleepEnabled: applied } : current));
+    } catch (error) {
+      setConfig((current) => (current ? { ...current, sm8550SleepEnabled: !enabled } : current));
+    }
+  };
   return (
     <>
       <PanelSection title="Controller">
@@ -60,6 +72,14 @@ export function Settings({ config, setConfig }: {
         <Field label="ABL Version" description={config.ablVersion || "unknown"} />
       </PanelSection>
       <PanelSection title="Experimental">
+        {config.cpuDeviceClass === "SM8550" && (
+          <ToggleRow
+            label="SM8550 Native Sleep"
+            description="Takes effect after restart"
+            value={!!config.sm8550SleepEnabled}
+            onChange={setSm8550SleepEnabled}
+          />
+        )}
         <ToggleRow
           label="USB File Transfer"
           description={config.mtpEnabled ? "Enabled until shutdown" : undefined}

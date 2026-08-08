@@ -69,6 +69,13 @@ def mtp_enabled():
     return active_s == "active"
 
 
+def sm8550_sleep_enabled():
+    try:
+        return bool(call("get_sm8550_sleep_enabled").get("enabled"))
+    except Exception:
+        return False
+
+
 def os_version():
     return read_text(OS_VERSION_PATH) or "unknown"
 
@@ -93,6 +100,10 @@ def set_ssh_enabled(enabled):
 
 def set_mtp_enabled(enabled):
     return bool(call("set_mtp_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def set_sm8550_sleep_enabled(enabled):
+    return bool(call("set_sm8550_sleep_enabled", enabled=bool(enabled)).get("enabled"))
 
 
 CORE_PRESET_VARS = (

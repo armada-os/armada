@@ -37,6 +37,12 @@ if [[ -n "$profile" && -r "$device_dir/$profile.conf" ]]; then
     source "$device_dir/$profile.conf"
 fi
 
+# Native sleep stays opt-in while the SM8550 stack is experimental.
+if [[ "${ARMADA_SOC_CLASS:-}" == "SM8550" &&
+      " $(</proc/cmdline) " == *" sm8550.ns=1 "* ]]; then
+    ARMADA_SUSPEND_MODE=mem
+fi
+
 # CPU topology by SoC (device conf may override). Cpulists are ordered:
 # presets expand in host order, WINE_CPU_TOPOLOGY consumers keep the order.
 # BIG includes the prime cores; PRIME is the strict subset. Empty
