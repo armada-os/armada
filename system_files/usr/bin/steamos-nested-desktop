@@ -1,0 +1,129 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+set -euo pipefail
+
+if [[ ${XDG_SESSION_DESKTOP:-} == KDE || ${KDE_FULL_SESSION:-} == true ]]; then
+    echo "steamos-nested-desktop: refusing to launch inside KDE" >&2
+    if [[ ! -t 1 ]] && command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "Nested Desktop" --sorry \
+            "Nested Desktop should be launched from Gaming Mode."
+    fi
+    exit 0
+fi
+
+state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/armada"
+install -d -m 0700 "${state_dir}"
+exec >>"${state_dir}/nested-desktop.log" 2>&1
+echo "=== Nested Desktop $(date --iso-8601=seconds) ==="
+
+# Gamescope's overlay, session-specific portals, and forced Qt backend must not
+# leak into Plasma. Armada exports QT_QPA_PLATFORM=xcb in Gaming Mode, which
+# prevents Plasma Shell from creating its Wayland panel surface.
+unset LD_PRELOAD XDG_DESKTOP_PORTAL_DIR QT_QPA_PLATFORM
+cd "${HOME}"
+
+parent_runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}
+nested_runtime=$(mktemp -d "${parent_runtime}/nested-desktop.XXXXXXXX")
+
+# The physical DSI panel and Gamescope's nested X11 output can expose the same
+# display identity even though they need different rotations. Mirror the user's
+# data/config directories with symlinks, but give Nested Desktop private legacy
+# KScreen and modern KWin output stores so its landscape transform cannot turn
+# Desktop Mode portrait.
+real_data_home=${XDG_DATA_HOME:-${HOME}/.local/share}
+nested_data_home="${nested_runtime}/data"
+install -d -m 0700 "${nested_data_home}/kscreen"
+shopt -s nullglob dotglob
+for entry in "${real_data_home}"/*; do
+    [[ ${entry##*/} == kscreen ]] && continue
+    ln -s "${entry}" "${nested_data_home}/${entry##*/}"
+done
+shopt -u nullglob dotglob
+
+real_config_home=${XDG_CONFIG_HOME:-${HOME}/.config}
+nested_config_home="${nested_runtime}/config"
+install -d -m 0700 "${nested_config_home}"
+shopt -s nullglob dotglob
+for entry in "${real_config_home}"/*; do
+    [[ ${entry##*/} == kwinoutputconfig.json ]] && continue
+    ln -s "${entry}" "${nested_config_home}/${entry##*/}"
+done
+shopt -u nullglob dotglob
+
+cleanup() {
+    umount --recursive "${nested_runtime}" >/dev/null 2>&1 || true
+    rm -rf --one-file-system -- "${nested_runtime}" || true
+}
+trap cleanup EXIT
+
+# Keep audio connected to the parent Gaming Mode PipeWire session.
+if [[ -S "${parent_runtime}/pulse/native" ]]; then
+    install -d -m 0700 "${nested_runtime}/pulse"
+    ln -s "${parent_runtime}/pulse/native" "${nested_runtime}/pulse/native"
+fi
+shopt -s nullglob
+for socket in "${parent_runtime}"/pipewire-*; do
+    ln -s "${socket}" "${nested_runtime}/${socket##*/}"
+done
+shopt -u nullglob
+
+# Match SteamOS: let Gamescope define the surface, input region, orientation,
+# and pixel geometry instead of imposing a second resolution on nested KWin.
+install -d -m 0700 "${nested_runtime}/bin"
+cat > "${nested_runtime}/bin/kwin_wayland_wrapper" <<EOF
+#!/usr/bin/bash
+echo "Nested Desktop parent DISPLAY=\${DISPLAY:-} WAYLAND_DISPLAY=\${WAYLAND_DISPLAY:-}" >>"${state_dir}/nested-desktop.log"
+args=(--fullscreen true --no-lockscreen)
+if [[ -n \${DISPLAY:-} ]]; then
+    args+=(--x11-display "\${DISPLAY}")
+elif [[ -n \${WAYLAND_DISPLAY:-} ]]; then
+    args+=(--wayland-display "\${WAYLAND_DISPLAY}")
+fi
+exec /usr/bin/kwin_wayland_wrapper "\${args[@]}" "\$@"
+EOF
+chmod 0755 "${nested_runtime}/bin/kwin_wayland_wrapper"
+
+# KScreen may remember an old portrait transform for its synthetic X11-0
+# output. Keep it in landscape at an Odin-friendly 150% scale after KWin
+# exposes it; leave the mode itself under Gamescope/Steam's control.
+cat > "${nested_runtime}/bin/start-nested-plasma" <<EOF
+#!/usr/bin/bash
+set -u
+
+startplasma-wayland &
+session_pid=\$!
+
+(
+    for _ in {1..80}; do
+        if env -u DISPLAY QT_QPA_PLATFORM=wayland kscreen-doctor -o 2>/dev/null \
+                | grep -q ' X11-0 '; then
+            env -u DISPLAY QT_QPA_PLATFORM=wayland kscreen-doctor \
+                output.X11-0.rotation.normal output.X11-0.scale.1.5 \
+                >>"${state_dir}/nested-desktop.log" 2>&1 || true
+            exit 0
+        fi
+        sleep 0.25
+    done
+) &
+normalizer_pid=\$!
+
+wait "\${session_pid}"
+status=\$?
+kill "\${normalizer_pid}" >/dev/null 2>&1 || true
+wait "\${normalizer_pid}" 2>/dev/null || true
+exit "\${status}"
+EOF
+chmod 0755 "${nested_runtime}/bin/start-nested-plasma"
+
+export PATH="${nested_runtime}/bin:${PATH}"
+export XDG_RUNTIME_DIR="${nested_runtime}"
+export XDG_DATA_HOME="${nested_data_home}"
+export XDG_CONFIG_HOME="${nested_config_home}"
+export DESKTOP_SESSION=plasma
+export XDG_CURRENT_DESKTOP=KDE
+export XDG_SESSION_DESKTOP=KDE
+export XDG_SESSION_TYPE=wayland
+export ARMADA_NESTED_DESKTOP=1
+
+echo "steamos-nested-desktop: starting session"
+dbus-run-session "${nested_runtime}/bin/start-nested-plasma"

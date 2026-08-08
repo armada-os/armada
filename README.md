@@ -181,6 +181,26 @@ desktop. The **Bazaar** app store and the **Armada Installer**
 ([Install to internal storage](#install-to-internal-storage)) live here. Use the
 **Return to Gaming Mode** shortcut on the desktop to switch back.
 
+To add a desktop application, executable, AppImage, script, or Windows program
+to the Gaming Mode library, right-click its file in Dolphin and choose **Add to
+Steam**.
+
+### Nested Desktop
+
+Armada includes an optional **Nested Desktop** launcher for running KDE Plasma
+without leaving Gaming Mode. In Desktop Mode, find **Nested Desktop** in the
+application menu, right-click it, and choose **Add to Steam**. Back in Gaming
+Mode, open its properties, select **Armada Native** under **Compatibility**, and
+set **Game Resolution** to **Native**.
+
+The nested session follows SteamOS' fullscreen KWin path: Gamescope controls
+the surface and input mapping, and the launcher starts a separate Plasma
+session while sharing the parent session's PipeWire audio. It clears Gaming
+Mode's forced Qt backend so Plasma creates its native Wayland panel, keeps the
+workspace in landscape, and uses 150% logical scaling for the handheld screen.
+Its KScreen/KWin output state is isolated so the nested landscape transform
+cannot change the physical panel's Desktop Mode orientation.
+
 ### Power button and sleep
 
 Pressing the power button does a "fake suspend" (inspired by ROCKNIX) rather than

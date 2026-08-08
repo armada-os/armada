@@ -1,0 +1,7 @@
+"manifest"
+{
+  "version" "2"
+  "commandline" "/armada-native %verb%"
+  "use_sessions" "0"
+  "compatmanager_layer_name" "native"
+}
