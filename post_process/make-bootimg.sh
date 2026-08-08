@@ -45,8 +45,8 @@ for _name in ${SUPPORTED_DTBS}; do
     _DTB_ARGS="${_DTB_ARGS} '${BOOTDIR}/dtb/qcom/${_name}.dtb'"
 done
 CONTENT_ID=$(sudo bash -c "source '${ARMADA_LIB}/bootimg-args'; armada_bootimg_content_id '${KPATH}' '${IPATH}' ${_DTB_ARGS}")
-STAMP_ID=$(armada_bootimg_id "${LINUX_LINE}" "${INITRD_LINE}" "${OPTIONS_LINE}" "${DTB_LIST}" "${ARMADA_LIB}/bootimg-args" "${CONTENT_ID}")
 CMDLINE=$(armada_bootimg_cmdline "${OPTIONS_LINE}") || { echo "ERROR: no ostree= karg in ${BLS}"; exit 1; }
+STAMP_ID=$(armada_bootimg_id "${LINUX_LINE}" "${INITRD_LINE}" "${CMDLINE}" "${DTB_LIST}" "${ARMADA_LIB}/bootimg-args" "${CONTENT_ID}")
 
 if [[ "${#CMDLINE}" -gt "${ARMADA_CMDLINE_MAX}" ]]; then
     echo "ERROR: cmdline is ${#CMDLINE}B, over the ${ARMADA_CMDLINE_MAX}B boot-header limit"; exit 1

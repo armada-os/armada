@@ -17,6 +17,7 @@ armada_bootimg_cmdline() {
     for t in $1; do
         case "${t}" in
             console=ttyS0) continue ;;
+            sm8550.ns|sm8550.ns=*) continue ;;
             ostree=*) ostree_arg="${t}" ;;
             rootflags=*) rflags="${rflags:+${rflags},}${t#rootflags=}" ;;
             *) rest="${rest} ${t}" ;;
@@ -25,6 +26,7 @@ armada_bootimg_cmdline() {
     [ -n "${ostree_arg}" ] || return 1
     rflags="${rflags//,space_cache=v2/}"
     [ -n "${rflags}" ] && rest="${rest} rootflags=${rflags}"
+    [ "${2:-0}" = 1 ] && rest="${rest} sm8550.ns=1"
     printf '%s%s' "${ostree_arg}" "${rest}"
 }
 
@@ -33,7 +35,7 @@ armada_bootimg_cmdline() {
 armada_bootimg_content_id() {
     sha256sum "$@" | awk '{print $1}' | tr '\n' ' '
 }
-# Args: linux initrd options dtb_list args_file content_id.
+# Args: linux initrd effective_cmdline dtb_list args_file content_id.
 armada_bootimg_id() {
     { printf '%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$6"; cat "$4" "$5"; } | sha256sum | cut -d' ' -f1
 }

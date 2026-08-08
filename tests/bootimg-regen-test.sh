@@ -27,7 +27,7 @@ source "$ARMADA_LIB/bootimg-args"
 
 BLS_OPTS="root=UUID=r rootflags=subvol=/root rw boot=UUID=b rootwait"
 BLS_OPTS+=" rootflags=noatime,compress=zstd:1,space_cache=v2 console=tty0 quiet"
-BLS_OPTS+=" console=ttyS0 ostree=/ostree/boot.1/default/csum/0"
+BLS_OPTS+=" console=ttyS0 sm8550.ns sm8550.ns=1 ostree=/ostree/boot.1/default/csum/0"
 
 cmdline="$(armada_bootimg_cmdline "$BLS_OPTS")"
 # ostree= must lead: it is the karg the boot depends on, so a truncated
@@ -35,12 +35,19 @@ cmdline="$(armada_bootimg_cmdline "$BLS_OPTS")"
 [[ "$cmdline" == "ostree=/ostree/boot.1/default/csum/0 "* ]] ||
     fail "transform: ostree= is not first: $cmdline"
 [[ "$cmdline" != *"console=ttyS0"* ]] || fail "transform: serial console not dropped"
+[[ " $cmdline " != *" sm8550.ns "* ]] || fail "transform: kept bare deployment sleep karg"
+[[ "$cmdline" != *"sm8550.ns="* ]] || fail "transform: kept deployment-owned sleep karg"
 [[ "$cmdline" == *"console=tty0"* ]] || fail "transform: dropped the real console"
 # Both rootflags= tokens must survive as one, or the root subvolume changes.
 assert_contains "transform" "$cmdline" "rootflags=subvol=/root,noatime,compress=zstd:1"
 [[ "$cmdline" != *"space_cache=v2"* ]] || fail "transform: legacy space_cache kept"
 [[ "$(grep -o 'rootflags=' <<<"$cmdline" | wc -l)" == 1 ]] ||
     fail "transform: more than one rootflags= token"
+
+sleep_cmdline="$(armada_bootimg_cmdline "$BLS_OPTS" 1)"
+assert_contains "transform local sleep overlay" "$sleep_cmdline" "sm8550.ns=1"
+[[ "$(grep -o 'sm8550.ns=1' <<<"$sleep_cmdline" | wc -l)" == 1 ]] ||
+    fail "transform: local sleep overlay was duplicated"
 
 # No ostree= karg must fail loudly rather than bake an unbootable /KERNEL.
 if armada_bootimg_cmdline "root=UUID=r rw quiet" >/dev/null 2>&1; then
@@ -63,7 +70,14 @@ assert_eq "transform shell options" "$-" "$before"
 # Neutralize the two things a test cannot provide: a mounted ESP and a
 # lock under /run. Everything else runs as shipped.
 ESP="$WORK/esp"; BOOT="$WORK/boot"; SYS="$WORK/sysroot"
-mkdir -p "$ESP"
+SLEEP_CONFIG="$SYS/etc/armada/sleep.conf"
+DEVICE_ENV="$WORK/device-env"
+mkdir -p "$ESP" "$(dirname "$SLEEP_CONFIG")"
+cat > "$DEVICE_ENV" <<'EOF'
+#!/usr/bin/env bash
+printf 'ARMADA_SOC_CLASS=SM8550\n'
+EOF
+chmod +x "$DEVICE_ENV"
 sed -e 's|findmnt -rn "${ESP}"|true "${ESP}"|' \
     -e "s|/run/armada-bootimg.lock|$WORK/lock|" "$UPDATE" > "$WORK/update.sh"
 
@@ -72,6 +86,7 @@ run_update() {
         ARGS_FILE="$ARMADA_LIB/bootimg-args" \
         DTB_LIST="$ARMADA_LIB/supported-dtbs" \
         MKBOOTIMG="$ROOT/build_files/vendor/mkbootimg/mkbootimg.py" \
+        DEVICE_ENV="$DEVICE_ENV" \
         bash "$WORK/update.sh" "$@" 2>&1 || true
 }
 
@@ -107,6 +122,29 @@ assert_contains "regen" "$out" "wrote $ESP/KERNEL"
 
 # A second run is a no-op: the stamp matches.
 assert_contains "regen idempotence" "$(run_update)" "already current"
+
+# The local marker is part of the effective cmdline identity even though it is
+# deliberately absent from the deployment's BLS options.
+off_id=$(cat "$ESP/.armada-bootimg.id")
+printf 'sm8550_native_sleep=1\n' > "$SLEEP_CONFIG"
+assert_contains "sleep marker enable" "$(run_update)" "wrote $ESP/KERNEL"
+on_id=$(cat "$ESP/.armada-bootimg.id")
+[[ "$on_id" != "$off_id" ]] || fail "sleep marker enable: stamp did not change"
+assert_contains "sleep marker idempotence" "$(run_update)" "already current"
+
+printf 'sm8550_native_sleep=0\n' > "$SLEEP_CONFIG"
+assert_contains "sleep marker disable" "$(run_update)" "wrote $ESP/KERNEL"
+assert_eq "sleep marker restores off identity" "$(cat "$ESP/.armada-bootimg.id")" "$off_id"
+
+# The bake-side guard is authoritative even if sleep.conf is copied or edited
+# on hardware where the SM8550-only setting is unsupported.
+printf 'sm8550_native_sleep=1\n' > "$SLEEP_CONFIG"
+sed -i 's/SM8550/SM8650/' "$DEVICE_ENV"
+out="$(run_update)"
+assert_contains "non-SM8550 sleep warning" "$out" "device-env reported SM8650"
+assert_contains "non-SM8550 sleep setting ignored" "$out" "already current"
+sed -i 's/SM8650/SM8550/' "$DEVICE_ENV"
+printf 'sm8550_native_sleep=0\n' > "$SLEEP_CONFIG"
 
 # The snapshot is boot-time only; a shutdown-style run must never write it.
 [[ ! -e "$ESP/KERNEL.BAK" ]] || fail "snapshot: written without --snapshot-prev"

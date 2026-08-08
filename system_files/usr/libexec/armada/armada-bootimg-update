@@ -9,6 +9,8 @@ SYSROOT="${SYSROOT:-/}"
 MKBOOTIMG="${MKBOOTIMG:-/usr/libexec/armada/mkbootimg.py}"
 DTB_LIST="${DTB_LIST:-/usr/lib/armada/supported-dtbs}"
 ARGS_FILE="${ARGS_FILE:-/usr/lib/armada/bootimg-args}"
+DEVICE_ENV="${DEVICE_ENV:-/usr/libexec/armada/device-env}"
+SLEEP_CONFIG="${SLEEP_CONFIG:-${SYSROOT%/}/etc/armada/sleep.conf}"
 KERNEL_OUT="${ESP}/KERNEL"
 STAMP="${ESP}/.armada-bootimg.id"
 # Plain 8.3: a long name would also generate a short alias next to KERNEL, the
@@ -106,6 +108,32 @@ if [ -r "${deploy_root}/usr/lib/armada/supported-dtbs" ]; then
     DTB_LIST="${deploy_root}/usr/lib/armada/supported-dtbs"
 fi
 
+sm8550_sleep_requested=0
+if [ -r "${SLEEP_CONFIG}" ]; then
+    while IFS='=' read -r key value; do
+        key=${key//[[:space:]]/}
+        [ "${key}" = sm8550_native_sleep ] || continue
+        value=${value//[[:space:]]/}
+        [ "${value}" = 1 ] && sm8550_sleep_requested=1
+        break
+    done < "${SLEEP_CONFIG}"
+fi
+
+sm8550_sleep=0
+if [ "${sm8550_sleep_requested}" = 1 ]; then
+    soc=$("${DEVICE_ENV}" 2>/dev/null | sed -n 's/^ARMADA_SOC_CLASS=//p' | head -1 || true)
+    if [ "${soc}" = SM8550 ]; then
+        sm8550_sleep=1
+    else
+        echo "armada-bootimg-update: sm8550_native_sleep=1 ignored: device-env reported ${soc:-no SoC}" >&2
+    fi
+fi
+
+cmdline=$(armada_bootimg_cmdline "${options}" "${sm8550_sleep}") || {
+    echo "armada-bootimg-update: no ostree= karg in ${entry}; refusing to bake an unbootable /KERNEL" >&2
+    exit 1
+}
+
 # BLS paths carry a /boot prefix (bootprefix=true); the files live on this fs.
 kpath="${BOOTROOT}${linux#/boot}"
 ipath="${BOOTROOT}${initrd#/boot}"
@@ -116,17 +144,12 @@ while read -r name; do
     [ -n "${name}" ] || continue
     content_files+=("${dpath}/qcom/${name}.dtb")
 done < "${DTB_LIST}"
-id=$(armada_bootimg_id "${linux}" "${initrd}" "${options}" "${DTB_LIST}" "${ARGS_FILE}" \
+id=$(armada_bootimg_id "${linux}" "${initrd}" "${cmdline}" "${DTB_LIST}" "${ARGS_FILE}" \
     "$(armada_bootimg_content_id "${content_files[@]}")")
 if [ -f "${KERNEL_OUT}" ] && [ "$(cat "${STAMP}" 2>/dev/null || true)" = "${id}" ]; then
     echo "armada-bootimg-update: /KERNEL already current (${linux##*/})"
     exit 0
 fi
-
-cmdline=$(armada_bootimg_cmdline "${options}") || {
-    echo "armada-bootimg-update: no ostree= karg in ${entry}; refusing to bake an unbootable /KERNEL" >&2
-    exit 1
-}
 
 # Fail loud rather than ship a silently-truncated, unbootable /KERNEL that can
 # only be recovered via fastboot. Limit is single-sourced (see bootimg-args).
