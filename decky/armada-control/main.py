@@ -9,7 +9,7 @@ from armada_control.calibration import (
 )
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
-from armada_control.power import save_power_config
+from armada_control.power import save_power_config, set_cpu_boost_enabled
 from armada_control.steam import installed_games
 from armada_control.system import (
     reapply_perf,
@@ -31,6 +31,10 @@ class Plugin:
 
     async def save_power_config(self, data):
         await asyncio.to_thread(save_power_config, data)
+        return await self.get_config()
+
+    async def set_cpu_boost_enabled(self, enabled):
+        await asyncio.to_thread(set_cpu_boost_enabled, enabled)
         return await self.get_config()
 
     async def save_tweaks(self, data):

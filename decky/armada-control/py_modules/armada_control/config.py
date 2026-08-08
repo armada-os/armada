@@ -1,5 +1,5 @@
 from .controller import CONTROLLER_TYPES, controller_type
-from .power import factory_power_defaults, parse_power
+from .power import cpu_boost_state, factory_power_defaults, parse_power
 from .steam import installed_games
 from .system import (
     abl_auto_enabled,
@@ -23,6 +23,7 @@ def build_config(include_games=True):
         "fexProfiles": fex_profile_labels(fex_contract),
         "perf": perf_info(),
         "cpuDeviceClass": cpu_device_class(),
+        "cpuBoost": cpu_boost_state(),
         "osVersion": os_version(),
         "ablVersion": abl_version(),
         "ablAutoEnabled": abl_auto_enabled(),
