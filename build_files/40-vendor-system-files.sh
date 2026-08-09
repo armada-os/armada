@@ -112,3 +112,7 @@ systemctl mask systemd-hibernate.service systemd-hybrid-sleep.service systemd-su
 # systemd-backlight restores a stale (often near-dark) level mid-boot, fighting
 # the splash's fixed 50% default; Steam persists the user's brightness itself.
 systemctl mask systemd-backlight@.service
+
+# We ship the flathub repo by default, the fedora repo only contains a subset of
+# the same apps that are in flathub, so we mask it to avoid confusion and issues.
+systemctl mask flatpak-add-fedora-repos.service
