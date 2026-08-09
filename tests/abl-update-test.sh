@@ -167,6 +167,33 @@ set -e
 grep -q '^--error Bootloader update failed' "$WORK/splash-log" ||
     fail "write failure did not replace the splash with an error"
 
+# The privileged settings service persists an explicit preference and falls
+# back to the image policy only while the preference is absent.
+python3 - "$ROOT" "$WORK" <<'PY'
+import importlib.machinery
+import importlib.util
+import pathlib
+import sys
+
+root, work = map(pathlib.Path, sys.argv[1:])
+sys.path.insert(0, str(root / "system_files/usr/lib/armada"))
+path = root / "system_files/usr/libexec/armada/armada-control"
+loader = importlib.machinery.SourceFileLoader("armada_control_service", str(path))
+spec = importlib.util.spec_from_loader("armada_control_service", loader)
+control = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(control)
+
+control.ABL_CONFIG = work / "abl.conf"
+control.ABL_MANIFEST = work / "abl-manifest"
+control.ABL_MANIFEST.write_text("ARMADA_ABL_AUTO=0\n")
+assert control.abl_auto_enabled() is False
+assert control.action_set_abl_auto_enabled({"enabled": True}) == {"enabled": True}
+assert control.ABL_CONFIG.read_text() == "auto_update_enabled=1\n"
+control.ABL_MANIFEST.write_text("ARMADA_ABL_AUTO=1\n")
+assert control.action_set_abl_auto_enabled({"enabled": False}) == {"enabled": False}
+assert control.ABL_CONFIG.read_text() == "auto_update_enabled=0\n"
+PY
+
 FROOT="$WORK/finalize"; FBOOT="$FROOT/boot"; FSYS="$FROOT/sysroot"
 mkdir -p "$FBOOT/loader/entries" "$FSYS/ostree/deploy/old" \
     "$FSYS/ostree/deploy/target/usr/lib/armada/abl"
@@ -186,7 +213,8 @@ EOF
 chmod +x "$FROOT/updater"
 finalize_env=(BOOTROOT="$FBOOT" SYSROOT="$FSYS"
     ARGS_FILE="$ROOT/system_files/usr/lib/armada/bootimg-args"
-    UPDATER="$FROOT/updater" ARMADA_FINALIZE_LOG="$FROOT/finalize-log")
+    UPDATER="$FROOT/updater" ARMADA_FINALIZE_LOG="$FROOT/finalize-log"
+    ABL_CONFIG="$FROOT/abl.conf")
 env "${finalize_env[@]}" "$FINALIZE"
 assert_contains "$(cat "$FROOT/finalize-log")" \
     "--target-root $FSYS/ostree/deploy/target"
@@ -204,6 +232,26 @@ printf 'ARMADA_ABL_AUTO=0\n' > "$FSYS/ostree/deploy/target/usr/lib/armada/abl/ma
 : > "$FROOT/finalize-log"
 env "${finalize_env[@]}" "$FINALIZE"
 [[ ! -s "$FROOT/finalize-log" ]] || fail "disabled automatic target invoked writer"
+
+# A persistent user choice overrides the image default in either direction.
+printf 'auto_update_enabled=1\n' > "$FROOT/abl.conf"
+env "${finalize_env[@]}" "$FINALIZE"
+assert_contains "$(cat "$FROOT/finalize-log")" \
+    "--target-root $FSYS/ostree/deploy/target"
+printf 'ARMADA_ABL_AUTO=1\n' > "$FSYS/ostree/deploy/target/usr/lib/armada/abl/manifest"
+printf 'auto_update_enabled=0\n' > "$FROOT/abl.conf"
+: > "$FROOT/finalize-log"
+env "${finalize_env[@]}" "$FINALIZE"
+[[ ! -s "$FROOT/finalize-log" ]] || fail "user-disabled automatic target invoked writer"
+
+# Deployments predating the vendored ABL payload silently remain ineligible.
+rm -f "$FROOT/abl.conf" "$FSYS/ostree/deploy/target/usr/lib/armada/abl/manifest"
+: > "$FROOT/finalize-log"
+env "${finalize_env[@]}" "$FINALIZE"
+[[ ! -s "$FROOT/finalize-log" ]] || fail "manifest-less target invoked writer"
+printf 'auto_update_enabled=1\n' > "$FROOT/abl.conf"
+env "${finalize_env[@]}" "$FINALIZE"
+[[ ! -s "$FROOT/finalize-log" ]] || fail "user-enabled manifest-less target invoked writer"
 
 write_manifest 0
 cp "$old" "$ABL_A"; cp "$old" "$ABL_B"

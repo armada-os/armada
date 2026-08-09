@@ -59,6 +59,7 @@ find /etc/NetworkManager/system-connections -name '*.nmconnection' -exec chmod 0
 
 systemctl disable getty@tty1.service || true
 systemctl disable sshd.service || true
+systemctl disable armada-mtp.service || true
 systemctl enable sddm.service
 systemctl enable armada-session-default.service
 systemctl enable seatd.service

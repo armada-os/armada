@@ -59,6 +59,23 @@ def ssh_enabled():
     return active_s == "active"
 
 
+def mtp_enabled():
+    try:
+        return bool(call("get_mtp_enabled").get("enabled"))
+    except Exception:
+        pass
+    active = run_cmd(["/usr/bin/systemctl", "is-active", "armada-mtp.service"])
+    active_s = active.stdout.strip() if active else ""
+    return active_s == "active"
+
+
+def abl_auto_enabled():
+    try:
+        return bool(call("get_abl_auto_enabled").get("enabled"))
+    except Exception:
+        return False
+
+
 def os_version():
     return read_text(OS_VERSION_PATH) or "unknown"
 
@@ -79,6 +96,14 @@ def read_text(path):
 
 def set_ssh_enabled(enabled):
     return bool(call("set_ssh_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def set_mtp_enabled(enabled):
+    return bool(call("set_mtp_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def set_abl_auto_enabled(enabled):
+    return bool(call("set_abl_auto_enabled", enabled=bool(enabled)).get("enabled"))
 
 
 CORE_PRESET_VARS = (

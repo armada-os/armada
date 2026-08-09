@@ -1,0 +1,3 @@
+[com/ranfdev/DistroShelf]
+distrobox-executable='host'
+selected-terminal='Konsole'

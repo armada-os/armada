@@ -1,0 +1,127 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+gadget=/sys/kernel/config/usb_gadget/armada-mtp
+config="$gadget/configs/c.1"
+function="$gadget/functions/ffs.mtp"
+ffs=/dev/ffs-mtp
+runtime=/run/armada-mtp
+role_state="$runtime/previous-role"
+
+unbind() {
+    if [[ -e "$gadget/UDC" && -n "$(<"$gadget/UDC")" ]]; then
+        printf '\n' > "$gadget/UDC" || :
+    fi
+    if [[ -s "$role_state" ]]; then
+        role_path="$(sed -n '1p' "$role_state" || true)"
+        previous_role="$(sed -n '2p' "$role_state" || true)"
+        if [[ -w "$role_path" && -n "$previous_role" ]]; then
+            printf '%s' "$previous_role" > "$role_path" || :
+        fi
+        rm -f "$role_state" || :
+    fi
+}
+
+case "${1:-}" in
+    setup)
+        /usr/sbin/modprobe libcomposite
+        if ! mountpoint -q /sys/kernel/config; then
+            mount -t configfs configfs /sys/kernel/config
+        fi
+        if [[ -e "$gadget" ]]; then
+            printf 'armada-mtp: stale USB gadget exists at %s\n' "$gadget" >&2
+            exit 1
+        fi
+        mkdir "$gadget"
+        printf '0x1d6b' > "$gadget/idVendor"
+        printf '0x0100' > "$gadget/idProduct"
+        printf '0x0200' > "$gadget/bcdUSB"
+        printf '0x0001' > "$gadget/bcdDevice"
+        mkdir "$gadget/strings/0x409"
+        if ! serial="$(/usr/bin/systemd-id128 machine-id -a c130694e253a463d92175e45a1be98de 2>/dev/null)" || [[ -z "$serial" ]]; then
+            printf 'armada-mtp: failed to derive USB serial\n' >&2
+            exit 1
+        fi
+        printf '%s' "$serial" > "$gadget/strings/0x409/serialnumber"
+        printf 'Armada' > "$gadget/strings/0x409/manufacturer"
+        printf 'Armada' > "$gadget/strings/0x409/product"
+        mkdir "$config"
+        mkdir "$config/strings/0x409"
+        printf 'MTP' > "$config/strings/0x409/configuration"
+        printf '0xc0' > "$config/bmAttributes"
+        printf '2' > "$config/MaxPower"
+        mkdir "$function"
+        ln -s "$function" "$config/ffs.mtp"
+        install -d -m 0755 "$ffs"
+        armada_uid="$(id -u armada)"
+        armada_gid="$(id -g armada)"
+        mount -t functionfs -o "rmode=0500,fmode=0600,uid=$armada_uid,gid=$armada_gid" mtp "$ffs"
+        {
+            # uMTP follows directory symlinks; non-hidden loops remain unsupported.
+            printf '%s\n' \
+                'loop_on_disconnect 1' \
+                'show_hidden_files 0' \
+                'umask 022' \
+                'storage "/var/home/armada" "Home" "rw"' \
+                'manufacturer "Armada"' \
+                'product "Armada"' \
+                "serial \"$serial\"" \
+                'firmware_version "Armada"' \
+                'mtp_extensions "microsoft.com: 1.0; android.com: 1.0;"' \
+                'interface "MTP"' \
+                'usb_vendor_id 0x1d6b' \
+                'usb_product_id 0x0100' \
+                'usb_class 0x6' \
+                'usb_subclass 0x1' \
+                'usb_protocol 0x1' \
+                'usb_dev_version 0x0001' \
+                'sync_when_close 0x1' \
+                'usb_functionfs_mode 0x1' \
+                'usb_dev_path "/dev/ffs-mtp/ep0"' \
+                'usb_epin_path "/dev/ffs-mtp/ep1"' \
+                'usb_epout_path "/dev/ffs-mtp/ep2"' \
+                'usb_epint_path "/dev/ffs-mtp/ep3"' \
+                'usb_max_packet_size 0x200'
+        } > "$runtime/umtprd.conf"
+        ;;
+    bind)
+        shopt -s nullglob
+        udcs=(/sys/class/udc/*)
+        if ((${#udcs[@]} == 0)); then
+            printf 'armada-mtp: no USB device controller found\n' >&2
+            exit 1
+        fi
+        udc_name="${udcs[0]##*/}"
+        role_path="/sys/class/usb_role/${udc_name}-role-switch/role"
+        if [[ ! -e "$role_path" ]]; then
+            role_paths=(/sys/class/usb_role/*/role)
+            role_path="${role_paths[0]:-}"
+        fi
+        if [[ -n "$role_path" ]]; then
+            previous_role="$(<"$role_path")"
+            printf '%s\n%s\n' "$role_path" "$previous_role" > "$role_state"
+            printf 'device' > "$role_path"
+        fi
+        printf '%s' "$udc_name" > "$gadget/UDC"
+        ;;
+    unbind)
+        unbind
+        ;;
+    teardown)
+        unbind
+        if mountpoint -q "$ffs"; then
+            umount "$ffs" || :
+        fi
+        [[ ! -L "$config/ffs.mtp" ]] || rm "$config/ffs.mtp" || :
+        [[ ! -d "$function" ]] || rmdir "$function" || :
+        [[ ! -d "$config/strings/0x409" ]] || rmdir "$config/strings/0x409" || :
+        [[ ! -d "$config" ]] || rmdir "$config" || :
+        [[ ! -d "$gadget/strings/0x409" ]] || rmdir "$gadget/strings/0x409" || :
+        [[ ! -d "$gadget" ]] || rmdir "$gadget" || :
+        [[ ! -d "$ffs" ]] || rmdir "$ffs" || :
+        ;;
+    *)
+        printf 'usage: %s {setup|bind|unbind|teardown}\n' "$0" >&2
+        exit 2
+        ;;
+esac

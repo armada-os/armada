@@ -18,6 +18,7 @@ chmod 0700 /var/home/armada
 install -Dpm 0755 -o armada -g armada \
     /usr/share/applications/armada-return-to-gamemode.desktop \
     /var/home/armada/Desktop/armada-return-to-gamemode.desktop
+cp -af /etc/skel/. /var/home/armada/
 chown -R armada:armada /var/home/armada
 
 echo 'armada:armada' | chpasswd

@@ -18,6 +18,8 @@ import armada_perf
 SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
 ABL_VERSION_TOOL = "/usr/lib/armada/abl-version"
+ABL_CONFIG = Path("/etc/armada/abl.conf")
+ABL_MANIFEST = Path("/usr/lib/armada/abl/manifest")
 ABL_PARTITIONS = (
     ("A", "/dev/disk/by-partlabel/abl_a"),
     ("B", "/dev/disk/by-partlabel/abl_b"),
@@ -94,6 +96,35 @@ def ssh_enabled():
     return result.stdout.strip() == "active"
 
 
+def mtp_enabled():
+    result = subprocess.run(
+        ["/usr/bin/systemctl", "is-active", "armada-mtp.service"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=5,
+    )
+    return result.stdout.strip() == "active"
+
+
+def abl_auto_enabled():
+    for path, key in ((ABL_CONFIG, "auto_update_enabled"), (ABL_MANIFEST, "ARMADA_ABL_AUTO")):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        value = ""
+        for line in lines:
+            name, sep, raw = line.partition("=")
+            if sep and name.strip() == key:
+                value = raw.strip()
+                break
+        if value in {"0", "1"}:
+            return value == "1"
+    return False
+
+
 def device_env():
     result = subprocess.check_output(["/usr/libexec/armada/device-env"], text=True, timeout=5)
     env = {}
@@ -152,6 +183,34 @@ def action_set_ssh_enabled(request):
 
 def action_get_ssh_enabled(request):
     return {"enabled": ssh_enabled()}
+
+
+def action_set_mtp_enabled(request):
+    enabled = bool(request.get("enabled"))
+    action = "start" if enabled else "stop"
+    try:
+        run(["/usr/bin/systemctl", action, "armada-mtp.service"], timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        if enabled:
+            try:
+                run(["/usr/bin/systemctl", "stop", "armada-mtp.service"], timeout=30)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        raise
+    return {"enabled": mtp_enabled()}
+
+
+def action_get_mtp_enabled(request):
+    return {"enabled": mtp_enabled()}
+
+
+def action_set_abl_auto_enabled(request):
+    atomic_write(ABL_CONFIG, f"auto_update_enabled={int(bool(request.get('enabled')))}\n")
+    return {"enabled": abl_auto_enabled()}
+
+
+def action_get_abl_auto_enabled(request):
+    return {"enabled": abl_auto_enabled()}
 
 
 def action_get_device_env(request):
@@ -361,9 +420,13 @@ ACTIONS = {
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
     "get_abl_version": action_get_abl_version,
+    "get_abl_auto_enabled": action_get_abl_auto_enabled,
     "get_ssh_enabled": action_get_ssh_enabled,
+    "get_mtp_enabled": action_get_mtp_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
     "set_ssh_enabled": action_set_ssh_enabled,
+    "set_mtp_enabled": action_set_mtp_enabled,
+    "set_abl_auto_enabled": action_set_abl_auto_enabled,
     "write_config": action_write_config,
     "reapply_perf": action_reapply_perf,
     "restart_game_mode": action_restart_game_mode,

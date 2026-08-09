@@ -1,0 +1,24 @@
+[Unit]
+Description=Armada USB MTP file transfer
+After=local-fs.target systemd-modules-load.service
+RequiresMountsFor=/var/home/armada
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=armada
+Group=armada
+UMask=0022
+RuntimeDirectory=armada-mtp
+ExecStartPre=+/usr/libexec/armada/mtp-gadget setup
+ExecStart=/usr/bin/umtprd -conf /run/armada-mtp/umtprd.conf
+ExecStartPost=+/usr/libexec/armada/mtp-gadget bind
+ExecStop=+/usr/libexec/armada/mtp-gadget unbind
+ExecStopPost=+/usr/libexec/armada/mtp-gadget teardown
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+TimeoutStopSec=30
+NoNewPrivileges=yes
+# Do not add PrivateTmp=, ProtectSystem=, or ProtectHome=; their mount namespaces
+# hide the FunctionFS mount created by ExecStartPre from umtprd.

@@ -23,6 +23,20 @@
       }
     },
     {
+      "id": "cemu",
+      "name": "Cemu",
+      "summary": "Wii U",
+      "category": "emulation",
+      "icon": "https://github.com/cemu-project.png",
+      "note": "Community ARM64 AppImage",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/pkgforge-dev/Cemu-AppImage-Enhanced/releases?per_page=20",
+        "asset": "^Cemu-.*-anylinux-aarch64\\.AppImage$",
+        "filename": "Cemu.AppImage"
+      }
+    },
+    {
       "id": "ppsspp",
       "name": "PPSSPP",
       "summary": "PlayStation Portable",
@@ -117,18 +131,6 @@
       }
     },
     {
-      "id": "ryujinx",
-      "name": "Ryujinx",
-      "summary": "Nintendo Switch, alternative",
-      "category": "emulation",
-      "icon": "https://dl.flathub.org/media/io/github/ryubing.Ryujinx/96633a0efb58a5753b5714835ab91ee1/icons/128x128/io.github.ryubing.Ryujinx.png",
-      "note": "Needs console firmware and keys",
-      "install": {
-        "type": "flatpak",
-        "ref": "io.github.ryubing.Ryujinx"
-      }
-    },
-    {
       "id": "xemu",
       "name": "xemu",
       "summary": "Original Xbox",
@@ -137,6 +139,20 @@
       "install": {
         "type": "flatpak",
         "ref": "app.xemu.xemu"
+      }
+    },
+    {
+      "id": "xenia-edge",
+      "name": "Xenia Edge",
+      "summary": "Xbox 360",
+      "category": "emulation",
+      "icon": "https://raw.githubusercontent.com/xenia-canary/xenia-canary/canary_experimental/assets/icon/32.png",
+      "note": "x86_64 build; runs through FEX",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/has207/xenia-edge/releases?per_page=15",
+        "asset": "^xenia_edge_linux\\.AppImage$",
+        "filename": "XeniaEdge.AppImage"
       }
     },
     {

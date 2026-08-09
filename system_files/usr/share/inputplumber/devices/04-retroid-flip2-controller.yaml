@@ -8,17 +8,7 @@ matches:
       sys_path: /sys/firmware/devicetree/base
       attributes:
         - name: model
-          value: Retroid Pocket 5
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: Retroid Pocket Mini
-  - udev:
-      sys_path: /sys/firmware/devicetree/base
-      attributes:
-        - name: model
-          value: Retroid Pocket Mini V2
+          value: Retroid Pocket Flip2
 
 single_source: false
 
@@ -27,7 +17,7 @@ source_devices:
     evdev:
       phys_path: retroid-pocket-gamepad/input0
       handler: event*
-    capability_map_id: retroid_mcu
+    capability_map_id: retroid_flip2
     passthrough: true
 
 options:

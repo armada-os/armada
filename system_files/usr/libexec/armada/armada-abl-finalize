@@ -6,6 +6,7 @@ BOOTROOT=${BOOTROOT:-/boot}
 SYSROOT=${SYSROOT:-/}
 ARGS_FILE=${ARGS_FILE:-/usr/lib/armada/bootimg-args}
 UPDATER=${UPDATER:-/usr/libexec/armada/armada-abl-update}
+ABL_CONFIG=${ABL_CONFIG:-/etc/armada/abl.conf}
 
 . "${ARGS_FILE}"
 entry=$(armada_default_bls_entry "${BOOTROOT}")
@@ -19,5 +20,13 @@ for token in ${options}; do
 done
 [ -n "${target_ostree}" ] || exit 0
 target_root=$(realpath -e "${SYSROOT%/}${target_ostree}" 2>/dev/null) || exit 0
-grep -qx 'ARMADA_ABL_AUTO=1' "${target_root}/usr/lib/armada/abl/manifest" 2>/dev/null || exit 0
+manifest="${target_root}/usr/lib/armada/abl/manifest"
+[ -r "${manifest}" ] || exit 0
+auto=$(sed -n \
+    's/^[[:space:]]*auto_update_enabled[[:space:]]*=[[:space:]]*\([^[:space:]]*\)[[:space:]]*$/\1/p' \
+    "${ABL_CONFIG}" 2>/dev/null | head -1) || true
+if [ "${auto}" != 0 ] && [ "${auto}" != 1 ]; then
+    auto=$(sed -n 's/^ARMADA_ABL_AUTO=//p' "${manifest}" | head -1) || exit 0
+fi
+[ "${auto}" = 1 ] || exit 0
 "${UPDATER}" --target-root "${target_root}"
