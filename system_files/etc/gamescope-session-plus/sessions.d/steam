@@ -18,7 +18,7 @@ fi
 # touchscreen so fingers on the dark glass don't move Steam's cursor.
 # The desktop session re-enables it (see desktop-bootstrap).
 if [[ -n "${ARMADA_SECONDARY_TOUCHSCREEN:-}" ]]; then
-    /usr/libexec/armada/touchscreen-inhibit "$ARMADA_SECONDARY_TOUCHSCREEN" 1 2>/dev/null || true
+    sudo -n /usr/libexec/armada/touchscreen-inhibit "$ARMADA_SECONDARY_TOUCHSCREEN" 1 2>/dev/null || true
 fi
 FORCE_COMPOSITION_ROTATION="${ARMADA_GAMESCOPE_FORCE_COMPOSITION_ROTATION:-0}"
 if [[ -n "${ARMADA_GAMESCOPE_FAKE_OUTPUT_MM:-}" ]]; then

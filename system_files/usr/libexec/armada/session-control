@@ -2,6 +2,8 @@
 # zz- sorts after armada.conf so its Session= wins (User=/Relogin= stay there).
 set -euo pipefail
 
+eval "$(/usr/libexec/armada/device-env)"
+
 case "${1:-}" in
     switch-desktop)  session=armada-plasma.desktop ;;
     switch-gamemode) session=gamescope-session-steam.desktop ;;
@@ -35,8 +37,42 @@ logout_plasma() {
         "${qdbus}" org.kde.Shutdown /Shutdown org.kde.Shutdown.logout
 }
 
+set_secondary_output() {
+    local state=$1
+    local user=armada
+    local uid=1000
+    local bus="/run/user/${uid}/bus"
+
+    [[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]] || return 0
+    [[ -S "${bus}" ]] || return 0
+    command -v kscreen-doctor >/dev/null 2>&1 || return 0
+
+    sudo -Eu "${user}" env \
+        XDG_RUNTIME_DIR="/run/user/${uid}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+        WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}" \
+        kscreen-doctor "output.${ARMADA_SECONDARY_CONNECTOR}.${state}" >/dev/null 2>&1 || true
+}
+
+set_secondary_touchscreen() {
+    local inhibited=$1
+
+    [[ -n "${ARMADA_SECONDARY_TOUCHSCREEN:-}" ]] || return 0
+    command -v /usr/libexec/armada/touchscreen-inhibit >/dev/null 2>&1 || return 0
+
+    /usr/libexec/armada/touchscreen-inhibit "${ARMADA_SECONDARY_TOUCHSCREEN}" "${inhibited}" 2>/dev/null || true
+}
+
 printf '[Autologin]\nSession=%s\n' "${session}" > /etc/sddm.conf.d/zz-steamos-autologin.conf
 systemctl reset-failed sddm.service 2>/dev/null || true
+
+if [[ ${1:-} == "switch-gamemode" ]]; then
+    # Apply the Game Mode policy before logging Plasma out. The gamescope
+    # session repeats the touchscreen inhibit when Steam starts, but doing it
+    # here avoids a live lower digitizer during the transition.
+    set_secondary_touchscreen 1
+    set_secondary_output disable
+fi
 
 if [[ "${default_only:-0}" == "1" ]]; then
     exit 0

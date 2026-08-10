@@ -32,6 +32,7 @@ cat > /etc/sudoers.d/armada-user <<'EOF'
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/session-control switch-desktop
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/session-control switch-gamemode
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/session-control default-gamemode
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/touchscreen-inhibit *
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/armada-installer *
 EOF
 chmod 0440 /etc/sudoers.d/armada-user

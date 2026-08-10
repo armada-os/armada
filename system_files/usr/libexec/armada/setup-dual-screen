@@ -64,7 +64,7 @@ def pin_touchscreen(name, connector, devices):
     if name not in devices:
         print(f"setup-dual-screen: input device not found: {name}",
               file=sys.stderr)
-        return False
+        return True
     vendor, product, event = devices[name]
     # Persisted mapping, applied by KWin when the device is added.
     persisted = subprocess.run(
@@ -89,6 +89,7 @@ def main():
     env = device_env()
     primary = env.get("ARMADA_PRIMARY_CONNECTOR")
     secondary = env.get("ARMADA_SECONDARY_CONNECTOR")
+    orientation = env.get("ARMADA_PANEL_ORIENTATION") or "normal"
     if not primary or not secondary:
         return 0
 
@@ -104,6 +105,25 @@ def main():
         print(f"setup-dual-screen: outputs not found: {primary}, {secondary}",
               file=sys.stderr)
         return 1
+
+    commands = [
+        f"output.{primary}.enable",
+        f"output.{secondary}.enable",
+    ]
+    if orientation in ("left", "right", "inverted", "normal"):
+        commands.extend([
+            f"output.{primary}.rotation.{orientation}",
+            f"output.{secondary}.rotation.{orientation}",
+        ])
+    subprocess.run(["kscreen-doctor", *commands], check=True)
+
+    # Re-read after enable/rotation so placement uses the actual logical sizes.
+    doc = subprocess.run(
+        ["kscreen-doctor", "-j"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    outputs = json.JSONDecoder().raw_decode(doc)[0]["outputs"]
+    by_name = {o["name"]: o for o in outputs}
 
     primary_size = logical_size(by_name[primary])
     secondary_size = logical_size(by_name[secondary])
