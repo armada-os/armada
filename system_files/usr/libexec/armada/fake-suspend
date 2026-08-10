@@ -251,8 +251,10 @@ do_suspend() {
     block_input
     display_off   # gamescope drm_sleep (game) / bl_power (desktop); after Steam's animation
     freeze_processes
-    # Radio suspend disabled until we can improve resume speed (currently takes 30+ seconds)
-    # suspend_radios
+    # Radios (Wi-Fi/BT) are a large share of fake-suspend idle drain. Soft-blocking them while
+    # asleep cuts it notably, at the cost of re-associating on resume. Opt-in per device via
+    # ARMADA_SUSPEND_RADIOS (default 0 preserves fast resume); see devices/defaults.conf.
+    [[ "${ARMADA_SUSPEND_RADIOS:-0}" == 1 ]] && suspend_radios
     if ! timeout 10 /usr/bin/armada-power suspend; then
         log "armada-power suspend failed; aborting fake suspend"
         do_resume
@@ -267,8 +269,8 @@ do_resume() {
     log "leaving fake suspend"
     resume_runtime_pm
     timeout 10 /usr/bin/armada-power resume || log "armada-power resume timed out"
-    # Radio suspend disabled until we can improve resume speed (currently takes 30+ seconds)
-    # resume_radios
+    # Restore radios only if they were soft-blocked on suspend (see ARMADA_SUSPEND_RADIOS).
+    [[ "${ARMADA_SUSPEND_RADIOS:-0}" == 1 ]] && resume_radios
     unfreeze_processes
     unblock_input
     unmute_audio
