@@ -143,6 +143,11 @@ def set_networkmanager_sleep_allowed(allow_sleep):
         NM_IGNORE_SLEEP.touch()
 
 
+def select_mem_sleep(mode):
+    if mode in {"s2idle", "deep"}:
+        MEM_SLEEP_PATH.write_text(f"{mode}\n", encoding="utf-8")
+
+
 def abl_auto_enabled():
     for path, key in ((ABL_CONFIG, "auto_update_enabled"), (ABL_MANIFEST, "ARMADA_ABL_AUTO")):
         try:
@@ -255,6 +260,7 @@ def action_set_sleep_mode(request):
     if value not in available_sleep_modes():
         raise RuntimeError("sleep mode is not supported on this device")
 
+    select_mem_sleep(value)
     write_sleep_config(value)
     set_networkmanager_sleep_allowed(value != "fake")
     return {"value": value}
