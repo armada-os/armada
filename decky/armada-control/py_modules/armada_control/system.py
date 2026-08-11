@@ -7,6 +7,12 @@ from .privileged import call
 
 
 OS_VERSION_PATH = Path("/usr/lib/armada/version")
+MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
+SLEEP_MODE_LABELS = {
+    "fake": "Fake",
+    "s2idle": "s2idle",
+    "deep": "Deep",
+}
 
 
 def run_cmd(cmd, timeout=5, capture=True):
@@ -21,10 +27,6 @@ def run_cmd(cmd, timeout=5, capture=True):
         )
     except (OSError, subprocess.SubprocessError):
         return None
-
-
-def cpu_device_class():
-    return device_env().get("ARMADA_SOC_CLASS", "")
 
 
 def device_env():
@@ -104,6 +106,17 @@ def set_mtp_enabled(enabled):
 
 def set_abl_auto_enabled(enabled):
     return bool(call("set_abl_auto_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def sleep_modes():
+    modes = ["fake"]
+    advertised = {word.strip("[]") for word in read_text(MEM_SLEEP_PATH).split()}
+    modes.extend(mode for mode in ("s2idle", "deep") if mode in advertised)
+    return [{"data": mode, "label": SLEEP_MODE_LABELS[mode]} for mode in modes]
+
+
+def set_sleep_mode(value):
+    return str(call("set_sleep_mode", value=str(value)).get("value"))
 
 
 CORE_PRESET_VARS = (
