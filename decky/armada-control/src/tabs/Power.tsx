@@ -1,7 +1,8 @@
 import { ButtonItem, PanelSection } from "@decky/ui";
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { SelectEdit, SliderEdit } from "../components/widgets";
+import { setCpuBoostEnabled as applyCpuBoostEnabled } from "../backend";
+import { SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
 import { clone, titleCase, update } from "../lib/util";
 import type { Config, PowerProfile } from "../types";
 
@@ -46,6 +47,17 @@ export function Power({ config, setConfig }: { config: Config; setConfig: Dispat
     if (!defaults) return;
     setConfig((current) => (current ? update(current, ["power", "profiles", profile], defaults) : current));
   };
+  const setCpuBoostEnabled = async (enabled: boolean) => {
+    const previous = !!config.cpuBoost?.enabled;
+    if (enabled === previous) return;
+    setConfig((current) => (current ? update(current, ["cpuBoost", "enabled"], enabled) : current));
+    try {
+      const next = await applyCpuBoostEnabled(enabled);
+      setConfig(next);
+    } catch (error) {
+      setConfig((current) => (current ? update(current, ["cpuBoost", "enabled"], previous) : current));
+    }
+  };
   const underclockLevel = p.cpu_underclock || "";
   const supportsUnderclockPresets = !!config.power.underclocks?.[config.cpuDeviceClass];
   return (
@@ -54,6 +66,13 @@ export function Power({ config, setConfig }: { config: Config; setConfig: Dispat
         <SelectEdit value={profile} options={profiles} onChange={setProfile} />
       </PanelSection>
       <PanelSection title="PROFILE SETTINGS">
+        <ToggleRow
+          label="CPU Turbo Boost"
+          value={!!config.cpuBoost?.enabled}
+          disabled={!config.cpuBoost?.available}
+          description={config.cpuBoost?.available ? "Allow the CPU to use boost frequencies." : "CPU boost control is not available on this device."}
+          onChange={setCpuBoostEnabled}
+        />
         <SelectEdit label="Fan Curve" value={p.fan_curve} options={fanCurves} onChange={(v) => setProfileValue("fan_curve", v)} />
         {(config.perf?.governors?.length ?? 0) > 0 ? (
           <SelectEdit

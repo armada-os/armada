@@ -51,6 +51,8 @@ XML = f"""
     <property name="ManualGpuClock" type="u" access="readwrite"/>
     <property name="ManualGpuClockMin" type="u" access="read"/>
     <property name="ManualGpuClockMax" type="u" access="read"/>
+    <property name="CpuBoostAvailable" type="b" access="read"/>
+    <property name="CpuBoostEnabled" type="b" access="readwrite"/>
     <property name="FanMode" type="s" access="read"/>
     <property name="FanPwm" type="u" access="read"/>
     <property name="FanRpm" type="u" access="read"/>
@@ -187,6 +189,7 @@ class ArmadaPower:
         self.profile = ""
         self.gpu_level = "auto"
         self.manual_gpu_clock = 0
+        self.cpu_boost_enabled = None
         self.smoothed_temp = 0.0
         self.last_pwm = 0
         self.suspended = False
@@ -205,6 +208,8 @@ class ArmadaPower:
             current = read_text(self.fan_pwm)
             self.last_pwm = int(current) if current.isdigit() else self.fan_config["min_pwm"]
         self.apply_profile()
+        if self.cpu_boost_enabled is not None:
+            self.set_cpu_boost(self.cpu_boost_enabled)
         if self.gpu_level == "manual" and self.manual_gpu_clock:
             self.set_gpu_manual_clock(self.manual_gpu_clock)
         self.apply_irq_affinity()
@@ -515,6 +520,8 @@ class ArmadaPower:
                 self.gpu_level = value
             elif key == "manual_gpu_clock" and value.isdigit():
                 self.manual_gpu_clock = int(value)
+            elif key == "cpu_boost_enabled" and value in ("0", "1"):
+                self.cpu_boost_enabled = value == "1"
 
     def save_state(self):
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -522,6 +529,7 @@ class ArmadaPower:
             f"profile={self.profile}\n"
             f"gpu_level={self.gpu_level}\n"
             f"manual_gpu_clock={self.manual_gpu_clock}\n"
+            f"cpu_boost_enabled={1 if self.cpu_boost_current() else 0}\n"
         )
 
     def gpu_freqs(self):
@@ -538,6 +546,41 @@ class ArmadaPower:
         if low.isdigit() and high.isdigit():
             return [int(low), int(high)]
         return []
+
+    def cpu_boost_paths(self):
+        global_boost = Path("/sys/devices/system/cpu/cpufreq/boost")
+        if global_boost.exists():
+            # On Qualcomm/Pocket DS, the global node is the authoritative control;
+            # writing per-policy boost nodes can return EINVAL for clusters that do
+            # not support boost independently.
+            return [global_boost]
+        paths = []
+        for policy in self.cpu_policies:
+            boost = policy / "boost"
+            if boost.exists():
+                paths.append(boost)
+        # Preserve order while removing duplicates from policy symlinks.
+        return list(dict.fromkeys(paths))
+
+    def cpu_boost_available(self):
+        return bool(self.cpu_boost_paths())
+
+    def cpu_boost_current(self):
+        paths = self.cpu_boost_paths()
+        if not paths:
+            return False
+        # If any boost control is still enabled, report boost as enabled.
+        return any(read_text(path) not in ("", "0") for path in paths)
+
+    def set_cpu_boost(self, enabled):
+        paths = self.cpu_boost_paths()
+        if not paths:
+            raise RuntimeError("CPU boost control is not available")
+        value = "1" if enabled else "0"
+        for path in paths:
+            write_text(path, value)
+        self.cpu_boost_enabled = enabled
+        return self.cpu_boost_current()
 
     def closest(self, freqs, target):
         return min(freqs, key=lambda freq: abs(freq - target)) if freqs else 0
@@ -837,6 +880,10 @@ class ArmadaPower:
             return GLib.Variant("u", freqs[0] // 1000000 if freqs else 0)
         if prop == "ManualGpuClockMax":
             return GLib.Variant("u", freqs[-1] // 1000000 if freqs else 0)
+        if prop == "CpuBoostAvailable":
+            return GLib.Variant("b", self.cpu_boost_available())
+        if prop == "CpuBoostEnabled":
+            return GLib.Variant("b", self.cpu_boost_current())
         if prop == "FanMode":
             return GLib.Variant("s", "managed" if self.fan_pwm else "unavailable")
         if prop == "FanPwm":
@@ -875,6 +922,10 @@ class ArmadaPower:
             if self.gpu_level == "manual":
                 mhz = self.set_gpu_manual_clock(mhz)
             changed["ManualGpuClock"] = GLib.Variant("u", mhz)
+        elif prop == "CpuBoostEnabled":
+            enabled = value.get_boolean()
+            applied = self.set_cpu_boost(enabled)
+            changed["CpuBoostEnabled"] = GLib.Variant("b", applied)
         else:
             raise KeyError(prop)
         self.save_state()
@@ -893,6 +944,8 @@ class ArmadaPower:
             "manual_gpu_clock": self.get_property("ManualGpuClock"),
             "manual_gpu_clock_min": self.get_property("ManualGpuClockMin"),
             "manual_gpu_clock_max": self.get_property("ManualGpuClockMax"),
+            "cpu_boost_available": self.get_property("CpuBoostAvailable"),
+            "cpu_boost_enabled": self.get_property("CpuBoostEnabled"),
             "fan_mode": self.get_property("FanMode"),
             "fan_pwm": self.get_property("FanPwm"),
             "fan_rpm": self.get_property("FanRpm"),
@@ -919,6 +972,8 @@ class ArmadaPower:
                 self.discover()
                 self.apply_underclock_refs()
                 self.apply_profile()
+                if self.cpu_boost_enabled is not None:
+                    self.set_cpu_boost(self.cpu_boost_enabled)
                 if self.gpu_level == "manual" and self.manual_gpu_clock:
                     self.set_gpu_manual_clock(self.manual_gpu_clock)
                 self.apply_irq_affinity()

@@ -4,6 +4,7 @@ import type { CalibrationState, Capture, Config, InstalledGame, PowerConfig, Twe
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
 export const savePowerConfig = (data: PowerConfig) => call<[PowerConfig], Config>("save_power_config", data);
+export const setCpuBoostEnabled = (enabled: boolean) => call<[boolean], Config>("set_cpu_boost_enabled", enabled);
 export const saveTweaks = (data: Tweaks) => call<[Tweaks], Config>("save_tweaks", data);
 export const getCompatApplied = () => call<[], string[]>("get_compat_applied");
 let compatAppliedSaveChain = Promise.resolve<unknown>(undefined);

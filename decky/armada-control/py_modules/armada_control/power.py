@@ -1,4 +1,5 @@
 import configparser
+import subprocess
 import shutil
 import tempfile
 import time
@@ -9,10 +10,51 @@ from .privileged import call
 POWER_CONFIG = Path("/etc/armada/power-profiles.conf")
 FACTORY_POWER_CONFIG = Path("/usr/share/armada/power-profiles.conf")
 PROFILES = ("eco", "balanced", "performance")
+POWER_CLI = "/usr/bin/armada-power"
 
 
 def default_label(name):
     return name.replace("_", " ").title()
+
+
+def power_status():
+    try:
+        proc = subprocess.run(
+            [POWER_CLI, "status"],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    data = {}
+    for line in proc.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        data[key] = value
+    return data
+
+
+def cpu_boost_state():
+    status = power_status()
+    return {
+        "available": status.get("cpu_boost_available") == "True",
+        "enabled": status.get("cpu_boost_enabled") == "True",
+    }
+
+
+def set_cpu_boost_enabled(enabled):
+    subprocess.run(
+        [POWER_CLI, "boost", "on" if enabled else "off"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+    )
+    return cpu_boost_state()
 
 
 def restore_factory_power_config(reason):

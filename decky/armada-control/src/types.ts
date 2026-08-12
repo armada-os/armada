@@ -79,6 +79,11 @@ export interface PerfInfo {
   cpuCount: number;
 }
 
+export interface CpuBoostState {
+  available: boolean;
+  enabled: boolean;
+}
+
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
@@ -87,6 +92,7 @@ export interface Config {
   fexProfiles: Record<string, FexProfile>;
   perf?: PerfInfo;
   cpuDeviceClass: string;
+  cpuBoost: CpuBoostState;
   osVersion: string;
   ablVersion: string;
   ablAutoEnabled: boolean;
