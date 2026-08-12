@@ -54,6 +54,40 @@ snapshot_wakeup_sources() {
     cp "$source_file" "$state_dir/wakeup_sources.before"
 }
 
+snapshot_interrupts() {
+    [[ -r $proc_root/interrupts ]] || return 0
+    cp "$proc_root/interrupts" "$state_dir/interrupts.before"
+}
+
+snapshot_thermal_temperatures() {
+    local zone found=0
+
+    : >"$state_dir/thermal-temperatures.before"
+    for zone in "$sys_root"/class/thermal/thermal_zone*; do
+        [[ -d $zone && -r $zone/type && -r $zone/temp ]] || continue
+        found=1
+        printf '%s\t%s\t%s\n' "$(basename "$zone")" \
+            "$(read_value "$zone/type")" "$(read_value "$zone/temp")" \
+            >>"$state_dir/thermal-temperatures.before"
+    done
+    ((found)) || rm -f "$state_dir/thermal-temperatures.before"
+}
+
+enable_tsens_dynamic_debug() {
+    local control="$sys_root/kernel/debug/dynamic_debug/control"
+
+    if [[ ! -w $control ]]; then
+        echo "TSENS dynamic debug is unavailable; sensor threshold details will not be logged."
+        return
+    fi
+
+    if printf 'file drivers/thermal/qcom/tsens.c +p\n' >"$control"; then
+        echo "TSENS threshold and interrupt debug logging enabled."
+    else
+        echo "TSENS dynamic debug could not be enabled."
+    fi
+}
+
 prepare() {
     local pm_debug="$sys_root/power/pm_debug_messages"
     local pm_print_times="$sys_root/power/pm_print_times"
@@ -66,6 +100,9 @@ prepare() {
         cp "$proc_root/sys/kernel/random/boot_id" "$state_dir/boot_id"
     fi
     snapshot_wakeup_sources
+    snapshot_interrupts
+    snapshot_thermal_temperatures
+    enable_tsens_dynamic_debug
 
     if [[ -w $pm_debug ]]; then
         echo 1 >"$pm_debug"
@@ -288,6 +325,113 @@ power_state_report() {
     ((found)) || echo "gpu_devfreq=unavailable"
 }
 
+thermal_state_report() {
+    local zone trip index prepared_temp current_temp delta found=0
+    local before="$state_dir/thermal-temperatures.before"
+
+    for zone in "$sys_root"/class/thermal/thermal_zone*; do
+        [[ -d $zone ]] || continue
+        found=1
+        current_temp=$(read_value "$zone/temp")
+        printf 'zone=%s type=%s temp_mC=%s mode=%s policy=%s' \
+            "$(basename "$zone")" "$(read_value "$zone/type")" \
+            "$current_temp" "$(read_value "$zone/mode")" \
+            "$(read_value "$zone/policy")"
+        prepared_temp=
+        if [[ -r $before ]]; then
+            prepared_temp=$(awk -v zone="$(basename "$zone")" \
+                '$1 == zone { print $3; exit }' "$before")
+        fi
+        if [[ $prepared_temp =~ ^-?[0-9]+$ && $current_temp =~ ^-?[0-9]+$ ]]; then
+            delta=$((current_temp - prepared_temp))
+            printf ' prepared_temp_mC=%s temp_delta_mC=%+d' "$prepared_temp" "$delta"
+        fi
+        for trip in "$zone"/trip_point_*_temp; do
+            [[ -r $trip ]] || continue
+            index=${trip##*/trip_point_}
+            index=${index%_temp}
+            printf ' trip%s_type=%s trip%s_temp_mC=%s trip%s_hyst_mC=%s' \
+                "$index" "$(read_value "$zone/trip_point_${index}_type")" \
+                "$index" "$(read_value "$trip")" \
+                "$index" "$(read_value "$zone/trip_point_${index}_hyst")"
+        done
+        echo
+    done
+    ((found)) || echo "thermal_zones=unavailable"
+}
+
+thermal_irq_report() {
+    local current="$proc_root/interrupts" before="$state_dir/interrupts.before"
+    local current_boot baseline_boot
+
+    if [[ ! -r $current ]]; then
+        echo "thermal_irqs=unavailable"
+        return
+    fi
+
+    current_boot=$(read_value "$proc_root/sys/kernel/random/boot_id" "")
+    baseline_boot=$(read_value "$state_dir/boot_id" "")
+    if [[ -r $before && -n $current_boot && $current_boot == "$baseline_boot" ]]; then
+        echo "irq total_count count_since_prepare details"
+        awk '
+            function parse_line(    i) {
+                irq = $1
+                sub(/:$/, "", irq)
+                total = 0
+                for (i = 2; i <= NF && $i ~ /^[0-9]+$/; i++)
+                    total += $i
+                details = ""
+                for (; i <= NF; i++)
+                    details = details (details == "" ? "" : " ") $i
+            }
+            NR == FNR {
+                if (tolower($0) ~ /(thermal|tsens)/ && $1 ~ /^[0-9]+:$/) {
+                    parse_line()
+                    baseline[irq] = total
+                }
+                next
+            }
+            tolower($0) ~ /(thermal|tsens)/ && $1 ~ /^[0-9]+:$/ {
+                parse_line()
+                printf "%s %d %+d %s\n", irq, total, total - baseline[irq], details
+                found = 1
+            }
+            END { if (!found) print "thermal_irqs=none" }
+        ' "$before" "$current"
+    else
+        grep -Ei 'thermal|tsens' "$current" 2>/dev/null || echo "thermal_irqs=none"
+    fi
+}
+
+power_supply_report() {
+    local supply field found=0
+    local fields=(type status online present health temp current_now voltage_now power_now usb_type)
+
+    for supply in "$sys_root"/class/power_supply/*; do
+        [[ -d $supply ]] || continue
+        found=1
+        printf 'supply=%s' "$(basename "$supply")"
+        for field in "${fields[@]}"; do
+            [[ -r $supply/$field ]] || continue
+            printf ' %s=%s' "$field" "$(read_value "$supply/$field")"
+        done
+        echo
+    done
+    ((found)) || echo "power_supplies=unavailable"
+}
+
+tsens_dynamic_debug_report() {
+    local control="$sys_root/kernel/debug/dynamic_debug/control" enabled
+
+    if [[ ! -r $control ]]; then
+        echo "tsens_dynamic_debug=unavailable"
+        return
+    fi
+
+    enabled=$(grep -Ec 'drivers/thermal/qcom/tsens\.c:.* =[^ ]*p' "$control" 2>/dev/null || true)
+    echo "tsens_dynamic_debug_entries=${enabled:-0}"
+}
+
 # Anything left behind here means fake-suspend resume died partway: input stays
 # grabbed, the session stays frozen, the panel stays off. The kernel is fine and
 # the device still looks hung.
@@ -377,7 +521,7 @@ pstore_report() {
 
 sleep_logs() {
     local boot=$1 output
-    local pattern='PM:|suspend|resume|wakeup|wake irq|tsens|qcom.geni|rsinput|ucsi|pmic.gl|ufs|pcie|ath12k|armada-fake-suspend|powerbuttond|armada-powerd|logind'
+    local pattern='PM:|suspend|resume|wakeup|wake irq|thermal|tsens|qcom.geni|rsinput|ucsi|pmic.gl|ufs|pcie|ath12k|armada-fake-suspend|powerbuttond|armada-powerd|logind'
     # pm_print_times emits a pair of lines per device per phase, which would
     # otherwise be the whole tail. Device callbacks get their own section.
     local timing='(: (PM: )?calling .* @ [0-9]+|(PM: )?.* returned -?[0-9]+ after [0-9]+ usecs)'
@@ -495,6 +639,7 @@ collect() {
     single_line_file mem_sleep "$sys_root/power/mem_sleep"
     single_line_file pm_debug_messages "$sys_root/power/pm_debug_messages"
     single_line_file pm_print_times "$sys_root/power/pm_print_times"
+    single_line_file pm_async "$sys_root/power/pm_async"
     single_line_file wakeup_count "$sys_root/power/wakeup_count"
     if [[ ${sleep_mode:-} == fake ]]; then
         echo "kernel_suspend_diagnostics=not-applicable (fake suspend does not enter kernel system suspend)"
@@ -507,6 +652,12 @@ collect() {
 
     section "CPU and GPU frequency"
     power_state_report
+
+    section "Thermal and charging state"
+    tsens_dynamic_debug_report
+    thermal_irq_report
+    thermal_state_report
+    power_supply_report
 
     section "Input and lid state"
     input_state_report
