@@ -1,9 +1,11 @@
+import { toaster } from "@decky/api";
 import { ButtonItem, Field, PanelSection } from "@decky/ui";
 import type { Dispatch, SetStateAction } from "react";
 import {
   setAblAutoEnabled as applyAblAutoEnabled,
   setControllerType as applyControllerType,
   setMtpEnabled as applyMtpEnabled,
+  setSleepMode as applySleepMode,
   setSshEnabled as applySshEnabled,
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
@@ -60,6 +62,17 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, ablAutoEnabled: !enabled } : current));
     }
   };
+  const setSleepMode = async (value: string) => {
+    const previous = config.sleepMode || "fake";
+    setConfig((current) => (current ? { ...current, sleepMode: value } : current));
+    try {
+      const applied = await applySleepMode(value);
+      setConfig((current) => (current ? { ...current, sleepMode: applied } : current));
+    } catch (error) {
+      setConfig((current) => (current ? { ...current, sleepMode: previous } : current));
+      toaster.toast({ title: "Could not change sleep mode", body: String(error) });
+    }
+  };
   return (
     <>
       <PanelSection title="Controller">
@@ -77,6 +90,14 @@ export function Settings({ config, setConfig }: {
         <Field label="ABL Version" description={config.ablVersion || "unknown"} />
       </PanelSection>
       <PanelSection title="Experimental">
+        {(config.sleepModes?.length || 0) > 1 && (
+          <SelectEdit
+            label="Sleep Mode"
+            value={config.sleepMode || "fake"}
+            options={config.sleepModes || []}
+            onChange={setSleepMode}
+          />
+        )}
         <ToggleRow
           label="USB File Transfer"
           description={config.mtpEnabled ? "Enabled until shutdown" : undefined}

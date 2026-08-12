@@ -10,19 +10,22 @@ from .privileged import call
 from .system import read_text
 
 INPUT_CALIBRATION_CONFIG = Path("/etc/armada/input-calibration.json")
-RSINPUT_PARAMETERS = Path("/sys/module/rsinput/parameters")
+CALIBRATION_BACKENDS = {
+    "rsinput": Path("/sys/module/rsinput/parameters"),
+    "retroid": Path("/sys/module/retroid/parameters"),
+}
 INPUTPLUMBER_INTERCEPT = Path("/usr/libexec/armada/inputplumber-intercept")
 INPUTPLUMBER_SERVICE = "org.shadowblip.InputPlumber"
 INPUTPLUMBER_COMPOSITE_IFACE = "org.shadowblip.Input.CompositeDevice"
 ABS_CODES = {
     "left_x": 0,
     "left_y": 1,
-    "left_trigger": 2,
     "right_x": 3,
     "right_y": 4,
-    "right_trigger": 5,
-    "gas": 9,
-    "brake": 10,
+}
+TRIGGER_CODES = {
+    "default": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
+    "retroid": {"left_trigger": (20,), "right_trigger": (21,)},
 }
 CALIBRATION_PARAMS = (
     "axis_leftx_min",
@@ -200,7 +203,9 @@ def calibration_event():
     if not events:
         events = input_events()
     preferred = (
-        lambda event: "rsinput-gamepad" in event["phys"] or "rsinput" in event["name"].casefold(),
+        lambda event: "rsinput-gamepad" in event["phys"].casefold() or "rsinput" in event["name"].casefold(),
+        lambda event: "retroid-pocket-gamepad" in event["phys"].casefold()
+        or "retroid pocket gamepad" in event["name"].casefold(),
         lambda event: "AYANEO Controller" in event["name"],
         lambda event: event["name"] == "Microsoft X-Box 360 pad",
     )
@@ -228,6 +233,8 @@ def read_abs(fd, code):
     if len(data) != 24:
         raise OSError(f"unexpected EVIOCGABS response length for code {code}")
     value, minimum, maximum, fuzz, flat, resolution = struct.unpack("iiiiii", data)
+    if minimum == maximum:
+        raise OSError(f"analog control {code} has no range")
     return {
         "value": value,
         "min": minimum,
@@ -238,29 +245,54 @@ def read_abs(fd, code):
     }
 
 
-def read_controls(fd):
+def event_backend(event):
+    if not event:
+        return None
+    name = str(event.get("name", "")).casefold()
+    phys = str(event.get("phys", "")).casefold()
+    if "rsinput" in name or "rsinput-gamepad" in phys:
+        return "rsinput"
+    if "retroid pocket gamepad" in name or "retroid-pocket-gamepad" in phys:
+        return "retroid"
+    return None
+
+
+def calibration_backend(event=None):
+    if event is None:
+        event = calibration_event()
+    backend = event_backend(event)
+    if backend and CALIBRATION_BACKENDS[backend].exists():
+        return backend
+    return None
+
+
+def read_backend_controls(fd, backend=None):
     controls = {}
     for name, code in ABS_CODES.items():
         try:
             controls[name] = read_abs(fd, code)
         except OSError:
             pass
-    if "left_trigger" not in controls and "brake" in controls:
-        controls["left_trigger"] = controls["brake"]
-    if "right_trigger" not in controls and "gas" in controls:
-        controls["right_trigger"] = controls["gas"]
+    trigger_codes = TRIGGER_CODES.get(backend, TRIGGER_CODES["default"])
+    for name, codes in trigger_codes.items():
+        for code in codes:
+            try:
+                controls[name] = read_abs(fd, code)
+                break
+            except OSError:
+                pass
     return controls
 
 
 def build_state(event, controls):
-    can = calibration_can_apply(event)
+    backend = calibration_backend(event)
     return {
         "supported": bool(controls),
         "reason": "" if controls else "Controller has no readable analog controls",
         "controls": controls,
         "event": event,
-        "canApply": can,
-        "backend": "rsinput" if can else "tester",
+        "canApply": bool(backend),
+        "backend": backend or "tester",
     }
 
 
@@ -295,12 +327,18 @@ def close_session_device():
 def controller_state():
     if _session_fd is not None and _session_device is not None:
         try:
-            return build_state(_session_device, read_controls(_session_fd.fileno()))
+            return build_state(
+                _session_device,
+                read_backend_controls(_session_fd.fileno(), event_backend(_session_device)),
+            )
         except OSError:
             # Node went away (device re-registered); re-resolve once.
             if open_session_device() and _session_fd is not None:
                 try:
-                    return build_state(_session_device, read_controls(_session_fd.fileno()))
+                    return build_state(
+                        _session_device,
+                        read_backend_controls(_session_fd.fileno(), event_backend(_session_device)),
+                    )
                 except OSError:
                     close_session_device()
     event = calibration_event()
@@ -308,28 +346,21 @@ def controller_state():
         return {"supported": False, "reason": "No controller input device found", "controls": {}, "event": None}
     try:
         with open(event["path"], "rb", buffering=0) as f:
-            controls = read_controls(f.fileno())
+            controls = read_backend_controls(f.fileno(), event_backend(event))
     except OSError as exc:
         return {"supported": False, "reason": str(exc), "controls": {}, "event": event}
     return build_state(event, controls)
 
 
-def calibration_can_apply(event=None):
-    if not RSINPUT_PARAMETERS.exists():
-        return False
-    if event is None:
-        event = calibration_event()
-    if not event:
-        return False
-    return "rsinput-gamepad" in event["phys"] or "rsinput" in event["name"].casefold()
-
-
-def read_calibration_params():
+def read_calibration_params(backend=None):
     params = {}
-    if not RSINPUT_PARAMETERS.exists():
+    if backend is None:
+        backend = calibration_backend()
+    parameters = CALIBRATION_BACKENDS.get(backend)
+    if parameters is None or not parameters.exists():
         return params
     for name in CALIBRATION_PARAMS:
-        text = read_text(RSINPUT_PARAMETERS / name)
+        text = read_text(parameters / name)
         if text:
             try:
                 params[name] = int(text)
@@ -339,17 +370,23 @@ def read_calibration_params():
 
 
 def reset_calibration_params():
+    backend = calibration_backend()
+    if backend is None:
+        raise RuntimeError("controller calibration is not supported on this device")
     params = {}
+    axis_range = 1408 if backend == "retroid" else 1024
+    axis_deadzone = 0 if backend == "retroid" else 70
     for axis in ("axis_leftx", "axis_lefty", "axis_rightx", "axis_righty"):
-        params[f"{axis}_min"] = -1024
+        params[f"{axis}_min"] = -axis_range
         params[f"{axis}_center"] = 0
-        params[f"{axis}_max"] = 1024
-        params[f"{axis}_deadzone"] = 70
+        params[f"{axis}_max"] = axis_range
+        params[f"{axis}_deadzone"] = axis_deadzone
         params[f"{axis}_antideadzone"] = 0
     for trigger in ("trigger_left", "trigger_right"):
         params[f"{trigger}_max"] = 1552
         params[f"{trigger}_deadzone"] = 0
         params[f"{trigger}_antideadzone"] = 0
+    params["backend"] = backend
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     return calibration_status()
 
@@ -402,15 +439,21 @@ def merge_capture_sample(capture, state):
 def calibration_status():
     state = controller_state()
     state["saved"] = INPUT_CALIBRATION_CONFIG.exists()
-    state["params"] = read_calibration_params()
-    if not state.get("canApply") and RSINPUT_PARAMETERS.exists():
+    backend = state.get("backend") if state.get("canApply") else None
+    state["params"] = read_calibration_params(backend) if backend else {}
+    if state.get("supported") and not state.get("canApply"):
         state["reason"] = "Live tester only on this device"
     return state
 
 
 def save_calibration(capture):
-    capture = merge_capture_sample(capture, controller_state())
-    params = calibration_from_capture(capture, read_calibration_params())
+    state = controller_state()
+    backend = state.get("backend") if state.get("canApply") else None
+    if backend not in CALIBRATION_BACKENDS:
+        raise RuntimeError("controller calibration is not supported on this device")
+    capture = merge_capture_sample(capture, state)
+    params = calibration_from_capture(capture, read_calibration_params(backend))
+    params["backend"] = backend
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     return calibration_status()
 

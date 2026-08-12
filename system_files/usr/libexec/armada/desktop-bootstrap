@@ -20,8 +20,9 @@ else
     systemctl --user import-environment "${activation_env[@]}" 2>/dev/null || true
 fi
 
-if command -v /usr/libexec/armada/device-env >/dev/null 2>&1; then
-    eval "$(/usr/libexec/armada/device-env)"
+device_env="${ARMADA_DEVICE_ENV:-/usr/libexec/armada/device-env}"
+if [[ -x "${device_env}" ]]; then
+    eval "$("${device_env}")"
 fi
 
 # The gaming session inhibits the secondary touchscreen (the desktop is the
@@ -36,18 +37,11 @@ panel_orientation="${ARMADA_PANEL_ORIENTATION:-normal}"
 [[ -n "${display_connector}" ]] || exit 0
 
 config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/armada"
-# Dual-screen enablement can renumber the primary connector. Single-screen
-# devices retain their legacy markers so upgrades preserve user display tweaks.
-if [[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]]; then
-    rotation_done="${config_dir}/desktop-rotation-${display_connector}.done"
-    scale_done="${config_dir}/desktop-scale-${display_connector}.done"
-else
-    rotation_done="${config_dir}/desktop-rotation.done"
-    scale_done="${config_dir}/desktop-scale.done"
-fi
-dual_done="${config_dir}/desktop-dual-screen.done"
+armada_lib_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../lib/armada" && pwd)"
+source "${armada_lib_dir}/desktop-bootstrap-lib"
+armada_desktop_bootstrap_state "${config_dir}"
 
-[[ ! -e "${rotation_done}" || ! -e "${scale_done}" || ! -e "${dual_done}" ]] || exit 0
+[[ "${rotation_complete}" != 1 || "${scale_complete}" != 1 || "${dual_complete}" != 1 ]] || exit 0
 mkdir -p "${config_dir}"
 
 for _ in {1..5}; do
@@ -55,27 +49,27 @@ for _ in {1..5}; do
     sleep 2
 done
 
-if [[ ! -e "${rotation_done}" ]]; then
-    case "${panel_orientation}" in
-        left|right|inverted)
-            if kscreen-doctor "output.${display_connector}.rotation.${panel_orientation}" >/dev/null 2>&1; then
-                touch "${rotation_done}"
-            fi
-            ;;
-        *)
-            touch "${rotation_done}"
-            ;;
-    esac
+if [[ "${rotation_complete}" != 1 ]] &&
+        kscreen-doctor "output.${display_connector}.rotation.${rotation_value}" >/dev/null 2>&1; then
+    if armada_write_marker "${rotation_done}" "${rotation_signature}"; then
+        rotation_complete=1
+    fi
 fi
 
-if [[ ! -e "${scale_done}" ]] && kscreen-doctor "output.${display_connector}.scale.1.5" >/dev/null 2>&1; then
-    touch "${scale_done}"
+if [[ "${scale_complete}" != 1 ]] &&
+        kscreen-doctor "output.${display_connector}.scale.${desktop_scale}" >/dev/null 2>&1; then
+    if armada_write_marker "${scale_done}" "${scale_signature}"; then
+        scale_complete=1
+    fi
 fi
 
-if [[ ! -e "${dual_done}" ]]; then
+if [[ "${dual_complete}" != 1 && "${rotation_complete}" == 1 && "${scale_complete}" == 1 ]]; then
     if [[ -z "${ARMADA_SECONDARY_CONNECTOR:-}" ]]; then
-        touch "${dual_done}"
-    elif /usr/libexec/armada/setup-dual-screen; then
-        touch "${dual_done}"
+        armada_write_marker "${dual_done}" "${dual_signature}" || true
+    else
+        dual_screen_setup="${ARMADA_SETUP_DUAL_SCREEN:-/usr/libexec/armada/setup-dual-screen}"
+        if "${dual_screen_setup}"; then
+            armada_write_marker "${dual_done}" "${dual_signature}" || true
+        fi
     fi
 fi

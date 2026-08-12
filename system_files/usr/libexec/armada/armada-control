@@ -28,6 +28,10 @@ MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xb360", "ds5"}
 INTERCEPT_MODES = {"overlay", "reset"}
+SLEEP_CONFIG = Path("/etc/armada/sleep.conf")
+SUSPEND_MODE_KEY = "suspend_mode"
+NM_IGNORE_SLEEP = Path("/etc/NetworkManager/ignore-sleep")
+MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
 CONFIG_PATHS = {
     "power": Path("/etc/armada/power-profiles.conf"),
     "tweaks": Path("/etc/armada/game-tweaks.json"),
@@ -63,6 +67,10 @@ CALIBRATION_PARAMS = (
     "trigger_right_deadzone",
     "trigger_right_antideadzone",
 )
+CALIBRATION_BACKENDS = {
+    "rsinput": Path("/sys/module/rsinput/parameters"),
+    "retroid": Path("/sys/module/retroid/parameters"),
+}
 
 
 def atomic_write(path, text):
@@ -106,6 +114,38 @@ def mtp_enabled():
         timeout=5,
     )
     return result.stdout.strip() == "active"
+
+
+def write_sleep_config(mode):
+    try:
+        lines = SLEEP_CONFIG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    output = []
+    written = False
+    for line in lines:
+        key, sep, _value = line.partition("=")
+        if sep and key.strip() == SUSPEND_MODE_KEY:
+            if not written:
+                output.append(f"{SUSPEND_MODE_KEY}={mode}")
+                written = True
+            continue
+        output.append(line)
+    if not written:
+        output.append(f"{SUSPEND_MODE_KEY}={mode}")
+    atomic_write(SLEEP_CONFIG, "\n".join(output) + "\n")
+
+
+def set_networkmanager_sleep_allowed(allow_sleep):
+    if allow_sleep:
+        NM_IGNORE_SLEEP.unlink(missing_ok=True)
+    else:
+        NM_IGNORE_SLEEP.touch()
+
+
+def select_mem_sleep(mode):
+    if mode in {"s2idle", "deep"}:
+        MEM_SLEEP_PATH.write_text(f"{mode}\n", encoding="utf-8")
 
 
 def abl_auto_enabled():
@@ -204,6 +244,28 @@ def action_get_mtp_enabled(request):
     return {"enabled": mtp_enabled()}
 
 
+def available_sleep_modes():
+    try:
+        advertised = {
+            word.strip("[]")
+            for word in MEM_SLEEP_PATH.read_text(encoding="utf-8", errors="replace").split()
+        }
+    except OSError:
+        advertised = set()
+    return {"fake"} | ({"s2idle", "deep"} & advertised)
+
+
+def action_set_sleep_mode(request):
+    value = str(request.get("value", ""))
+    if value not in available_sleep_modes():
+        raise RuntimeError("sleep mode is not supported on this device")
+
+    select_mem_sleep(value)
+    write_sleep_config(value)
+    set_networkmanager_sleep_allowed(value != "fake")
+    return {"value": value}
+
+
 def action_set_abl_auto_enabled(request):
     atomic_write(ABL_CONFIG, f"auto_update_enabled={int(bool(request.get('enabled')))}\n")
     return {"enabled": abl_auto_enabled()}
@@ -238,13 +300,18 @@ def action_write_config(request):
         raise ValueError("config payload too large")
     if name == "calibration":
         params = json.loads(text)
-        rsinput = Path("/sys/module/rsinput/parameters")
-        if not rsinput.exists():
+        if not isinstance(params, dict):
+            raise ValueError("calibration config must be an object")
+        backend = params.get("backend", "rsinput")
+        parameters = CALIBRATION_BACKENDS.get(backend)
+        if parameters is None:
+            raise ValueError("invalid calibration backend")
+        if not parameters.exists():
             raise RuntimeError("controller calibration is not supported on this device")
         for param in CALIBRATION_PARAMS:
             if param in params:
-                (rsinput / param).write_text(str(int(params[param])), encoding="utf-8")
-        (rsinput / "update_params").write_text("1", encoding="utf-8")
+                (parameters / param).write_text(str(int(params[param])), encoding="utf-8")
+        (parameters / "update_params").write_text("1", encoding="utf-8")
     atomic_write(CONFIG_PATHS[name], text)
     if name == "power":
         run(["/usr/bin/armada-power", "reload"], timeout=15)
@@ -427,6 +494,7 @@ ACTIONS = {
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_abl_auto_enabled": action_set_abl_auto_enabled,
+    "set_sleep_mode": action_set_sleep_mode,
     "write_config": action_write_config,
     "reapply_perf": action_reapply_perf,
     "restart_game_mode": action_restart_game_mode,

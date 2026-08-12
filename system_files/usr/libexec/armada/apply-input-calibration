@@ -4,7 +4,10 @@ from pathlib import Path
 
 
 CONFIG = Path("/etc/armada/input-calibration.json")
-PARAMETERS = Path("/sys/module/rsinput/parameters")
+CALIBRATION_BACKENDS = {
+    "rsinput": Path("/sys/module/rsinput/parameters"),
+    "retroid": Path("/sys/module/retroid/parameters"),
+}
 PARAM_NAMES = (
     "axis_leftx_min",
     "axis_leftx_center",
@@ -36,16 +39,22 @@ PARAM_NAMES = (
 
 
 def main():
-    if not CONFIG.exists() or not PARAMETERS.exists():
+    if not CONFIG.exists():
         return
     with CONFIG.open(encoding="utf-8") as f:
         params = json.load(f)
     if not isinstance(params, dict):
         raise SystemExit("input calibration config must be a JSON object")
+    backend = params.get("backend", "rsinput")
+    parameters = CALIBRATION_BACKENDS.get(backend)
+    if parameters is None:
+        return
+    if not parameters.exists():
+        return
     for name in PARAM_NAMES:
         if name in params:
-            (PARAMETERS / name).write_text(str(int(params[name])), encoding="utf-8")
-    (PARAMETERS / "update_params").write_text("1", encoding="utf-8")
+            (parameters / name).write_text(str(int(params[name])), encoding="utf-8")
+    (parameters / "update_params").write_text("1", encoding="utf-8")
 
 
 if __name__ == "__main__":

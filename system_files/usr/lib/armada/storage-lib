@@ -12,3 +12,55 @@ armada_internal_device() {
     done
     return 1
 }
+
+armada_root_device() {
+    local source parent
+    source=$(findmnt -no SOURCE /sysroot 2>/dev/null || findmnt -no SOURCE /) || return 1
+    source=${source%%\[*}
+    source=$(readlink -f "$source" 2>/dev/null || printf '%s\n' "$source")
+    parent=$(lsblk -dnro PKNAME "$source" 2>/dev/null | head -1) || true
+    [[ -n "$parent" ]] || return 1
+    readlink -f "/dev/$parent" 2>/dev/null || printf '/dev/%s\n' "$parent"
+}
+
+armada_running_from_internal() {
+    local internal root
+    internal="${ARMADA_INTERNAL_DEVICE:-$(armada_internal_device || true)}"
+    [[ -n "$internal" ]] || return 1
+    internal=$(readlink -f "$internal" 2>/dev/null || printf '%s\n' "$internal")
+    root=$(armada_root_device) || return 1
+    [[ "$root" == "$internal" ]]
+}
+
+# Requires root so access can be checked as the session user with runuser.
+armada_mounted_sd() {
+    local disk_path disk node_path node target options
+    local block_class="${ARMADA_BLOCK_CLASS:-/sys/class/block}"
+    local media_root="${ARMADA_MEDIA_ROOT:-/run/media/armada}"
+    local mounts=()
+
+    for disk_path in "$block_class"/mmcblk[0-9]*; do
+        [[ -r "$disk_path/device/type" ]] || continue
+        disk="${disk_path##*/}"
+        [[ "$disk" =~ ^mmcblk[0-9]+$ ]] || continue
+        [[ "$(<"$disk_path/device/type")" == SD ]] || continue
+        for node_path in "$disk_path" "$block_class"/"$disk"p*; do
+            [[ -e "$node_path" ]] || continue
+            node="/dev/${node_path##*/}"
+            while IFS= read -r -d '' target && IFS= read -r -d '' options; do
+                [[ -d "$target" ]] || continue
+                [[ "$target" == "$media_root"/* ]] || continue
+                case ",$options," in
+                    *,rw,*) ;;
+                    *) continue ;;
+                esac
+                runuser -u armada -- test -r "$target" -a -w "$target" -a -x "$target" || continue
+                mounts+=("$target")
+            done < <(findmnt -J -S "$node" -o TARGET,OPTIONS 2>/dev/null \
+                | jq -j '.filesystems[]? | .target, "\u0000", .options, "\u0000"')
+        done
+    done
+
+    ((${#mounts[@]} == 1)) || return 1
+    printf '%s\n' "${mounts[0]}"
+}

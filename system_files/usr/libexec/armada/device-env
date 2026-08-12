@@ -36,6 +36,35 @@ esac
 if [[ -n "$profile" && -r "$device_dir/$profile.conf" ]]; then
     source "$device_dir/$profile.conf"
 fi
+profile_suspend_mode=${ARMADA_SUSPEND_MODE:-fake}
+
+mem_sleep=${ARMADA_MEM_SLEEP_PATH:-/sys/power/mem_sleep}
+mem_sleep_modes=
+if [[ -r "$mem_sleep" ]]; then
+    mem_sleep_modes=$(<"$mem_sleep")
+fi
+selected_mem_sleep=$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' <<<"$mem_sleep_modes")
+
+sleep_config=${ARMADA_SLEEP_CONFIG:-/etc/armada/sleep.conf}
+if [[ -r "$sleep_config" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^[[:space:]]*suspend_mode[[:space:]]*=[[:space:]]*(fake|s2idle|deep)[[:space:]]*$ ]]; then
+            suspend_mode=${BASH_REMATCH[1]}
+            if [[ "$suspend_mode" == fake ]] || grep -qw "$suspend_mode" <<<"$mem_sleep_modes"; then
+                ARMADA_SUSPEND_MODE=$suspend_mode
+            else
+                ARMADA_SUSPEND_MODE=$profile_suspend_mode
+            fi
+        fi
+    done <"$sleep_config"
+fi
+if [[ "${ARMADA_SUSPEND_MODE:-fake}" == "mem" ]]; then
+    if [[ "$selected_mem_sleep" == "s2idle" || "$selected_mem_sleep" == "deep" ]]; then
+        ARMADA_SUSPEND_MODE=$selected_mem_sleep
+    else
+        ARMADA_SUSPEND_MODE=fake
+    fi
+fi
 
 # CPU topology by SoC (device conf may override). Cpulists are ordered:
 # presets expand in host order, WINE_CPU_TOPOLOGY consumers keep the order.

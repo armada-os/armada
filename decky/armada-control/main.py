@@ -16,6 +16,7 @@ from armada_control.system import (
     restart_game_mode,
     set_abl_auto_enabled,
     set_mtp_enabled,
+    set_sleep_mode,
     set_ssh_enabled,
 )
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
@@ -51,6 +52,9 @@ class Plugin:
 
     async def set_abl_auto_enabled(self, enabled):
         return await asyncio.to_thread(set_abl_auto_enabled, enabled)
+
+    async def set_sleep_mode(self, value):
+        return await asyncio.to_thread(set_sleep_mode, value)
 
     async def reapply_perf(self):
         return await asyncio.to_thread(reapply_perf)

@@ -1,7 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-eval "$(/usr/libexec/armada/device-env)"
+device_env=${ARMADA_DEVICE_ENV:-/usr/libexec/armada/device-env}
+mem_sleep=${ARMADA_MEM_SLEEP_PATH:-/sys/power/mem_sleep}
+nm_ignore_sleep=${ARMADA_NM_IGNORE_SLEEP:-/etc/NetworkManager/ignore-sleep}
+
+eval "$("$device_env")"
 
 # AYANEO Pocket MCUs need this serial frame to switch to fake-Xbox-360 mode
 # (045e:028e); without it the kernel can't drive the controller.
@@ -30,12 +34,37 @@ case "${ARMADA_GAMEPAD_QUIRK:-none}" in
         ;;
 esac
 
-# fake-suspend keeps wifi associated; real suspend needs NM to drop and reconnect.
-if [[ "${ARMADA_SUSPEND_MODE:-fake}" != "fake" ]]; then
-    rm -f /etc/NetworkManager/ignore-sleep
+# Keep the kernel selection aligned with the saved preference after reboot.
+if [[ "${ARMADA_SUSPEND_MODE:-fake}" == "s2idle" ||
+    "${ARMADA_SUSPEND_MODE:-fake}" == "deep" ]]; then
+    if [[ -w "$mem_sleep" ]] && grep -qw "$ARMADA_SUSPEND_MODE" "$mem_sleep"; then
+        if ! echo "$ARMADA_SUSPEND_MODE" >"$mem_sleep"; then
+            echo "device-quirks: failed to select $ARMADA_SUSPEND_MODE in $mem_sleep" >&2
+        fi
+    fi
 fi
 
-# SM8550 (A740): CPU0's deep power-collapse C-state wedges the GMU; disable it.
+# fake-suspend keeps wifi associated; real suspend needs NM to drop and reconnect.
+if [[ "${ARMADA_SUSPEND_MODE:-fake}" != "fake" ]]; then
+    if ! rm -f "$nm_ignore_sleep"; then
+        echo "device-quirks: failed to remove $nm_ignore_sleep" >&2
+    fi
+else
+    if ! touch "$nm_ignore_sleep"; then
+        echo "device-quirks: failed to create $nm_ignore_sleep" >&2
+    fi
+fi
+
 if [[ "${ARMADA_SOC_CLASS:-}" == "SM8550" ]]; then
-    echo 1 >/sys/devices/system/cpu/cpu0/cpuidle/state1/disable
+    # A740 wedges the GMU when CPU0 enters its deep power-collapse state.
+    cpu0_deep_idle=/sys/devices/system/cpu/cpu0/cpuidle/state1/disable
+    if [[ -w "$cpu0_deep_idle" ]]; then
+        echo 1 >"$cpu0_deep_idle"
+    fi
+
+    # SM8550 UFS needs up to 3 seconds for UIC completion across suspend.
+    uic_timeout=/sys/module/ufshcd_core/parameters/uic_cmd_timeout
+    if [[ -w "$uic_timeout" ]]; then
+        echo 3000 >"$uic_timeout"
+    fi
 fi

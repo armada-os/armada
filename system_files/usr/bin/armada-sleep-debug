@@ -1,0 +1,724 @@
+#!/usr/bin/bash
+set -uo pipefail
+
+sys_root=${ARMADA_SLEEP_DEBUG_SYS_ROOT:-/sys}
+proc_root=${ARMADA_SLEEP_DEBUG_PROC_ROOT:-/proc}
+state_dir=${ARMADA_SLEEP_DEBUG_STATE_DIR:-/var/tmp/armada-sleep-debug}
+journalctl_bin=${ARMADA_SLEEP_DEBUG_JOURNALCTL:-/usr/bin/journalctl}
+systemctl_bin=${ARMADA_SLEEP_DEBUG_SYSTEMCTL:-/usr/bin/systemctl}
+device_env=${ARMADA_SLEEP_DEBUG_DEVICE_ENV:-/usr/libexec/armada/device-env}
+input_lib=${ARMADA_SLEEP_DEBUG_INPUT_LIB:-/usr/lib/armada/input-lib}
+evtest_bin=${ARMADA_SLEEP_DEBUG_EVTEST:-/usr/bin/evtest}
+dev_root=${ARMADA_SLEEP_DEBUG_DEV_ROOT:-/dev}
+run_root=${ARMADA_SLEEP_DEBUG_RUN_ROOT:-/run}
+
+usage() {
+    echo "Usage: armada-sleep-debug prepare"
+    echo "       armada-sleep-debug collect  (default when no command is given)"
+}
+
+require_root() {
+    if ((EUID != 0)) && [[ ${ARMADA_SLEEP_DEBUG_ALLOW_NONROOT:-0} != 1 ]]; then
+        echo "Run this command with sudo." >&2
+        exit 1
+    fi
+}
+
+section() {
+    printf '\n## %s\n' "$1"
+}
+
+single_line_file() {
+    local label=$1 path=$2
+
+    printf '%s=' "$label"
+    if [[ -r $path ]]; then
+        tr '\n' ' ' <"$path"
+        echo
+    else
+        echo unavailable
+    fi
+}
+
+read_value() {
+    local value=
+
+    [[ -r $1 ]] && value=$(tr -d '\n' <"$1" 2>/dev/null)
+    printf '%s' "${value:-${2-unavailable}}"
+}
+
+snapshot_wakeup_sources() {
+    local source_file="$sys_root/kernel/debug/wakeup_sources"
+
+    [[ -r $source_file ]] || return 0
+    cp "$source_file" "$state_dir/wakeup_sources.before"
+}
+
+snapshot_interrupts() {
+    [[ -r $proc_root/interrupts ]] || return 0
+    cp "$proc_root/interrupts" "$state_dir/interrupts.before"
+}
+
+snapshot_thermal_temperatures() {
+    local zone found=0
+
+    : >"$state_dir/thermal-temperatures.before"
+    for zone in "$sys_root"/class/thermal/thermal_zone*; do
+        [[ -d $zone && -r $zone/type && -r $zone/temp ]] || continue
+        found=1
+        printf '%s\t%s\t%s\n' "$(basename "$zone")" \
+            "$(read_value "$zone/type")" "$(read_value "$zone/temp")" \
+            >>"$state_dir/thermal-temperatures.before"
+    done
+    ((found)) || rm -f "$state_dir/thermal-temperatures.before"
+}
+
+enable_tsens_dynamic_debug() {
+    local control="$sys_root/kernel/debug/dynamic_debug/control"
+
+    if [[ ! -w $control ]]; then
+        echo "TSENS dynamic debug is unavailable; sensor threshold details will not be logged."
+        return
+    fi
+
+    if printf 'file drivers/thermal/qcom/tsens.c +p\n' >"$control"; then
+        echo "TSENS threshold and interrupt debug logging enabled."
+    else
+        echo "TSENS dynamic debug could not be enabled."
+    fi
+}
+
+prepare() {
+    local pm_debug="$sys_root/power/pm_debug_messages"
+    local pm_print_times="$sys_root/power/pm_print_times"
+
+    require_root
+    umask 077
+    mkdir -p "$state_dir"
+    date --iso-8601=seconds >"$state_dir/prepared_at"
+    if [[ -r $proc_root/sys/kernel/random/boot_id ]]; then
+        cp "$proc_root/sys/kernel/random/boot_id" "$state_dir/boot_id"
+    fi
+    snapshot_wakeup_sources
+    snapshot_interrupts
+    snapshot_thermal_temperatures
+    enable_tsens_dynamic_debug
+
+    if [[ -w $pm_debug ]]; then
+        echo 1 >"$pm_debug"
+        echo "PM debug messages enabled."
+    else
+        echo "PM debug messages are unavailable; the report will use wake IRQ state and counters."
+    fi
+
+    if [[ -w $pm_print_times ]]; then
+        echo 1 >"$pm_print_times"
+        echo "Per-device suspend/resume timing enabled."
+    else
+        echo "Per-device suspend/resume timing is unavailable."
+    fi
+
+    if [[ -r $state_dir/wakeup_sources.before ]]; then
+        echo "Wakeup-source baseline saved in $state_dir."
+    else
+        echo "Wakeup-source counters are unavailable; no baseline was saved."
+    fi
+    echo "After the next wake, run:"
+    echo "sudo armada-sleep-debug collect > armada-sleep-debug.txt"
+    echo "Prepare settings are per-boot; run prepare again after every reboot."
+}
+
+wakeup_irq_report() {
+    local irq_file="$sys_root/power/pm_wakeup_irq"
+    local irq irq_dir
+
+    if [[ ! -r $irq_file ]]; then
+        echo "pm_wakeup_irq=unavailable"
+        return
+    fi
+
+    if ! irq=$(cat "$irq_file" 2>/dev/null) || [[ -z $irq ]]; then
+        echo "pm_wakeup_irq=none-recorded"
+        return
+    fi
+    echo "pm_wakeup_irq=$irq"
+    [[ $irq =~ ^[1-9][0-9]*$ ]] || return
+
+    irq_dir="$sys_root/kernel/irq/$irq"
+    for field in actions name chip_name hwirq type; do
+        [[ -r $irq_dir/$field ]] && single_line_file "irq_${field}" "$irq_dir/$field"
+    done
+    [[ -r $irq_dir/wakeup ]] && single_line_file irq_wakeup_after_resume "$irq_dir/wakeup"
+    awk -v irq="${irq}:" '$1 == irq { print }' "$proc_root/interrupts" 2>/dev/null || true
+}
+
+wakeup_source_report() {
+    local current="$sys_root/kernel/debug/wakeup_sources"
+    local before="$state_dir/wakeup_sources.before"
+    local current_boot baseline_boot
+
+    if [[ ! -r $current ]]; then
+        echo "wakeup_sources=unavailable"
+        return
+    fi
+
+    current_boot=$(read_value "$proc_root/sys/kernel/random/boot_id" "")
+    baseline_boot=$(read_value "$state_dir/boot_id" "")
+    if [[ -r $before && -n $current_boot && $current_boot == "$baseline_boot" ]]; then
+        echo "name active_delta event_delta wakeup_delta expire_delta"
+        awk '
+            NR == FNR {
+                if (FNR > 1) {
+                    active[$1] = $2
+                    event[$1] = $3
+                    wakeup[$1] = $4
+                    expire[$1] = $5
+                }
+                next
+            }
+            FNR > 1 {
+                active_delta = $2 - active[$1]
+                event_delta = $3 - event[$1]
+                wakeup_delta = $4 - wakeup[$1]
+                expire_delta = $5 - expire[$1]
+                if (active_delta || event_delta || wakeup_delta || expire_delta)
+                    print $1, active_delta, event_delta, wakeup_delta, expire_delta
+            }
+        ' "$before" "$current"
+    else
+        echo "No same-boot prepare baseline was found. Sources with a nonzero wakeup count follow."
+        awk 'NR == 1 || $4 != 0 { print }' "$current"
+    fi
+}
+
+suspend_stats_report() {
+    local stats_dir="$sys_root/power/suspend_stats"
+    local path found=0
+
+    if [[ ! -d $stats_dir ]]; then
+        echo "suspend_stats=unavailable"
+        return
+    fi
+
+    for path in "$stats_dir"/*; do
+        [[ -f $path && -r $path ]] || continue
+        found=1
+        single_line_file "$(basename "$path")" "$path"
+    done
+    ((found)) || echo "suspend_stats=unavailable"
+}
+
+wakeup_inventory_report() {
+    local wakeup path name device power_wakeup found=0
+
+    for wakeup in "$sys_root"/class/wakeup/wakeup*; do
+        [[ -d $wakeup ]] || continue
+        found=1
+        name=$(cat "$wakeup/name" 2>/dev/null || basename "$wakeup")
+        device=$(readlink -f "$wakeup/device" 2>/dev/null || true)
+        power_wakeup=unavailable
+        [[ -r $wakeup/device/power/wakeup ]] && power_wakeup=$(tr -d '\n' <"$wakeup/device/power/wakeup")
+        printf 'source=%s device=%s power_wakeup=%s' "$name" "${device:-unavailable}" "$power_wakeup"
+        for path in active_count event_count wakeup_count expire_count; do
+            [[ -r $wakeup/$path ]] && printf ' %s=%s' "$path" "$(tr -d '\n' <"$wakeup/$path")"
+        done
+        echo
+    done
+    ((found)) || echo "wakeup_class=unavailable"
+}
+
+rtc_and_timer_report() {
+    local rtc found=0
+
+    for rtc in "$sys_root"/class/rtc/rtc*; do
+        [[ -d $rtc ]] || continue
+        found=1
+        printf '%s=' "$(basename "$rtc")_wakealarm"
+        if [[ -r $rtc/wakealarm ]]; then
+            tr '\n' ' ' <"$rtc/wakealarm"
+            echo
+        else
+            echo unavailable
+        fi
+    done
+    ((found)) || echo "rtc_wakealarm=unavailable"
+
+    if [[ -x $systemctl_bin ]]; then
+        echo "Wake-capable timer properties:"
+        "$systemctl_bin" show '*.timer' --property=Id --property=WakeSystem 2>/dev/null || true
+        echo "Scheduled timers:"
+        "$systemctl_bin" list-timers --all --no-pager 2>/dev/null || true
+    else
+        echo "systemd_timers=unavailable"
+    fi
+}
+
+input_state_report() {
+    local dev name lid_dev= power_dev= lid_state=absent rc
+
+    for dev in "$dev_root"/input/event*; do
+        [[ -e $dev ]] || continue
+        name=$(cat "$sys_root/class/input/$(basename "$dev")/device/name" 2>/dev/null || true)
+        case $name in
+            *pwrkey*|*[Pp]ower\ [Bb]utton*) power_dev=$dev; break ;;
+        esac
+    done
+    echo "power_device=${power_dev:-unavailable}"
+
+    if [[ -r $input_lib ]]; then
+        # shellcheck source=/usr/lib/armada/input-lib
+        source "$input_lib"
+        lid_dev=$(armada_find_lid_dev 2>/dev/null || true)
+    fi
+    if [[ -n $lid_dev ]]; then
+        lid_state=unknown
+        if [[ -x $evtest_bin ]]; then
+            "$evtest_bin" --query "$lid_dev" EV_SW SW_LID >/dev/null 2>&1
+            rc=$?
+            [[ $rc == 0 ]] && lid_state=open
+            [[ $rc == 10 ]] && lid_state=closed
+        fi
+    fi
+    echo "lid_device=${lid_dev:-none}"
+    echo "lid_state=$lid_state"
+}
+
+# armada-power pins every CPU policy and the GPU to their lowest OPP for the
+# duration of a fake suspend. A resume that dies before restoring them leaves a
+# device that runs, but far too slowly to look awake.
+power_state_report() {
+    local policy gpu cur min max hw_min hw_max lowest found=0
+
+    for policy in "$sys_root"/devices/system/cpu/cpufreq/policy*; do
+        [[ -d $policy ]] || continue
+        found=1
+        cur=$(read_value "$policy/scaling_cur_freq")
+        min=$(read_value "$policy/scaling_min_freq")
+        max=$(read_value "$policy/scaling_max_freq")
+        hw_min=$(read_value "$policy/cpuinfo_min_freq")
+        hw_max=$(read_value "$policy/cpuinfo_max_freq")
+        printf '%s cur=%s min=%s max=%s hw_min=%s hw_max=%s' \
+            "$(basename "$policy")" "$cur" "$min" "$max" "$hw_min" "$hw_max"
+        if [[ $max == "$hw_min" && $hw_min != "$hw_max" ]]; then
+            printf ' PINNED-LOW (suspend profile not restored)'
+        fi
+        echo
+    done
+    ((found)) || echo "cpufreq=unavailable"
+
+    found=0
+    for gpu in "$sys_root"/class/devfreq/*.gpu; do
+        [[ -d $gpu ]] || continue
+        found=1
+        min=$(read_value "$gpu/min_freq")
+        max=$(read_value "$gpu/max_freq")
+        # Lowest OPP only: gpu-manual pins min==max at an arbitrary clock.
+        lowest=$(tr ' ' '\n' <"$gpu/available_frequencies" 2>/dev/null | sort -n | head -1)
+        printf 'gpu=%s cur=%s min=%s max=%s governor=%s' \
+            "$(basename "$gpu")" "$(read_value "$gpu/cur_freq")" \
+            "$min" "$max" "$(read_value "$gpu/governor")"
+        if [[ -n $lowest && $min == "$max" && $max == "$lowest" ]]; then
+            printf ' PINNED-LOW (suspend profile not restored)'
+        fi
+        echo
+    done
+    ((found)) || echo "gpu_devfreq=unavailable"
+}
+
+thermal_state_report() {
+    local zone trip index prepared_temp current_temp delta found=0
+    local before="$state_dir/thermal-temperatures.before"
+
+    for zone in "$sys_root"/class/thermal/thermal_zone*; do
+        [[ -d $zone ]] || continue
+        found=1
+        current_temp=$(read_value "$zone/temp")
+        printf 'zone=%s type=%s temp_mC=%s mode=%s policy=%s' \
+            "$(basename "$zone")" "$(read_value "$zone/type")" \
+            "$current_temp" "$(read_value "$zone/mode")" \
+            "$(read_value "$zone/policy")"
+        prepared_temp=
+        if [[ -r $before ]]; then
+            prepared_temp=$(awk -v zone="$(basename "$zone")" \
+                '$1 == zone { print $3; exit }' "$before")
+        fi
+        if [[ $prepared_temp =~ ^-?[0-9]+$ && $current_temp =~ ^-?[0-9]+$ ]]; then
+            delta=$((current_temp - prepared_temp))
+            printf ' prepared_temp_mC=%s temp_delta_mC=%+d' "$prepared_temp" "$delta"
+        fi
+        for trip in "$zone"/trip_point_*_temp; do
+            [[ -r $trip ]] || continue
+            index=${trip##*/trip_point_}
+            index=${index%_temp}
+            printf ' trip%s_type=%s trip%s_temp_mC=%s trip%s_hyst_mC=%s' \
+                "$index" "$(read_value "$zone/trip_point_${index}_type")" \
+                "$index" "$(read_value "$trip")" \
+                "$index" "$(read_value "$zone/trip_point_${index}_hyst")"
+        done
+        echo
+    done
+    ((found)) || echo "thermal_zones=unavailable"
+}
+
+thermal_irq_report() {
+    local current="$proc_root/interrupts" before="$state_dir/interrupts.before"
+    local current_boot baseline_boot
+
+    if [[ ! -r $current ]]; then
+        echo "thermal_irqs=unavailable"
+        return
+    fi
+
+    current_boot=$(read_value "$proc_root/sys/kernel/random/boot_id" "")
+    baseline_boot=$(read_value "$state_dir/boot_id" "")
+    if [[ -r $before && -n $current_boot && $current_boot == "$baseline_boot" ]]; then
+        echo "irq total_count count_since_prepare details"
+        awk '
+            function parse_line(    i) {
+                irq = $1
+                sub(/:$/, "", irq)
+                total = 0
+                for (i = 2; i <= NF && $i ~ /^[0-9]+$/; i++)
+                    total += $i
+                details = ""
+                for (; i <= NF; i++)
+                    details = details (details == "" ? "" : " ") $i
+            }
+            NR == FNR {
+                if (tolower($0) ~ /(thermal|tsens)/ && $1 ~ /^[0-9]+:$/) {
+                    parse_line()
+                    baseline[irq] = total
+                }
+                next
+            }
+            tolower($0) ~ /(thermal|tsens)/ && $1 ~ /^[0-9]+:$/ {
+                parse_line()
+                printf "%s %d %+d %s\n", irq, total, total - baseline[irq], details
+                found = 1
+            }
+            END { if (!found) print "thermal_irqs=none" }
+        ' "$before" "$current"
+    else
+        grep -Ei 'thermal|tsens' "$current" 2>/dev/null || echo "thermal_irqs=none"
+    fi
+}
+
+power_supply_report() {
+    local supply field found=0
+    local fields=(type status online present health temp current_now voltage_now power_now usb_type)
+
+    for supply in "$sys_root"/class/power_supply/*; do
+        [[ -d $supply ]] || continue
+        found=1
+        printf 'supply=%s' "$(basename "$supply")"
+        for field in "${fields[@]}"; do
+            [[ -r $supply/$field ]] || continue
+            printf ' %s=%s' "$field" "$(read_value "$supply/$field")"
+        done
+        echo
+    done
+    ((found)) || echo "power_supplies=unavailable"
+}
+
+tsens_dynamic_debug_report() {
+    local control="$sys_root/kernel/debug/dynamic_debug/control" enabled
+
+    if [[ ! -r $control ]]; then
+        echo "tsens_dynamic_debug=unavailable"
+        return
+    fi
+
+    enabled=$(grep -Ec 'drivers/thermal/qcom/tsens\.c:.* =[^ ]*p' "$control" 2>/dev/null || true)
+    echo "tsens_dynamic_debug_entries=${enabled:-0}"
+}
+
+# Anything left behind here means fake-suspend resume died partway: input stays
+# grabbed, the session stays frozen, the panel stays off. The kernel is fine and
+# the device still looks hung.
+fake_suspend_report() {
+    local save_dir="$run_root/armada/fake-suspend" leftovers cgroup grabs frozen bl
+
+    if [[ -e $run_root/armada/fake-suspend.active ]]; then
+        echo "fake_suspend=active"
+    else
+        echo "fake_suspend=inactive"
+    fi
+    if [[ -e $run_root/armada/fake-suspend.wake ]]; then
+        echo "fake_wake_request=pending"
+    else
+        echo "fake_wake_request=absent"
+    fi
+
+    if [[ -d $save_dir ]]; then
+        leftovers=$(ls -A "$save_dir" 2>/dev/null | tr '\n' ' ')
+        echo "fake_suspend_leftovers=${leftovers:-empty-dir}"
+        if [[ -r $save_dir/app-cgroup ]]; then
+            read -r cgroup <"$save_dir/app-cgroup"
+            single_line_file app_cgroup_freeze "$sys_root/fs/cgroup${cgroup}/cgroup.freeze"
+        fi
+    else
+        echo "fake_suspend_leftovers=none"
+    fi
+
+    grabs=$(pgrep -af 'evtest --grab' 2>/dev/null | tr '\n' ';')
+    echo "input_grabs=${grabs:-none}"
+
+    frozen=$(find "$sys_root/fs/cgroup" -name cgroup.freeze -readable \
+        -exec grep -l '^1$' {} + 2>/dev/null | tr '\n' ' ')
+    echo "frozen_cgroups=${frozen:-none}"
+
+    for bl in "$sys_root"/class/backlight/*; do
+        [[ -d $bl ]] || continue
+        printf 'backlight=%s bl_power=%s brightness=%s\n' "$(basename "$bl")" \
+            "$(read_value "$bl/bl_power")" "$(read_value "$bl/brightness")"
+    done
+}
+
+# D covers a wedged driver; T covers a session the fake-suspend freezer stopped
+# and never continued, which is the likelier hang on fake-suspend devices.
+blocked_tasks_report() {
+    local status pid state comm wchan stack line found=0
+
+    for status in "$proc_root"/[0-9]*/status; do
+        [[ -r $status ]] || continue
+        state= comm=
+        while IFS= read -r line; do
+            case $line in
+                Name:*) comm=${line#Name:} ;;
+                State:*) state=${line#State:}; break ;;
+            esac
+        done <"$status"
+        comm=${comm#"${comm%%[![:space:]]*}"}
+        state=${state#"${state%%[![:space:]]*}"}
+        state=${state:0:1}
+        [[ $state == D || $state == T ]] || continue
+        found=1
+        pid=${status%/status}
+        pid=${pid##*/}
+        wchan=$(cat "$proc_root/$pid/wchan" 2>/dev/null || echo unavailable)
+        printf 'pid=%s comm=%s state=%s wchan=%s\n' "$pid" "${comm:-unknown}" "$state" "$wchan"
+        stack="$proc_root/$pid/stack"
+        if [[ -r $stack ]]; then
+            sed "s/^/pid_${pid}_stack: /" "$stack"
+        else
+            echo "pid_${pid}_stack: unavailable"
+        fi
+    done
+    ((found)) || echo "blocked_tasks=none"
+}
+
+pstore_report() {
+    local pstore_dir="$sys_root/fs/pstore" path found=0
+
+    for path in "$pstore_dir"/console-ramoops-* "$pstore_dir"/dmesg-ramoops-*; do
+        [[ -f $path && -r $path ]] || continue
+        found=1
+        echo "### $(basename "$path")"
+        cat "$path"
+    done
+    ((found)) || echo "pstore_console=unavailable (ramoops may not be configured)"
+}
+
+sleep_logs() {
+    local boot=$1 output
+    local pattern='PM:|suspend|resume|wakeup|wake irq|thermal|tsens|qcom.geni|rsinput|ucsi|pmic.gl|ufs|pcie|ath12k|armada-fake-suspend|powerbuttond|armada-powerd|logind'
+    # pm_print_times emits a pair of lines per device per phase, which would
+    # otherwise be the whole tail. Device callbacks get their own section.
+    local timing='(: (PM: )?calling .* @ [0-9]+|(PM: )?.* returned -?[0-9]+ after [0-9]+ usecs)'
+
+    [[ -x $journalctl_bin ]] || {
+        echo "journal=unavailable"
+        return
+    }
+
+    output="$($journalctl_bin -b "$boot" --no-pager -o short-monotonic 2>/dev/null |
+        grep -Ei "$pattern" | grep -Ev "$timing" | tail -n 400)" || true
+    if [[ -n $output ]]; then
+        printf '%s\n' "$output"
+    else
+        echo "No matching journal entries."
+    fi
+}
+
+# With pm_print_times on, a device that never finished suspending or resuming
+# has a "calling" line with no matching "returned" line. Those are the suspects.
+device_timing_report() {
+    local boot=$1 output
+
+    [[ -x $journalctl_bin ]] || {
+        echo "journal=unavailable"
+        return
+    }
+
+    output="$($journalctl_bin -k -b "$boot" --no-pager -o short-monotonic 2>/dev/null | awk '
+        function device_key(text, marker) {
+            marker = index(text, ": PM: ")
+            return marker ? substr(text, 1, marker - 1) : ""
+        }
+        { line = $0; sub(/^.*kernel: /, "", line) }
+        / calling .* @ [0-9]+/ {
+            seen = 1
+            dev = device_key(line)
+            if (dev != "") pending[dev] = line
+            next
+        }
+        / returned -?[0-9]+ after [0-9]+ usecs/ {
+            seen = 1
+            dev = device_key(line)
+            if (dev != "") delete pending[dev]
+            next
+        }
+        END {
+            if (!seen) {
+                print "ARMADA_SLEEP_DEBUG_NO_TIMING_DATA"
+                exit
+            }
+            for (dev in pending) print pending[dev]
+        }
+    ')" || true
+
+    if [[ $output == ARMADA_SLEEP_DEBUG_NO_TIMING_DATA ]]; then
+        echo "device_callbacks=no-timing-data"
+    elif [[ -n $output ]]; then
+        echo "Devices whose callback never returned:"
+        printf '%s\n' "$output"
+    else
+        echo "device_callbacks=none-outstanding"
+    fi
+}
+
+kernel_tail() {
+    local boot=$1 output
+
+    [[ -x $journalctl_bin ]] || {
+        echo "journal=unavailable"
+        return
+    }
+    output="$($journalctl_bin -k -b "$boot" --no-pager -o short-monotonic 2>/dev/null | tail -n 100)" || true
+    if [[ -n $output ]]; then
+        printf '%s\n' "$output"
+    else
+        echo "No kernel journal entries."
+    fi
+}
+
+collect() {
+    local current_boot baseline_boot device_info sleep_mode
+
+    require_root
+    echo "Armada sleep debug report"
+    echo "generated=$(date --iso-8601=seconds)"
+
+    section "System"
+    single_line_file kernel "$proc_root/sys/kernel/osrelease"
+    single_line_file boot_id "$proc_root/sys/kernel/random/boot_id"
+    single_line_file uptime "$proc_root/uptime"
+    single_line_file cmdline "$proc_root/cmdline"
+    if [[ -x $device_env ]]; then
+        device_info=$($device_env 2>/dev/null || true)
+        grep -E '^ARMADA_(DEVICE_ID|DEVICE_NAME|SOC_CLASS|SUSPEND_MODE)=' <<<"$device_info" || true
+        sleep_mode=$(sed -n 's/^ARMADA_SUSPEND_MODE=//p' <<<"$device_info")
+    fi
+    [[ -r /etc/armada/sleep.conf ]] && sed 's/^/sleep_conf: /' /etc/armada/sleep.conf
+
+    current_boot=$(read_value "$proc_root/sys/kernel/random/boot_id" "")
+    baseline_boot=$(read_value "$state_dir/boot_id" "")
+    [[ -r $state_dir/prepared_at ]] && single_line_file prepared_at "$state_dir/prepared_at"
+    if [[ -n $baseline_boot ]]; then
+        if [[ $baseline_boot == "$current_boot" ]]; then
+            echo "baseline_boot=current"
+        else
+            echo "baseline_boot=previous"
+        fi
+    else
+        echo "baseline_boot=unavailable"
+    fi
+
+    section "Sleep state"
+    single_line_file power_state "$sys_root/power/state"
+    single_line_file mem_sleep "$sys_root/power/mem_sleep"
+    single_line_file pm_debug_messages "$sys_root/power/pm_debug_messages"
+    single_line_file pm_print_times "$sys_root/power/pm_print_times"
+    single_line_file pm_async "$sys_root/power/pm_async"
+    single_line_file wakeup_count "$sys_root/power/wakeup_count"
+    if [[ ${sleep_mode:-} == fake ]]; then
+        echo "kernel_suspend_diagnostics=not-applicable (fake suspend does not enter kernel system suspend)"
+    else
+        echo "kernel_suspend_diagnostics=applicable"
+    fi
+
+    section "Fake suspend state"
+    fake_suspend_report
+
+    section "CPU and GPU frequency"
+    power_state_report
+
+    section "Thermal and charging state"
+    tsens_dynamic_debug_report
+    thermal_irq_report
+    thermal_state_report
+    power_supply_report
+
+    section "Input and lid state"
+    input_state_report
+
+    section "First wake IRQ"
+    wakeup_irq_report
+
+    section "Wakeup source changes"
+    wakeup_source_report
+
+    section "Armed wake sources"
+    wakeup_inventory_report
+
+    section "RTC alarms and systemd timers"
+    rtc_and_timer_report
+
+    section "Suspend statistics"
+    suspend_stats_report
+
+    section "Blocked tasks"
+    blocked_tasks_report
+
+    section "Persistent crash log"
+    pstore_report
+
+    section "Device callbacks (current boot)"
+    device_timing_report 0
+
+    section "Device callbacks (previous boot)"
+    device_timing_report -1
+
+    section "Current boot sleep log"
+    sleep_logs 0
+
+    section "Previous boot sleep log"
+    sleep_logs -1
+
+    section "Current boot kernel tail"
+    kernel_tail 0
+
+    section "Previous boot kernel tail"
+    kernel_tail -1
+}
+
+command=${1:-collect}
+(($# == 0)) || shift
+
+case $command in
+    prepare)
+        [[ $# == 0 ]] || { usage >&2; exit 2; }
+        prepare
+        ;;
+    collect)
+        [[ $# == 0 ]] || { usage >&2; exit 2; }
+        collect
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

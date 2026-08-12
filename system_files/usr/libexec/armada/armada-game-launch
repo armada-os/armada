@@ -15,6 +15,7 @@ import armada_perf
 
 
 BASE_FEX_CONFIG = pathlib.Path("/usr/share/fex-emu/Config.json")
+FEX_ROOTFS_DIR = BASE_FEX_CONFIG.parent / "RootFS"
 TWEAKS_CONFIG = pathlib.Path("/etc/armada/game-tweaks.json")
 FEX_PROFILES_CONFIG = pathlib.Path("/usr/share/armada/fex-profiles.json")
 PROTON_INJECT_SRC = pathlib.Path("/usr/share/armada/proton-inject/x86_64-linux-gnu")
@@ -83,6 +84,12 @@ def resolve_fex_config(settings, profiles):
 def apply_fex(settings, game_id, profiles, env):
     with BASE_FEX_CONFIG.open(encoding="utf-8") as f:
         config = json.load(f)
+
+    # portable FEX doesn't search the system RootFS directory
+    rootfs = config.get("Config", {}).get("RootFS")
+    if isinstance(rootfs, str) and rootfs and not pathlib.Path(rootfs).is_absolute():
+        config["Config"]["RootFS"] = str(FEX_ROOTFS_DIR / rootfs)
+
     allowed = set().union(*(profile["config"].keys() for profile in profiles.values()))
     fex_config = resolve_fex_config(settings, profiles)
     config.setdefault("Config", {}).update({k: v for k, v in fex_config.items() if k in allowed})

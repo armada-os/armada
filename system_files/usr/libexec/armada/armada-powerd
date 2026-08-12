@@ -969,16 +969,15 @@ class ArmadaPower:
             self.handle_get_property,
             self.handle_set_property,
         )
-        if self.env.get("ARMADA_SUSPEND_MODE", "fake") != "fake":
-            connection.signal_subscribe(
-                LOGIN1_NAME,
-                LOGIN1_IFACE,
-                "PrepareForSleep",
-                LOGIN1_PATH,
-                None,
-                Gio.DBusSignalFlags.NONE,
-                self.handle_prepare_for_sleep,
-            )
+        connection.signal_subscribe(
+            LOGIN1_NAME,
+            LOGIN1_IFACE,
+            "PrepareForSleep",
+            LOGIN1_PATH,
+            None,
+            Gio.DBusSignalFlags.NONE,
+            self.handle_prepare_for_sleep,
+        )
 
     def handle_prepare_for_sleep(
         self, _connection, _sender, _path, _iface, _signal, params

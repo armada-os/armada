@@ -4,17 +4,6 @@ set -euo pipefail
 eval "$(/usr/libexec/armada/device-env)"
 source /usr/lib/armada/storage-lib
 
-# The internal-storage installer can only target a disk it isn't booted from,
-# so its KDE entry (TryExec=/run/armada/installable) is shown only on an SD
-# boot. The marker lives in tmpfs, so it's absent by default → hidden on internal.
-dev="${ARMADA_INTERNAL_DEVICE:-$(armada_internal_device || true)}"
-src=$(findmnt -no SOURCE /sysroot 2>/dev/null || findmnt -no SOURCE /)
-src=$(readlink -f "$src" 2>/dev/null || echo "$src")
-# If the internal disk can't be resolved, show the entry anyway so launching it
-# surfaces the error instead of the entry being silently missing.
-if [[ -n "$dev" ]]; then
-    case "$src" in
-        "$dev"*) exit 0 ;;
-    esac
-fi
+# Hide the TryExec marker on internal boot; fail open so the installer surfaces detection errors.
+armada_running_from_internal && exit 0
 install -m 0755 /dev/null /run/armada/installable

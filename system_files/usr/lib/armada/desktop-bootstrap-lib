@@ -1,0 +1,74 @@
+#!/usr/bin/bash
+# Marker-state helpers for desktop-bootstrap.
+#
+# Inputs are the device-env globals plus display_connector and
+# panel_orientation. The state function exports marker paths, expected
+# signatures, desired display values, and completion flags to its caller.
+
+armada_write_marker() {
+    local path="$1" signature="$2"
+
+    (printf '%s\n' "${signature}" > "${path}") 2>/dev/null
+}
+
+armada_marker_is_current() {
+    local path="$1" signature="$2" legacy_path="$3"
+
+    if [[ -r "${path}" && "$(<"${path}")" == "${signature}" ]]; then
+        return 0
+    fi
+    if [[ ( ! -e "${path}" || ! -s "${path}" ) && -e "${legacy_path}" ]]; then
+        armada_write_marker "${path}" "${signature}"
+        return
+    fi
+    return 1
+}
+
+armada_desktop_bootstrap_state() {
+    local config_dir="$1"
+
+    case "${panel_orientation:-normal}" in
+        left|right|inverted|normal) rotation_value="${panel_orientation}" ;;
+        *) rotation_value=normal ;;
+    esac
+    desktop_scale=1.5
+
+    rotation_done="${config_dir}/desktop-rotation.done"
+    scale_done="${config_dir}/desktop-scale.done"
+    legacy_dual_layout=0
+    if [[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]]; then
+        legacy_rotation_done="${config_dir}/desktop-rotation-${display_connector}.done"
+        legacy_scale_done="${config_dir}/desktop-scale-${display_connector}.done"
+        if [[ -e "${legacy_rotation_done}" || -e "${legacy_scale_done}" ]]; then
+            legacy_dual_layout=1
+        fi
+    else
+        legacy_rotation_done="${rotation_done}"
+        legacy_scale_done="${scale_done}"
+    fi
+
+    rotation_signature="v1|${ARMADA_DEVICE_ID:-unknown}|${display_connector}|${rotation_value}"
+    scale_signature="v1|${ARMADA_DEVICE_ID:-unknown}|${display_connector}|${desktop_scale}"
+    rotation_complete=0
+    scale_complete=0
+    armada_marker_is_current "${rotation_done}" "${rotation_signature}" \
+        "${legacy_rotation_done}" && rotation_complete=1
+    armada_marker_is_current "${scale_done}" "${scale_signature}" \
+        "${legacy_scale_done}" && scale_complete=1
+
+    dual_done="${config_dir}/desktop-dual-screen.done"
+    dual_signature="v1|${ARMADA_DEVICE_ID:-unknown}|${display_connector}|${ARMADA_SECONDARY_CONNECTOR:-}|${ARMADA_PRIMARY_TOUCHSCREEN:-}|${ARMADA_SECONDARY_TOUCHSCREEN:-}|${rotation_value}|${desktop_scale}"
+    dual_complete=0
+    if [[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]]; then
+        if [[ -r "${dual_done}" && "$(<"${dual_done}")" == "${dual_signature}" ]]; then
+            dual_complete=1
+        elif [[ -e "${dual_done}" && ! -s "${dual_done}" &&
+                "${legacy_dual_layout}" == 1 ]] &&
+                armada_write_marker "${dual_done}" "${dual_signature}"; then
+            dual_complete=1
+        fi
+    elif armada_marker_is_current "${dual_done}" "${dual_signature}" \
+            "${dual_done}"; then
+        dual_complete=1
+    fi
+}

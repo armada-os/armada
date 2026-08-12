@@ -92,6 +92,8 @@ export interface Config {
   ablAutoEnabled: boolean;
   sshEnabled: boolean;
   mtpEnabled: boolean;
+  sleepMode: string;
+  sleepModes: DropdownChoice[];
   controllerType: string;
   controllerTypes: DropdownChoice[];
   calibration?: CalibrationState;

@@ -55,6 +55,8 @@ dnf5 -y install --setopt=install_weak_deps=False \
     qt6-qtvirtualkeyboard \
     zenity \
     seatd \
+    cage \
+    wlr-randr \
     distrobox
 
 dnf5 -y install --setopt=install_weak_deps=False \
