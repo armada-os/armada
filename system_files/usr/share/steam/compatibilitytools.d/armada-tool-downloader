@@ -27,12 +27,30 @@ if [ -e /usr/bin/chimera-splash ] ; then
 fi
 
 wait $curl_pid
+curl_exit=$?
 
 test $splash_pid || kill -9 $splash_pid
 
+if [ $curl_exit -ne 0 ]; then
+	if [ -e "$TOOLS_DIR/$TOOL_DIR/$TOOL_CMD" ]; then
+		echo "download failed, using existing $TOOL_DIR"
+		popd
+		exec "$TOOLS_DIR/$TOOL_DIR/$TOOL_CMD" $@
+	else
+		echo "download failed and no existing tool found"
+		exit
+	fi
+fi
+
 if ! echo "$TOOL_MD5SUM $TOOL_FILE" | md5sum --status -c; then
-	echo "checksum mismatch"
-	exit
+	if [ -e "$TOOLS_DIR/$TOOL_DIR/$TOOL_CMD" ]; then
+		echo "checksum mismatch, using existing $TOOL_DIR"
+		popd
+		exec "$TOOLS_DIR/$TOOL_DIR/$TOOL_CMD" $@
+	else
+		echo "checksum mismatch and no existing tool found"
+		exit
+	fi
 fi
 
 rm -rf "$TOOL_DIR"
