@@ -90,41 +90,18 @@ STEAM_HOME="${STEAM_BOOTSTRAP_HOME}/.local/share/Steam"
 STEAM_BOOTSTRAP_HOME="${STEAM_BOOTSTRAP_HOME}" bash /ctx/build_files/generate-steam-bootstrap.sh
 rm -f /etc/steamos-oobe-image
 
-PROTON_VER="11.0-20260703-slr"
-PROTON_ARCHIVE_NAME="proton-cachyos-${PROTON_VER}-arm64"
-# Keep this in sync with armada-fixups when changing Proton major/minor lines.
-PROTON_TOOL_NAME="proton-cachyos-11.0-arm64"
-PROTON_TAR="${PROTON_ARCHIVE_NAME}.tar.xz"
-PROTON_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_TAR}"
-PROTON_SHA512_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_ARCHIVE_NAME}.sha512sum"
+# Copy directory early so default compat tool can be set
+cp -a /ctx/system_files/usr/share/steam /usr/share/
 
-curl --retry 3 --retry-delay 2 -fsSL -o "/tmp/${PROTON_TAR}" "${PROTON_URL}"
-curl --retry 3 --retry-delay 2 -fsSL -o "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum" "${PROTON_SHA512_URL}"
-cd /tmp
-sha512sum -c "${PROTON_ARCHIVE_NAME}.sha512sum"
+PROTON_DIR=/usr/share/steam/compatibilitytools.d/
 
-# Ship Proton in the image, not the user's /var home: /var is install-only on
-# bootc and custom compat tools don't self-update, so a home copy would freeze.
-PROTON_DIR="/usr/share/steam/compatibilitytools.d"
-mkdir -p "${PROTON_DIR}"
-tar -xJf "/tmp/${PROTON_TAR}" -C "${PROTON_DIR}/"
-if [[ ! -d "${PROTON_DIR}/${PROTON_ARCHIVE_NAME}" ]]; then
-    echo "ERROR: CachyOS Proton archive did not extract ${PROTON_ARCHIVE_NAME}" >&2
-    exit 1
-fi
-rm -rf "${PROTON_DIR:?}/${PROTON_TOOL_NAME}"
-mv "${PROTON_DIR}/${PROTON_ARCHIVE_NAME}" "${PROTON_DIR}/${PROTON_TOOL_NAME}"
-# Missing runtime app makes Steam fall back to Proton 10.
-sed -i '/require_tool_appid/d' "${PROTON_DIR}/${PROTON_TOOL_NAME}/toolmanifest.vdf"
-python3 /ctx/build_files/patch-proton-cachyos-dxvk-probe.py \
-    "${PROTON_DIR}/${PROTON_TOOL_NAME}/proton"
-python3 /ctx/build_files/set-steam-default-compat.py "${STEAM_HOME}" "${PROTON_TOOL_NAME}" "${PROTON_DIR}"
-rm -f "/tmp/${PROTON_TAR}" "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum"
+# Set default tool to Proton CachyOS arm64
+python3 /ctx/build_files/set-steam-default-compat.py "${STEAM_HOME}" "proton-cachyos-arm64" "${PROTON_DIR}"
 
 # Pin Steam, Proton, and the FEX rootfs to their own rechunk layers (build-chunked-oci reads the
 # user.component xattr) so a system_files change doesn't re-pull them every OTA.
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"steam")' "${STEAM_HOME}"
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"proton")' "${PROTON_DIR}/${PROTON_TOOL_NAME}"
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"proton")' "${PROTON_DIR}"
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-rootfs")' /usr/share/fex-emu/RootFS
 
-echo "Pre-staged: ARM64 Steam bootstrap + CachyOS Proton 11 ${PROTON_VER}"
+echo "Pre-staged: ARM64 Steam bootstrap + Proton CachyOS/GE"

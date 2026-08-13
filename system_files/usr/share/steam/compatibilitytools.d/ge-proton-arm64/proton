@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Shim that updates/downloads custom Proton versions
+
+# Needs to be updated for each tool we add
+TOOL_VERSION="GE-Proton11-5"
+TOOL_URL=https://github.com/GloriousEggroll/proton-ge-custom/releases/download/${TOOL_VERSION}/${TOOL_VERSION}-aarch64.tar.gz
+TOOL_MD5SUM=2deb264ec1f01b9178e5f42253684681
+TOOL_DIR=ge-proton-arm64
+TOOL_CMD=proton
+
+# Should stay unchanging
+TOOLS_DIR="$HOME/.config/armada/compatibilitytools.d"
+TOOL_FILE="$(basename $TOOL_URL)"
+
+if grep -q "${TOOL_VERSION}" "${TOOLS_DIR}/${TOOL_DIR}/version"; then
+    exec "$TOOLS_DIR/$TOOL_DIR/$TOOL_CMD" $@
+else
+    export TOOL_URL TOOL_MD5SUM TOOL_DIR TOOL_CMD TOOLS_DIR TOOL_FILE
+    exec /usr/share/steam/compatibilitytools.d/armada-tool-downloader $@
+fi
