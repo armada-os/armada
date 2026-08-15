@@ -9,6 +9,7 @@ from armada_control.calibration import (
 )
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
+from armada_control.leds import save_leds
 from armada_control.power import save_power_config
 from armada_control.steam import installed_games
 from armada_control.system import (
@@ -65,6 +66,10 @@ class Plugin:
 
     async def restart_game_mode(self):
         return await asyncio.to_thread(restart_game_mode)
+
+    async def save_leds(self, data):
+        await asyncio.to_thread(save_leds, data)
+        return await self.get_config()
 
     async def set_controller_type(self, value):
         return await asyncio.to_thread(set_controller_type, value)

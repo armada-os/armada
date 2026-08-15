@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""Drive the AYN Odin 3 stick ring LEDs from /etc/armada/leds.json.
+
+The panel exposes 24 single-colour LED class devices, four RGB emitters per
+stick: /sys/class/leds/{l,r}:{r,g,b}{1..4}. They are only grouped into rings
+by their physical placement, so a solid colour needs every channel written.
+
+The config file is polled rather than signalled so the Quick Access Menu can
+preview a colour while the user drags a slider.
+"""
+import json
+import math
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CONFIG = Path(os.environ.get("ARMADA_LED_CONFIG", "/etc/armada/leds.json"))
+LED_DIR = Path(os.environ.get("ARMADA_LED_DIR", "/sys/class/leds"))
+DEVICE_ENV = os.environ.get("ARMADA_DEVICE_ENV", "/usr/libexec/armada/device-env")
+# Only devices whose ring wiring has been verified on hardware.
+SUPPORTED_DEVICES = ("ayn-odin-3",)
+SIDES = ("l", "r")
+CHANNELS = ("r", "g", "b")
+INDEXES = (1, 2, 3, 4)
+POLL_INTERVAL = 0.1
+# The i2c controllers can probe after this unit starts.
+PROBE_TIMEOUT = 30.0
+# 60 Hz: at 20 Hz the breathing ramp visibly bands on a 4 s period.
+FRAME_INTERVAL = float(os.environ.get("ARMADA_LED_FRAME_INTERVAL", "0.016"))
+# PWM duty is linear in current; eyes are not. Perceived brightness tracks
+# roughly duty^(1/2.2), so raise the requested level before writing.
+GAMMA = 2.2
+BREATH_FLOOR = 0.0
+# Fully saturated hue 0. A washed out default would leave the hue slider
+# looking broken until the user finds the saturation one.
+DEFAULT_COLOR = "ff0000"
+DEFAULTS = {
+    "enabled": False,
+    "mode": "static",
+    "brightness": 60,
+    "left": DEFAULT_COLOR,
+    "right": DEFAULT_COLOR,
+    "period": 4.0,
+}
+MODES = ("static", "breathing")
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def parse_color(value, fallback):
+    text = str(value or "").strip().lstrip("#")
+    if len(text) != 6:
+        return fallback
+    try:
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return fallback
+
+
+def load_config():
+    config = dict(DEFAULTS)
+    try:
+        raw = json.loads(CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    config["enabled"] = bool(raw.get("enabled", DEFAULTS["enabled"]))
+    mode = str(raw.get("mode", DEFAULTS["mode"])).strip().lower()
+    config["mode"] = mode if mode in MODES else DEFAULTS["mode"]
+    try:
+        config["brightness"] = clamp(int(raw.get("brightness", DEFAULTS["brightness"])), 0, 100)
+    except (TypeError, ValueError):
+        config["brightness"] = DEFAULTS["brightness"]
+    try:
+        config["period"] = clamp(float(raw.get("period", DEFAULTS["period"])), 0.5, 30.0)
+    except (TypeError, ValueError):
+        config["period"] = DEFAULTS["period"]
+    fallback = parse_color(DEFAULT_COLOR, (255, 255, 255))
+    config["left"] = parse_color(raw.get("left"), fallback)
+    config["right"] = parse_color(raw.get("right"), fallback)
+    return config
+
+
+def config_stamp():
+    try:
+        info = CONFIG.stat()
+    except OSError:
+        return None
+    return (info.st_mtime_ns, info.st_size)
+
+
+def device_id():
+    if "ARMADA_DEVICE_ID" in os.environ:
+        return os.environ["ARMADA_DEVICE_ID"]
+    try:
+        out = subprocess.run(["bash", "-c", f'eval "$({DEVICE_ENV})"; printf "%s" "$ARMADA_DEVICE_ID"'],
+                             check=False, capture_output=True, text=True, timeout=10)
+        return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+class Rings:
+    """Open file handles for every channel, keyed by (side, channel)."""
+
+    def __init__(self, led_dir):
+        self.handles = {}
+        self.last = {}
+        for side in SIDES:
+            for channel in CHANNELS:
+                paths = [led_dir / f"{side}:{channel}{index}" / "brightness" for index in INDEXES]
+                if not all(path.exists() for path in paths):
+                    continue
+                handles = [path.open("w") for path in paths]
+                if os.environ.get("ARMADA_LED_ORDER") == "reverse":
+                    handles.reverse()
+                self.handles[(side, channel)] = handles
+                self.last[(side, channel)] = None
+
+    def present(self):
+        return len(self.handles) == len(SIDES) * len(CHANNELS)
+
+    def write(self, side, channel, value):
+        key = (side, channel)
+        handles = self.handles.get(key)
+        if handles is None or self.last.get(key) == value:
+            return
+        text = str(value)
+        for handle in handles:
+            try:
+                # sysfs ignores the file offset, a regular file does not. Rewind
+                # so a shorter value cannot leave a tail behind.
+                handle.seek(0)
+                handle.truncate()
+                handle.write(text)
+                handle.flush()
+            except OSError:
+                pass
+        self.last[key] = value
+
+    def apply(self, colors, level):
+        # level is perceptual 0..1; convert once per frame, not per channel.
+        duty = level ** GAMMA
+        for side in SIDES:
+            color = colors[side]
+            for offset, channel in enumerate(CHANNELS):
+                self.write(side, channel, int(round(color[offset] * duty)))
+
+    def off(self):
+        for side in SIDES:
+            for channel in CHANNELS:
+                self.write(side, channel, 0)
+
+    def close(self):
+        for handles in self.handles.values():
+            for handle in handles:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+
+
+def breath_level(elapsed, period):
+    # Cosine so the ends of the ramp linger; a triangle wave visibly ticks.
+    phase = (1.0 - math.cos(2.0 * math.pi * elapsed / period)) / 2.0
+    return BREATH_FLOOR + (1.0 - BREATH_FLOOR) * phase
+
+
+def main():
+    device = device_id()
+    if device not in SUPPORTED_DEVICES:
+        print(f"armada-ledd: {device or 'unknown device'} has no verified ring layout, exiting",
+              file=sys.stderr)
+        return 0
+
+    deadline = time.monotonic() + PROBE_TIMEOUT
+    while True:
+        rings = Rings(LED_DIR)
+        if rings.present():
+            break
+        rings.close()
+        if time.monotonic() >= deadline:
+            print(f"armada-ledd: stick ring LEDs did not appear within {PROBE_TIMEOUT:.0f}s, exiting",
+                  file=sys.stderr)
+            return 0
+        time.sleep(0.5)
+
+    running = [True]
+
+    def stop(_signum, _frame):
+        running[0] = False
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, stop)
+
+    config = load_config()
+    stamp = config_stamp()
+    colors = {"l": config["left"], "r": config["right"]}
+    started = time.monotonic()
+    next_poll = 0.0
+
+    try:
+        while running[0]:
+            now = time.monotonic()
+            if now >= next_poll:
+                next_poll = now + POLL_INTERVAL
+                current = config_stamp()
+                if current != stamp:
+                    stamp = current
+                    config = load_config()
+                    colors = {"l": config["left"], "r": config["right"]}
+                    started = now
+
+            if not config["enabled"] or not config["brightness"]:
+                rings.off()
+                time.sleep(POLL_INTERVAL)
+                continue
+
+            scale = config["brightness"] / 100.0
+            if config["mode"] == "breathing":
+                level = scale * breath_level(now - started, config["period"])
+                rings.apply(colors, level)
+                time.sleep(FRAME_INTERVAL)
+            else:
+                rings.apply(colors, scale)
+                time.sleep(POLL_INTERVAL)
+    finally:
+        rings.off()
+        rings.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

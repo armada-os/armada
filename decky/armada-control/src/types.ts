@@ -79,6 +79,15 @@ export interface PerfInfo {
   cpuCount: number;
 }
 
+export interface LedConfig {
+  enabled: boolean;
+  mode: string;
+  brightness: number;
+  left: string;
+  right: string;
+  period: number;
+}
+
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
@@ -96,6 +105,8 @@ export interface Config {
   desktopModes: DropdownChoice[];
   sleepMode: string;
   sleepModes: DropdownChoice[];
+  leds: LedConfig;
+  ledsSupported: boolean;
   controllerType: string;
   controllerTypes: DropdownChoice[];
   calibration?: CalibrationState;

@@ -10,6 +10,7 @@ import {
   setSshEnabled as applySshEnabled,
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
+import { StickLighting } from "../components/StickLighting";
 import { SelectEdit, ToggleRow } from "../components/widgets";
 import type { Config } from "../types";
 
@@ -96,6 +97,7 @@ export function Settings({ config, setConfig }: {
         />
         <ButtonItem layout="below" onClick={openCalibration}>Launch Calibration</ButtonItem>
       </PanelSection>
+      {config.ledsSupported ? <StickLighting config={config} setConfig={setConfig} /> : null}
       <PanelSection title="System">
         <ToggleRow label="Enable SSH" value={!!config.sshEnabled} onChange={setSshEnabled} />
         <Field label="OS Version" description={config.osVersion || "unknown"} />

@@ -1,4 +1,5 @@
 from .controller import CONTROLLER_TYPES, controller_type
+from .leds import led_state
 from .power import factory_power_defaults, parse_power
 from .steam import installed_games
 from .system import (
@@ -19,6 +20,7 @@ from .tweaks import fex_profile_labels, load_fex_contract, load_tweaks
 def build_config(include_games=True):
     fex_contract = load_fex_contract()
     env = device_env()
+    leds = led_state()
     return {
         "power": parse_power(),
         "powerDefaults": factory_power_defaults(),
@@ -36,6 +38,8 @@ def build_config(include_games=True):
         "desktopModes": desktop_modes(),
         "sleepMode": env.get("ARMADA_SUSPEND_MODE", "fake"),
         "sleepModes": sleep_modes(),
+        "leds": leds["leds"],
+        "ledsSupported": leds["supported"],
         "controllerType": controller_type(),
         "controllerTypes": [{"data": key, "label": label} for key, label in CONTROLLER_TYPES.items()],
     }

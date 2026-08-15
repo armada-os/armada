@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import type { CalibrationState, Capture, Config, InstalledGame, PowerConfig, Tweaks } from "./types";
+import type { CalibrationState, Capture, Config, InstalledGame, LedConfig, PowerConfig, Tweaks } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
@@ -22,6 +22,7 @@ export const setDesktopMode = (value: string) => call<[string], string>("set_des
 export const setSleepMode = (value: string) => call<[string], string>("set_sleep_mode", value);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
 export const restartGameMode = () => call<[], boolean>("restart_game_mode");
+export const saveLeds = (data: LedConfig) => call<[LedConfig], Config>("save_leds", data);
 export const setControllerType = (value: string) => call<[string], string>("set_controller_type", value);
 export const getControllerState = () => call<[], CalibrationState>("get_controller_state");
 export const saveCalibration = (capture: Capture) => call<[Capture], CalibrationState>("save_calibration", capture);

@@ -1,0 +1,16 @@
+[Unit]
+Description=Armada stick lighting
+After=systemd-modules-load.service
+
+[Service]
+# Exits on its own when the device has no verified ring layout. Conditions are
+# deliberately absent: systemd evaluates them once, and the i2c LED controllers
+# can probe after this unit starts.
+Type=simple
+ExecStart=/usr/libexec/armada/armada-ledd
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

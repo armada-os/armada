@@ -176,7 +176,10 @@ tabs:
   most titles; change these only if a game misbehaves. Settings are saved per game.
 - **Settings.** Choose the controller emulation type (**Xbox 360**, **Steam
   Deck**, or **DualSense**), launch stick and trigger **calibration**, and adjust
-  system options.
+  system options. On the AYN Odin 3 this is also where **Stick Lighting** lives:
+  colour, brightness, and a static or breathing mode for the rings around the
+  sticks. It is off by default, and the section is hidden on devices without
+  verified ring wiring.
 
 ### Desktop mode
 

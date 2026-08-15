@@ -73,6 +73,27 @@ CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
+LED_CONFIG = Path("/etc/armada/leds.json")
+LED_DIR = Path("/sys/class/leds")
+# Devices whose stick ring layout has been verified on hardware.
+LED_DEVICES = ("ayn-odin-3",)
+LED_MODES = ("static", "breathing")
+LED_CHANNELS = tuple(
+    f"{side}:{channel}{index}"
+    for side in ("l", "r")
+    for channel in ("r", "g", "b")
+    for index in (1, 2, 3, 4)
+)
+# Fully saturated hue 0; a washed out default hides what the hue slider does.
+LED_DEFAULT_COLOR = "ff0000"
+LED_DEFAULTS = {
+    "enabled": False,
+    "mode": "static",
+    "brightness": 60,
+    "left": LED_DEFAULT_COLOR,
+    "right": LED_DEFAULT_COLOR,
+    "period": 4.0,
+}
 
 
 def atomic_write(path, text):
@@ -299,6 +320,69 @@ def action_get_abl_auto_enabled(request):
     return {"enabled": abl_auto_enabled()}
 
 
+def leds_present():
+    return all((LED_DIR / name / "brightness").exists() for name in LED_CHANNELS)
+
+
+def leds_supported():
+    return device_env().get("ARMADA_DEVICE_ID", "") in LED_DEVICES and leds_present()
+
+
+def normalize_led_color(value, fallback):
+    text = str(value or "").strip().lstrip("#").lower()
+    if len(text) == 6 and all(char in "0123456789abcdef" for char in text):
+        return text
+    return fallback
+
+
+def normalize_leds(raw):
+    if not isinstance(raw, dict):
+        raise ValueError("led config must be an object")
+    try:
+        brightness = int(raw.get("brightness", LED_DEFAULTS["brightness"]))
+        period = float(raw.get("period", LED_DEFAULTS["period"]))
+    except (TypeError, ValueError):
+        raise ValueError("invalid led config value")
+    mode = str(raw.get("mode", LED_DEFAULTS["mode"])).strip().lower()
+    return {
+        "enabled": bool(raw.get("enabled", LED_DEFAULTS["enabled"])),
+        "mode": mode if mode in LED_MODES else LED_DEFAULTS["mode"],
+        "brightness": max(0, min(100, brightness)),
+        "period": max(0.5, min(30.0, period)),
+        "left": normalize_led_color(raw.get("left"), LED_DEFAULTS["left"]),
+        "right": normalize_led_color(raw.get("right"), LED_DEFAULTS["right"]),
+    }
+
+
+def read_leds():
+    try:
+        raw = json.loads(LED_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    try:
+        return normalize_leds(raw)
+    except ValueError:
+        return dict(LED_DEFAULTS)
+
+
+def action_get_leds(request):
+    return {"supported": leds_supported(), "leds": read_leds()}
+
+
+def action_set_leds(request):
+    if not leds_supported():
+        raise RuntimeError("stick lighting is not supported on this device")
+    config = normalize_leds(request.get("leds"))
+    atomic_write(LED_CONFIG, json.dumps(config, indent=2, sort_keys=True) + "\n")
+    # armada-ledd polls the config file; starting it is only needed after the
+    # first write on a fresh install, or if the user stopped the unit.
+    try:
+        run(["/usr/bin/systemctl", "start", "armada-leds.service"], timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"armada-control: could not start armada-leds.service: {exc}", file=sys.stderr)
+    return {"supported": True, "leds": config}
+
+
 def action_get_device_env(request):
     return {"env": device_env()}
 
@@ -510,6 +594,8 @@ ACTIONS = {
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
+    "get_leds": action_get_leds,
+    "set_leds": action_set_leds,
     "get_abl_version": action_get_abl_version,
     "get_abl_auto_enabled": action_get_abl_auto_enabled,
     "get_ssh_enabled": action_get_ssh_enabled,
