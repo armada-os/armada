@@ -7,7 +7,8 @@ import threading
 import time
 
 from . import store
-from .paths import apps_dir, compat_tools_dir, plugin_dir, user_home, user_ids
+from .proc import clean_env
+from .paths import apps_dir, plugin_dir, plugins_dir, user_home, user_ids
 
 
 _flatpak_cache = {"at": 0.0, "refs": set()}
@@ -47,6 +48,7 @@ def flatpak_refs(max_age=3.0):
             capture_output=True,
             text=True,
             timeout=15,
+            env=clean_env(),
         )
         _flatpak_cache["refs"] = {line.strip() for line in result.stdout.splitlines() if line.strip()}
     except (OSError, subprocess.TimeoutExpired):
@@ -75,10 +77,12 @@ def installed_info(app, state, refs):
         if installed and record.get("tag"):
             info["version"] = record["tag"]
         return info
-    if kind == "compat":
-        record = (state.get("compat") or {}).get(app.get("id")) or {}
+    if kind == "system":
+        return {"installed": bool(install.get("exec")) and os.path.exists(install["exec"])}
+    if kind == "deckyplugin":
+        record = (state.get("plugins") or {}).get(app.get("id")) or {}
         dirname = record.get("dir")
-        installed = bool(dirname and "/" not in dirname and (compat_tools_dir() / dirname).exists())
+        installed = bool(dirname and "/" not in dirname and (plugins_dir() / dirname).exists())
         info = {"installed": installed}
         if installed and record.get("tag"):
             info["version"] = record["tag"]
@@ -86,21 +90,52 @@ def installed_info(app, state, refs):
     return {"installed": False}
 
 
+def _conflict_present(entry, refs):
+    kind = entry.get("type")
+    if kind == "flatpak":
+        return bool(entry.get("ref")) and entry["ref"] in refs
+    if kind == "appimage":
+        filename = entry.get("filename")
+        return bool(filename and (apps_dir() / filename).exists())
+    return False
+
+
+def present_conflicts(app, refs):
+    """Rival packagings of the same app that are actually on the system."""
+    return [entry for entry in (app.get("conflicts") or []) if _conflict_present(entry, refs)]
+
+
 def installed_map():
     state = store.load_state()
     refs = flatpak_refs()
-    return {app["id"]: installed_info(app, state, refs) for app in all_apps() if app.get("id")}
+    result = {}
+    for app in all_apps():
+        app_id = app.get("id")
+        if not app_id:
+            continue
+        info = installed_info(app, state, refs)
+        conflicts = present_conflicts(app, refs)
+        if conflicts:
+            info["conflicts"] = conflicts
+        result[app_id] = info
+    return result
 
 
 def launch_spec(app):
     install = app.get("install") or {}
     kind = install.get("type")
+    if app.get("desktopOnly"):
+        return None
     home = str(user_home())
     name = app.get("name") or app.get("id") or "App"
+    extra = (install.get("launchOptions") or "").strip()
     if kind == "flatpak" and install.get("ref"):
-        return {"name": name, "exe": "/usr/bin/flatpak", "startDir": home, "launchOptions": "run " + install["ref"]}
+        options = " ".join(filter(None, ("run " + install["ref"], extra)))
+        return {"name": name, "exe": "/usr/bin/flatpak", "startDir": home, "launchOptions": options}
     if kind == "appimage" and install.get("filename"):
-        return {"name": name, "exe": str(apps_dir() / install["filename"]), "startDir": str(apps_dir()), "launchOptions": ""}
+        return {"name": name, "exe": str(apps_dir() / install["filename"]), "startDir": str(apps_dir()), "launchOptions": extra}
+    if kind == "system" and install.get("exec"):
+        return {"name": name, "exe": install["exec"], "startDir": os.path.dirname(install["exec"]), "launchOptions": extra}
     return None
 
 
@@ -138,6 +173,7 @@ def catalog_payload():
             "icon": app.get("icon") or "",
             "note": app.get("note") or "",
             "installType": install.get("type") or "",
+            "desktopOnly": bool(app.get("desktopOnly")),
             "launch": launch_spec(app),
         })
     return {"apps": apps, "home": str(user_home())}

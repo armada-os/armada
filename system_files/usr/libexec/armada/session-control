@@ -2,8 +2,14 @@
 # zz- sorts after armada.conf so its Session= wins (User=/Relogin= stay there).
 set -euo pipefail
 
+desktop_session=armada-plasma.desktop
+
+if [[ $(cat /etc/armada/desktop-session 2> /dev/null) == mobile ]]; then
+  desktop_session=armada-plasma-mobile.desktop
+fi
+
 case "${1:-}" in
-    switch-desktop)  session=armada-plasma.desktop ;;
+    switch-desktop)  session=$desktop_session ;;
     switch-gamemode) session=gamescope-session-steam.desktop ;;
     default-gamemode) session=gamescope-session-steam.desktop; default_only=1 ;;
     *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode}" >&2; exit 1 ;;

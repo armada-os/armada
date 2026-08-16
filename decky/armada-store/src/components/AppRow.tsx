@@ -32,13 +32,16 @@ export function AppRow({ app, job, info, updateAvailable, onMenu }: {
   const active = !!job && !TERMINAL_PHASES.includes(job.phase);
   const failed = job?.phase === "error";
   const installed = !!info?.installed;
+  // A rival packaging is still an install the user has, and replacing it is the
+  // action to offer, so it reads as an update rather than as absent.
+  const conflicted = !!info?.conflicts?.length;
   let state: ReactNode = null;
   let stateClass = "armada-store-row-state";
   if (active && job) state = job.percent != null ? `${job.percent}%` : "...";
   else if (failed) {
     state = stateIcons.error;
     stateClass += " armada-store-error";
-  } else if (installed && updateAvailable) {
+  } else if (conflicted || (installed && updateAvailable)) {
     state = stateIcons.update;
     stateClass += " armada-store-update";
   } else if (installed) state = stateIcons.installed;

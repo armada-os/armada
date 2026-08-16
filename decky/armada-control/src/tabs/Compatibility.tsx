@@ -77,7 +77,6 @@ const fexKnobs = [
 const thunkModules = [
   { module: "Vulkan", label: "Host Vulkan" },
   { module: "GL", label: "Host OpenGL" },
-  { module: "EGL", label: "Host EGL" },
   { module: "asound", label: "Host ALSA" },
   { module: "drm", label: "Host DRM" },
   { module: "WaylandClient", label: "Host Wayland" },

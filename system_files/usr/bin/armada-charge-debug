@@ -1,0 +1,262 @@
+#!/usr/bin/bash
+set -uo pipefail
+
+sys_root=${ARMADA_CHARGE_DEBUG_SYS_ROOT:-/sys}
+proc_root=${ARMADA_CHARGE_DEBUG_PROC_ROOT:-/proc}
+journalctl_bin=${ARMADA_CHARGE_DEBUG_JOURNALCTL:-/usr/bin/journalctl}
+modprobe_bin=${ARMADA_CHARGE_DEBUG_MODPROBE:-/usr/sbin/modprobe}
+device_env=${ARMADA_CHARGE_DEBUG_DEVICE_ENV:-/usr/libexec/armada/device-env}
+tracefs=${ARMADA_CHARGE_DEBUG_TRACEFS:-/sys/kernel/tracing}
+watch_seconds=20
+
+usage() {
+    echo "Usage: armada-charge-debug [--watch SECONDS] [--ulog-only]"
+    echo
+    echo "One-shot charging diagnostic. Run it while the problem is visible,"
+    echo "with the charger attached, BEFORE rebooting or shutting down:"
+    echo "sudo armada-charge-debug > armada-charge-debug.txt"
+    echo
+    echo "--ulog-only prints just the charger firmware log capture."
+}
+
+require_root() {
+    if ((EUID != 0)) && [[ ${ARMADA_CHARGE_DEBUG_ALLOW_NONROOT:-0} != 1 ]]; then
+        echo "Run this command with sudo." >&2
+        exit 1
+    fi
+}
+
+section() {
+    printf '\n## %s\n' "$1"
+}
+
+single_line_file() {
+    local label=$1 path=$2
+
+    printf '%s=' "$label"
+    if [[ -r $path ]]; then
+        tr '\n' ' ' <"$path"
+        echo
+    else
+        echo unavailable
+    fi
+}
+
+read_value() {
+    local value=
+
+    [[ -r $1 ]] && value=$(tr -d '\n' <"$1" 2>/dev/null)
+    printf '%s' "${value:-${2-unavailable}}"
+}
+
+supply_dump() {
+    local supply found=0
+
+    for supply in "$sys_root"/class/power_supply/*; do
+        [[ -d $supply && -r $supply/uevent ]] || continue
+        found=1
+        sed "s/^/$(basename "$supply") /" "$supply/uevent"
+    done
+    ((found)) || echo "power_supplies=unavailable"
+}
+
+supply_sample() {
+    local supply field
+    local fields=(status online current_now voltage_now charge_counter capacity)
+
+    for supply in "$sys_root"/class/power_supply/*; do
+        [[ -d $supply ]] || continue
+        printf '%s' "$(basename "$supply")"
+        for field in "${fields[@]}"; do
+            printf ' %s=%s' "$field" "$(read_value "$supply/$field" -)"
+        done
+        echo
+    done
+}
+
+trend_report() {
+    local before=$1 after=$2 elapsed=$3
+
+    echo "samples taken ${elapsed}s apart; positive current_now direction is device-specific"
+    sed 's/^/before: /' <<<"$before"
+    sed 's/^/after:  /' <<<"$after"
+    awk -v secs="$elapsed" '
+        NR == FNR {
+            for (i = 2; i <= NF; i++) {
+                split($i, kv, "=")
+                if (kv[1] == "charge_counter") before[$1] = kv[2]
+            }
+            next
+        }
+        {
+            for (i = 2; i <= NF; i++) {
+                split($i, kv, "=")
+                if (kv[1] == "charge_counter" && $1 in before && kv[2] + 0 == kv[2] && before[$1] + 0 == before[$1])
+                    printf "%s charge_counter_delta_uAh=%+d over %ss\n", $1, kv[2] - before[$1], secs
+            }
+        }
+    ' <(printf '%s\n' "$before") <(printf '%s\n' "$after")
+    echo "gauge_caveat=the fuel gauge on these devices can misreport and resync; treat voltage_now and an external meter as ground truth"
+}
+
+typec_report() {
+    local port entry found=0
+
+    for port in "$sys_root"/class/typec/*; do
+        [[ -d $port ]] || continue
+        found=1
+        printf 'typec=%s' "$(basename "$port")"
+        for entry in data_role power_role port_type orientation usb_power_delivery_revision; do
+            [[ -r $port/$entry ]] && printf ' %s=%s' "$entry" "$(read_value "$port/$entry")"
+        done
+        echo
+    done
+    ((found)) || echo "typec=unavailable"
+
+    for entry in "$sys_root"/class/usb_role/*/role; do
+        [[ -r $entry ]] || continue
+        echo "usb_role $(dirname "$entry" | xargs basename)=$(read_value "$entry")"
+    done
+}
+
+# Never unload pmic_pdcharger_ulog: modprobe -r blocks forever in the GLINK
+# endpoint teardown (D state until reboot, and shutdown hangs on the held
+# device lock). Loaded, it polls 1/s awake and nothing while suspended.
+ulog_report() {
+    local secs=$1 instance="$tracefs/instances/armada-charge-debug"
+    local bound=0 dev
+
+    if [[ ! -d $sys_root/module/pmic_pdcharger_ulog ]]; then
+        if ! "$modprobe_bin" pmic_pdcharger_ulog 2>/dev/null; then
+            echo "ulog=module-unavailable (pmic_pdcharger_ulog did not load)"
+            return
+        fi
+    fi
+
+    for dev in "$sys_root"/bus/rpmsg/devices/*PMIC_LOGS_ADSP_APPS*; do
+        [[ -e $dev ]] && bound=1
+    done
+    if ((!bound)); then
+        echo "ulog=channel-absent (firmware does not expose PMIC_LOGS_ADSP_APPS)"
+        return
+    fi
+
+    if ! mkdir -p "$instance" 2>/dev/null ||
+        ! echo 1 >"$instance/events/pmic_pdcharger_ulog/enable" 2>/dev/null; then
+        echo "ulog=tracefs-unavailable"
+        return
+    fi
+
+    echo "ulog=capturing ${secs}s of charger firmware log"
+    sleep "$secs"
+    echo 0 >"$instance/events/pmic_pdcharger_ulog/enable" 2>/dev/null
+    grep -v '^#' "$instance/trace" 2>/dev/null || echo "ulog_trace=empty"
+    rmdir "$instance" 2>/dev/null
+    echo "ulog_module=left-loaded (unloading wedges the GLINK teardown; it polls 1/s while awake until reboot)"
+}
+
+sleep_context_report() {
+    local stats="$sys_root/power/suspend_stats" field
+
+    single_line_file mem_sleep "$sys_root/power/mem_sleep"
+    if [[ -d $stats ]]; then
+        for field in success fail failed_suspend last_failed_dev last_failed_errno; do
+            single_line_file "suspend_stats_$field" "$stats/$field"
+        done
+    else
+        echo "suspend_stats=unavailable"
+    fi
+    if [[ -x $journalctl_bin ]]; then
+        echo "suspend_entries_this_boot=$($journalctl_bin -k -b 0 --no-pager 2>/dev/null |
+            grep -c 'PM: suspend entry' || true)"
+    fi
+    echo "note=success 0 with fake suspend configured means the kernel never suspended this boot"
+}
+
+charge_logs() {
+    local pattern='battmgr|pmic_glink|pmic-glink|pdcharger|charger|ucsi|typec|pdr|adsp|remoteproc|dwc3|battery'
+    local output
+
+    [[ -x $journalctl_bin ]] || {
+        echo "journal=unavailable"
+        return
+    }
+    output="$($journalctl_bin -b 0 --no-pager -o short-monotonic 2>/dev/null |
+        grep -Ei "$pattern" | tail -n 300)" || true
+    if [[ -n $output ]]; then
+        printf '%s\n' "$output"
+    else
+        echo "No matching journal entries."
+    fi
+}
+
+report() {
+    local before after device_info
+
+    require_root
+    echo "Armada charge debug report"
+    echo "generated=$(date --iso-8601=seconds)"
+
+    section "System"
+    single_line_file kernel "$proc_root/sys/kernel/osrelease"
+    single_line_file boot_id "$proc_root/sys/kernel/random/boot_id"
+    single_line_file uptime "$proc_root/uptime"
+    single_line_file cmdline "$proc_root/cmdline"
+    if [[ -x $device_env ]]; then
+        device_info=$($device_env 2>/dev/null || true)
+        grep -E '^ARMADA_(DEVICE_ID|DEVICE_NAME|SOC_CLASS|SUSPEND_MODE)=' <<<"$device_info" || true
+    fi
+    [[ -r /etc/armada/sleep.conf ]] && sed 's/^/sleep_conf: /' /etc/armada/sleep.conf
+
+    section "Power supplies"
+    supply_dump
+
+    section "Type-C and USB role"
+    typec_report
+
+    before=$(supply_sample)
+
+    section "Charger firmware log"
+    ulog_report "$watch_seconds"
+
+    after=$(supply_sample)
+
+    section "Charge trend"
+    trend_report "$before" "$after" "$watch_seconds"
+
+    section "Sleep context"
+    sleep_context_report
+
+    section "Charging-related journal (current boot)"
+    charge_logs
+}
+
+ulog_only=0
+while (($#)); do
+    case $1 in
+        --watch)
+            shift
+            [[ ${1:-} =~ ^[0-9]+$ ]] || { usage >&2; exit 2; }
+            watch_seconds=$1
+            ;;
+        --ulog-only)
+            ulog_only=1
+            ;;
+        -h|--help|help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+if ((ulog_only)); then
+    require_root
+    ulog_report "$watch_seconds"
+else
+    report
+fi

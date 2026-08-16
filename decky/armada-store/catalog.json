@@ -4,8 +4,9 @@
       "id": "retroarch",
       "name": "RetroArch",
       "summary": "Multi-system (libretro cores)",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/org/libretro/RetroArch/608ad8984f80cbcf61daf07ab00ee716/icons/128x128/org.libretro.RetroArch.png",
+      "postInstall": "retroarch-cores-url",
       "install": {
         "type": "flatpak",
         "ref": "org.libretro.RetroArch"
@@ -15,7 +16,7 @@
       "id": "dolphin",
       "name": "Dolphin",
       "summary": "GameCube and Wii",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/org/dolphinemu/dolphin-emu/ce769d4ecef73c615cc31b263a193a6c/icons/128x128/org.DolphinEmu.dolphin-emu.png",
       "install": {
         "type": "flatpak",
@@ -26,13 +27,12 @@
       "id": "cemu",
       "name": "Cemu",
       "summary": "Wii U",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://github.com/cemu-project.png",
-      "note": "Community ARM64 AppImage",
       "install": {
         "type": "appimage",
         "releases": "https://api.github.com/repos/pkgforge-dev/Cemu-AppImage-Enhanced/releases?per_page=20",
-        "asset": "^Cemu-.*-anylinux-aarch64\\.AppImage$",
+        "asset": "^Cemu_Nightly-.*-anylinux-aarch64\\.AppImage$",
         "filename": "Cemu.AppImage"
       }
     },
@@ -40,7 +40,7 @@
       "id": "ppsspp",
       "name": "PPSSPP",
       "summary": "PlayStation Portable",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/org/ppsspp/PPSSPP/38b2798efcaad131e5a694a9edbccf53/icons/128x128/org.ppsspp.PPSSPP.png",
       "install": {
         "type": "flatpak",
@@ -51,18 +51,26 @@
       "id": "duckstation",
       "name": "DuckStation",
       "summary": "PlayStation 1",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/org/duckstation/DuckStation/090ec9de83aac22d040b24d0ed04f728/icons/128x128/org.duckstation.DuckStation.png",
       "install": {
-        "type": "flatpak",
-        "ref": "org.duckstation.DuckStation"
-      }
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/stenzek/duckstation/releases?per_page=10",
+        "asset": "^DuckStation-arm64\\.AppImage$",
+        "filename": "DuckStation.AppImage"
+      },
+      "conflicts": [
+        {
+          "type": "flatpak",
+          "ref": "org.duckstation.DuckStation"
+        }
+      ]
     },
     {
       "id": "armsx2",
       "name": "ARMSX2",
       "summary": "PlayStation 2",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://github.com/ARMSX2.png",
       "note": "Nightly builds",
       "install": {
@@ -76,22 +84,31 @@
       "id": "rpcs3",
       "name": "RPCS3",
       "summary": "PlayStation 3",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/net/rpcs3/RPCS3/cac28374f8039a48845e19ca130ad837/icons/128x128/net.rpcs3.RPCS3.png",
       "install": {
-        "type": "flatpak",
-        "ref": "net.rpcs3.RPCS3"
-      }
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/RPCS3/rpcs3-binaries-linux-arm64/releases?per_page=20",
+        "asset": "^rpcs3-v[0-9].*_linux_aarch64\\.AppImage$",
+        "filename": "rpcs3.AppImage"
+      },
+      "conflicts": [
+        {
+          "type": "flatpak",
+          "ref": "net.rpcs3.RPCS3"
+        }
+      ]
     },
     {
       "id": "vita3k",
       "name": "Vita3K",
       "summary": "PlayStation Vita",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://github.com/Vita3K.png",
       "install": {
         "type": "appimage",
-        "url": "https://github.com/Vita3K/Vita3K/releases/download/continuous/Vita3K-aarch64.AppImage",
+        "releases": "https://api.github.com/repos/Vita3K/Vita3K/releases?per_page=10",
+        "asset": "^Vita3K-aarch64\\.AppImage$",
         "filename": "Vita3K.AppImage"
       }
     },
@@ -99,7 +116,7 @@
       "id": "melonds",
       "name": "melonDS",
       "summary": "Nintendo DS",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/net/kuribo64/melonDS/81b115ecef228fbc787c03d4808282f4/icons/128x128/net.kuribo64.melonDS.png",
       "install": {
         "type": "flatpak",
@@ -110,56 +127,45 @@
       "id": "azahar",
       "name": "Azahar",
       "summary": "Nintendo 3DS",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/org/azahar_emu/Azahar/dc321b338585729e498afdf244f0f09b/icons/128x128/org.azahar_emu.Azahar.png",
       "install": {
-        "type": "flatpak",
-        "ref": "org.azahar_emu.Azahar"
-      }
-    },
-    {
-      "id": "eden",
-      "name": "Eden",
-      "summary": "Nintendo Switch",
-      "category": "emulation",
-      "note": "Needs console firmware and keys",
-      "install": {
         "type": "appimage",
-        "releases": "https://git.eden-emu.dev/api/v1/repos/eden-emu/eden/releases?limit=10",
-        "asset": "aarch64-clang-pgo\\.AppImage$",
-        "filename": "Eden.AppImage"
-      }
+        "releases": "https://api.github.com/repos/pkgforge-dev/Azahar-AppImage-Enhanced/releases?per_page=10",
+        "asset": "^Azahar-[0-9a-f]{6,}-anylinux-aarch64\\.AppImage$",
+        "filename": "Azahar-Enhanced.AppImage"
+      },
+      "conflicts": [
+        {
+          "type": "flatpak",
+          "ref": "org.azahar_emu.Azahar"
+        }
+      ]
     },
     {
       "id": "xemu",
       "name": "xemu",
       "summary": "Original Xbox",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/app/xemu/xemu/6f30e1c4e52473b1418f6e5174e7a82b/icons/128x128/app.xemu.xemu.png",
       "install": {
-        "type": "flatpak",
-        "ref": "app.xemu.xemu"
-      }
-    },
-    {
-      "id": "xenia-edge",
-      "name": "Xenia Edge",
-      "summary": "Xbox 360",
-      "category": "emulation",
-      "icon": "https://raw.githubusercontent.com/xenia-canary/xenia-canary/canary_experimental/assets/icon/32.png",
-      "note": "x86_64 build; runs through FEX",
-      "install": {
         "type": "appimage",
-        "releases": "https://api.github.com/repos/has207/xenia-edge/releases?per_page=15",
-        "asset": "^xenia_edge_linux\\.AppImage$",
-        "filename": "XeniaEdge.AppImage"
-      }
+        "releases": "https://api.github.com/repos/xemu-project/xemu/releases?per_page=10",
+        "asset": "^xemu-[0-9][0-9.]*-[0-9]+-g[0-9a-f]+-aarch64\\.AppImage$",
+        "filename": "xemu.AppImage"
+      },
+      "conflicts": [
+        {
+          "type": "flatpak",
+          "ref": "app.xemu.xemu"
+        }
+      ]
     },
     {
       "id": "flycast",
       "name": "Flycast",
       "summary": "Dreamcast",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/org/flycast/Flycast/bee247a9effec8fe563f3abb8a888af4/icons/128x128/org.flycast.Flycast.png",
       "install": {
         "type": "flatpak",
@@ -170,7 +176,7 @@
       "id": "scummvm",
       "name": "ScummVM",
       "summary": "Classic adventure games",
-      "category": "emulation",
+      "category": "emulators",
       "icon": "https://dl.flathub.org/media/org/scummvm/ScummVM/01f8ee11f45f2b7c8348c99c598fca36/icons/128x128/org.scummvm.ScummVM.png",
       "install": {
         "type": "flatpak",
@@ -214,13 +220,29 @@
       "id": "es-de",
       "name": "ES-DE",
       "summary": "Emulation frontend for ROM collections",
-      "category": "emulation",
+      "category": "applications",
       "icon": "https://gitlab.com/uploads/-/system/project/avatar/18817634/emulationstation_1024x1024.png",
+      "postInstall": "es-de-custom-systems",
       "install": {
         "type": "appimage",
         "releases": "https://gitlab.com/api/v4/projects/es-de%2Femulationstation-de/releases?per_page=10",
         "asset": "^ES-DE_aarch64\\.AppImage$",
         "filename": "ES-DE.AppImage"
+      }
+    },
+    {
+      "id": "steam-rom-manager",
+      "name": "Steam ROM Manager",
+      "summary": "Add ROMs to your Steam library with artwork",
+      "category": "applications",
+      "icon": "https://github.com/SteamGridDB.png",
+      "note": "Needs Steam closed; run it from desktop mode",
+      "desktopOnly": true,
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/SteamGridDB/steam-rom-manager/releases?per_page=20",
+        "asset": "^Steam-ROM-Manager-[0-9][0-9.]*-arm64\\.AppImage$",
+        "filename": "Steam-ROM-Manager.AppImage"
       }
     },
     {
@@ -235,17 +257,41 @@
       }
     },
     {
-      "id": "proton-ge-arm64",
-      "name": "GE-Proton 11 (ARM64)",
-      "summary": "Alternative to the built-in Proton",
-      "category": "compat",
-      "icon": "https://github.com/GloriousEggroll.png",
+      "id": "protonplus",
+      "name": "ProtonPlus",
+      "summary": "Install and manage Proton and Wine runners",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/vysp3r/ProtonPlus/c09f1de1cb1a40acdd89eee078699f2d/icons/128x128/com.vysp3r.ProtonPlus.png",
+      "note": "Restart Steam after installing a runner",
       "install": {
-        "type": "compat",
-        "releases": "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases?per_page=10",
-        "asset": "^GE-Proton11-\\d+-aarch64\\.tar\\.gz$"
-      },
-      "note": "Restart Steam after installing"
+        "type": "flatpak",
+        "ref": "com.vysp3r.ProtonPlus"
+      }
+    },
+    {
+      "id": "heroic",
+      "name": "Heroic Games Launcher",
+      "summary": "Play Epic, GOG and Amazon games",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/heroicgameslauncher/hgl/7c9401fb986461cf52a549d0514c83b9/icons/128x128/com.heroicgameslauncher.hgl.png",
+      "note": "Ships with Armada",
+      "install": {
+        "type": "system",
+        "exec": "/usr/bin/heroic",
+        "launchOptions": "--no-sandbox"
+      }
+    },
+    {
+      "id": "decky-lsfg-vk",
+      "name": "Decky LSFG-VK",
+      "summary": "Lossless Scaling frame generation",
+      "category": "plugins",
+      "icon": "https://raw.githubusercontent.com/xXJSONDeruloXx/decky-lsfg-vk/main/assets/decky-lossless-logo.png",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/xXJSONDeruloXx/decky-lsfg-vk/releases?per_page=10",
+        "asset": "^Decky\\.LSFG-VK\\.zip$"
+      }
     }
   ]
 }

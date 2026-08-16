@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!-- An entry here REPLACES the bundled rule of the same name. -->
+<ruleList>
+    <emulator name="ARMSX2">
+        <rule type="systempath">
+            <entry>armsx2</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/Applications/ARMSX2*.AppImage</entry>
+            <entry>~/.local/bin/ARMSX2*.AppImage</entry>
+            <entry>~/bin/ARMSX2*.AppImage</entry>
+        </rule>
+    </emulator>
+</ruleList>

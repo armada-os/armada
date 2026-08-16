@@ -6,9 +6,14 @@ install -Dpm 0755 /packages/extest/libextest.so /usr/lib/extest/libextest.so
 
 cp -a /packages/mesa-android/waydroid/vendor /usr/share/armada/waydroid/
 
+# x86 Turnip payload for the guestos overlay; the rootfs's driver lacks armada's mesa patches
+mkdir -p /usr/share/armada/guestos-x86-mesa
+cp -a /packages/mesa-x86/guestos-x86-mesa/usr /usr/share/armada/guestos-x86-mesa/
+
 # Status text font for armada-splash (falls back to its embedded bitmap font
-# if this link dangles).
-splash_font="$(rpm -ql google-noto-sans-vf-fonts | grep -m1 '\.ttf$')"
+# if this link dangles). Static face: stb_truetype renders a VF's default
+# instance only. Exact name: condensed faces sort first.
+splash_font="$(rpm -ql google-noto-sans-mono-fonts | grep -m1 '/NotoSansMono-SemiBold\.ttf$')"
 [ -n "${splash_font}" ]
 ln -sf "${splash_font}" /usr/share/armada/splash/font.ttf
 
@@ -66,6 +71,7 @@ systemctl enable seatd.service
 systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
+systemctl enable armada-guestos.service
 systemctl enable armada-device-quirks.service
 systemctl enable armada-fixups.service
 systemctl enable armada-installer-visibility.service

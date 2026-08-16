@@ -13,6 +13,10 @@ SLEEP_MODE_LABELS = {
     "s2idle": "s2idle",
     "deep": "Deep",
 }
+DESKTOP_MODE_LABELS = {
+    "mobile": "Plasma Mobile",
+    "desktop": "Plasma Desktop"
+}
 
 
 def run_cmd(cmd, timeout=5, capture=True):
@@ -107,6 +111,23 @@ def set_mtp_enabled(enabled):
 def set_abl_auto_enabled(enabled):
     return bool(call("set_abl_auto_enabled", enabled=bool(enabled)).get("enabled"))
 
+def desktop_mode() -> str:
+    try:
+        value = str(call("get_desktop_mode").get("value", ""))
+    except Exception:
+        return "desktop"
+
+    return value if value in DESKTOP_MODE_LABELS else "desktop"
+
+
+def set_desktop_mode(value: str) -> str:
+    return str(
+        call("set_desktop_mode", value=str(value)).get("value")
+    )
+
+def desktop_modes():
+    modes = ["desktop", "mobile"]
+    return [{"data": mode, "label": DESKTOP_MODE_LABELS[mode]} for mode in modes]
 
 def sleep_modes():
     modes = ["fake"]

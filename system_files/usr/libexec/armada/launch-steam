@@ -28,58 +28,13 @@ if [[ -d "${steam_runtime_bin}" ]]; then
 fi
 export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
 
-steamapps_dirs=("${steam_root}/steamapps")
-while IFS= read -r library; do
-    steamapps="${library}/steamapps"
-    [[ -d "${steamapps}" ]] || continue
-    steamapps_dirs+=("${steamapps}")
-done < <(grep -oP '"path"\s+"\K[^"]+' "${steam_root}/steamapps/libraryfolders.vdf" 2>/dev/null || true)
-
-# Register the official Proton 11.0 (ARM64) before Steam scans compatibilitytools.d.
-proton11_runner=""
+# prune the Proton 11 registration earlier releases wrote; the internal-name
+# match keeps user-created tool dirs safe
 proton11_reg="${steam_root}/compatibilitytools.d/proton-11-arm64"
-for steamapps in "${steamapps_dirs[@]}"; do
-    runner="${steamapps}/common/Proton 11.0 (ARM64)"
-    flags="$(grep -oP '"StateFlags"\s+"\K[0-9]+' "${steamapps}/appmanifest_4628740.acf" 2>/dev/null || true)"
-    if [[ -n "${flags}" ]] && (( flags & 4 )) && [[ -d "${runner}" ]]; then
-        proton11_runner="${runner}"
-        break
-    fi
-done
-if [[ -n "${proton11_runner}" ]]; then
-    mkdir -p "${proton11_reg}"
-    cat > "${proton11_reg}/compatibilitytool.vdf" <<EOF
-"compatibilitytools"
-{
-  "compat_tools"
-  {
-    "proton11_arm64"
-    {
-      "install_path" "${proton11_runner}"
-      "display_name" "Proton 11.0 (ARM64)"
-      "from_oslist"  "windows"
-      "to_oslist"    "linux"
-    }
-  }
-}
-EOF
-else
-    rm -rf "${proton11_reg}"
+if grep -q '"proton11_arm64"' "${proton11_reg}/compatibilitytool.vdf" 2>/dev/null; then
+    rm -f "${proton11_reg}/compatibilitytool.vdf"
+    rmdir "${proton11_reg}" 2>/dev/null || true
 fi
-
-# The ARM client can't resolve require_tool_appid for the SLR4 Arm64 runtime (4185400)
-# even when it's installed, so Protons requiring it fail "compat tool failed". Strip it
-# from every Proton and run bare.
-for manifest in "${steam_root}"/compatibilitytools.d/*/toolmanifest.vdf; do
-    [[ -f "${manifest}" ]] || continue
-    sed -i '/require_tool_appid.*4185400/d' "${manifest}"
-done
-for steamapps in "${steamapps_dirs[@]}"; do
-    for manifest in "${steamapps}"/common/Proton*/toolmanifest.vdf; do
-        [[ -f "${manifest}" ]] || continue
-        sed -i '/require_tool_appid.*4185400/d' "${manifest}"
-    done
-done
 
 touch "${steam_root}/.cef-enable-remote-debugging"
 cd "${steam_arm_dir}"

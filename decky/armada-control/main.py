@@ -16,6 +16,7 @@ from armada_control.system import (
     restart_game_mode,
     set_abl_auto_enabled,
     set_mtp_enabled,
+    set_desktop_mode,
     set_sleep_mode,
     set_ssh_enabled,
 )
@@ -52,6 +53,9 @@ class Plugin:
 
     async def set_abl_auto_enabled(self, enabled):
         return await asyncio.to_thread(set_abl_auto_enabled, enabled)
+
+    async def set_desktop_mode(self, value):
+        return await asyncio.to_thread(set_desktop_mode, value)
 
     async def set_sleep_mode(self, value):
         return await asyncio.to_thread(set_sleep_mode, value)

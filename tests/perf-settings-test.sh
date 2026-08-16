@@ -137,7 +137,7 @@ check("env tombstone removes global var", "A" not in merged_env)
 check("env global-only view intact", ap.merged_settings(env_tweaks, None)["env"] == {"A": "1", "B": "2"})
 
 # --- armada-game-launch: FEX path unchanged by perf keys --------------------
-os.environ["XDG_RUNTIME_DIR"] = WORK
+os.environ["XDG_CACHE_HOME"] = WORK
 launch = load_script("armada-game-launch")
 base_fex = os.path.join(WORK, "base-fex.json")
 with open(base_fex, "w") as f:
@@ -150,13 +150,14 @@ def fex_result(settings):
     env = {}
     launch.apply_fex(settings, "620", profiles, env)
     with open(env["FEX_APP_CONFIG"]) as f:
-        return json.load(f)
+        return env["FEX_APP_CONFIG"], json.load(f)
 
 
-plain = fex_result({"fexProfile": "default"})
-with_perf = fex_result({"fexProfile": "default", "cores": "big", "nice": -5,
-                        "gamescopeRr": True, "scheduler": "lavd",
-                        "env": {"X": "1"}, "wineTopology": False})
+config_path, plain = fex_result({"fexProfile": "default"})
+check("config lands in test cache dir", config_path.startswith(WORK + "/armada-fex/"))
+_, with_perf = fex_result({"fexProfile": "default", "cores": "big", "nice": -5,
+                           "gamescopeRr": True, "scheduler": "lavd",
+                           "env": {"X": "1"}, "wineTopology": False})
 check("FEX config unaffected by perf keys", plain == with_perf)
 check("FEX config content sane", plain["Config"]["Multiblock"] == "0")
 
@@ -205,6 +206,9 @@ check("device-env SM8550 irq littles", thor.get("ARMADA_IRQ_CORES") == "0-2")
 thor_override = run_device_env("AYN Thor", {"ARMADA_IRQ_CORES": ""})
 check("device-env explicit-empty override honored",
       thor_override.get("ARMADA_IRQ_CORES") == "''")
+pocket_ds = run_device_env("AYANEO Pocket DS")
+check("device-env Pocket DS enables sync suspend",
+      pocket_ds.get("ARMADA_SYNC_SUSPEND") == "1")
 
 # --- armada-powerd: config parsing ------------------------------------------
 powerd = load_script("armada-powerd")

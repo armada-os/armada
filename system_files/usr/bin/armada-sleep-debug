@@ -9,6 +9,7 @@ systemctl_bin=${ARMADA_SLEEP_DEBUG_SYSTEMCTL:-/usr/bin/systemctl}
 device_env=${ARMADA_SLEEP_DEBUG_DEVICE_ENV:-/usr/libexec/armada/device-env}
 input_lib=${ARMADA_SLEEP_DEBUG_INPUT_LIB:-/usr/lib/armada/input-lib}
 evtest_bin=${ARMADA_SLEEP_DEBUG_EVTEST:-/usr/bin/evtest}
+charge_debug_bin=${ARMADA_SLEEP_DEBUG_CHARGE_DEBUG:-/usr/bin/armada-charge-debug}
 dev_root=${ARMADA_SLEEP_DEBUG_DEV_ROOT:-/dev}
 run_root=${ARMADA_SLEEP_DEBUG_RUN_ROOT:-/run}
 
@@ -73,6 +74,70 @@ snapshot_thermal_temperatures() {
     ((found)) || rm -f "$state_dir/thermal-temperatures.before"
 }
 
+snapshot_input_devices() {
+    local ev
+
+    : >"$state_dir/input-devices.before"
+    for ev in "$sys_root"/class/input/event*; do
+        [[ -r $ev/device/name ]] || continue
+        printf '%s\t%s\n' "$(basename "$ev")" "$(read_value "$ev/device/name")" \
+            >>"$state_dir/input-devices.before"
+    done
+    [[ -s $state_dir/input-devices.before ]] || rm -f "$state_dir/input-devices.before"
+}
+
+snapshot_charge_state() {
+    local supply field found=0
+    local fields=(status online current_now voltage_now charge_counter capacity)
+
+    : >"$state_dir/charge.before"
+    echo "epoch $(date +%s)" >>"$state_dir/charge.before"
+    for supply in "$sys_root"/class/power_supply/*; do
+        [[ -d $supply ]] || continue
+        found=1
+        printf '%s' "$(basename "$supply")" >>"$state_dir/charge.before"
+        for field in "${fields[@]}"; do
+            printf ' %s=%s' "$field" "$(read_value "$supply/$field" -)" \
+                >>"$state_dir/charge.before"
+        done
+        echo >>"$state_dir/charge.before"
+    done
+    ((found)) || rm -f "$state_dir/charge.before"
+}
+
+# qcom_stats names are opaque: aosd = chip-wide AOSS deep sleep, cxsd = CX
+# rail collapse, ddr = DDR self-refresh. cpuidle s2idle counters only tick
+# inside suspend-to-idle, so no window bracketing is needed for them.
+snapshot_sleep_depth() {
+    local stats_dir="$sys_root/kernel/debug/qcom_stats" stat_file count duration
+    local cpu state name
+
+    : >"$state_dir/qcom-stats.before"
+    for stat_file in "$stats_dir"/*; do
+        [[ -f $stat_file && -r $stat_file ]] || continue
+        count=$(sed -n 's/^Count: //p' "$stat_file" 2>/dev/null | head -n 1)
+        duration=$(sed -n 's/^Accumulated Duration: //p' "$stat_file" 2>/dev/null | head -n 1)
+        [[ -n $count ]] || continue
+        printf '%s\t%s\t%s\n' "$(basename "$stat_file")" "$count" "${duration:-0}" \
+            >>"$state_dir/qcom-stats.before"
+    done
+    [[ -s $state_dir/qcom-stats.before ]] || rm -f "$state_dir/qcom-stats.before"
+
+    : >"$state_dir/cpuidle-s2idle.before"
+    for state in "$sys_root"/devices/system/cpu/cpu*/cpuidle/state*; do
+        [[ -r $state/s2idle/usage ]] || continue
+        cpu=${state%/cpuidle/*}
+        cpu=${cpu##*/}
+        name=$(read_value "$state/name" "$(basename "$state")")
+        printf '%s/%s\t%s\t%s\t%s\n' "$cpu" "$name" \
+            "$(read_value "$state/s2idle/usage" 0)" \
+            "$(read_value "$state/s2idle/time" 0)" \
+            "$(basename "$state")" \
+            >>"$state_dir/cpuidle-s2idle.before"
+    done
+    [[ -s $state_dir/cpuidle-s2idle.before ]] || rm -f "$state_dir/cpuidle-s2idle.before"
+}
+
 enable_tsens_dynamic_debug() {
     local control="$sys_root/kernel/debug/dynamic_debug/control"
 
@@ -102,6 +167,9 @@ prepare() {
     snapshot_wakeup_sources
     snapshot_interrupts
     snapshot_thermal_temperatures
+    snapshot_charge_state
+    snapshot_sleep_depth
+    snapshot_input_devices
     enable_tsens_dynamic_debug
 
     if [[ -w $pm_debug ]]; then
@@ -283,6 +351,37 @@ input_state_report() {
     echo "lid_state=$lid_state"
 }
 
+# Dead-on-resume input shows as missing-since-prepare (driver unregistered)
+# or a parent stuck in runtime_status=suspended (bus never woke).
+input_inventory_report() {
+    local baseline="$state_dir/input-devices.before" ev name parent status found=0
+
+    for ev in "$sys_root"/class/input/event*; do
+        [[ -r $ev/device/name ]] || continue
+        found=1
+        name=$(read_value "$ev/device/name")
+        status=unavailable
+        for parent in "$ev/device/device" "$ev/device/device/.."; do
+            if [[ -r $parent/power/runtime_status ]]; then
+                status=$(read_value "$parent/power/runtime_status")
+                break
+            fi
+        done
+        printf 'input=%s name="%s" parent_runtime_status=%s\n' \
+            "$(basename "$ev")" "$name" "$status"
+    done
+    ((found)) || echo "input_devices=none"
+
+    if [[ -r $baseline ]]; then
+        while IFS=$'\t' read -r ev name; do
+            [[ -r $sys_root/class/input/$ev/device/name ]] ||
+                echo "input_missing_since_prepare=$ev \"$name\""
+        done <"$baseline"
+    else
+        echo "input_baseline=unavailable (run prepare before suspending)"
+    fi
+}
+
 # armada-power pins every CPU policy and the GPU to their lowest OPP for the
 # duration of a fake suspend. A resume that dies before restoring them leaves a
 # device that runs, but far too slowly to look awake.
@@ -403,6 +502,52 @@ thermal_irq_report() {
     fi
 }
 
+# An IRQ absent from this list while its device is being exercised means the
+# line never fired; zero-delta rows are omitted, not shown as +0.
+irq_delta_report() {
+    local current="$proc_root/interrupts" before="$state_dir/interrupts.before"
+    local current_boot baseline_boot
+
+    if [[ ! -r $current || ! -r $before ]]; then
+        echo "irq_deltas=unavailable (needs a prepare baseline)"
+        return
+    fi
+    current_boot=$(read_value "$proc_root/sys/kernel/random/boot_id" "")
+    baseline_boot=$(read_value "$state_dir/boot_id" "")
+    if [[ -z $current_boot || $current_boot != "$baseline_boot" ]]; then
+        echo "irq_deltas=unavailable (baseline is from a different boot)"
+        return
+    fi
+    awk '
+        function parse_line(    i) {
+            irq = $1
+            sub(/:$/, "", irq)
+            total = 0
+            for (i = 2; i <= NF && $i ~ /^[0-9]+$/; i++)
+                total += $i
+            details = ""
+            for (; i <= NF; i++)
+                details = details (details == "" ? "" : " ") $i
+        }
+        NR == FNR {
+            if ($1 ~ /^[0-9]+:$/) {
+                parse_line()
+                baseline[irq] = total
+            }
+            next
+        }
+        $1 ~ /^[0-9]+:$/ {
+            parse_line()
+            delta = total - baseline[irq]
+            if (delta != 0) {
+                printf "%08d %s %d %+d %s\n", delta, irq, total, delta, details
+                found = 1
+            }
+        }
+        END { if (!found) print "irq_deltas=none" }
+    ' "$before" "$current" | sort -rn | cut -d ' ' -f 2- | head -n 40
+}
+
 power_supply_report() {
     local supply field found=0
     local fields=(type status online present health temp current_now voltage_now power_now usb_type)
@@ -418,6 +563,135 @@ power_supply_report() {
         echo
     done
     ((found)) || echo "power_supplies=unavailable"
+}
+
+charge_delta_report() {
+    local baseline="$state_dir/charge.before" now_epoch elapsed
+
+    if [[ ! -r $baseline ]]; then
+        echo "charge_baseline=unavailable (run prepare before suspending)"
+        return
+    fi
+    now_epoch=$(date +%s)
+    awk -v now="$now_epoch" '
+        NR == FNR {
+            if ($1 == "epoch") { then = $2; next }
+            for (i = 2; i <= NF; i++) {
+                split($i, kv, "=")
+                before[$1 "." kv[1]] = kv[2]
+            }
+            supplies[$1] = 1
+            next
+        }
+        {
+            for (i = 2; i <= NF; i++) {
+                split($i, kv, "=")
+                current[$1 "." kv[1]] = kv[2]
+            }
+            supplies[$1] = 1
+        }
+        END {
+            if (!then) { print "charge_baseline=unreadable"; exit }
+            elapsed = now - then
+            printf "charge_window_seconds=%d\n", elapsed
+            for (s in supplies) {
+                cb = before[s ".charge_counter"]; ca = current[s ".charge_counter"]
+                vb = before[s ".voltage_now"];    va = current[s ".voltage_now"]
+                line = s
+                if (cb + 0 == cb && ca + 0 == ca && cb != "" && ca != "") {
+                    line = line sprintf(" charge_counter_delta_uAh=%+d", ca - cb)
+                    if (elapsed > 0)
+                        line = line sprintf(" rate_mAh_per_h=%+.1f", (ca - cb) * 3.6 / elapsed)
+                }
+                if (vb + 0 == vb && va + 0 == va && vb != "" && va != "")
+                    line = line sprintf(" voltage_delta_uV=%+d", va - vb)
+                if (line != s) print line
+            }
+        }
+    ' "$baseline" <(
+        for supply in "$sys_root"/class/power_supply/*; do
+            [[ -d $supply ]] || continue
+            printf '%s' "$(basename "$supply")"
+            for field in status online current_now voltage_now charge_counter capacity; do
+                printf ' %s=%s' "$field" "$(read_value "$supply/$field" -)"
+            done
+            echo
+        done
+    )
+    echo "charge_caveat=gauge deltas are indicative only; voltage and an external meter are ground truth"
+}
+
+sleep_depth_report() {
+    local stats_dir="$sys_root/kernel/debug/qcom_stats"
+    local baseline="$state_dir/qcom-stats.before" stat_file count duration found=0
+    local cpuidle_baseline="$state_dir/cpuidle-s2idle.before" cpu state name
+
+    if [[ ! -d $stats_dir ]]; then
+        echo "qcom_stats=unavailable (debugfs or CONFIG_QCOM_STATS missing)"
+    else
+        for stat_file in "$stats_dir"/*; do
+            [[ -f $stat_file && -r $stat_file ]] || continue
+            count=$(sed -n 's/^Count: //p' "$stat_file" 2>/dev/null | head -n 1)
+            duration=$(sed -n 's/^Accumulated Duration: //p' "$stat_file" 2>/dev/null | head -n 1)
+            [[ -n $count ]] || continue
+            found=1
+            printf 'stat=%s count=%s' "$(basename "$stat_file")" "$count"
+            if [[ -r $baseline ]]; then
+                awk -v name="$(basename "$stat_file")" -v count="$count" \
+                    -v duration="${duration:-0}" -F '\t' '
+                    $1 == name {
+                        printf " count_delta=%+d duration_delta=%+d", count - $2, duration - $3
+                        exit
+                    }
+                ' "$baseline"
+            fi
+            echo
+        done
+        ((found)) || echo "qcom_stats=empty"
+        if ((found)); then
+            echo "reading=aosd/cxsd/ddr deltas of 0 across a real suspend mean the SoC rails never powered down"
+            [[ -r $baseline ]] || echo "qcom_stats_baseline=unavailable (deltas need a same-boot prepare)"
+        fi
+    fi
+
+    found=0
+    for state in "$sys_root"/devices/system/cpu/cpu*/cpuidle/state*; do
+        [[ -r $state/s2idle/usage ]] || continue
+        found=1
+        cpu=${state%/cpuidle/*}
+        cpu=${cpu##*/}
+        name=$(read_value "$state/name" "$(basename "$state")")
+        printf 's2idle_state=%s/%s usage=%s time_us=%s' "$cpu" "$name" \
+            "$(read_value "$state/s2idle/usage" 0)" "$(read_value "$state/s2idle/time" 0)"
+        if [[ -r $cpuidle_baseline ]]; then
+            awk -v key="$cpu/$name" -v usage="$(read_value "$state/s2idle/usage" 0)" -F '\t' '
+                $1 == key { printf " usage_delta=%+d", usage - $2; exit }
+            ' "$cpuidle_baseline"
+        fi
+        echo
+    done
+    ((found)) || echo "cpuidle_s2idle=unavailable (expected when the platform suspends via deep)"
+}
+
+# Post-wake snapshot of the charger firmware's live state (contract, ICL and
+# FCC votes). The firmware log ring is only seconds deep, so events from
+# inside the sleep window are usually gone by collect time.
+charger_firmware_log_report() {
+    local supply online=0
+
+    for supply in "$sys_root"/class/power_supply/*; do
+        [[ -r $supply/online && $(read_value "$supply/online") == 1 ]] && online=1
+    done
+    if ((!online)); then
+        echo "charger_firmware_log=skipped (no charger attached; run armada-charge-debug manually if needed)"
+        return
+    fi
+    if [[ ! -x $charge_debug_bin ]]; then
+        echo "charger_firmware_log=unavailable (armada-charge-debug missing)"
+        return
+    fi
+    "$charge_debug_bin" --ulog-only --watch 10 2>&1 ||
+        echo "charger_firmware_log=failed"
 }
 
 tsens_dynamic_debug_report() {
@@ -521,7 +795,7 @@ pstore_report() {
 
 sleep_logs() {
     local boot=$1 output
-    local pattern='PM:|suspend|resume|wakeup|wake irq|thermal|tsens|qcom.geni|rsinput|ucsi|pmic.gl|ufs|pcie|ath12k|armada-fake-suspend|powerbuttond|armada-powerd|logind'
+    local pattern='PM:|suspend|resume|wakeup|wake irq|thermal|tsens|qcom.geni|geni_i2c|i2c|rsinput|ucsi|pmic.gl|ufs|pcie|ath12k|goodix|ft5x|focaltech|hynitron|touchscreen|armada-fake-suspend|powerbuttond|armada-powerd|logind'
     # pm_print_times emits a pair of lines per device per phase, which would
     # otherwise be the whole tail. Device callbacks get their own section.
     local timing='(: (PM: )?calling .* @ [0-9]+|(PM: )?.* returned -?[0-9]+ after [0-9]+ usecs)'
@@ -532,11 +806,31 @@ sleep_logs() {
     }
 
     output="$($journalctl_bin -b "$boot" --no-pager -o short-monotonic 2>/dev/null |
-        grep -Ei "$pattern" | grep -Ev "$timing" | tail -n 400)" || true
+        grep -Ei "$pattern" | grep -Ev "$timing" |
+        grep -v 'Existing logind session ID' | tail -n 400)" || true
     if [[ -n $output ]]; then
         printf '%s\n' "$output"
     else
         echo "No matching journal entries."
+    fi
+}
+
+# The broad sleep log is a capped tail, so on a long boot the PM entry/exit
+# markers can be pushed out by chattier matches; this small list cannot be.
+suspend_timeline_report() {
+    local boot=$1 output
+
+    [[ -x $journalctl_bin ]] || {
+        echo "journal=unavailable"
+        return
+    }
+    output="$($journalctl_bin -k -b "$boot" --no-pager -o short-monotonic 2>/dev/null |
+        grep -E 'PM: suspend (entry|exit)|Freezing of tasks|Restarting tasks|Wakeup pending' |
+        tail -n 30)" || true
+    if [[ -n $output ]]; then
+        printf '%s\n' "$output"
+    else
+        echo "suspend_timeline=none"
     fi
 }
 
@@ -658,9 +952,12 @@ collect() {
     thermal_irq_report
     thermal_state_report
     power_supply_report
+    charge_delta_report
+    charger_firmware_log_report
 
     section "Input and lid state"
     input_state_report
+    input_inventory_report
 
     section "First wake IRQ"
     wakeup_irq_report
@@ -671,11 +968,17 @@ collect() {
     section "Armed wake sources"
     wakeup_inventory_report
 
+    section "IRQ activity since prepare"
+    irq_delta_report
+
     section "RTC alarms and systemd timers"
     rtc_and_timer_report
 
     section "Suspend statistics"
     suspend_stats_report
+
+    section "Sleep depth"
+    sleep_depth_report
 
     section "Blocked tasks"
     blocked_tasks_report
@@ -688,6 +991,12 @@ collect() {
 
     section "Device callbacks (previous boot)"
     device_timing_report -1
+
+    section "Suspend timeline (current boot)"
+    suspend_timeline_report 0
+
+    section "Suspend timeline (previous boot)"
+    suspend_timeline_report -1
 
     section "Current boot sleep log"
     sleep_logs 0

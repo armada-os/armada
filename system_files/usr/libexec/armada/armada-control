@@ -32,6 +32,8 @@ SLEEP_CONFIG = Path("/etc/armada/sleep.conf")
 SUSPEND_MODE_KEY = "suspend_mode"
 NM_IGNORE_SLEEP = Path("/etc/NetworkManager/ignore-sleep")
 MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
+DESKTOP_SESSION_PATH = Path("/etc/armada/desktop-session")
+DESKTOP_MODES = {"desktop", "mobile"}
 CONFIG_PATHS = {
     "power": Path("/etc/armada/power-profiles.conf"),
     "tweaks": Path("/etc/armada/game-tweaks.json"),
@@ -142,6 +144,20 @@ def set_networkmanager_sleep_allowed(allow_sleep):
     else:
         NM_IGNORE_SLEEP.touch()
 
+def get_desktop_mode() -> str:
+    try:
+        mode = DESKTOP_SESSION_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "desktop"
+
+    return mode if mode in DESKTOP_MODES else "desktop"
+
+
+def set_desktop_mode(mode: str):
+    if mode not in DESKTOP_MODES:
+        raise ValueError("invalid desktop mode")
+
+    atomic_write(DESKTOP_SESSION_PATH, f"{mode}\n")
 
 def select_mem_sleep(mode):
     if mode in {"s2idle", "deep"}:
@@ -254,6 +270,14 @@ def available_sleep_modes():
         advertised = set()
     return {"fake"} | ({"s2idle", "deep"} & advertised)
 
+def action_get_desktop_mode(request):
+    return {"value": get_desktop_mode()}
+
+
+def action_set_desktop_mode(request):
+    value = str(request.get("value", ""))
+    set_desktop_mode(value)
+    return {"value": get_desktop_mode()}
 
 def action_set_sleep_mode(request):
     value = str(request.get("value", ""))
@@ -494,6 +518,8 @@ ACTIONS = {
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_abl_auto_enabled": action_set_abl_auto_enabled,
+    "get_desktop_mode": action_get_desktop_mode,
+    "set_desktop_mode": action_set_desktop_mode,
     "set_sleep_mode": action_set_sleep_mode,
     "write_config": action_write_config,
     "reapply_perf": action_reapply_perf,

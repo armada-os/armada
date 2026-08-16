@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Present the FEX x86 rootfs at /usr/share/guestos/fex-mesa, the OS-provided
+# path Steam's FEX compat tool hardcodes for the x86 Proton chain.
+set -u
+
+SQSH=/usr/share/fex-emu/RootFS/ArchLinux.sqsh
+RUN=/run/armada/guestos
+TARGET=/usr/share/guestos/fex-mesa
+# rootfs-shaped tree (contains usr/) shadowing the rootfs's driver
+PAYLOAD=/usr/share/armada/guestos-x86-mesa
+
+case "${1:-start}" in
+  start)
+    [ -f "${SQSH}" ] || exit 0
+    mkdir -p "${RUN}/lower"
+    mountpoint -q "${RUN}/lower" || mount -t squashfs -o ro,loop "${SQSH}" "${RUN}/lower" || exit 1
+    mountpoint -q "${TARGET}" || mount -t overlay overlay \
+      -o "lowerdir=${PAYLOAD}:${RUN}/lower" "${TARGET}" || exit 1
+    ;;
+  stop)
+    if mountpoint -q "${TARGET}"; then
+      umount "${TARGET}" || exit 1
+    fi
+    if mountpoint -q "${RUN}/lower"; then
+      umount "${RUN}/lower" || exit 1
+    fi
+    ;;
+esac
+exit 0

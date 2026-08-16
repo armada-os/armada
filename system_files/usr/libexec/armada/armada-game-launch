@@ -15,7 +15,6 @@ import armada_perf
 
 
 BASE_FEX_CONFIG = pathlib.Path("/usr/share/fex-emu/Config.json")
-FEX_ROOTFS_DIR = BASE_FEX_CONFIG.parent / "RootFS"
 TWEAKS_CONFIG = pathlib.Path("/etc/armada/game-tweaks.json")
 FEX_PROFILES_CONFIG = pathlib.Path("/usr/share/armada/fex-profiles.json")
 PROTON_INJECT_SRC = pathlib.Path("/usr/share/armada/proton-inject/x86_64-linux-gnu")
@@ -64,11 +63,14 @@ def thunk_settings(settings, modules):
     return {name: 1 if thunks.get(name, True) else 0 for name in modules}
 
 
-def runtime_config_dir():
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime:
-        return pathlib.Path(runtime) / "armada-fex"
-    return pathlib.Path("/tmp") / f"armada-fex-{os.getuid()}"
+def fex_config_dir():
+    # pressure-vessel shares this cache path into the container; a runtime-dir
+    # config is invisible there and FEX silently skips an unseen FEX_APP_CONFIG.
+    # Relative XDG_CACHE_HOME (invalid per XDG) would be re-anchored by portable FEX.
+    cache = os.environ.get("XDG_CACHE_HOME")
+    if cache and pathlib.Path(cache).is_absolute():
+        return pathlib.Path(cache) / "armada-fex"
+    return pathlib.Path.home() / ".cache" / "armada-fex"
 
 
 def resolve_fex_config(settings, profiles):
@@ -85,17 +87,17 @@ def apply_fex(settings, game_id, profiles, env):
     with BASE_FEX_CONFIG.open(encoding="utf-8") as f:
         config = json.load(f)
 
-    # portable FEX doesn't search the system RootFS directory
-    rootfs = config.get("Config", {}).get("RootFS")
-    if isinstance(rootfs, str) and rootfs and not pathlib.Path(rootfs).is_absolute():
-        config["Config"]["RootFS"] = str(FEX_ROOTFS_DIR / rootfs)
+    # each FEX resolves rootfs/thunk paths from its own global or template config;
+    # forcing Armada's onto the Steam FEX depot (Proton 11) empties its SLR4 rootfs
+    for key in ("RootFS", "ThunkGuestLibs", "ThunkHostLibs"):
+        config.get("Config", {}).pop(key, None)
 
     allowed = set().union(*(profile["config"].keys() for profile in profiles.values()))
     fex_config = resolve_fex_config(settings, profiles)
     config.setdefault("Config", {}).update({k: v for k, v in fex_config.items() if k in allowed})
     config["ThunksDB"] = thunk_settings(settings, config.get("ThunksDB", {}).keys())
 
-    config_dir = runtime_config_dir()
+    config_dir = fex_config_dir()
     config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     cutoff = time.time() - 86400
     for old in config_dir.glob("*.json"):

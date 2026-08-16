@@ -1,6 +1,6 @@
 import asyncio
 
-from armada_store import catalog, jobs, store, updates
+from armada_store import catalog, jobs, session, store, updates
 
 
 class Plugin:
@@ -28,6 +28,9 @@ class Plugin:
     async def uninstall_app(self, app_id):
         return await asyncio.to_thread(jobs.start, app_id, "uninstall")
 
+    async def replace_app(self, app_id):
+        return await asyncio.to_thread(jobs.start, app_id, "replace")
+
     async def cancel_job(self, app_id):
         return await asyncio.to_thread(jobs.cancel, app_id)
 
@@ -40,5 +43,8 @@ class Plugin:
     async def record_shortcut(self, app_id, steam_appid):
         return await asyncio.to_thread(store.record_shortcut, app_id, steam_appid)
 
-    async def clear_shortcut(self, app_id):
-        return await asyncio.to_thread(store.clear_shortcut, app_id)
+    async def clear_shortcut(self, app_id, keep_pending=False, expected=None):
+        return await asyncio.to_thread(store.clear_shortcut, app_id, bool(keep_pending), expected)
+
+    async def switch_to_desktop(self):
+        return await asyncio.to_thread(session.switch_to_desktop)

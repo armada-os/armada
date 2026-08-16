@@ -12,7 +12,8 @@ export interface CatalogApp {
   category: string;
   icon: string;
   note: string;
-  installType: "flatpak" | "appimage" | "compat" | "";
+  installType: "flatpak" | "appimage" | "deckyplugin" | "system" | "";
+  desktopOnly: boolean;
   launch: LaunchSpec | null;
 }
 
@@ -23,15 +24,22 @@ export interface Catalog {
 
 export interface Job {
   appId: string;
-  action: "install" | "uninstall";
+  action: "install" | "uninstall" | "replace";
   phase: string;
   percent: number | null;
   error: string;
 }
 
+export interface Conflict {
+  type: "flatpak" | "appimage";
+  ref?: string;
+  filename?: string;
+}
+
 export interface InstalledInfo {
   installed: boolean;
   version?: string;
+  conflicts?: Conflict[];
 }
 
 export interface Status {

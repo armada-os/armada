@@ -29,8 +29,8 @@ def apps_dir():
     return user_home() / "Applications"
 
 
-def compat_tools_dir():
-    return user_home() / ".local/share/Steam/compatibilitytools.d"
+def plugins_dir():
+    return user_home() / "homebrew/plugins"
 
 
 def state_root():

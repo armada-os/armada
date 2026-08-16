@@ -8,6 +8,8 @@ from .system import (
     mtp_enabled,
     os_version,
     perf_info,
+    desktop_mode,
+    desktop_modes,
     sleep_modes,
     ssh_enabled,
 )
@@ -30,6 +32,8 @@ def build_config(include_games=True):
         "ablAutoEnabled": abl_auto_enabled(),
         "sshEnabled": ssh_enabled(),
         "mtpEnabled": mtp_enabled(),
+        "desktopMode": desktop_mode(),
+        "desktopModes": desktop_modes(),
         "sleepMode": env.get("ARMADA_SUSPEND_MODE", "fake"),
         "sleepModes": sleep_modes(),
         "controllerType": controller_type(),

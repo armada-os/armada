@@ -78,11 +78,13 @@ dnf5 -y install --setopt=install_weak_deps=False \
     google-noto-sans-arabic-vf-fonts \
     google-noto-sans-hebrew-vf-fonts \
     google-noto-sans-devanagari-vf-fonts \
-    google-noto-color-emoji-fonts
+    google-noto-color-emoji-fonts \
+    google-noto-sans-mono-fonts
 
 dnf5 -y install --setopt=install_weak_deps=False \
     plasma-workspace \
     plasma-desktop \
+    plasma-mobile \
     plasma-pa \
     plasma-nm \
     bluedevil \
@@ -100,6 +102,9 @@ dnf5 -y install --setopt=install_weak_deps=False \
     ark \
     gwenview \
     kwrite
+
+# feedbackd's role-routing sinks can wedge Steam audio during session startup.
+rm -f /usr/share/wireplumber/wireplumber.conf.d/media-role-nodes.conf
 
 # Patched KWin lets devices pin Plasma's virtual keyboard to a configured output.
 dnf5 -y install --setopt=install_weak_deps=False \

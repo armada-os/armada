@@ -1,0 +1,13 @@
+[Unit]
+Description=Present the FEX x86 rootfs at the path Steam's FEX compat tool expects
+ConditionPathExists=/usr/share/fex-emu/RootFS/ArchLinux.sqsh
+Before=systemd-user-sessions.service graphical.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/armada/armada-guestos-mount start
+ExecStop=/usr/libexec/armada/armada-guestos-mount stop
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!-- A system here REPLACES the bundled one, so this is ES-DE's own ps2 entry
+     with the ARMSX2 command added; keep it in sync when ES-DE updates. -->
+<systemList>
+    <system>
+        <name>ps2</name>
+        <fullname>Sony PlayStation 2</fullname>
+        <path>%ROMPATH%/ps2</path>
+        <extension>.bin .BIN .chd .CHD .ciso .CISO .cso .CSO .desktop .dump .DUMP .elf .ELF .gz .GZ .m3u .M3U .mdf .MDF .img .IMG .iso .ISO .isz .ISZ .ngr .NRG .zso .ZSO</extension>
+        <command label="ARMSX2">%EMULATOR_ARMSX2% %ROM%</command>
+        <command label="LRPS2">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/pcsx2_libretro.so %ROM%</command>
+        <command label="PCSX2">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/pcsx2_libretro.so %ROM%</command>
+        <command label="PCSX2 (Standalone)">%EMULATOR_PCSX2% -batch %ROM%</command>
+        <command label="PCSX2 Legacy (Standalone)">%EMULATOR_PCSX2-LEGACY% --nogui %ROM%</command>
+        <command label="Play! (Standalone)">%EMULATOR_PLAY!% --fullscreen --disc %ROM%</command>
+        <command label="Shortcut or script">%ENABLESHORTCUTS% %EMULATOR_OS-SHELL% %ROM%</command>
+        <platform>ps2</platform>
+        <theme>ps2</theme>
+    </system>
+</systemList>

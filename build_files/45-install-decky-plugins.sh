@@ -8,6 +8,7 @@ install_plugin() {
     cp -a "${src}/plugin.json" "${src}/package.json" "${src}/main.py" "${dest}/"
     cp -a "${src}/py_modules" "${dest}/"
     [[ ! -f "${src}/catalog.json" ]] || cp -a "${src}/catalog.json" "${dest}/"
+    [[ ! -d "${src}/templates" ]] || cp -a "${src}/templates" "${dest}/"
     cp -a "${dist}" "${dest}/dist"
     rm -f "${dest}/dist/"*.map
     find "${dest}" -name __pycache__ -type d -prune -exec rm -rf {} +

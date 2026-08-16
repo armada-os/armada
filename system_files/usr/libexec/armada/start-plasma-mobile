@@ -1,0 +1,15 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+export DESKTOP_SESSION=plasma-mobile
+export XDG_CURRENT_DESKTOP=KDE
+export XDG_SESSION_DESKTOP=KDE
+export XDG_SESSION_TYPE=wayland
+
+if command -v /usr/libexec/armada/device-env >/dev/null 2>&1; then
+  set -a
+  eval "$(/usr/libexec/armada/device-env)"
+  set +a
+fi
+
+exec /usr/bin/startplasmamobile

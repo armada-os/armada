@@ -18,6 +18,7 @@ export const saveCompatApplied = (appids: string[]) => {
 export const setSshEnabled = (enabled: boolean) => call<[boolean], boolean>("set_ssh_enabled", enabled);
 export const setMtpEnabled = (enabled: boolean) => call<[boolean], boolean>("set_mtp_enabled", enabled);
 export const setAblAutoEnabled = (enabled: boolean) => call<[boolean], boolean>("set_abl_auto_enabled", enabled);
+export const setDesktopMode = (value: string) => call<[string], string>("set_desktop_mode", value);
 export const setSleepMode = (value: string) => call<[string], string>("set_sleep_mode", value);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
 export const restartGameMode = () => call<[], boolean>("restart_game_mode");

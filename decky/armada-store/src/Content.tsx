@@ -5,23 +5,24 @@ import type { ReactNode } from "react";
 import * as backend from "./backend";
 import { AppRow, TERMINAL_PHASES } from "./components/AppRow";
 import { categoryIcons } from "./icons";
-import { addToSteam, launchShortcut, removeFromSteam, restartSteam } from "./lib/shortcuts";
+import { addToSteam, launchShortcut, removeFromSteam } from "./lib/shortcuts";
 import { styles } from "./styles";
 import type { Catalog, CatalogApp, Job, Status } from "./types";
 
 const SECTIONS = [
-  { key: "emulation", title: "Emulation" },
+  { key: "emulators", title: "Emulators" },
   { key: "applications", title: "Applications" },
-  { key: "compat", title: "Compatibility Tools" },
+  { key: "plugins", title: "Decky Plugins" },
 ];
 
 // The QAM unmounts the panel whenever a menu or modal takes focus, so
 // per-render state cannot survive a drill-down.
 let rememberedView: string | null = null;
 let cachedCatalog: Catalog | null = null;
-// Module scope and never cleared: the panel remounts constantly, and
-// AddShortcut may have run before a failure, so a retry would duplicate.
+// Module scope: the panel remounts constantly, and AddShortcut may have run
+// before a failure, so a retry would duplicate. Removal is safe to repeat.
 const autoAddAttempted = new Set<string>();
+const removalInFlight = new Set<string>();
 
 export function Content() {
   const [catalog, setCatalogState] = useState<Catalog | null>(cachedCatalog);
@@ -93,9 +94,9 @@ export function Content() {
       if (job.phase === "error") {
         toast(app.name, job.error || "Failed");
       } else if (job.phase === "done") {
-        if (job.action === "install") {
+        if (job.action !== "uninstall") {
           installFinished = true;
-          toast(app.name, app.installType === "compat" ? "Installed. Restart Steam to use it." : "Installed");
+          toast(app.name, "Installed");
         } else {
           toast(app.name, "Uninstalled");
         }
@@ -133,21 +134,37 @@ export function Content() {
     await backend.recordShortcut(app.id, appid);
   };
 
+  // A replacement queues while its old shortcut still exists. Dropping that one
+  // is its own phase so a failure retries, leaving the queued add in place.
+  const dropOldShortcut = async (appId: string, previous: number) => {
+    try {
+      removeFromSteam(previous);
+      await backend.clearShortcutRecord(appId, true, previous);
+    } finally {
+      removalInFlight.delete(appId);
+    }
+  };
+
   // The backend keeps the pending list until a shortcut is recorded, so an
   // install that finished with the panel closed is still picked up later.
   useEffect(() => {
     if (!status || !catalog) return;
     const pending = status.pending || [];
     for (const appId of autoAddAttempted) {
-      // Uninstalled and nothing queued: a later reinstall should auto-add again.
-      if (!status.installed?.[appId]?.installed && !pending.includes(appId)) {
-        autoAddAttempted.delete(appId);
-      }
+      // Off the queue: a later install or replacement gets a fresh attempt.
+      if (!pending.includes(appId)) autoAddAttempted.delete(appId);
     }
     for (const appId of pending) {
       const app = catalog.apps.find((entry) => entry.id === appId);
       if (!app || !app.launch) continue;
-      if (status.shortcuts?.[app.id] != null) continue;
+      if (!status.installed?.[app.id]?.installed) continue;
+      const previous = status.shortcuts?.[app.id];
+      if (previous != null) {
+        if (removalInFlight.has(app.id)) continue;
+        removalInFlight.add(app.id);
+        dropOldShortcut(app.id, previous).then(refreshStatus, () => {});
+        continue;
+      }
       if (autoAddAttempted.has(app.id)) continue;
       autoAddAttempted.add(app.id);
       run(addToSteamFlow(app), () => toast(app.name, "Added to Steam"));
@@ -176,6 +193,7 @@ export function Content() {
     const job = jobs.get(app.id) || null;
     const active = !!job && !TERMINAL_PHASES.includes(job.phase);
     const installed = !!status?.installed?.[app.id]?.installed;
+    const conflicts = status?.installed?.[app.id]?.conflicts || [];
     const shortcut = status?.shortcuts?.[app.id];
     const items: ReactNode[] = [];
     if (active) {
@@ -184,7 +202,9 @@ export function Content() {
       if (job?.phase === "error") {
         items.push(<MenuItem key="dismiss" onSelected={() => run(backend.dismissJob(app.id))}>Dismiss error</MenuItem>);
       }
-      const launchable = installed;
+      // A desktop-only tool must not be launched from game mode even if an
+      // older install left a Steam shortcut behind.
+      const launchable = installed && !app.desktopOnly;
       if (shortcut != null && launchable) {
         items.push(
           <MenuItem
@@ -209,27 +229,28 @@ export function Content() {
         );
       }
       const update = installed ? updates[app.id] : undefined;
-      if (!installed || update) {
-        const label = !installed
-          ? "Install"
-          : update?.latest
-            ? `Update to ${update.latest}`
-            : "Update";
+      if (conflicts.length) {
+        // Installing alongside would leave two copies and two shortcuts, so
+        // this replaces the Install action rather than sitting next to it.
+        const kind = conflicts[0].type === "appimage" ? "AppImage" : "Flatpak";
+        items.push(
+          <MenuItem key="replace" onSelected={() => run(backend.replaceApp(app.id))}>
+            {`Replace ${kind} version`}
+          </MenuItem>,
+        );
+      } else if (!installed || update) {
+        // Not the resolved tag: half of them are "nightly" or a commit hash,
+        // and no version is shown to compare against anyway.
         items.push(
           <MenuItem key="install" onSelected={() => run(backend.installApp(app.id))}>
-            {label}
+            {installed ? "Update to latest" : "Install"}
           </MenuItem>,
         );
       }
-      if (app.installType === "compat" && installed) {
+      if (app.desktopOnly && installed) {
         items.push(
-          <MenuItem
-            key="restart"
-            onSelected={() => {
-              if (!restartSteam()) toast("Armada Store", "Restart Steam manually to pick up the new tool");
-            }}
-          >
-            Restart Steam
+          <MenuItem key="desktop" onSelected={() => run(backend.switchToDesktop())}>
+            Switch to Desktop
           </MenuItem>,
         );
       }
@@ -245,7 +266,7 @@ export function Content() {
           </MenuItem>,
         );
       }
-      if (installed) {
+      if (installed && app.installType !== "system") {
         items.push(
           <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut))}>
             Uninstall

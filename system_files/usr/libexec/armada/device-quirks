@@ -55,6 +55,20 @@ else
     fi
 fi
 
+# Some devices need synchronous device suspend ordering. On AYANEO Pocket DS,
+# async suspend can race the Goodix touchscreen against panel/regulator power
+# sequencing and make goodix_suspend abort with -EAGAIN.
+if [[ "${ARMADA_SYNC_SUSPEND:-0}" == "1" ]]; then
+    pm_async_path=${ARMADA_PM_ASYNC_PATH:-/sys/power/pm_async}
+    if [[ -w "$pm_async_path" ]]; then
+        if ! echo 0 >"$pm_async_path"; then
+            echo "device-quirks: failed to disable async suspend via $pm_async_path" >&2
+        fi
+    else
+        echo "device-quirks: $pm_async_path not writable, skipping sync suspend quirk" >&2
+    fi
+fi
+
 if [[ "${ARMADA_SOC_CLASS:-}" == "SM8550" ]]; then
     # A740 wedges the GMU when CPU0 enters its deep power-collapse state.
     cpu0_deep_idle=/sys/devices/system/cpu/cpu0/cpuidle/state1/disable

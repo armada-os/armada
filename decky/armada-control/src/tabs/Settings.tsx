@@ -5,6 +5,7 @@ import {
   setAblAutoEnabled as applyAblAutoEnabled,
   setControllerType as applyControllerType,
   setMtpEnabled as applyMtpEnabled,
+  setDesktopMode as applyDesktopMode,
   setSleepMode as applySleepMode,
   setSshEnabled as applySshEnabled,
 } from "../backend";
@@ -62,6 +63,17 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, ablAutoEnabled: !enabled } : current));
     }
   };
+  const setDesktopMode = async (value: string) => {
+    const previous = config.desktopMode || "desktop";
+    setConfig((current: Config | null) => (current ? { ...current, desktopMode: value } : current));
+    try {
+      const applied = await applyDesktopMode(value);
+      setConfig((current: Config | null) => (current ? { ...current, desktopMode: applied } : current));
+    } catch (error) {
+      setConfig((current: Config | null) => (current ? { ...current, desktopMode: previous } : current));
+      toaster.toast({ title: "Could not change desktop mode", body: String(error) });
+    }
+  }
   const setSleepMode = async (value: string) => {
     const previous = config.sleepMode || "fake";
     setConfig((current) => (current ? { ...current, sleepMode: value } : current));
@@ -96,6 +108,14 @@ export function Settings({ config, setConfig }: {
             value={config.sleepMode || "fake"}
             options={config.sleepModes || []}
             onChange={setSleepMode}
+          />
+        )}
+        {(config.desktopModes?.length || 0) > 1 && (
+          <SelectEdit
+            label="Desktop Mode"
+            value={config.desktopMode || "desktop"}
+            options={config.desktopModes || []}
+            onChange={setDesktopMode}
           />
         )}
         <ToggleRow
