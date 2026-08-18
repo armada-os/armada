@@ -1,0 +1,185 @@
+#!/bin/sh
+set -u
+
+USB=/sys/class/power_supply/qcom-battmgr-usb
+BAT=/sys/class/power_supply/battery
+MASTER=/sys/class/power_supply/hl7139-master
+SLAVE=/sys/class/power_supply/hl7139-slave
+active=0
+
+readv()
+{
+	cat "$1"
+}
+
+log()
+{
+	printf 'pocketevo-charge: %s\n' "$*"
+}
+
+cleanup()
+{
+	set +e
+	printf '0\n' > "$MASTER/online"
+	printf '0\n' > "$SLAVE/online"
+	# The EVO firmware reports USB protocol type SDP even when its separate
+	# adapter type is PD-PPS.  The kernel setter checks the raw adapter type,
+	# so attempt the conservative request and tolerate a non-PPS rejection.
+	printf '9600000\n' > "$USB/voltage_now" 2>/dev/null
+	sleep 1
+	printf '3000000\n' > "$USB/input_current_limit"
+	if test "$active" = 1; then
+		log 'direct-charge session stopped; Qualcomm charger restored'
+	fi
+	active=0
+}
+
+eligible()
+{
+	test -d "$USB" || return 1
+	test -d "$BAT" || return 1
+	test -d "$MASTER" || return 1
+	test -d "$SLAVE" || return 1
+	test "$(readv "$USB/online")" = 1 || return 1
+	test "$(readv "$MASTER/online")" = 0 || return 1
+	test "$(readv "$SLAVE/online")" = 0 || return 1
+	test "$(readv "$MASTER/health")" = Good || return 1
+	test "$(readv "$SLAVE/health")" = Good || return 1
+
+	soc=$(readv "$BAT/capacity") || return 1
+	bat_v=$(readv "$BAT/voltage_now") || return 1
+	bat_t=$(readv "$BAT/temp") || return 1
+	test "$soc" -ge 10 || return 1
+	test "$soc" -le 88 || return 1
+	test "$bat_v" -ge 3500000 || return 1
+	test "$bat_v" -le 4430000 || return 1
+	test "$bat_t" -ge 100 || return 1
+	test "$bat_t" -le 400 || return 1
+}
+
+direct_session()
+{
+	log "starting direct charge at SOC $(readv "$BAT/capacity")%"
+
+	printf '13000\n' > "$USB/input_current_limit" || return 1
+	sleep 2
+	test "$(readv "$USB/current_now")" -le 150000 || return 1
+
+	bat_v=$(readv "$BAT/voltage_now") || return 1
+	target=$((bat_v * 2 + 800000))
+	if test "$target" -lt 8800000; then target=8800000; fi
+	if test "$target" -gt 9200000; then target=9200000; fi
+
+	# The kernel setter verifies that Qualcomm firmware reports a PD-PPS
+	# adapter before accepting this request.
+	printf '%s\n' "$target" > "$USB/voltage_now" || return 1
+	sleep 1
+
+	usb_v=$(readv "$USB/voltage_now") || return 1
+	test "$usb_v" -ge $((target - 500000)) || return 1
+	test "$usb_v" -le $((target + 300000)) || return 1
+
+	printf '1\n' > "$MASTER/online" || return 1
+	sleep 0.2
+	printf '1\n' > "$SLAVE/online" || return 1
+	test "$(readv "$MASTER/online")" = 1 || return 1
+	test "$(readv "$SLAVE/online")" = 1 || return 1
+	active=1
+
+	# Let the inrush settle before the first watch-loop sample;
+	# the per-pump current guard trips on the enable transient otherwise.
+	sleep 3
+
+	i=0
+	o_i=0
+	while :; do
+		usb_online=$(readv "$USB/online") || return 1
+		usb_v=$(readv "$USB/voltage_now") || return 1
+		bat_soc=$(readv "$BAT/capacity") || return 1
+		bat_v=$(readv "$BAT/voltage_now") || return 1
+		bat_i=$(readv "$BAT/current_now") || return 1
+		bat_t=$(readv "$BAT/temp") || return 1
+		master_v=$(readv "$MASTER/voltage_now") || return 1
+		master_i=$(readv "$MASTER/current_now") || return 1
+		master_t=$(readv "$MASTER/temp") || return 1
+		slave_v=$(readv "$SLAVE/voltage_now") || return 1
+		slave_i=$(readv "$SLAVE/current_now") || return 1
+		slave_t=$(readv "$SLAVE/temp") || return 1
+		total_i=$((master_i + slave_i))
+
+		if test "$usb_online" != 1; then log 'guard: USB input went offline'; return 1; fi
+		if test "$bat_soc" -ge 90; then log "guard: SOC ${bat_soc}% reached the 90% direct-charge limit"; return 1; fi
+		if test "$bat_v" -gt 4500000; then log "guard: battery voltage ${bat_v}uV exceeds the EVO 4500000uV OVP limit"; return 1; fi
+		if test "$bat_i" -gt 7000000; then log "guard: battery current ${bat_i}uA exceeds 7000000uA"; return 1; fi
+		if test "$bat_t" -lt 100 || test "$bat_t" -gt 400; then log "guard: battery temperature ${bat_t}dC is outside 100..400dC"; return 1; fi
+		if test "$(readv "$MASTER/online")" != 1; then log 'guard: master charge pump went offline'; return 1; fi
+		if test "$(readv "$SLAVE/online")" != 1; then log 'guard: slave charge pump went offline'; return 1; fi
+		if test "$(readv "$MASTER/health")" != Good; then log 'guard: master charge pump reported a fault'; return 1; fi
+		if test "$(readv "$SLAVE/health")" != Good; then log 'guard: slave charge pump reported a fault'; return 1; fi
+		test "$master_v" -ge 8000000 || return 1
+		test "$master_v" -le 10500000 || return 1
+		test "$slave_v" -ge 8000000 || return 1
+		test "$slave_v" -le 10500000 || return 1
+		test "$master_i" -le 1800000 || return 1
+		test "$slave_i" -le 1800000 || return 1
+		if test "$total_i" -gt 3120000; then
+			# Debounce: a single out-of-range sample is usually a transient
+			# during the ramp (the controller may already be pulling back);
+			# only end the session on 3 consecutive samples (~1.5 s).
+			o_i=$((o_i + 1))
+			if test "$o_i" -ge 3; then
+				log "guard: combined pump input ${total_i}uA exceeds 3120000uA"
+				return 1
+			fi
+		elif test "$o_i" -gt 0; then
+			o_i=0
+		fi
+		if test "$master_t" -gt 650 || test "$slave_t" -gt 650; then log "guard: pump temperature ${master_t}/${slave_t}dC exceeds 650dC"; return 1; fi
+
+		# Match the EVO DTBO's 4.450 V alarm and 4.500 V hardware OVP by
+		# tapering the PPS request before the cutoff, instead of treating
+		# normal CV entry as an abrupt fault.
+		if test "$bat_v" -gt 4450000; then
+			target=$((target - 80000))
+		elif test "$bat_v" -gt 4430000; then
+			# Hold the last request in the CV-entry hysteresis band so the
+			# current controller does not immediately ramp it back up.
+			:
+		elif test "$total_i" -gt 3080000 || test "$bat_i" -gt 6500000; then
+			target=$((target - 40000))
+		elif test "$total_i" -lt 2300000 && test "$bat_i" -lt 6500000 && test "$target" -le 9860000; then
+			target=$((target + 40000))
+		elif test "$total_i" -lt 3080000 && test "$bat_i" -lt 6500000 && test "$target" -lt 10500000; then
+			target=$((target + 20000))
+		fi
+
+		if test "$target" -lt 8000000; then target=8000000; fi
+		if test "$target" -gt 10500000; then target=10500000; fi
+		printf '%s\n' "$target" > "$USB/voltage_now" || return 1
+
+		if test $((i % 10)) -eq 0; then
+			device_mw=$((master_v * total_i / 1000000000))
+			request_mw=$((target * total_i / 1000000000))
+			log "SOC=${bat_soc}% request=${target}uV input=${total_i}uA source=${request_mw}mW device=${device_mw}mW battery=${bat_v}uV/${bat_i}uA temps=${bat_t}/${master_t}/${slave_t}dC"
+		fi
+
+		i=$((i + 1))
+		sleep 0.5
+	done
+}
+
+trap 'exit 0' HUP INT TERM
+trap cleanup EXIT
+
+cleanup
+while :; do
+	if eligible; then
+		if ! direct_session; then
+			log 'guard or control operation ended the direct-charge session'
+		fi
+		cleanup
+		sleep 60
+	else
+		sleep 5
+	fi
+done
