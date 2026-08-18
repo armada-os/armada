@@ -52,6 +52,11 @@ grep -qx 'MimeType=x-scheme-handler/steam;' "$ENTRY" \
 grep -qx 'x-scheme-handler/steam=steam.desktop' "$MIMEAPPS" \
     || fail "mimeapps.list has no default for x-scheme-handler/steam"
 
+# Directory-opening actions such as Steam's file browser and Firefox's
+# "Show in Folder" need a system default on a fresh user profile.
+grep -qx 'inode/directory=org.kde.dolphin.desktop' "$MIMEAPPS" \
+    || fail "mimeapps.list has no default directory handler"
+
 # system_files is copied after the RPM scriptlets, so the cache needs a rebuild.
 grep -q 'update-desktop-database -q /usr/share/applications' "$VENDOR" \
     || fail "build does not refresh mimeinfo.cache after vendoring system_files"
