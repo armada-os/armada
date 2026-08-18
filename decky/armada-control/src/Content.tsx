@@ -1,13 +1,14 @@
 import { Field, PanelSection, Tabs } from "@decky/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { getConfig, getInstalledGames, savePowerConfig, saveTweaks } from "./backend";
+import { getConfig, getInstalledGames, savePowerConfig, saveRGBConfig, saveTweaks } from "./backend";
 import { useDebouncedSave } from "./hooks/useDebouncedSave";
 import { tabIcons } from "./icons";
 import { currentGame } from "./lib/games";
 import { styles } from "./styles";
 import { Compatibility } from "./tabs/Compatibility";
 import { Power } from "./tabs/Power";
+import { RGB } from "./tabs/RGB";
 import { Settings } from "./tabs/Settings";
 import type { Config } from "./types";
 
@@ -17,6 +18,7 @@ export function Content() {
   const [message, setMessage] = useState("Loading");
   const savedPowerSnapshot = useRef("");
   const savedTweaksSnapshot = useRef("");
+  const savedRgbSnapshot = useRef("");
   const installedGamesRequested = useRef(false);
   const load = useCallback(async () => {
     try {
@@ -25,6 +27,7 @@ export function Content() {
       next.selectedGame = next.game || null;
       savedPowerSnapshot.current = JSON.stringify(next.power);
       savedTweaksSnapshot.current = JSON.stringify(next.tweaks);
+      savedRgbSnapshot.current = JSON.stringify(next.rgb);
       setConfig((current) => ({ ...next, installedGames: current?.installedGames || next.installedGames }));
     } catch (error) {
       setMessage(String(error));
@@ -86,9 +89,30 @@ export function Content() {
         activeTab={tab}
         onShowTab={setTab}
         tabs={[
-          { id: "Compatibility", title: tabIcons.Compatibility, content: tabContent(<Compatibility config={config} setConfig={setConfig} />) },
-          { id: "Power", title: tabIcons.Power, content: tabContent(<Power config={config} setConfig={setConfig} />) },
-          { id: "Advanced", title: tabIcons.Advanced, content: tabContent(<Settings config={config} setConfig={setConfig} />) },
+          {
+            id: "Compatibility",
+            title: tabIcons.Compatibility,
+            content: tabContent(tab === "Compatibility" ? <Compatibility config={config} setConfig={setConfig} /> : null),
+          },
+          {
+            id: "Power",
+            title: tabIcons.Power,
+            content: tabContent(tab === "Power" ? <Power config={config} setConfig={setConfig} /> : null),
+          },
+          ...(config.rgbSupported !== false
+            ? [
+                {
+                  id: "RGB",
+                  title: tabIcons.RGB,
+                  content: tabContent(tab === "RGB" ? <RGB config={config} setConfig={setConfig} /> : null),
+                },
+              ]
+            : []),
+          {
+            id: "Advanced",
+            title: tabIcons.Advanced,
+            content: tabContent(tab === "Advanced" ? <Settings config={config} setConfig={setConfig} /> : null),
+          },
         ]}
       />
     </div>

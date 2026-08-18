@@ -79,6 +79,20 @@ export interface PerfInfo {
   cpuCount: number;
 }
 
+export interface RGBConfig {
+  enabled: boolean;
+  brightness: number;
+  effect: string;
+  speed: number;
+  color: [number, number, number];
+  sync_zones: boolean;
+  sticks_color: [number, number, number];
+  sides_color: [number, number, number];
+  sleep_off: boolean;
+  zones?: string[];
+  supported?: boolean;
+}
+
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
@@ -101,6 +115,8 @@ export interface Config {
   calibration?: CalibrationState;
   game?: GameRef | null;
   selectedGame?: GameRef | null;
+  rgb?: RGBConfig;
+  rgbSupported?: boolean;
 }
 
 export type Capture = Record<string, { center: number; min: number; max: number; range: number }>;

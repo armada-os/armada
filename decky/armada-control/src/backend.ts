@@ -1,11 +1,12 @@
 import { call } from "@decky/api";
-import type { CalibrationState, Capture, Config, InstalledGame, PowerConfig, Tweaks } from "./types";
+import type { CalibrationState, Capture, Config, InstalledGame, PowerConfig, RGBConfig, Tweaks } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
 export const getCompatMappedAppids = (tool: string) => call<[string], string[]>("get_compat_mapped_appids", tool);
 export const savePowerConfig = (data: PowerConfig) => call<[PowerConfig], Config>("save_power_config", data);
 export const saveTweaks = (data: Tweaks) => call<[Tweaks], Config>("save_tweaks", data);
+export const saveRGBConfig = (data: RGBConfig) => call<[RGBConfig], Config>("save_rgb_config", data);
 export const getCompatApplied = () => call<[], string[]>("get_compat_applied");
 let compatAppliedSaveChain = Promise.resolve<unknown>(undefined);
 export const saveCompatApplied = (appids: string[]) => {

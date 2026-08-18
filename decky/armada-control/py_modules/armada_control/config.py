@@ -1,5 +1,6 @@
 from .controller import CONTROLLER_TYPES, controller_type
 from .power import factory_power_defaults, parse_power
+from .rgb import get_rgb_state
 from .steam import installed_games
 from .system import (
     abl_auto_enabled,
@@ -19,6 +20,7 @@ from .tweaks import fex_profile_labels, load_fex_contract, load_tweaks
 def build_config(include_games=True):
     fex_contract = load_fex_contract()
     env = device_env()
+    rgb = get_rgb_state()
     return {
         "power": parse_power(),
         "powerDefaults": factory_power_defaults(),
@@ -38,4 +40,6 @@ def build_config(include_games=True):
         "sleepModes": sleep_modes(),
         "controllerType": controller_type(),
         "controllerTypes": [{"data": key, "label": label} for key, label in CONTROLLER_TYPES.items()],
+        "rgb": rgb,
+        "rgbSupported": rgb.get("supported", False),
     }
