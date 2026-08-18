@@ -12,6 +12,7 @@ SLEEP_MODE_LABELS = {
     "fake": "Fake",
     "s2idle": "s2idle",
     "deep": "Deep",
+    "auto": "Auto adjust",
 }
 DESKTOP_MODE_LABELS = {
     "mobile": "Plasma Mobile",
@@ -130,7 +131,7 @@ def desktop_modes():
     return [{"data": mode, "label": DESKTOP_MODE_LABELS[mode]} for mode in modes]
 
 def sleep_modes():
-    modes = ["fake"]
+    modes = ["fake", "auto"]
     advertised = {word.strip("[]") for word in read_text(MEM_SLEEP_PATH).split()}
     modes.extend(mode for mode in ("s2idle", "deep") if mode in advertised)
     return [{"data": mode, "label": SLEEP_MODE_LABELS[mode]} for mode in modes]

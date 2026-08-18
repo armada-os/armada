@@ -163,7 +163,6 @@ def select_mem_sleep(mode):
     if mode in {"s2idle", "deep"}:
         MEM_SLEEP_PATH.write_text(f"{mode}\n", encoding="utf-8")
 
-
 def abl_auto_enabled():
     for path, key in ((ABL_CONFIG, "auto_update_enabled"), (ABL_MANIFEST, "ARMADA_ABL_AUTO")):
         try:
@@ -268,7 +267,7 @@ def available_sleep_modes():
         }
     except OSError:
         advertised = set()
-    return {"fake"} | ({"s2idle", "deep"} & advertised)
+    return {"fake", "auto"} | ({"s2idle", "deep"} & advertised)
 
 def action_get_desktop_mode(request):
     return {"value": get_desktop_mode()}

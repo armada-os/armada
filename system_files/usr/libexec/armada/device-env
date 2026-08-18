@@ -48,9 +48,9 @@ selected_mem_sleep=$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' <<<"$mem_sleep_modes")
 sleep_config=${ARMADA_SLEEP_CONFIG:-/etc/armada/sleep.conf}
 if [[ -r "$sleep_config" ]]; then
     while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" =~ ^[[:space:]]*suspend_mode[[:space:]]*=[[:space:]]*(fake|s2idle|deep)[[:space:]]*$ ]]; then
+        if [[ "$line" =~ ^[[:space:]]*suspend_mode[[:space:]]*=[[:space:]]*(fake|s2idle|deep|auto)[[:space:]]*$ ]]; then
             suspend_mode=${BASH_REMATCH[1]}
-            if [[ "$suspend_mode" == fake ]] || grep -qw "$suspend_mode" <<<"$mem_sleep_modes"; then
+            if [[ "$suspend_mode" == fake || "$suspend_mode" == auto ]] || grep -qw "$suspend_mode" <<<"$mem_sleep_modes"; then
                 ARMADA_SUSPEND_MODE=$suspend_mode
             else
                 ARMADA_SUSPEND_MODE=$profile_suspend_mode
@@ -63,6 +63,20 @@ if [[ "${ARMADA_SUSPEND_MODE:-fake}" == "mem" ]]; then
         ARMADA_SUSPEND_MODE=$selected_mem_sleep
     else
         ARMADA_SUSPEND_MODE=fake
+    fi
+fi
+
+# auto: charge-aware sleep mode. Deep sleep powers down the ADSP, which
+# kills the PD contract and the battery-manager firmware — a plugged-in
+# device then drains instead of charging (and can wedge on attach).
+# s2idle keeps the ADSP alive, so charging continues. Pick s2idle while a
+# charger is present, deep otherwise.
+if [[ "${ARMADA_SUSPEND_MODE:-fake}" == "auto" ]]; then
+    usb_online=${ARMADA_USB_ONLINE_PATH:-/sys/class/power_supply/qcom-battmgr-usb/online}
+    if [[ -r "$usb_online" ]] && [[ "$(<"$usb_online")" == "1" ]]; then
+        ARMADA_SUSPEND_MODE=s2idle
+    else
+        ARMADA_SUSPEND_MODE=deep
     fi
 fi
 
