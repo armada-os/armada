@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+import json
 import os
 import pathlib
 import re
+import shutil
 import stat
 
 
@@ -142,10 +144,42 @@ def strip_compat_wildcard():
         pass
 
 
+def fix_lsfg_vulkan_layer():
+    # The decky-lsfg-vk plugin upstream installer writes a broken relative library_path
+    # ("../../../lib/liblsfg-vk.so") and expects liblsfg-vk.so in ~/.local/lib/.
+    # Ensure ~/.local/lib/liblsfg-vk.so exists and the layer manifest points to it.
+    plugin_so = HOME_DIR / "homebrew/plugins/Decky LSFG-VK/bin/liblsfg-vk-arm64.so"
+    target_lib_dir = HOME_DIR / ".local/lib"
+    target_so = target_lib_dir / "liblsfg-vk.so"
+
+    if plugin_so.is_file() and not target_so.is_file():
+        try:
+            target_lib_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(plugin_so, target_so)
+            home_stat = HOME_DIR.stat()
+            os.chown(target_so, home_stat.st_uid, home_stat.st_gid)
+            print("Installed liblsfg-vk.so to ~/.local/lib/")
+        except OSError as exc:
+            print(f"Failed to copy liblsfg-vk.so: {exc}")
+
+    manifest_path = HOME_DIR / ".local/share/vulkan/implicit_layer.d/VkLayer_LS_frame_generation.json"
+    if manifest_path.is_file():
+        try:
+            content = json.loads(manifest_path.read_text(encoding="utf-8"))
+            lib_path = content.get("layer", {}).get("library_path", "")
+            if lib_path.startswith("..") or not pathlib.Path(lib_path).is_file():
+                content["layer"]["library_path"] = str(target_so)
+                manifest_path.write_text(json.dumps(content, indent=2), encoding="utf-8")
+                print("Fixed VkLayer_LS_frame_generation.json library_path to absolute ~/.local/lib/liblsfg-vk.so")
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Failed to normalize LSFG Vulkan manifest: {exc}")
+
+
 def main():
     fix_desktop_ownership()
     fix_proton_11_tool_id()
     strip_compat_wildcard()
+    fix_lsfg_vulkan_layer()
 
 
 if __name__ == "__main__":
