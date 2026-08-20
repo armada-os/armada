@@ -3,18 +3,66 @@
      with the ARMSX2 command added; keep it in sync when ES-DE updates. -->
 <systemList>
     <system>
+        <name>pico8</name>
+        <fullname>PICO-8 Fantasy Console</fullname>
+        <path>%ROMPATH%/pico8</path>
+        <extension>.p8 .P8 .png .PNG</extension>
+        <command label="PICO-8 (Standalone 64-bit)">%EMULATOR_PICO-8_64% -root_path %GAMEDIR% -run %ROM%</command>
+        <command label="PICO-8 (Standalone)">%EMULATOR_PICO-8% -root_path %GAMEDIR% -run %ROM%</command>
+        <command label="PICO-8 Splore (Standalone 64-bit)">%EMULATOR_PICO-8_64% -root_path %GAMEDIR% -splore</command>
+        <command label="PICO-8 Splore (Standalone)">%EMULATOR_PICO-8% -root_path %GAMEDIR% -splore</command>
+        <command label="Retro8">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/retro8_libretro.so %ROM%</command>
+        <platform>pico8</platform>
+        <theme>pico8</theme>
+    </system>
+    <system>
         <name>ps2</name>
         <fullname>Sony PlayStation 2</fullname>
         <path>%ROMPATH%/ps2</path>
         <extension>.bin .BIN .chd .CHD .ciso .CISO .cso .CSO .desktop .dump .DUMP .elf .ELF .gz .GZ .m3u .M3U .mdf .MDF .img .IMG .iso .ISO .isz .ISZ .ngr .NRG .zso .ZSO</extension>
         <command label="ARMSX2">%EMULATOR_ARMSX2% %ROM%</command>
         <command label="LRPS2">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/pcsx2_libretro.so %ROM%</command>
-        <command label="PCSX2">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/pcsx2_libretro.so %ROM%</command>
-        <command label="PCSX2 (Standalone)">%EMULATOR_PCSX2% -batch %ROM%</command>
-        <command label="PCSX2 Legacy (Standalone)">%EMULATOR_PCSX2-LEGACY% --nogui %ROM%</command>
-        <command label="Play! (Standalone)">%EMULATOR_PLAY!% --fullscreen --disc %ROM%</command>
         <command label="Shortcut or script">%ENABLESHORTCUTS% %EMULATOR_OS-SHELL% %ROM%</command>
         <platform>ps2</platform>
         <theme>ps2</theme>
+    </system>
+    <system>
+        <name>psvita</name>
+        <fullname>Sony PlayStation Vita</fullname>
+        <path>%ROMPATH%/psvita</path>
+        <extension>.psvita</extension>
+        <command label="Vita3K (Standalone)">%EMULATOR_VITA3K% -r %INJECT%=%BASENAME%.psvita</command>
+        <platform>psvita</platform>
+        <theme>psvita</theme>
+    </system>
+    <system>
+        <name>scummvm</name>
+        <fullname>ScummVM Game Engine</fullname>
+        <path>%ROMPATH%/scummvm</path>
+        <extension>.scummvm .SCUMMVM .svm .SVM</extension>
+        <command label="ScummVM (Standalone)">%STARTDIR%=%GAMEDIR% %EMULATOR_SCUMMVM% -p %ROM% --auto-detect</command>
+        <command label="ScummVM">%EMULATOR_RETROARCH% -L %CORE_RETROARCH%/scummvm_libretro.so %ROM%</command>
+        <command label="DREAMM (Standalone)">%STARTDIR%=%GAMEDIR% %EMULATOR_DREAMM% .</command>
+        <platform>scummvm</platform>
+        <theme>scummvm</theme>
+    </system>
+    <system>
+        <name>wiiu</name>
+        <fullname>Nintendo Wii U</fullname>
+        <path>%ROMPATH%/wiiu</path>
+        <extension>.elf .ELF .rpx .RPX .tmd .TMD .wua .WUA .wud .WUD .wuhb .WUHB .wux .WUX</extension>
+        <command label="Cemu (Standalone)">%EMULATOR_CEMU% -f -g %ROM%</command>
+        <platform>wiiu</platform>
+        <theme>wiiu</theme>
+    </system>
+    <system>
+        <name>xbox360</name>
+        <fullname>Microsoft Xbox 360</fullname>
+        <path>%ROMPATH%/xbox360</path>
+        <extension>. .desktop .iso .ISO .sh .xex .XEX .zar .ZAR</extension>
+        <command label="Xenia Edge (Standalone)">%EMULATOR_XENIAEDGE% %INJECT%=%BASENAME%.commands %ROM%</command>
+        <command label="Shortcut or script">%ENABLESHORTCUTS% %EMULATOR_OS-SHELL% %ROM%</command>
+        <platform>xbox360</platform>
+        <theme>xbox360</theme>
     </system>
 </systemList>

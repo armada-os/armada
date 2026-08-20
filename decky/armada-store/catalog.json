@@ -262,7 +262,8 @@
       "summary": "Install and manage Proton and Wine runners",
       "category": "applications",
       "icon": "https://dl.flathub.org/media/com/vysp3r/ProtonPlus/c09f1de1cb1a40acdd89eee078699f2d/icons/128x128/com.vysp3r.ProtonPlus.png",
-      "note": "Restart Steam after installing a runner",
+      "note": "Run it from desktop mode",
+      "desktopOnly": true,
       "install": {
         "type": "flatpak",
         "ref": "com.vysp3r.ProtonPlus"
@@ -279,6 +280,44 @@
         "type": "system",
         "exec": "/usr/bin/heroic",
         "launchOptions": "--no-sandbox"
+      }
+    },
+    {
+      "id": "firefox",
+      "name": "Firefox",
+      "summary": "Web browser",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/icons/128x128/org.mozilla.firefox.png",
+      "note": "Ships with Armada",
+      "install": {
+        "type": "system",
+        "exec": "/usr/bin/firefox"
+      }
+    },
+    {
+      "id": "flatseal",
+      "name": "Flatseal",
+      "summary": "Manage Flatpak permissions",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/github/tchx84.Flatseal/462bde383c024a52b3132ae3df79704a/icons/128x128/com.github.tchx84.Flatseal.png",
+      "note": "Run it from desktop mode",
+      "desktopOnly": true,
+      "install": {
+        "type": "flatpak",
+        "ref": "com.github.tchx84.Flatseal"
+      }
+    },
+    {
+      "id": "distroshelf",
+      "name": "DistroShelf",
+      "summary": "Graphical interface for managing Distrobox containers",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/ranfdev/DistroShelf/a795d9521e32f6b32b6e226d368a25c1/icons/128x128/com.ranfdev.DistroShelf.png",
+      "note": "Run it from desktop mode",
+      "desktopOnly": true,
+      "install": {
+        "type": "flatpak",
+        "ref": "com.ranfdev.DistroShelf"
       }
     },
     {

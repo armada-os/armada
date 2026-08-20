@@ -46,6 +46,10 @@ export const styles = `
         line-height: 16px;
         opacity: 0.62;
       }
+      .armada-control-tabs .armada-note-error {
+        color: #ff6b6b;
+        opacity: 1;
+      }
       .armada-control-tabs .armada-advanced-group {
         margin-left: 6px;
         padding-left: 6px;

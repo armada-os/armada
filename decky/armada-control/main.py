@@ -10,7 +10,7 @@ from armada_control.calibration import (
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
 from armada_control.power import save_power_config
-from armada_control.steam import installed_games
+from armada_control.steam import compat_mapped_appids, installed_games
 from armada_control.system import (
     reapply_perf,
     restart_game_mode,
@@ -30,6 +30,9 @@ class Plugin:
 
     async def get_installed_games(self):
         return await asyncio.to_thread(installed_games)
+
+    async def get_compat_mapped_appids(self, tool):
+        return await asyncio.to_thread(compat_mapped_appids, tool)
 
     async def save_power_config(self, data):
         await asyncio.to_thread(save_power_config, data)

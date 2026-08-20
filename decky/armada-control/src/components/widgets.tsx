@@ -1,28 +1,27 @@
-import { Dropdown, DropdownItemInternal, Field, PanelSection, PanelSectionRow, SliderField, ToggleField } from "@decky/ui";
+import { Dropdown, Field, PanelSection, PanelSectionRow, SliderField, ToggleField } from "@decky/ui";
 import type { ReactNode } from "react";
 import type { DropdownChoice } from "../types";
 
 type Option = string | DropdownChoice;
 
-export function SelectEdit({ label, value, options, onChange, labelBelow, disabled }: {
+export function SelectEdit({ label, value, options, onChange, labelBelow, disabled, placeholder }: {
   label?: ReactNode;
   value: any;
   options: Option[];
   onChange: (data: any) => void;
   labelBelow?: boolean;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   const rgOptions = options.map((option) => (typeof option === "string" ? { data: option, label: option } : option));
   return (
     <PanelSectionRow>
       {label === undefined ? (
-        <Dropdown disabled={disabled} selectedOption={value} rgOptions={rgOptions} onChange={(option) => onChange(option.data)} />
-      ) : labelBelow ? (
-        <Field label={label} childrenLayout="below" childrenContainerWidth="max" disabled={disabled}>
-          <Dropdown disabled={disabled} selectedOption={value} rgOptions={rgOptions} onChange={(option) => onChange(option.data)} />
-        </Field>
+        <Dropdown disabled={disabled} strDefaultLabel={placeholder} selectedOption={value} rgOptions={rgOptions} onChange={(option) => onChange(option.data)} />
       ) : (
-        <DropdownItemInternal disabled={disabled} childrenContainerWidth="max" label={label} selectedOption={value} rgOptions={rgOptions} onChange={(option) => onChange(option.data)} />
+        <Field label={label} childrenLayout="below" childrenContainerWidth="max" disabled={disabled}>
+          <Dropdown disabled={disabled} strDefaultLabel={placeholder} selectedOption={value} rgOptions={rgOptions} onChange={(option) => onChange(option.data)} />
+        </Field>
       )}
     </PanelSectionRow>
   );

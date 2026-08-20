@@ -1,0 +1,3 @@
+#!/usr/bin/bash
+# Steam's generated game shortcuts and steam:// handlers hardcode `steam`.
+exec /usr/libexec/armada/launch-steam --desktop "$@"

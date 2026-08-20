@@ -4,11 +4,74 @@
     <emulator name="ARMSX2">
         <rule type="systempath">
             <entry>armsx2</entry>
+            <entry>net.armsx2.ARMSX2</entry>
         </rule>
         <rule type="staticpath">
             <entry>~/Applications/ARMSX2*.AppImage</entry>
+            <entry>~/.local/share/applications/ARMSX2*.AppImage</entry>
             <entry>~/.local/bin/ARMSX2*.AppImage</entry>
             <entry>~/bin/ARMSX2*.AppImage</entry>
+        </rule>
+    </emulator>
+    <emulator name="CEMU">
+        <rule type="systempath">
+            <entry>cemu</entry>
+            <entry>Cemu</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/Applications/Cemu*.AppImage</entry>
+            <entry>~/.local/share/applications/Cemu*.AppImage</entry>
+            <entry>~/.local/bin/Cemu*.AppImage</entry>
+            <entry>~/bin/Cemu*.AppImage</entry>
+            <entry>~/Applications/Cemu/Cemu</entry>
+            <entry>~/.local/share/applications/Cemu/Cemu</entry>
+            <entry>~/.local/bin/Cemu/Cemu</entry>
+            <entry>~/bin/Cemu/Cemu</entry>
+            <entry>/var/lib/flatpak/exports/bin/info.cemu.Cemu</entry>
+            <entry>~/.local/share/flatpak/exports/bin/info.cemu.Cemu</entry>
+        </rule>
+    </emulator>
+    <emulator name="PICO-8_64">
+        <rule type="systempath">
+            <entry>pico8_64</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/Applications/pico-8/pico8_64</entry>
+            <entry>~/.local/share/applications/pico-8/pico8_64</entry>
+            <entry>~/.local/bin/pico-8/pico8_64</entry>
+            <entry>~/bin/pico-8/pico8_64</entry>
+        </rule>
+    </emulator>
+    <emulator name="VITA3K">
+        <rule type="systempath">
+            <entry>vita3k</entry>
+            <entry>Vita3K</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/Applications/Vita3K*.AppImage</entry>
+            <entry>~/.local/share/applications/Vita3K*.AppImage</entry>
+            <entry>~/.local/bin/Vita3K*.AppImage</entry>
+            <entry>~/bin/Vita3K*.AppImage</entry>
+            <entry>~/Applications/Vita3K/Vita3K</entry>
+            <entry>~/.local/share/applications/Vita3K/Vita3K</entry>
+            <entry>~/.local/bin/Vita3K/Vita3K</entry>
+            <entry>~/bin/Vita3K/Vita3K</entry>
+        </rule>
+    </emulator>
+    <emulator name="XENIAEDGE">
+        <rule type="systempath">
+            <entry>xenia_edge</entry>
+            <entry>xenia</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/Applications/xenia*.AppImage</entry>
+            <entry>~/.local/share/applications/xenia*.AppImage</entry>
+            <entry>~/.local/bin/xenia*.AppImage</entry>
+            <entry>~/bin/xenia*.AppImage</entry>
+            <entry>~/Applications/Xenia*.AppImage</entry>
+            <entry>~/.local/share/applications/Xenia*.AppImage</entry>
+            <entry>~/.local/bin/Xenia*.AppImage</entry>
+            <entry>~/bin/Xenia*.AppImage</entry>
         </rule>
     </emulator>
 </ruleList>

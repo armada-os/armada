@@ -30,6 +30,26 @@ export function setWindowsCompatTool(toolName: string | undefined): void {
   windowsCompatTool = toolName || DEFAULT_WINDOWS_COMPAT_TOOL;
 }
 
+// A saved default can name a tool a later release stopped shipping.
+async function effectiveWindowsCompatTool(): Promise<string> {
+  const tools = await getProtonTools();
+  if (!tools.length) return "";
+  if (tools.some((tool) => tool.id === windowsCompatTool)) return windowsCompatTool;
+  return tools.some((tool) => tool.id === DEFAULT_WINDOWS_COMPAT_TOOL) ? DEFAULT_WINDOWS_COMPAT_TOOL : "";
+}
+
+// Steam keeps reporting stale details for an app whose tool went missing, so a write
+// to one can never be confirmed; take the call at its word.
+async function repinToTool(appid: string, tool: string): Promise<boolean> {
+  try {
+    await specifyCompatTool(appid, tool);
+  } catch (error) {
+    return false;
+  }
+  markCompatHandled(appid);
+  return true;
+}
+
 export function configureCompatPolicy(toolName: string | undefined, autoApply: boolean, appids: string[]): void {
   setWindowsCompatTool(toolName);
   autoApplyCompat = autoApply;
@@ -111,9 +131,9 @@ export async function resolveCompatState(appid: string): Promise<CompatState | n
   };
 }
 
-export function compatSelection(state: CompatState | null): string {
+export function compatSelection(state: CompatState | null, defaultTool?: string): string {
   if (!state || !state.tool || state.priority < 250) return FOLLOW_STEAM_COMPAT;
-  return state.tool === windowsCompatTool ? USE_DEFAULT_COMPAT : state.tool;
+  return state.tool === (defaultTool || windowsCompatTool) ? USE_DEFAULT_COMPAT : state.tool;
 }
 
 export async function specifyCompatTool(appid: string, toolName: string): Promise<void> {
@@ -275,17 +295,17 @@ async function applyCompatDefaultForRoute(appid: string, route: CompatRoute | nu
     markCompatHandled(appid);
     return true;
   }
-  const protonTools = await getProtonTools();
-  if (!protonTools.some((tool) => tool.id === windowsCompatTool)) return false;
+  const tool = await effectiveWindowsCompatTool();
+  if (!tool) return false;
   const waiter = waitForAppDetails(
     appid,
     (details) => Number(details.nCompatToolPriority || 0) >= 250
-      && String(details.strCompatToolName || "") === windowsCompatTool,
+      && String(details.strCompatToolName || "") === tool,
     5000,
     250,
   );
   try {
-    await specifyCompatTool(appid, windowsCompatTool);
+    await specifyCompatTool(appid, tool);
   } catch (error) {
     waiter.cancel();
     return false;
@@ -367,21 +387,35 @@ async function applyGamePolicyWithRetries(appid: string, onHandledChange: () => 
   }
 }
 
-export async function migrateWindowsCompatTool(appids: string[], oldTool: string, newTool: string): Promise<void> {
+// Steam reports an unresolvable tool as unset, so oldTool matches nothing; pinnedAppids carries those games.
+export async function migrateWindowsCompatTool(
+  appids: string[],
+  oldTool: string,
+  newTool: string,
+  pinnedAppids?: string[] | null,
+): Promise<void> {
   if (!oldTool || oldTool === newTool) return;
   const protonTools = await getProtonTools();
   if (!protonTools.some((tool) => tool.id === newTool)) return;
   setWindowsCompatTool(newTool);
+  const pinned = pinnedAppids ? new Set(pinnedAppids.map(String)) : null;
   let next = 0;
   const worker = async () => {
     while (next < appids.length) {
       const appid = appids[next++];
+      if (pinned && !pinned.has(appid)) continue;
       const type = await resolveOverviewType(appid);
       if (type !== 1) continue;
       const details = await resolveDetails(appid);
       if (!details) continue;
-      if (Number(details.nCompatToolPriority || 0) < 250) continue;
-      if (String(details.strCompatToolName || "") !== oldTool) continue;
+      const priority = Number(details.nCompatToolPriority || 0);
+      if (pinned) {
+        // A pin the client can resolve means the stored record is stale.
+        if (priority >= 250) continue;
+        await repinToTool(appid, newTool);
+        continue;
+      }
+      if (priority < 250 || String(details.strCompatToolName || "") !== oldTool) continue;
       for (let attempt = 0; attempt < 3; attempt++) {
         if (await applyCompatDefaultForRoute(appid, "windows")) break;
       }
@@ -390,20 +424,32 @@ export async function migrateWindowsCompatTool(appids: string[], oldTool: string
   await Promise.all(Array.from({ length: Math.min(10, appids.length) }, worker));
 }
 
-export async function resetCompatToolToDefault(appid: string): Promise<string> {
+export async function resetCompatToolToDefault(appid: string, pinnedAppids?: string[] | null): Promise<string> {
   const type = await resolveOverviewType(appid);
   if (type === STEAM_SHORTCUT_APP_TYPE) {
     await specifyCompatTool(appid, "");
     return "";
   }
   if (type !== 1) return "";
+  const tool = await effectiveWindowsCompatTool();
+  // Clearing first needs a default to put back and a known pin state; null is unknown.
+  if (!tool || pinnedAppids === null) {
+    const state = await resolveCompatState(appid);
+    return state && state.priority >= 250 ? state.tool : "";
+  }
+  // A dangling pin reads as unset, so clearing it first would route the game as Linux.
+  if (pinnedAppids?.includes(appid)) return (await repinToTool(appid, tool)) ? tool : "";
   const route = await clearCompatToolAndResolveRoute(appid);
   const applied = await applyCompatDefaultForRoute(appid, route);
-  return applied && route === "windows" ? windowsCompatTool : "";
+  return applied && route === "windows" ? tool : "";
 }
 
-export async function resetAllGamePolicies(appids: string[]): Promise<void> {
+export async function resetAllGamePolicies(appids: string[], pinnedAppids?: string[] | null): Promise<void> {
   await getProtonTools(true);
+  const tool = await effectiveWindowsCompatTool();
+  // null pin state is unknown, so leave mappings alone rather than risk stranding one.
+  const canResetCompat = Boolean(tool) && pinnedAppids !== null;
+  const pinned = pinnedAppids ? new Set(pinnedAppids.map(String)) : null;
   let next = 0;
   const worker = async () => {
     while (next < appids.length) {
@@ -417,7 +463,11 @@ export async function resetAllGamePolicies(appids: string[]): Promise<void> {
         continue;
       }
       if (type !== 1) continue;
-      await applyCompatDefaultForRoute(appid, await clearCompatToolAndResolveRoute(appid));
+      if (canResetCompat && pinned?.has(appid)) {
+        await repinToTool(appid, tool);
+      } else if (canResetCompat) {
+        await applyCompatDefaultForRoute(appid, await clearCompatToolAndResolveRoute(appid));
+      }
       await resetLaunchOptionsForGame(appid);
     }
   };

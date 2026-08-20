@@ -60,22 +60,28 @@ PY
 # ES-DE's custom files are XML that ES-DE parses at startup; malformed ones
 # are silently ignored and every custom emulator disappears.
 python3 - "$STORE" <<'PY'
-import sys, pathlib, xml.etree.ElementTree as ET
+import sys, pathlib, re, xml.etree.ElementTree as ET
 store = pathlib.Path(sys.argv[1])
 rules = ET.parse(store / "templates/es-de/es_find_rules.xml").getroot()
 names = {e.get("name") for e in rules.findall("emulator")}
-# ARMSX2 is the only emulator bundled ES-DE cannot find on its own.
-assert names == {"ARMSX2"}, names
+# The emulators the store installs that ES-DE's linuxarm rules cannot find.
+assert names == {"ARMSX2", "CEMU", "PICO-8_64", "VITA3K", "XENIAEDGE"}, names
 # Every entry here REPLACES the bundled one and takes its extensions and
 # alternative launch commands with it, so it must carry ES-DE's whole entry.
 systems = ET.parse(store / "templates/es-de/es_systems.xml").getroot()
-# Cemu needs no entry: ES-DE's own CEMU rule already finds ~/Applications.
-assert {s.findtext("name") for s in systems.findall("system")} == {"ps2"}
+assert {s.findtext("name") for s in systems.findall("system")} == {
+    "pico8", "ps2", "psvita", "scummvm", "wiiu", "xbox360"}
 ps2 = next(s for s in systems.findall("system") if s.findtext("name") == "ps2")
 assert {c.get("label") for c in ps2.findall("command")} == {
-    "ARMSX2", "LRPS2", "PCSX2", "PCSX2 (Standalone)", "PCSX2 Legacy (Standalone)",
-    "Play! (Standalone)", "Shortcut or script"}
+    "ARMSX2", "LRPS2", "Shortcut or script"}
 assert ".desktop" in (ps2.findtext("extension") or "").split()
+# A system whose emulator is unreachable is worse than no override at all.
+BUNDLED = {"RETROARCH", "OS-SHELL", "PICO-8", "SCUMMVM", "DREAMM"}
+for system in systems.findall("system"):
+    for command in system.findall("command"):
+        for used in re.findall(r"%EMULATOR_([A-Z0-9_.!-]+)%", command.text or ""):
+            assert used in names | BUNDLED, (system.findtext("name"), used)
+    assert system.findtext("platform"), system.findtext("name")
 print("es-de templates: %d rules, %d systems" % (len(names), len(systems.findall("system"))))
 PY
 
@@ -112,6 +118,18 @@ assert "--filesystem=home" in extra, extra
 assert "--filesystem=/run/media" in extra, extra
 
 print("overrides: %d flatpaks, all get /run/media and /media" % count)
+PY
+
+# dbus-broker only watches service directories that exist when it starts, so
+# the first Flatpak export into a missing one is invisible until the next boot.
+python3 - "$ROOT" <<'PY'
+import sys, pathlib
+rule = pathlib.Path(sys.argv[1]) / "system_files/usr/lib/tmpfiles.d/armada-flatpak-dbus.conf"
+assert rule.exists(), "no tmpfiles rule for the flatpak D-Bus service dir"
+lines = [l.strip() for l in rule.read_text().splitlines()
+         if l.strip() and not l.startswith("#")]
+assert lines == ["d /var/lib/flatpak/exports/share/dbus-1/services 0755 root root -"], lines
+print("dbus service dir: created at boot so the bus watches it from the start")
 PY
 
 # Release selection, against the shapes real forges actually return.
@@ -274,7 +292,7 @@ PY
 # Every app that changed packaging must declare the ref it displaces, or an
 # existing install is stranded with no way to remove it from the Store.
 python3 - "$STORE" <<'PY'
-import sys, pathlib, json
+import sys, pathlib, json, tempfile
 store = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(store / "py_modules"))
 from armada_store import catalog
@@ -298,13 +316,23 @@ for app in apps:
         assert install.get("releases"), "%s has no release feed" % app["id"]
         assert install.get("asset"), "%s has no asset pattern" % app["id"]
 
-# Armada Control wraps these as "armada-game-launch %command% <options>", so a
-# flag here reaches the app; for flatpaks it must stay after the run target.
+for app in apps:
+    spec = catalog.launch_spec(app)
+    if spec:
+        options = spec["launchOptions"]
+        assert catalog.LAUNCH_WRAPPER in options, (app["id"], options)
+        assert options.count(catalog.LAUNCH_WRAPPER) == 1, (app["id"], options)
+
 heroic = catalog.launch_spec(next(a for a in apps if a["id"] == "heroic"))
-assert heroic["launchOptions"] == "--no-sandbox", heroic
+assert heroic["launchOptions"] == catalog.DEFAULT_LAUNCH_OPTIONS + " --no-sandbox", heroic
 flat = catalog.launch_spec({"name": "x", "install": {
     "type": "flatpak", "ref": "org.example.App", "launchOptions": "--foo"}})
-assert flat["launchOptions"] == "run org.example.App --foo", flat
+assert flat["launchOptions"] == catalog.DEFAULT_LAUNCH_OPTIONS + " run org.example.App --foo", flat
+assert catalog.wrap_launch_options("%command% --foo") == catalog.DEFAULT_LAUNCH_OPTIONS + " --foo"
+assert catalog.wrap_launch_options(catalog.DEFAULT_LAUNCH_OPTIONS) == catalog.DEFAULT_LAUNCH_OPTIONS
+with tempfile.NamedTemporaryFile() as custom:
+    prepared = catalog.prepare_shortcut(custom.name)
+assert prepared["launchOptions"] == catalog.DEFAULT_LAUNCH_OPTIONS, prepared
 
 duck = next(a for a in apps if a["id"] == "duckstation")
 assert catalog.present_conflicts(duck, set()) == [], "conflict reported while absent"

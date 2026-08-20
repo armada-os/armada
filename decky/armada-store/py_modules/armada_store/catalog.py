@@ -13,6 +13,9 @@ from .paths import apps_dir, plugin_dir, plugins_dir, user_home, user_ids
 
 _flatpak_cache = {"at": 0.0, "refs": set()}
 _flatpak_refresh = threading.Lock()
+LAUNCH_WRAPPER = "/usr/libexec/armada/armada-game-launch"
+COMMAND_TOKEN = "%command%"
+DEFAULT_LAUNCH_OPTIONS = f"{LAUNCH_WRAPPER} {COMMAND_TOKEN}"
 
 
 def bundled_apps():
@@ -121,6 +124,15 @@ def installed_map():
     return result
 
 
+def wrap_launch_options(options):
+    options = str(options or "").strip()
+    if LAUNCH_WRAPPER in options:
+        return options
+    if COMMAND_TOKEN in options:
+        return options.replace(COMMAND_TOKEN, DEFAULT_LAUNCH_OPTIONS, 1)
+    return " ".join(filter(None, (DEFAULT_LAUNCH_OPTIONS, options)))
+
+
 def launch_spec(app):
     install = app.get("install") or {}
     kind = install.get("type")
@@ -131,11 +143,15 @@ def launch_spec(app):
     extra = (install.get("launchOptions") or "").strip()
     if kind == "flatpak" and install.get("ref"):
         options = " ".join(filter(None, ("run " + install["ref"], extra)))
-        return {"name": name, "exe": "/usr/bin/flatpak", "startDir": home, "launchOptions": options}
+        return {"name": name, "exe": "/usr/bin/flatpak", "startDir": home,
+                "launchOptions": wrap_launch_options(options)}
     if kind == "appimage" and install.get("filename"):
-        return {"name": name, "exe": str(apps_dir() / install["filename"]), "startDir": str(apps_dir()), "launchOptions": extra}
+        return {"name": name, "exe": str(apps_dir() / install["filename"]),
+                "startDir": str(apps_dir()), "launchOptions": wrap_launch_options(extra)}
     if kind == "system" and install.get("exec"):
-        return {"name": name, "exe": install["exec"], "startDir": os.path.dirname(install["exec"]), "launchOptions": extra}
+        return {"name": name, "exe": install["exec"],
+                "startDir": os.path.dirname(install["exec"]),
+                "launchOptions": wrap_launch_options(extra)}
     return None
 
 
@@ -188,4 +204,5 @@ def prepare_shortcut(path):
     base = path.rsplit("/", 1)[-1]
     name = re.sub(r"\.(appimage|sh|bin|x86_64|aarch64|exe)$", "", base, flags=re.I)
     name = re.sub(r"[-_.]+", " ", name).strip() or base
-    return {"name": name, "exe": path, "startDir": path.rsplit("/", 1)[0] or "/", "launchOptions": ""}
+    return {"name": name, "exe": path, "startDir": path.rsplit("/", 1)[0] or "/",
+            "launchOptions": DEFAULT_LAUNCH_OPTIONS}

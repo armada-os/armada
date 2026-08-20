@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 # Game launch-option prefix wrapper ("armada-game-launch %command%"). Applies
 # per-game settings via FEX_APP_CONFIG, the only knob every compat tool's FEX reads
 # (the on-disk FEX config files are seen only by the system FEX, not arm64ec/wow64).
@@ -7,6 +7,7 @@ import os
 import pathlib
 import shutil
 import socket
+import stat
 import sys
 import time
 
@@ -18,6 +19,40 @@ BASE_FEX_CONFIG = pathlib.Path("/usr/share/fex-emu/Config.json")
 TWEAKS_CONFIG = pathlib.Path("/etc/armada/game-tweaks.json")
 FEX_PROFILES_CONFIG = pathlib.Path("/usr/share/armada/fex-profiles.json")
 PROTON_INJECT_SRC = pathlib.Path("/usr/share/armada/proton-inject/x86_64-linux-gnu")
+APPIMAGE_EXEC_PATHS = ("/usr/local/bin", "/usr/bin", "/bin")
+
+
+def is_appimage(command):
+    try:
+        fd = os.open(command, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return False
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return False
+        header = os.read(fd, 11)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+    return (
+        len(header) == 11
+        and header[:4] == b"\x7fELF"
+        and header[8:10] == b"AI"
+        and header[10] in (1, 2)
+    )
+
+
+def prepare_appimage_path(args):
+    if not any(is_appimage(arg) for arg in args):
+        return
+
+    paths = os.environ.get("PATH", "").split(":") if os.environ.get("PATH") else []
+    for path in APPIMAGE_EXEC_PATHS:
+        if path not in paths:
+            paths.append(path)
+    os.environ["PATH"] = ":".join(paths)
 
 
 def appid():
@@ -238,6 +273,8 @@ def main():
         apply_fex(settings, game_id, contract["profiles"], os.environ)
     except Exception as exc:
         print(f"armada-game-launch: failed to apply settings: {exc}", file=sys.stderr)
+
+    prepare_appimage_path(args)
 
     try:
         apply_perf(settings, game_id)

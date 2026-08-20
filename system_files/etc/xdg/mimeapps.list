@@ -3,3 +3,4 @@ application/vnd.flatpak.ref=io.github.kolunmi.Bazaar.desktop
 text/html=org.mozilla.firefox.desktop
 x-scheme-handler/http=org.mozilla.firefox.desktop
 x-scheme-handler/https=org.mozilla.firefox.desktop
+x-scheme-handler/steam=steam.desktop

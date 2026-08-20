@@ -4,6 +4,10 @@ set -euxo pipefail
 cp -a /ctx/system_files/. /
 install -Dpm 0755 /packages/extest/libextest.so /usr/lib/extest/libextest.so
 
+# The vendored entries land after the RPM scriptlets ran, so mimeinfo.cache
+# would not otherwise list them.
+update-desktop-database -q /usr/share/applications
+
 cp -a /packages/mesa-android/waydroid/vendor /usr/share/armada/waydroid/
 
 # x86 Turnip payload for the guestos overlay; the rootfs's driver lacks armada's mesa patches
