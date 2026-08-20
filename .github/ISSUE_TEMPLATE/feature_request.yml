@@ -1,38 +1,66 @@
-# .github/ISSUE_TEMPLATE/feature_request.yml
 name: "Feature request"
-about: "Request a new feature or improvement for Armada."
-title: "[Feature Request] Describe your feature"
+description: "Request a new feature or improvement for Armada."
+title: "[Feature Request]: "
 labels: ["Feature"]
 assignees: []
 body:
-  - |
-    ### **Hardware Device**
-    _Please enter the device you are using [e.g. AYN Thor]._
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware Device
+      description: Please enter the device you are using.
+      placeholder: e.g. AYN Thor
+    validations:
+      required: false
 
-  - |
-    ### **OS Version**
-    _Please follow these steps to find and paste the Armada OS Version:_
-    1. Open Steam's quick access menu
-    2. Navigate to Decky (plug icon)
-    3. Select **Armada Control**
-    4. Navigate to Armada Control's settings (cog icon)
-    5. Copy the text below **OS Version** and paste it here
+  - type: textarea
+    id: os-version
+    attributes:
+      label: OS Version
+      description: |
+        Please follow these steps to find and paste the Armada OS Version:
+        1. Open Steam's quick access menu
+        2. Navigate to Decky (plug icon)
+        3. Select **Armada Control**
+        4. Navigate to Armada Control's settings (cog icon)
+        5. Copy the text below **OS Version** and paste it here
+    validations:
+      required: false
 
-  - |
-    ### **Description**
-    _A clear and concise description of the feature you are requesting._
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the feature you are requesting.
+    validations:
+      required: true
 
-  - |
-    ### **Desired behavior**
-    _Describe the behavior you want to see. Include examples, UI mockups, or workflows if helpful._
+  - type: textarea
+    id: desired-behavior
+    attributes:
+      label: Desired behavior
+      description: Describe the behavior you want to see. Include examples, UI mockups, or workflows if helpful.
+    validations:
+      required: false
 
-  - |
-    ### **Additional comments**
-    _Any other context, rationale, or constraints that will help evaluate or implement this feature._
+  - type: textarea
+    id: comments
+    attributes:
+      label: Additional comments
+      description: Any other context, rationale, or constraints that will help evaluate or implement this feature.
+    validations:
+      required: false
 
-  - |
-    ### **Confirmations**
-    - [ ] **I have read the project's README and documentation.**
-    - [ ] **I searched existing issues and feature requests and confirm this is not a duplicate.**
-    - [ ] **I included a clear use case and expected user benefit.**
-    - [ ] **I attached mockups, examples, or links if they help explain the request.**
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have read the project's README and documentation.
+          required: true
+        - label: I searched existing issues and feature requests and confirm this is not a duplicate.
+          required: true
+        - label: I included a clear use case and expected user benefit.
+          required: true
+        - label: I attached mockups, examples, or links if they help explain the request.
+          required: false

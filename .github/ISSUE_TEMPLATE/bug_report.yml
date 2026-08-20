@@ -1,49 +1,86 @@
-# .github/ISSUE_TEMPLATE/bug_report.yml
 name: "Bug report"
-about: "Report a bug in Armada."
-title: "[Bug] Describe your bug"
+description: "Report a bug in Armada."
+title: "[Bug]: "
 labels: ["Bug"]
 assignees: []
 body:
-  - |
-    ### **Hardware Device**
-    _Please enter the device you are using [e.g. AYN Thor]._
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware Device
+      description: Please enter the device you are using.
+      placeholder: e.g. AYN Thor
+    validations:
+      required: false
 
-  - |
-    ### **OS Version**
-    _Please follow these steps to find and paste the Armada OS Version:_
-    1. Open Steam's quick access menu
-    2. Navigate to Decky (plug icon)
-    3. Select **Armada Control**
-    4. Navigate to Armada Control's settings (cog icon)
-    5. Copy the text below **OS Version** and paste it here
+  - type: textarea
+    id: os-version
+    attributes:
+      label: OS Version
+      description: |
+        Please follow these steps to find and paste the Armada OS Version:
+        1. Open Steam's quick access menu
+        2. Navigate to Decky (plug icon)
+        3. Select **Armada Control**
+        4. Navigate to Armada Control's settings (cog icon)
+        5. Copy the text below **OS Version** and paste it here
+    validations:
+      required: false
 
-  - |
-    ### **Description**
-    _A clear and concise description of the problem._
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the problem.
+    validations:
+      required: true
 
-  - |
-    ### **Steps to reproduce**
-    1. _Step 1_
-    2. _Step 2_
-    3. _Step 3_
-    _Include exact commands, menu clicks, or actions. If applicable, attach logs or screenshots._
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include exact commands, menu clicks, or actions. If applicable, attach logs or screenshots.
+      placeholder: |
+        1. Step 1
+        2. Step 2
+        3. Step 3
+    validations:
+      required: true
 
-  - |
-    ### **Expected behavior**
-    _What you expected to happen._
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: false
 
-  - |
-    ### **Actual behavior**
-    _What actually happened, including error messages or crash output._
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened, including error messages or crash output.
+    validations:
+      required: false
 
-  - |
-    ### **Additional comments**
-    _Any other information that might help diagnose the issue._
+  - type: textarea
+    id: comments
+    attributes:
+      label: Additional comments
+      description: Any other information that might help diagnose the issue.
+    validations:
+      required: false
 
-  - |
-    ### **Confirmations**
-    - [ ] **I have read the project's README and documentation.**
-    - [ ] **I searched existing issues and confirm this is not a duplicate.**
-    - [ ] **I can reproduce this issue on the latest Armada release (or I noted the exact release above).**
-    - [ ] **I attached relevant logs, screenshots, or a minimal reproduction if applicable.**
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have read the project's README and documentation.
+          required: true
+        - label: I searched existing issues and confirm this is not a duplicate.
+          required: true
+        - label: I can reproduce this issue on the latest Armada release (or I noted the exact release above).
+          required: true
+        - label: I attached relevant logs, screenshots, or a minimal reproduction if applicable.
+          required: false
