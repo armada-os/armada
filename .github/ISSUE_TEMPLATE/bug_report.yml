@@ -54,15 +54,15 @@ body:
       label: Expected behavior
       description: What you expected to happen.
     validations:
-      required: false
+      required: true
 
   - type: input
     id: actual
     attributes:
       label: Actual behavior
-      description: What actually happened, including error messages or crash output.
+      description: What actually happened.
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: comments
