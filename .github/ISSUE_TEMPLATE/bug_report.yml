@@ -8,6 +8,7 @@ body:
       label: Hardware Device
       description: Please select the device you are using.
       options:
+        - ''
         - 'AYANEO Pocket EVO'
         - 'AYANEO Pocket S2'
         - 'AYANEO Pocket ACE'
