@@ -11,9 +11,9 @@ body:
       description: Please enter the device you are using.
       placeholder: e.g. AYN Thor
     validations:
-      required: false
+      required: true
 
-  - type: textarea
+  - type: input
     id: os-version
     attributes:
       label: OS Version
@@ -21,11 +21,12 @@ body:
         Please follow these steps to find and paste the Armada OS Version:
         1. Open Steam's quick access menu
         2. Navigate to Decky (plug icon)
-        3. Select **Armada Control**
+        3. Select Armada Control
         4. Navigate to Armada Control's settings (cog icon)
-        5. Copy the text below **OS Version** and paste it here
+        5. Copy the text below OS Version and paste it here
+      placeholder: AAAAMMDD.xxxxxxx
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: description
