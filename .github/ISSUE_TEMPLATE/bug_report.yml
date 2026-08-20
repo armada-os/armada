@@ -1,7 +1,7 @@
 name: "Bug report"
 description: "Report a bug in Armada."
 title: "[Bug]: A short description of your bug"
-labels: ["Bug"]
+type: bug
 assignees: []
 body:
   - type: input

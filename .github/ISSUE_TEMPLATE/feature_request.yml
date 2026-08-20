@@ -1,7 +1,7 @@
 name: "Feature request"
 description: "Request a new feature or improvement for Armada."
 title: "[Feature Request]: A short description of the desired feature"
-labels: ["Feature"]
+type: feature
 assignees: []
 body:
   - type: input
