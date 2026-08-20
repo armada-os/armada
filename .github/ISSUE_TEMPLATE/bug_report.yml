@@ -1,0 +1,49 @@
+# .github/ISSUE_TEMPLATE/bug_report.yml
+name: "Bug report"
+about: "Report a bug in Armada."
+title: "[Bug] Describe your bug"
+labels: ["Bug"]
+assignees: []
+body:
+  - |
+    ### **Hardware Device**
+    _Please enter the device you are using [e.g. AYN Thor]._
+
+  - |
+    ### **OS Version**
+    _Please follow these steps to find and paste the Armada OS Version:_
+    1. Open Steam's quick access menu
+    2. Navigate to Decky (plug icon)
+    3. Select **Armada Control**
+    4. Navigate to Armada Control's settings (cog icon)
+    5. Copy the text below **OS Version** and paste it here
+
+  - |
+    ### **Description**
+    _A clear and concise description of the problem._
+
+  - |
+    ### **Steps to reproduce**
+    1. _Step 1_
+    2. _Step 2_
+    3. _Step 3_
+    _Include exact commands, menu clicks, or actions. If applicable, attach logs or screenshots._
+
+  - |
+    ### **Expected behavior**
+    _What you expected to happen._
+
+  - |
+    ### **Actual behavior**
+    _What actually happened, including error messages or crash output._
+
+  - |
+    ### **Additional comments**
+    _Any other information that might help diagnose the issue._
+
+  - |
+    ### **Confirmations**
+    - [ ] **I have read the project's README and documentation.**
+    - [ ] **I searched existing issues and confirm this is not a duplicate.**
+    - [ ] **I can reproduce this issue on the latest Armada release (or I noted the exact release above).**
+    - [ ] **I attached relevant logs, screenshots, or a minimal reproduction if applicable.**
