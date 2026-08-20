@@ -7,6 +7,7 @@ body:
     attributes:
       label: Hardware Device
       description: Please select the device you are using.
+      default: 0
       options:
         - ''
         - 'AYANEO Pocket EVO'
