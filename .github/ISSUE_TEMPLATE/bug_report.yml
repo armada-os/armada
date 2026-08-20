@@ -1,6 +1,5 @@
 name: "Bug report"
 description: "Report a bug in Armada."
-type: bug
 assignees: []
 body:
   - type: dropdown
