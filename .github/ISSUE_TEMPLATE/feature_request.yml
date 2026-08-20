@@ -55,14 +55,6 @@ body:
       required: true
 
   - type: textarea
-    id: desired-behavior
-    attributes:
-      label: Desired behavior
-      description: Describe the behavior you want to see. Include examples, UI mockups, or workflows if helpful.
-    validations:
-      required: false
-
-  - type: textarea
     id: comments
     attributes:
       label: Additional comments
