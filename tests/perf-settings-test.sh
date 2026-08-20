@@ -15,7 +15,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 TWEAKS_FIXTURE="$WORK/game-tweaks.json"
-SESSION_FILE="$ROOT/system_files/etc/gamescope-session-plus/sessions.d/steam"
+SESSION_FILE="$ROOT/system_files/usr/share/gamescope-session-plus/sessions.d/steam"
 SESSION_REALTIME_BLOCK="$(sed -n '/^_armada_tweaks_config=/,/^unset _armada_tweaks_config$/p' "$SESSION_FILE")"
 
 session_realtime_value() {
