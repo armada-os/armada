@@ -9,6 +9,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -338,7 +339,8 @@ def action_write_config(request):
         (parameters / "update_params").write_text("1", encoding="utf-8")
     atomic_write(CONFIG_PATHS[name], text)
     if name == "power":
-        run(["/usr/bin/armada-power", "reload"], timeout=15)
+        # Fire-and-forget: do not block the single-threaded selector loop on a slow D-Bus reload.
+        threading.Thread(target=lambda: run(["/usr/bin/armada-power", "reload"], timeout=15), daemon=True).start()
     if name == "tweaks":
         PERF.refresh(keep_override=True)
     return {"ok": True}

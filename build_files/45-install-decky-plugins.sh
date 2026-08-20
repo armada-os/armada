@@ -40,5 +40,23 @@ curl --retry 3 --retry-delay 2 -fsSL "${decky_service_url}" |
 install -D -m 0644 "${decky_service_tmp}" /etc/systemd/system/plugin_loader.service
 rm -f "${decky_service_tmp}"
 
+# QAM freeze fix: isolate PluginLoader from game CPU contention.
+# - CPUSchedulingPolicy+Priority: SCHED_RR keeps the Decky UI thread runnable
+#   even when a game saturates SCHED_OTHER cores (gamescope-session drives game
+#   scheduling separately via armada_perf/armada-powerd).
+# - Nice=-5: companion boost within SCHED_OTHER descendants (PluginLoader spawns
+#   plugin helpers there).
+# - CPUAffinity kept unset so kernel can place the emulator on big cores when
+#   needed; the RR policy already prevents starvation on little cores.
+install -d -m 0755 /etc/systemd/system/plugin_loader.service.d
+cat > /etc/systemd/system/plugin_loader.service.d/10-qam-freeze-fix.conf <<'EOF'
+[Service]
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=10
+Nice=-5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=0
+EOF
+
 systemctl enable armada-decky-sync.service
 systemctl enable plugin_loader.service
