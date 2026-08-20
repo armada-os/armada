@@ -19,7 +19,7 @@ BASE_FEX_CONFIG = pathlib.Path("/usr/share/fex-emu/Config.json")
 TWEAKS_CONFIG = pathlib.Path("/etc/armada/game-tweaks.json")
 FEX_PROFILES_CONFIG = pathlib.Path("/usr/share/armada/fex-profiles.json")
 PROTON_INJECT_SRC = pathlib.Path("/usr/share/armada/proton-inject/x86_64-linux-gnu")
-APPIMAGE_EXEC_PATHS = ("/usr/local/bin", "/usr/bin", "/bin")
+STANDARD_EXEC_PATHS = ("/usr/local/bin", "/usr/bin", "/bin")
 
 
 def is_appimage(command):
@@ -44,12 +44,21 @@ def is_appimage(command):
     )
 
 
-def prepare_appimage_path(args):
+def prepare_launch_path(args):
+    # Steam can omit PATH entirely for non-Steam shortcuts. Native launchers
+    # still need standard tools for their child processes, even when Steam
+    # invokes the top-level executable by absolute path.
+    paths = os.environ.get("PATH", "").split(":") if os.environ.get("PATH") else []
+    if not paths:
+        paths.extend(STANDARD_EXEC_PATHS)
+
+    # AppImages additionally need the standard paths appended to an existing
+    # Steam runtime PATH so fusermount can be discovered.
     if not any(is_appimage(arg) for arg in args):
+        os.environ["PATH"] = ":".join(paths)
         return
 
-    paths = os.environ.get("PATH", "").split(":") if os.environ.get("PATH") else []
-    for path in APPIMAGE_EXEC_PATHS:
+    for path in STANDARD_EXEC_PATHS:
         if path not in paths:
             paths.append(path)
     os.environ["PATH"] = ":".join(paths)
@@ -274,7 +283,7 @@ def main():
     except Exception as exc:
         print(f"armada-game-launch: failed to apply settings: {exc}", file=sys.stderr)
 
-    prepare_appimage_path(args)
+    prepare_launch_path(args)
 
     try:
         apply_perf(settings, game_id)

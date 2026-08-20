@@ -137,7 +137,7 @@ check("env additive: game overrides entry", merged_env.get("B") == "override")
 check("env tombstone removes global var", "A" not in merged_env)
 check("env global-only view intact", ap.merged_settings(env_tweaks, None)["env"] == {"A": "1", "B": "2"})
 
-# --- armada-game-launch: FEX path unchanged by perf keys --------------------
+# --- armada-game-launch: launch environment + FEX settings ------------------
 os.environ["XDG_CACHE_HOME"] = WORK
 launch = load_script("armada-game-launch")
 with open(os.path.join(LIBEXEC, "armada-game-launch"), "rb") as f:
@@ -152,15 +152,19 @@ os.mkfifo(fifo)
 check("non-regular argv rejected", not launch.is_appimage(str(fifo)))
 saved_path = os.environ.get("PATH")
 try:
+    os.environ.pop("PATH", None)
+    launch.prepare_launch_path([str(not_appimage)])
+    check("native launcher gets standard PATH when Steam omits it",
+          os.environ["PATH"] == "/usr/local/bin:/usr/bin:/bin")
     os.environ["PATH"] = "/steam/runtime/bin"
-    launch.prepare_appimage_path(["/steam-launch-wrapper", "--", str(appimage)])
+    launch.prepare_launch_path(["/steam-launch-wrapper", "--", str(appimage)])
     check("AppImage command chain gets standard PATH",
           os.environ["PATH"] == "/steam/runtime/bin:/usr/local/bin:/usr/bin:/bin")
     os.environ["PATH"] = "/steam/runtime/bin"
-    launch.prepare_appimage_path(["/steam-launch-wrapper", "--", str(not_appimage)])
+    launch.prepare_launch_path(["/steam-launch-wrapper", "--", str(not_appimage)])
     check("non-AppImage PATH unchanged", os.environ["PATH"] == "/steam/runtime/bin")
     os.environ["PATH"] = "/usr/bin:/steam/runtime/bin:/bin"
-    launch.prepare_appimage_path([str(appimage)])
+    launch.prepare_launch_path([str(appimage)])
     check("existing PATH order preserved",
           os.environ["PATH"] == "/usr/bin:/steam/runtime/bin:/bin:/usr/local/bin")
 finally:
