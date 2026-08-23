@@ -1,0 +1,69 @@
+#!/bin/bash
+
+if [ -z "$FLATPAK_USER_ALLOWED" ]; then
+    new_args=()
+    warn=0
+    expect_system=0
+
+    for arg in "$@"; do
+
+    if [ "$expect_system" -eq 1 ]; then
+        expect_system=0
+        if [ "$arg" != "--system" ]; then
+            new_args+=("--system")
+        fi
+    fi
+
+        case "$arg" in
+            --user|-u)
+                warn=1
+                continue
+                ;;
+            -*)
+                rest="${arg#-}"
+                cleaned=""
+                i=0
+                len=${#rest}
+                has_u=0
+                while [ "$i" -lt "$len" ]; do
+                    c="${rest:$i:1}"
+                    if [ "$c" = "u" ]; then
+                        has_u=1
+                    else
+                        cleaned="$cleaned$c"
+                    fi
+                    i=$((i + 1))
+                done
+                if [ "$has_u" -eq 1 ]; then
+                    warn=1
+                    if [ -n "$cleaned" ]; then
+                        new_args+=("-$cleaned")
+                    fi
+                else
+                    new_args+=("$arg")
+                fi
+                ;;
+            install|remote-add|make-current)
+                expect_system=1
+                new_args+=("$arg")
+                ;;
+            *)
+                new_args+=("$arg")
+                ;;
+        esac
+    done
+
+    # Add --system if $expect_system is still 1
+    if [ "$expect_system" -eq 1 ]; then
+        new_args+=("--system")
+    fi
+
+    if [ "$warn" -eq 1 ]; then
+        echo -e '''\033[33mWARNING: Armada ignores --user / -u by default to avoid duplicate copies of large dependencies.
+    If you need user mode, set FLATPAK_USER_ALLOWED=1 to override.\033[0m'''
+    fi
+
+    set -- "${new_args[@]}"
+fi
+
+exec /usr/libexec/flatpak "$@"
