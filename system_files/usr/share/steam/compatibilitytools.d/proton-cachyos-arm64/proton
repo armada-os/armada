@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Shim that updates/downloads custom Proton versions
+
+# Needs to be updated for each tool we add
+TOOL_VERSION=cachyos-11.0-20260703-slr
+TOOL_URL=https://github.com/CachyOS/proton-cachyos/releases/download/${TOOL_VERSION}/proton-${TOOL_VERSION}-arm64.tar.xz
+TOOL_MD5SUM=e81c755c5d509df44d3fe51ee94ce132
+TOOL_DIR=proton-cachyos-arm64
+TOOL_CMD=proton
+
+# Should stay unchanging
+TOOLS_DIR="$HOME/.config/armada/compatibilitytools.d"
+TOOL_FILE="$(basename $TOOL_URL)"
+
+# IMPORTANT: Always check the version file in the tool before shipping, sometimes it might be wrong and then this will download on each launch
+if grep -q "${TOOL_VERSION}" "${TOOLS_DIR}/${TOOL_DIR}/version"; then
+    exec "$TOOLS_DIR/$TOOL_DIR/$TOOL_CMD" $@
+else
+    export TOOL_URL TOOL_MD5SUM TOOL_DIR TOOL_CMD TOOLS_DIR TOOL_FILE
+    exec /usr/share/steam/compatibilitytools.d/armada-tool-downloader $@
+fi
