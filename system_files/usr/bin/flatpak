@@ -60,7 +60,7 @@ if [ -z "$FLATPAK_USER_ALLOWED" ]; then
 
     if [ "$warn" -eq 1 ]; then
         echo -e '''\033[33mWARNING: Armada ignores --user / -u by default to avoid duplicate copies of large dependencies.
-    If you need user mode, set FLATPAK_USER_ALLOWED=1 to override.\033[0m'''
+    If you need user mode, set FLATPAK_USER_ALLOWED=1 to override.\033[0m''' >&2
     fi
 
     set -- "${new_args[@]}"
