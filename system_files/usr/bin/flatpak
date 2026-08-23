@@ -19,7 +19,7 @@ if [ -z "$FLATPAK_USER_ALLOWED" ]; then
                 warn=1
                 continue
                 ;;
-            -*)
+            -[!-]*)
                 rest="${arg#-}"
                 cleaned=""
                 i=0
