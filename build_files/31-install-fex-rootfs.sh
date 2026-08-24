@@ -2,12 +2,12 @@
 set -euxo pipefail
 
 : "${ARCH_ROOTFS_URL:?ARCH_ROOTFS_URL must be resolved before the build}"
-: "${ARCH_ROOTFS_XXH64:?ARCH_ROOTFS_XXH64 must be resolved before the build}"
+: "${ARCH_ROOTFS_XXH3:?ARCH_ROOTFS_XXH3 must be resolved before the build}"
 
 mkdir -p /usr/share/fex-emu/RootFS
 rootfs=/usr/share/fex-emu/RootFS/ArchLinux.sqsh
 curl --retry 3 --retry-delay 2 -fsSL -o "${rootfs}" "${ARCH_ROOTFS_URL}"
-printf '%s  %s\n' "${ARCH_ROOTFS_XXH64}" "${rootfs}" | xxhsum -c -
+printf 'XXH3_%s  %s\n' "${ARCH_ROOTFS_XXH3}" "${rootfs}" | xxhsum -c -
 
 # Steam's FEX compat tool needs the manifest the rootfs ships; a bump to a
 # rootfs without one would otherwise fail only at x86 game launch.

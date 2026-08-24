@@ -79,10 +79,11 @@ jobs:
           # ubuntu-24.04 dropped these from the runner image; the build,
           # rechunk, and publish steps need them.
           need=""
-          for t in buildah jq podman skopeo systemd-container; do
+          for t in jq podman skopeo systemd-container; do
             command -v "$t" >/dev/null || need="$need $t"
           done
           [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
+          sudo podman version
 
       - name: Require signing key before publishing a channel
         if: github.event_name != 'pull_request'
@@ -192,7 +193,8 @@ jobs:
           fi
 
           start=${SECONDS}
-          sudo buildah build \
+          # Work around Buildah 1.33's broken remote cache for stage-mounted RUN steps.
+          sudo podman build \
             --layers \
             --pull=always \
             --format=docker \

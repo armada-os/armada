@@ -79,6 +79,20 @@ COPY system_files /system_files/
 FROM quay.io/fedora/fedora-bootc:44
 # This value enters the RUN cache key, forcing a periodic DNF refresh.
 ARG CACHE_EPOCH=manual
+# Buildah cache keys omit mounted stage identities; include package refs explicitly.
+ARG FEX_PKG
+ARG MESA_PKG
+ARG MANGOHUD_PKG
+ARG GAMESCOPE_PKG
+ARG GAMESCOPE_SESSION_PKG
+ARG GAMESCOPE_SESSION_STEAM_PKG
+ARG KWIN_PKG
+ARG POWERDEVIL_PKG
+ARG INPUTPLUMBER_PKG
+ARG NETWORKMANAGER_PKG
+ARG JUPITER_HW_SUPPORT_PKG
+ARG ARMADA_SPLASH_PKG
+ARG UMTP_RESPONDER_PKG
 RUN --mount=type=bind,from=rpm-packages-build-files,source=/build_files,target=/ctx/build_files \
     --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
     --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
@@ -99,6 +113,7 @@ RUN --mount=type=bind,from=rpm-packages-build-files,source=/build_files,target=/
     CACHE_EPOCH="${CACHE_EPOCH}" /ctx/build_files/10-base-packages.sh && \
     /ctx/build_files/30-gaming-packages.sh
 
+ARG KERNEL_PKG
 RUN --mount=type=bind,from=kernel-build-files,source=/build_files,target=/ctx/build_files \
     --mount=type=bind,from=firmware-context,source=/system_files/usr/lib/firmware,target=/ctx/system_files/usr/lib/firmware \
     --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
@@ -141,6 +156,9 @@ RUN --mount=type=bind,from=decky-loader-build-files,source=/build_files,target=/
     DECKY_SERVICE_SHA256="${DECKY_SERVICE_SHA256}" \
         /ctx/build_files/46-install-decky-loader.sh
 
+ARG MESA_ANDROID_PKG
+ARG MESA_X86_PKG
+ARG EXTEST_PKG
 RUN --mount=type=bind,from=final-context,source=/,target=/ctx \
     --mount=type=bind,from=mesa-android,source=/,target=/packages/mesa-android \
     --mount=type=bind,from=mesa-x86,source=/,target=/packages/mesa-x86 \
