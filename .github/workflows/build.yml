@@ -28,7 +28,7 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.branch }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build_push:
@@ -48,8 +48,11 @@ jobs:
 
       - name: Prepare environment
         run: |
-          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
-          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
+          registry="${IMAGE_REGISTRY,,}"
+          name="${IMAGE_NAME,,}"
+          echo "IMAGE_REGISTRY=${registry}" >> "${GITHUB_ENV}"
+          echo "IMAGE_NAME=${name}" >> "${GITHUB_ENV}"
+          echo "BUILD_CACHE_REF=${registry}/${name}-build-cache" >> "${GITHUB_ENV}"
 
       - name: Resolve manual build ref
         id: manual
@@ -73,8 +76,8 @@ jobs:
       - name: Ensure container tools
         run: |
           set -euxo pipefail
-          # ubuntu-24.04 dropped these from the runner image; the build action,
-          # rechunk, and push all need them.
+          # ubuntu-24.04 dropped these from the runner image; the build,
+          # rechunk, and publish steps need them.
           need=""
           for t in buildah jq podman skopeo systemd-container; do
             command -v "$t" >/dev/null || need="$need $t"
@@ -93,6 +96,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.manual.outputs.branch || github.ref }}
+          persist-credentials: false
 
       - name: Check build recipes
         uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3
@@ -102,6 +106,17 @@ jobs:
         run: |
           echo "created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)" >> $GITHUB_OUTPUT
           echo "version=$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "cache_epoch=$(date -u +%G-W%V)" >> $GITHUB_OUTPUT
+
+      - name: Resolve external component versions
+        id: external
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          external_inputs="${RUNNER_TEMP}/external-inputs.env"
+          .github/scripts/resolve-external-inputs.sh > "${external_inputs}"
+          cat "${external_inputs}" >> "${GITHUB_OUTPUT}"
 
       - name: Image Metadata
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -125,49 +140,125 @@ jobs:
           sep-tags: " "
           sep-annotations: " "
 
+      - name: Log in to GHCR
+        env:
+          PUBLISH_IMAGE: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          if ! echo "${{ secrets.GITHUB_TOKEN }}" | sudo skopeo login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin; then
+            if [[ "${PUBLISH_IMAGE}" == "true" ]]; then
+              echo "::error::GHCR login failed; cannot publish the image"
+              exit 1
+            fi
+            echo "::warning::GHCR login failed; continuing the PR build without remote cache"
+          fi
+
       - name: Build Image
         id: build_image
-        uses: redhat-actions/buildah-build@5d8479758cc72ed82df28daba521d27e20ff8c8a # v3.0.0
-        with:
-          containerfiles: |
-            ./Containerfile
-          image: ${{ env.IMAGE_NAME }}
-          tags: raw
-          labels: ${{ steps.metadata.outputs.labels }}
-          build-args: |
-            ARMADA_VERSION=${{ steps.version.outputs.version }}
-          oci: false
+        env:
+          IMAGE_LABELS: ${{ steps.metadata.outputs.labels }}
+          PUBLISH_CACHE: ${{ github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          build_args=(
+            --build-arg "ARMADA_VERSION=${{ steps.version.outputs.version }}"
+            --build-arg "CACHE_EPOCH=${{ steps.version.outputs.cache_epoch }}"
+            --build-arg "STEAM_ARM_RUNTIME_SNAPSHOT=${{ steps.external.outputs.STEAM_ARM_RUNTIME_SNAPSHOT }}"
+            --build-arg "STEAM_ARM_MANIFEST_SHA256=${{ steps.external.outputs.STEAM_ARM_MANIFEST_SHA256 }}"
+            --build-arg "ARCH_ROOTFS_URL=${{ steps.external.outputs.ARCH_ROOTFS_URL }}"
+            --build-arg "ARCH_ROOTFS_XXH64=${{ steps.external.outputs.ARCH_ROOTFS_XXH64 }}"
+            --build-arg "PROTON_VERSION=${{ steps.external.outputs.PROTON_VERSION }}"
+            --build-arg "PROTON_SHA256=${{ steps.external.outputs.PROTON_SHA256 }}"
+            --build-arg "DECKY_VERSION=${{ steps.external.outputs.DECKY_VERSION }}"
+            --build-arg "DECKY_SHA256=${{ steps.external.outputs.DECKY_SHA256 }}"
+            --build-arg "DECKY_SERVICE_SHA256=${{ steps.external.outputs.DECKY_SERVICE_SHA256 }}"
+          )
+          label_args=()
+          while IFS= read -r label; do
+            [[ -z "${label}" ]] || label_args+=(--label "${label}")
+          done <<< "${IMAGE_LABELS}"
+          cache_args=()
+          have_cache_from=false
+          if sudo skopeo list-tags "docker://${BUILD_CACHE_REF}" >/dev/null 2>&1; then
+            cache_args+=(--cache-from "${BUILD_CACHE_REF}")
+            have_cache_from=true
+          fi
+          if [[ "${PUBLISH_CACHE}" == "true" ]]; then
+            cache_args+=(--cache-to "${BUILD_CACHE_REF}")
+            if [[ "${have_cache_from}" != "true" ]]; then
+              echo "No existing build cache found; this run will populate ${BUILD_CACHE_REF}"
+            fi
+          fi
+
+          start=${SECONDS}
+          sudo buildah build \
+            --layers \
+            --pull=always \
+            --format=docker \
+            --tag localhost/raw-img \
+            "${cache_args[@]}" \
+            "${build_args[@]}" \
+            "${label_args[@]}" \
+            .
+          echo "Build completed in $((SECONDS - start)) seconds"
 
       - name: Rechunk for small OTA deltas
         id: rechunk
         if: github.event_name != 'pull_request'
         run: |
-          set -euxo pipefail
-          # build-chunked-oci runs rpm-ostree from inside the image against root
-          # containers-storage, so bridge the rootless-built image over first.
-          sudo podman image scp ${USER}@localhost::${IMAGE_NAME}:raw root@localhost::raw-img
+          set -euo pipefail
+          IMAGE_FULL="${IMAGE_REGISTRY}/${IMAGE_NAME}"
+          CHANNEL_TAG="${{ steps.manual.outputs.branch || env.DEFAULT_TAG }}"
+          previous_ref="docker://${IMAGE_FULL}:${CHANNEL_TAG}"
+          if previous_manifest="$(sudo skopeo inspect --raw "${previous_ref}" 2>/dev/null)" &&
+             jq -e '(.layers | length) > 1 and all(.layers[1:][]; (.annotations["ostree.components"] // "") != "")' \
+                <<<"${previous_manifest}" >/dev/null; then
+            echo "Reusing annotated previous chunked build at ${previous_ref}"
+          else
+            echo "No annotated previous chunked build found at ${previous_ref}; rpm-ostree will treat this as a first build"
+          fi
+
+          chunked_oci="${RUNNER_TEMP}/chunked-oci"
+          mkdir -p "${chunked_oci}"
+          start=${SECONDS}
           sudo podman run --rm --privileged \
             --volume /var/lib/containers:/var/lib/containers \
+            --volume "${chunked_oci}:/output" \
             localhost/raw-img \
             rpm-ostree compose build-chunked-oci --bootc --max-layers 127 \
             --format-version 2 \
-            --from localhost/raw-img --output containers-storage:localhost/chunked-img
+            --previous-build "${previous_ref}" \
+            --from localhost/raw-img --output oci:/output:chunked-img
+          sudo skopeo inspect --raw "oci:${chunked_oci}:chunked-img" |
+            jq -e '(.layers | length) > 1 and all(.layers[1:][]; (.annotations["ostree.components"] // "") != "")' \
+              >/dev/null || {
+                echo "::error::Rechunked OCI image is missing ostree.components layer annotations"
+                exit 1
+              }
+          echo "Rechunk completed in $((SECONDS - start)) seconds"
 
       - name: Push to GHCR
         id: push
         if: github.event_name != 'pull_request'
         run: |
-          set -euxo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | sudo skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+          set -euo pipefail
           IMAGE_FULL="${IMAGE_REGISTRY}/${IMAGE_NAME}"
           BUILD_TAG="build-${{ steps.version.outputs.version }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           n=0
           until sudo skopeo copy \
-                containers-storage:localhost/chunked-img "docker://${IMAGE_FULL}:${BUILD_TAG}"; do
+                --format oci \
+                "oci:${RUNNER_TEMP}/chunked-oci:chunked-img" "docker://${IMAGE_FULL}:${BUILD_TAG}"; do
             n=$((n + 1)); [ "${n}" -ge 3 ] && exit 1; sleep 15
           done
           # skopeo --digestfile can't write under sudo's userns remap; read it back.
           digest=$(sudo skopeo inspect --format '{{.Digest}}' "docker://${IMAGE_FULL}:${BUILD_TAG}")
+          sudo skopeo inspect --raw "docker://${IMAGE_FULL}@${digest}" |
+            jq -e '(.layers | length) > 1 and all(.layers[1:][]; (.annotations["ostree.components"] // "") != "")' \
+              >/dev/null || {
+                echo "::error::Published image lost rpm-ostree chunk annotations"
+                exit 1
+              }
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
 
       - name: Install Cosign
@@ -184,8 +275,8 @@ jobs:
           set -euo pipefail
           IMAGE_FULL="${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}"
           IMAGE_REF="${IMAGE_FULL}@${{ steps.push.outputs.digest }}"
-          # cosign runs rootless and has its own auth store — the push step's
-          # `sudo skopeo login` only authenticated root, so log cosign in too.
+          # cosign runs rootless and has its own auth store — the build-cache
+          # login only authenticated root, so log cosign in too.
           echo "${{ secrets.GITHUB_TOKEN }}" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
           # Sign the digest, not a tag (a concurrent run could re-point the tag).
           # --new-bundle-format=false: bootc's verifier expects the legacy .sig; the
@@ -224,7 +315,7 @@ jobs:
           SRC="docker://${IMAGE_FULL}@${{ steps.push.outputs.digest }}"
           for tag in ${{ steps.metadata.outputs.tags }}; do
             n=0
-            until sudo skopeo copy --all "${SRC}" "docker://${IMAGE_FULL}:${tag}"; do
+            until sudo skopeo copy --all --format oci "${SRC}" "docker://${IMAGE_FULL}:${tag}"; do
               n=$((n + 1)); [ "${n}" -ge 3 ] && exit 1; sleep 15
             done
           done

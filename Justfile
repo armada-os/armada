@@ -82,6 +82,15 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS=()
     ARMADA_VERSION="$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)"
     BUILD_ARGS+=("--build-arg" "ARMADA_VERSION=${ARMADA_VERSION}")
+    CACHE_EPOCH="${CACHE_EPOCH:-$(date -u +%G-W%V)}"
+    BUILD_ARGS+=("--build-arg" "CACHE_EPOCH=${CACHE_EPOCH}")
+
+    EXTERNAL_INPUTS_FILE="$(mktemp)"
+    trap 'rm -f "${EXTERNAL_INPUTS_FILE}"' EXIT
+    .github/scripts/resolve-external-inputs.sh >"${EXTERNAL_INPUTS_FILE}"
+    while IFS= read -r input; do
+        BUILD_ARGS+=("--build-arg" "${input}")
+    done <"${EXTERNAL_INPUTS_FILE}"
 
     # Allow local armada-packages images to override pinned package images.
     mapfile -t PKG_VARS < <(sed -n 's/^ARG \([A-Z0-9_]*_PKG\)=.*/\1/p' Containerfile)

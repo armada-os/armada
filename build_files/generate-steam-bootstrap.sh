@@ -34,6 +34,9 @@ ln -sfn ../.local/share/Steam/ubuntu12_64 "${DOT_STEAM}/bin64"
 
 steam_manifest="${STEAM}/package/${STEAM_ARM_MANIFEST_NAME}.manifest"
 curl -fsSL -o "${steam_manifest}" "${STEAM_ARM_MANIFEST_URL}"
+if [[ -n "${STEAM_ARM_MANIFEST_SHA256:-}" ]]; then
+    printf '%s  %s\n' "${STEAM_ARM_MANIFEST_SHA256}" "${steam_manifest}" | sha256sum -c -
+fi
 
 steam_seed_package=$(
     python3 - "${steam_manifest}" <<'PY'

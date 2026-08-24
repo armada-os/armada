@@ -46,41 +46,128 @@ RUN npm ci
 COPY decky/armada-store/ ./
 RUN npm run build
 
-FROM scratch AS ctx
+FROM scratch AS base-packages-build-files
+COPY build_files/10-base-packages.sh /build_files/
+
+FROM scratch AS kernel-build-files
+COPY build_files/20-install-kernel.sh /build_files/
+
+FROM scratch AS gaming-packages-build-files
+COPY build_files/30-gaming-packages.sh /build_files/
+
+FROM scratch AS firmware-context
+COPY system_files/usr/lib/firmware /system_files/usr/lib/firmware/
+
+FROM scratch AS fex-rootfs-build-files
+COPY build_files/31-install-fex-rootfs.sh /build_files/
+
+FROM scratch AS steam-build-files
+COPY build_files/32-install-steam-bootstrap.sh /build_files/
+COPY build_files/generate-steam-bootstrap.sh /build_files/
+
+FROM scratch AS proton-build-files
+COPY build_files/33-install-cachyos-proton.sh /build_files/
+COPY build_files/patch-proton-cachyos-dxvk-probe.py /build_files/
+COPY build_files/set-steam-default-compat.py /build_files/
+
+FROM scratch AS decky-loader-build-files
+COPY build_files/46-install-decky-loader.sh /build_files/
+
+FROM scratch AS final-context
 COPY abl /abl/
 COPY build_files /build_files/
 COPY decky /decky/
 COPY system_files /system_files/
 
 FROM quay.io/fedora/fedora-bootc:44
-ARG ARMADA_VERSION=unknown
-LABEL org.opencontainers.image.version="${ARMADA_VERSION}"
+# This value enters the RUN cache key, forcing a periodic DNF refresh.
+ARG CACHE_EPOCH=manual
+RUN --mount=type=bind,from=base-packages-build-files,source=/build_files,target=/ctx/build_files \
+    --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
+    --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
+    --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    CACHE_EPOCH="${CACHE_EPOCH}" /ctx/build_files/10-base-packages.sh
 
-RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+RUN --mount=type=bind,from=kernel-build-files,source=/build_files,target=/ctx/build_files \
+    --mount=type=bind,from=firmware-context,source=/system_files/usr/lib/firmware,target=/ctx/system_files/usr/lib/firmware \
+    --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build_files/20-install-kernel.sh
+
+RUN --mount=type=bind,from=gaming-packages-build-files,source=/build_files,target=/ctx/build_files \
     --mount=type=bind,from=fex,source=/rpms,target=/packages/fex \
     --mount=type=bind,from=mesa,source=/rpms,target=/packages/mesa \
     --mount=type=bind,from=mangohud,source=/rpms,target=/packages/mangohud \
     --mount=type=bind,from=gamescope,source=/rpms,target=/packages/gamescope \
     --mount=type=bind,from=gamescope-session,source=/rpms,target=/packages/gamescope-session \
     --mount=type=bind,from=gamescope-session-steam,source=/rpms,target=/packages/gamescope-session-steam \
-    --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
-    --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
-    --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
     --mount=type=bind,from=inputplumber,source=/rpms,target=/packages/inputplumber \
     --mount=type=bind,from=networkmanager,source=/rpms,target=/packages/networkmanager \
     --mount=type=bind,from=jupiter-hw-support,source=/rpms,target=/packages/jupiter-hw-support \
+    --mount=type=bind,from=armada-splash,source=/rpms,target=/packages/armada-splash \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build_files/30-gaming-packages.sh
+
+ARG ARCH_ROOTFS_URL
+ARG ARCH_ROOTFS_XXH64
+RUN --mount=type=bind,from=fex-rootfs-build-files,source=/build_files,target=/ctx/build_files \
+    --mount=type=tmpfs,dst=/tmp \
+    ARCH_ROOTFS_URL="${ARCH_ROOTFS_URL}" \
+    ARCH_ROOTFS_XXH64="${ARCH_ROOTFS_XXH64}" \
+        /ctx/build_files/31-install-fex-rootfs.sh
+
+ARG STEAM_ARM_RUNTIME_SNAPSHOT
+ARG STEAM_ARM_MANIFEST_SHA256
+RUN --mount=type=bind,from=steam-build-files,source=/build_files,target=/ctx/build_files \
+    --mount=type=tmpfs,dst=/tmp \
+    STEAM_ARM_RUNTIME_SNAPSHOT="${STEAM_ARM_RUNTIME_SNAPSHOT}" \
+    STEAM_ARM_MANIFEST_SHA256="${STEAM_ARM_MANIFEST_SHA256}" \
+        /ctx/build_files/32-install-steam-bootstrap.sh
+
+ARG PROTON_VERSION
+ARG PROTON_SHA256
+RUN --mount=type=bind,from=proton-build-files,source=/build_files,target=/ctx/build_files \
+    --mount=type=tmpfs,dst=/tmp \
+    PROTON_VERSION="${PROTON_VERSION}" \
+    PROTON_SHA256="${PROTON_SHA256}" \
+        /ctx/build_files/33-install-cachyos-proton.sh
+
+ARG DECKY_VERSION
+ARG DECKY_SHA256
+ARG DECKY_SERVICE_SHA256
+RUN --mount=type=bind,from=decky-loader-build-files,source=/build_files,target=/ctx/build_files \
+    --mount=type=tmpfs,dst=/tmp \
+    DECKY_VERSION="${DECKY_VERSION}" \
+    DECKY_SHA256="${DECKY_SHA256}" \
+    DECKY_SERVICE_SHA256="${DECKY_SERVICE_SHA256}" \
+        /ctx/build_files/46-install-decky-loader.sh
+
+RUN --mount=type=bind,from=final-context,source=/,target=/ctx \
     --mount=type=bind,from=mesa-android,source=/,target=/packages/mesa-android \
     --mount=type=bind,from=mesa-x86,source=/,target=/packages/mesa-x86 \
     --mount=type=bind,from=extest,source=/,target=/packages/extest \
-    --mount=type=bind,from=armada-splash,source=/rpms,target=/packages/armada-splash \
-    --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
-    mkdir -p /usr/lib/armada && \
-    printf '%s\n' "${ARMADA_VERSION}" >/usr/lib/armada/version && \
-    /ctx/build_files/build.sh
+    /ctx/build_files/40-vendor-system-files.sh && \
+    /ctx/build_files/45-install-decky-plugins.sh && \
+    /ctx/build_files/50-create-user.sh && \
+    /ctx/build_files/55-generate-initramfs.sh && \
+    /ctx/build_files/60-set-default-target.sh && \
+    /ctx/build_files/70-cleanup.sh && \
+    /ctx/build_files/80-finalize-update-state.sh
 
 RUN bootc container lint
+
+ARG ARMADA_VERSION=unknown
+RUN mkdir -p /usr/lib/armada && printf '%s\n' "${ARMADA_VERSION}" >/usr/lib/armada/version
+LABEL org.opencontainers.image.version="${ARMADA_VERSION}"
