@@ -167,7 +167,7 @@ jobs:
             --build-arg "STEAM_ARM_RUNTIME_SNAPSHOT=${{ steps.external.outputs.STEAM_ARM_RUNTIME_SNAPSHOT }}"
             --build-arg "STEAM_ARM_MANIFEST_SHA256=${{ steps.external.outputs.STEAM_ARM_MANIFEST_SHA256 }}"
             --build-arg "ARCH_ROOTFS_URL=${{ steps.external.outputs.ARCH_ROOTFS_URL }}"
-            --build-arg "ARCH_ROOTFS_XXH64=${{ steps.external.outputs.ARCH_ROOTFS_XXH64 }}"
+            --build-arg "ARCH_ROOTFS_XXH3=${{ steps.external.outputs.ARCH_ROOTFS_XXH3 }}"
             --build-arg "PROTON_VERSION=${{ steps.external.outputs.PROTON_VERSION }}"
             --build-arg "PROTON_SHA256=${{ steps.external.outputs.PROTON_SHA256 }}"
             --build-arg "DECKY_VERSION=${{ steps.external.outputs.DECKY_VERSION }}"

@@ -39,7 +39,7 @@ steam_manifest_sha256="$(sha256sum "${tmpdir}/steam.manifest" | cut -d ' ' -f 1)
 curl "${curl_args[@]}" -o "${tmpdir}/rootfs.json" \
     https://rootfs.fex-emu.gg/RootFS_links.json
 arch_rootfs_url="$(jq -er '.v1["ArchLinux (SquashFS)"].URL' "${tmpdir}/rootfs.json")"
-arch_rootfs_xxh64="$(jq -er '.v1["ArchLinux (SquashFS)"].Hash' "${tmpdir}/rootfs.json")"
+arch_rootfs_xxh3="$(jq -er '.v1["ArchLinux (SquashFS)"].Hash' "${tmpdir}/rootfs.json")"
 
 curl "${github_curl_args[@]}" -o "${tmpdir}/proton.json" \
     'https://api.github.com/repos/CachyOS/proton-cachyos/releases?per_page=20'
@@ -85,7 +85,7 @@ decky_service_sha256="$(sha256sum "${tmpdir}/decky.service" | cut -d ' ' -f 1)"
 require_match STEAM_ARM_RUNTIME_SNAPSHOT "${steam_runtime_snapshot}" '^[A-Za-z0-9._-]+$'
 require_match STEAM_ARM_MANIFEST_SHA256 "${steam_manifest_sha256}" '^[0-9a-f]{64}$'
 require_match ARCH_ROOTFS_URL "${arch_rootfs_url}" '^https://rootfs\.fex-emu\.gg/ArchLinux/[0-9-]+/ArchLinux\.sqsh$'
-require_match ARCH_ROOTFS_XXH64 "${arch_rootfs_xxh64}" '^[0-9a-f]{16}$'
+require_match ARCH_ROOTFS_XXH3 "${arch_rootfs_xxh3}" '^[0-9a-f]{16}$'
 require_match PROTON_VERSION "${proton_version}" '^11\.0-[A-Za-z0-9._-]+$'
 require_match PROTON_SHA256 "${proton_sha256}" '^[0-9a-f]{64}$'
 require_match DECKY_VERSION "${decky_version}" '^v[0-9A-Za-z._-]+$'
@@ -95,7 +95,7 @@ require_match DECKY_SERVICE_SHA256 "${decky_service_sha256}" '^[0-9a-f]{64}$'
 emit STEAM_ARM_RUNTIME_SNAPSHOT "${steam_runtime_snapshot}"
 emit STEAM_ARM_MANIFEST_SHA256 "${steam_manifest_sha256}"
 emit ARCH_ROOTFS_URL "${arch_rootfs_url}"
-emit ARCH_ROOTFS_XXH64 "${arch_rootfs_xxh64}"
+emit ARCH_ROOTFS_XXH3 "${arch_rootfs_xxh3}"
 emit PROTON_VERSION "${proton_version}"
 emit PROTON_SHA256 "${proton_sha256}"
 emit DECKY_VERSION "${decky_version}"

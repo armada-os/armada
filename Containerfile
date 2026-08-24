@@ -108,11 +108,11 @@ RUN --mount=type=bind,from=kernel-build-files,source=/build_files,target=/ctx/bu
     /ctx/build_files/20-install-kernel.sh
 
 ARG ARCH_ROOTFS_URL
-ARG ARCH_ROOTFS_XXH64
+ARG ARCH_ROOTFS_XXH3
 RUN --mount=type=bind,from=fex-rootfs-build-files,source=/build_files,target=/ctx/build_files \
     --mount=type=tmpfs,dst=/tmp \
     ARCH_ROOTFS_URL="${ARCH_ROOTFS_URL}" \
-    ARCH_ROOTFS_XXH64="${ARCH_ROOTFS_XXH64}" \
+    ARCH_ROOTFS_XXH3="${ARCH_ROOTFS_XXH3}" \
         /ctx/build_files/31-install-fex-rootfs.sh
 
 ARG STEAM_ARM_RUNTIME_SNAPSHOT
