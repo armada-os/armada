@@ -46,14 +46,11 @@ RUN npm ci
 COPY decky/armada-store/ ./
 RUN npm run build
 
-FROM scratch AS base-packages-build-files
-COPY build_files/10-base-packages.sh /build_files/
+FROM scratch AS rpm-packages-build-files
+COPY build_files/10-base-packages.sh build_files/30-gaming-packages.sh /build_files/
 
 FROM scratch AS kernel-build-files
 COPY build_files/20-install-kernel.sh /build_files/
-
-FROM scratch AS gaming-packages-build-files
-COPY build_files/30-gaming-packages.sh /build_files/
 
 FROM scratch AS firmware-context
 COPY system_files/usr/lib/firmware /system_files/usr/lib/firmware/
@@ -82,24 +79,10 @@ COPY system_files /system_files/
 FROM quay.io/fedora/fedora-bootc:44
 # This value enters the RUN cache key, forcing a periodic DNF refresh.
 ARG CACHE_EPOCH=manual
-RUN --mount=type=bind,from=base-packages-build-files,source=/build_files,target=/ctx/build_files \
+RUN --mount=type=bind,from=rpm-packages-build-files,source=/build_files,target=/ctx/build_files \
     --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
     --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
-    --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    --mount=type=tmpfs,dst=/tmp \
-    CACHE_EPOCH="${CACHE_EPOCH}" /ctx/build_files/10-base-packages.sh
-
-RUN --mount=type=bind,from=kernel-build-files,source=/build_files,target=/ctx/build_files \
-    --mount=type=bind,from=firmware-context,source=/system_files/usr/lib/firmware,target=/ctx/system_files/usr/lib/firmware \
-    --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
-    --mount=type=cache,dst=/var/cache \
-    --mount=type=cache,dst=/var/log \
-    --mount=type=tmpfs,dst=/tmp \
-    /ctx/build_files/20-install-kernel.sh
-
-RUN --mount=type=bind,from=gaming-packages-build-files,source=/build_files,target=/ctx/build_files \
     --mount=type=bind,from=fex,source=/rpms,target=/packages/fex \
     --mount=type=bind,from=mesa,source=/rpms,target=/packages/mesa \
     --mount=type=bind,from=mangohud,source=/rpms,target=/packages/mangohud \
@@ -113,7 +96,16 @@ RUN --mount=type=bind,from=gaming-packages-build-files,source=/build_files,targe
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
+    CACHE_EPOCH="${CACHE_EPOCH}" /ctx/build_files/10-base-packages.sh && \
     /ctx/build_files/30-gaming-packages.sh
+
+RUN --mount=type=bind,from=kernel-build-files,source=/build_files,target=/ctx/build_files \
+    --mount=type=bind,from=firmware-context,source=/system_files/usr/lib/firmware,target=/ctx/system_files/usr/lib/firmware \
+    --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    --mount=type=tmpfs,dst=/tmp \
+    /ctx/build_files/20-install-kernel.sh
 
 ARG ARCH_ROOTFS_URL
 ARG ARCH_ROOTFS_XXH64
