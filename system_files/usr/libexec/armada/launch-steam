@@ -37,6 +37,7 @@ if grep -q '"proton11_arm64"' "${proton11_reg}/compatibilitytool.vdf" 2>/dev/nul
 fi
 
 touch "${steam_root}/.cef-enable-remote-debugging"
+systemctl --user --no-block restart armada-odin3-audio-steam-restore.service || true
 cd "${steam_arm_dir}"
 exec "${steam_arm}" \
     "${steam_args[@]}" \

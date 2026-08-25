@@ -1,0 +1,46 @@
+#!/bin/bash
+set -euo pipefail
+
+readonly DEVICE_ENV="${ARMADA_AUDIO_DEVICE_ENV:-/usr/libexec/armada/device-env}"
+readonly SYSTEMCTL="${ARMADA_AUDIO_SYSTEMCTL:-/usr/bin/systemctl}"
+
+runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+trigger="$runtime/armada-odin3-audio-resume-trigger"
+pending="$runtime/armada-odin3-audio-resume"
+
+discard_trigger() {
+    rm -f "$trigger"
+    exit 0
+}
+
+if ! policy="$(
+    /usr/bin/env -i PATH=/usr/bin:/usr/sbin:/bin:/sbin \
+        /bin/bash --noprofile --norc -p "$DEVICE_ENV"
+)"; then
+    discard_trigger
+fi
+eval "$policy" || discard_trigger
+if [[ "${ARMADA_DEVICE_ID:-}" != ayn-odin-3 ||
+      "${ARMADA_DEVICE_NAME:-}" != 'AYN Odin 3' ||
+      "${ARMADA_SOC_CLASS:-}" != SM8750 ]]; then
+    discard_trigger
+fi
+
+[[ -f "$trigger" && ! -L "$trigger" ]] || discard_trigger
+[[ "$(stat -c %s "$trigger")" -le 64 ]] || discard_trigger
+values=()
+mapfile -t values <"$trigger" || discard_trigger
+[[ "${#values[@]}" -eq 1 ]] || discard_trigger
+case "${values[0]}" in
+    Stereo|'Virtual Surround Sound') ;;
+    *) discard_trigger ;;
+esac
+
+# The rename consumes the path trigger before this one-shot exits while
+# preserving the validated request for the restarted hotplug daemon.
+mv -fT "$trigger" "$pending"
+if ! "$SYSTEMCTL" --user --no-block restart \
+    armada-odin3-audio-hotplug.service; then
+    mv -fT "$pending" "$trigger"
+    exit 1
+fi

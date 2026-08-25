@@ -1,0 +1,10 @@
+[Unit]
+Description=Restore the Odin 3 audio selection after real suspend
+After=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Path]
+PathExists=%t/armada-odin3-audio-resume-trigger
+Unit=armada-odin3-audio-resume.service
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Restart Odin 3 audio routing after real suspend
+After=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/armada/odin3-audio-resume

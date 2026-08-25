@@ -1,0 +1,14 @@
+[Unit]
+Description=Install the managed AYN Odin 3 audio profile
+After=local-fs.target
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/armada/odin3-audio-setup
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

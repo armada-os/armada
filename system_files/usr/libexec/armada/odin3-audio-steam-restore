@@ -1,0 +1,328 @@
+#!/usr/bin/python3
+"""Synchronize Steam's output override after its SharedJSContext is ready."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+
+import websocket
+
+
+DEVICE_ENV = os.environ.get(
+    "ARMADA_AUDIO_DEVICE_ENV", "/usr/libexec/armada/device-env"
+)
+PACTL = os.environ.get("ARMADA_AUDIO_PACTL", "/usr/bin/pactl")
+CEF_TARGETS = os.environ.get(
+    "ARMADA_AUDIO_STEAM_CEF_TARGETS", "http://127.0.0.1:8080/json"
+)
+WAIT_ATTEMPTS = 240
+WAIT_SECONDS = 0.25
+HTTP_TIMEOUT = 0.5
+WEBSOCKET_TIMEOUT = 6.0
+VIRTUAL_SINK = "Virtual Surround Sound"
+STEREO_SINK = "Stereo"
+TRUSTED_PATH = "/usr/bin:/usr/sbin:/bin:/sbin"
+
+# The only substituted value is a JSON object produced by json.dumps from
+# bounded PipeWire names and integer object indexes. JSON is valid JavaScript
+# syntax and ensure_ascii=True escapes quotes, controls, and line separators.
+SELECT_EXPRESSION = r"""
+(async () => {
+  const requested = __SELECTION__;
+  const audio = SteamClient.System.Audio;
+  const before = await audio.GetDevices();
+  if (!before || !Array.isArray(before.vecDevices))
+    throw new Error("GetDevices returned an invalid response");
+  const outputs = before.vecDevices.filter(
+    (device) => device && Number.isInteger(device.id) &&
+      device.currentConfig &&
+      Number.isInteger(device.currentConfig.nChannels) &&
+      device.currentConfig.nChannels > 0
+  );
+  let matches = outputs.filter((device) => device.sName === requested.name);
+  if (matches.length !== 1) {
+    const virtual = outputs.filter(
+      (device) => device.sName === "Virtual Surround Sound"
+    );
+    const stereo = outputs.filter((device) => device.sName === "Stereo");
+    if (virtual.length !== 1 || stereo.length !== 1 ||
+        requested.virtualPulseIndex < 0 || requested.stereoPulseIndex < 0)
+      throw new Error("Steam/PipeWire device calibration was not unique");
+    const virtualOffset = virtual[0].id - requested.virtualPulseIndex;
+    const stereoOffset = stereo[0].id - requested.stereoPulseIndex;
+    if (!Number.isInteger(virtualOffset) || virtualOffset !== stereoOffset)
+      throw new Error("Steam/PipeWire device-id calibration disagreed");
+    const derivedId = requested.pulseIndex + virtualOffset;
+    matches = outputs.filter((device) => device.id === derivedId);
+  }
+  if (matches.length !== 1)
+    throw new Error("requested Steam output was not unique");
+  const id = matches[0].id;
+  await audio.SetDefaultDeviceOverride(id, 1);
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const after = await audio.GetDevices();
+    if (after && after.overrideOutputDeviceId === id &&
+        after.activeOutputDeviceId === id)
+      return { ok: true, id: id, name: requested.name };
+  }
+  throw new Error("Steam output selection verification failed");
+})()
+""".strip()
+
+
+@dataclass(frozen=True)
+class SinkSelection:
+    name: str
+    pulse_index: int
+    virtual_pulse_index: int
+    stereo_pulse_index: int
+
+
+def diagnostic(message: str) -> None:
+    print(f"Armada Odin 3 Steam audio restore: {message}", file=sys.stderr)
+
+
+def is_odin3() -> bool:
+    try:
+        result = subprocess.run(
+            [
+                "/usr/bin/env",
+                "-i",
+                f"PATH={TRUSTED_PATH}",
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-p",
+                DEVICE_ENV,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        diagnostic(f"immutable device policy could not be read: {error}")
+        return False
+
+    policy: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in {
+            "ARMADA_DEVICE_ID",
+            "ARMADA_DEVICE_NAME",
+            "ARMADA_SOC_CLASS",
+        }:
+            policy[key] = value
+
+    return (
+        policy.get("ARMADA_DEVICE_ID") == "ayn-odin-3"
+        and policy.get("ARMADA_SOC_CLASS") == "SM8750"
+        and policy.get("ARMADA_DEVICE_NAME")
+        in {"AYN Odin 3", r"AYN\ Odin\ 3", "'AYN Odin 3'"}
+    )
+
+
+def run_pactl(*arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [PACTL, *arguments],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+
+
+def default_sink_name() -> str | None:
+    try:
+        result = run_pactl("get-default-sink")
+    except (OSError, subprocess.SubprocessError) as error:
+        diagnostic(f"default sink query failed; leaving Steam unchanged: {error}")
+        return None
+    sink = result.stdout.rstrip("\r\n")
+    if not sink or "\n" in sink or "\r" in sink:
+        diagnostic("default sink query returned an invalid name; leaving Steam unchanged")
+        return None
+    return sink
+
+
+def selected_sink() -> SinkSelection | None:
+    for attempt in range(1, 9):
+        before = default_sink_name()
+        if before is None:
+            return None
+        try:
+            result = run_pactl("--format=json", "list", "sinks")
+            sinks = json.loads(result.stdout)
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            diagnostic(f"sink inventory failed; leaving Steam unchanged: {error}")
+            return None
+        after = default_sink_name()
+        if before != after:
+            if attempt < 8:
+                time.sleep(WAIT_SECONDS)
+                continue
+            diagnostic("default sink did not settle; leaving Steam unchanged")
+            return None
+        if not isinstance(sinks, list):
+            diagnostic("sink inventory was not an array; leaving Steam unchanged")
+            return None
+        by_name: dict[str, list[int]] = {}
+        for sink in sinks:
+            if not isinstance(sink, dict):
+                continue
+            name = sink.get("name")
+            index = sink.get("index")
+            if (
+                isinstance(name, str)
+                and 0 < len(name) <= 512
+                and not any(ord(character) < 32 for character in name)
+                and isinstance(index, int)
+                and 0 <= index < 2**31
+            ):
+                by_name.setdefault(name, []).append(index)
+        matches = by_name.get(before, [])
+        if len(matches) != 1:
+            diagnostic(
+                f"default sink {before!r} was not unique; leaving Steam unchanged"
+            )
+            return None
+        virtual = by_name.get(VIRTUAL_SINK, [])
+        stereo = by_name.get(STEREO_SINK, [])
+        return SinkSelection(
+            name=before,
+            pulse_index=matches[0],
+            virtual_pulse_index=virtual[0] if len(virtual) == 1 else -1,
+            stereo_pulse_index=stereo[0] if len(stereo) == 1 else -1,
+        )
+    return None
+
+
+def selection_expression(selection: SinkSelection) -> str:
+    payload = json.dumps(
+        {
+            "name": selection.name,
+            "pulseIndex": selection.pulse_index,
+            "virtualPulseIndex": selection.virtual_pulse_index,
+            "stereoPulseIndex": selection.stereo_pulse_index,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return SELECT_EXPRESSION.replace("__SELECTION__", payload)
+
+
+def find_shared_context() -> str | None:
+    for attempt in range(1, WAIT_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(CEF_TARGETS, timeout=HTTP_TIMEOUT) as response:
+                targets = json.load(response)
+            matches = []
+            for target in targets if isinstance(targets, list) else []:
+                if not isinstance(target, dict) or target.get("title") != "SharedJSContext":
+                    continue
+                page = urllib.parse.urlsplit(str(target.get("url", "")))
+                ws_url = str(target.get("webSocketDebuggerUrl", ""))
+                websocket_endpoint = urllib.parse.urlsplit(ws_url)
+                if (
+                    page.scheme == "https"
+                    and page.hostname == "steamloopback.host"
+                    and websocket_endpoint.scheme == "ws"
+                    and websocket_endpoint.hostname == "127.0.0.1"
+                    and websocket_endpoint.port == 8080
+                    and websocket_endpoint.path.startswith("/devtools/page/")
+                ):
+                    matches.append(ws_url)
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                diagnostic("multiple qualifying SharedJSContext targets; refusing")
+                return None
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
+        if attempt < WAIT_ATTEMPTS:
+            time.sleep(WAIT_SECONDS)
+    diagnostic("timed out waiting for the qualifying Steam SharedJSContext")
+    return None
+
+
+def update_steam_override(
+    websocket_url: str, selection: SinkSelection
+) -> bool:
+    request = {
+        "id": 1,
+        "method": "Runtime.evaluate",
+        "params": {
+            "expression": selection_expression(selection),
+            "awaitPromise": True,
+            "returnByValue": True,
+        },
+    }
+    try:
+        connection = websocket.create_connection(
+            websocket_url,
+            timeout=WEBSOCKET_TIMEOUT,
+            origin="http://127.0.0.1:8080",
+        )
+        try:
+            connection.send(json.dumps(request, separators=(",", ":")))
+            while True:
+                response = json.loads(connection.recv())
+                if response.get("id") == 1:
+                    break
+        finally:
+            connection.close()
+    except (OSError, ValueError, websocket.WebSocketException) as error:
+        diagnostic(f"CEF evaluation failed: {error}")
+        return False
+
+    if "error" in response:
+        diagnostic(f"CEF Runtime.evaluate rejected the request: {response['error']!r}")
+        return False
+    evaluation = response.get("result", {})
+    if evaluation.get("exceptionDetails"):
+        diagnostic(f"CEF expression failed: {evaluation['exceptionDetails']!r}")
+        return False
+    value = evaluation.get("result", {}).get("value")
+    if not isinstance(value, dict) or value.get("ok") is not True:
+        diagnostic(f"CEF expression returned an unexpected result: {value!r}")
+        return False
+    if (
+        not isinstance(value.get("id"), int)
+        or value.get("name") != selection.name
+    ):
+        diagnostic(f"CEF selection result was not verified: {value!r}")
+        return False
+    diagnostic(
+        f"synchronized Steam output {selection.name!r} "
+        f"to device id {value['id']}"
+    )
+    return True
+
+
+def main() -> int:
+    if not is_odin3():
+        diagnostic("device gate did not match; leaving Steam unchanged")
+        return 0
+    # Steam and the user audio graph start concurrently. Waiting for the
+    # SharedJSContext first also gives WirePlumber time to restore the saved
+    # default instead of mistaking its brief priority fallback for user intent.
+    target = find_shared_context()
+    if target is None:
+        return 1
+    selection = selected_sink()
+    if selection is None:
+        return 1
+    return 0 if update_steam_override(target, selection) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
