@@ -18,6 +18,7 @@ case "$model" in
     "AYANEO Pocket ACE") profile=ayaneo-pocket-ace ;;
     "AYANEO Pocket DMG") profile=ayaneo-pocket-dmg ;;
     "AYANEO Pocket DS") profile=ayaneo-pocket-ds ;;
+    "AYANEO Pocket S 1K") profile=ayaneo-pocket-s1k ;;
     "AYANEO Pocket S 2K") profile=ayaneo-pocket-s2k ;;
     "AYANEO Pocket S2") profile=ayaneo-pocket-s2 ;;
     "KONKR Pocket FIT") profile=konkr-pocket-fit ;;
