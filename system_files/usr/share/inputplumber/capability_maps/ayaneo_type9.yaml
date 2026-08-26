@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+version: 2
+kind: CapabilityMap
+name: AYANEO Type 9
+id: aya9
+
+mapping:
+  - name: Side button to Quick Access
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN7
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+  - name: Front button to virtual keyboard (Steam)
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN6
+          value_type: button
+    target_event:
+      gamepad:
+        button: Guide
+  - name: Front button to virtual keyboard (X)
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN6
+          value_type: button
+    target_event:
+      gamepad:
+        button: North
+  - name: AYANEO button 2 to screenshot
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN5
+          value_type: button
+    target_event:
+      gamepad:
+        button: Screenshot
+  - name: Upper left back button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN3
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftTop
+  - name: Upper right back button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN4
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightTop

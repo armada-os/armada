@@ -1,16 +1,11 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
-# Schema version number
 version: 1
-
-# The type of configuration schema
 kind: CompositeDevice
-
-# Name of the composite device mapping
 name: AYANEO Standard Layout
 
-# Only use this profile if *any* of the given matches matches. If this list is
-# empty, then the source devices will *always* be checked.
-# /sys/class/dmi/id/product_name
+# The Pocket FIT and Pocket S2 expose the main gamepad and their auxiliary
+# buttons as two USB input devices. Keep both sources in one composite so Steam
+# cannot open the raw gamepad alongside InputPlumber's virtual controller.
 matches:
   - udev:
       sys_path: /sys/firmware/devicetree/base
@@ -23,33 +18,42 @@ matches:
         - name: model
           value: AYANEO Pocket S2
 
-# Only allow a single source device per composite device of this type.
-single_source: false
-
-# One or more source devices to combine into a single virtual device. The events
-# from these devices will be watched and translated according to the key map.
-source_devices:
-  - group: gamepad
-    evdev:
-      vendor_id: "1c4f"
-      product_id: "0002"
-      handler: event*
-    capability_map_id: ayaneo_mcu_xbox_standard
-  - group: gamepad
-    evdev:
-      vendor_id: "045e"
-      product_id: "028e"
-      handler: event*
-    capability_map_id: ayaneo_mcu_xbox_standard
-
-# Optional configuration for the composite device
+maximum_sources: 0
 options:
-  # If true, InputPlumber will automatically try to manage the input device. If
-  # this is false, InputPlumber will not try to manage the device unless an
-  # external service enables management of the device. Defaults to 'false'
   auto_manage: true
 
-# The target input device(s) to emulate by default
+source_devices:
+  # AYANEO/DInput mode
+  - group: gamepad
+    capability_map_id: pocket_fit_dinput
+    evdev:
+      name: AYANEO Controller
+      vendor_id: 4001
+      product_id: 0428
+      handler: event*
+  # The same physical HID carries AYANEO/DInput force-feedback output.
+  - group: gamepad
+    hidraw:
+      vendor_id: 0x4001
+      product_id: 0x0428
+      interface_num: 0
+  # Physical XInput mode remains available for Armada Control mode switching.
+  - group: gamepad
+    evdev:
+      phys_path: usb-0001:01:00.0-1/input0
+      vendor_id: 045e
+      product_id: 028e
+      handler: event*
+  # AYANEO auxiliary buttons and the upper pair of back buttons.
+  - group: keyboard
+    capability_map_id: aya9
+    evdev:
+      name: AYANEO DEVICE
+      vendor_id: 1c4f
+      product_id: 0002
+      handler: event*
+
 target_devices:
-  - xb360
+  - deck-uhid
   - keyboard
+  - mouse
