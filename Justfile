@@ -82,6 +82,9 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS=()
     ARMADA_VERSION="$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)"
     BUILD_ARGS+=("--build-arg" "ARMADA_VERSION=${ARMADA_VERSION}")
+    if [[ -n "${ARMADA_FEDORA_MIRROR:-}" ]]; then
+        BUILD_ARGS+=("--build-arg" "ARMADA_FEDORA_MIRROR=${ARMADA_FEDORA_MIRROR}")
+    fi
 
     # Allow local armada-packages images to override pinned package images.
     mapfile -t PKG_VARS < <(sed -n 's/^ARG \([A-Z0-9_]*_PKG\)=.*/\1/p' Containerfile)
