@@ -15,7 +15,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 TWEAKS_FIXTURE="$WORK/game-tweaks.json"
-SESSION_FILE="$ROOT/system_files/etc/gamescope-session-plus/sessions.d/steam"
+SESSION_FILE="$ROOT/system_files/usr/share/gamescope-session-plus/sessions.d/steam"
 SESSION_REALTIME_BLOCK="$(sed -n '/^_armada_tweaks_config=/,/^unset _armada_tweaks_config$/p' "$SESSION_FILE")"
 
 session_realtime_value() {
@@ -44,6 +44,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import pathlib
 import selectors
 import subprocess
 import sys
@@ -139,6 +140,35 @@ check("env global-only view intact", ap.merged_settings(env_tweaks, None)["env"]
 # --- armada-game-launch: FEX path unchanged by perf keys --------------------
 os.environ["XDG_CACHE_HOME"] = WORK
 launch = load_script("armada-game-launch")
+with open(os.path.join(LIBEXEC, "armada-game-launch"), "rb") as f:
+    check("wrapper interpreter is PATH-independent", f.readline() == b"#!/usr/bin/python3\n")
+
+appimage = pathlib.Path(WORK) / "test.AppImage"
+appimage.write_bytes(b"\x7fELF" + b"\0" * 4 + b"AI\x02")
+not_appimage = pathlib.Path(WORK) / "not-an-appimage"
+not_appimage.write_bytes(b"#!/bin/sh\n")
+fifo = pathlib.Path(WORK) / "argv-fifo"
+os.mkfifo(fifo)
+check("non-regular argv rejected", not launch.is_appimage(str(fifo)))
+saved_path = os.environ.get("PATH")
+try:
+    os.environ["PATH"] = "/steam/runtime/bin"
+    launch.prepare_appimage_path(["/steam-launch-wrapper", "--", str(appimage)])
+    check("AppImage command chain gets standard PATH",
+          os.environ["PATH"] == "/steam/runtime/bin:/usr/local/bin:/usr/bin:/bin")
+    os.environ["PATH"] = "/steam/runtime/bin"
+    launch.prepare_appimage_path(["/steam-launch-wrapper", "--", str(not_appimage)])
+    check("non-AppImage PATH unchanged", os.environ["PATH"] == "/steam/runtime/bin")
+    os.environ["PATH"] = "/usr/bin:/steam/runtime/bin:/bin"
+    launch.prepare_appimage_path([str(appimage)])
+    check("existing PATH order preserved",
+          os.environ["PATH"] == "/usr/bin:/steam/runtime/bin:/bin:/usr/local/bin")
+finally:
+    if saved_path is None:
+        os.environ.pop("PATH", None)
+    else:
+        os.environ["PATH"] = saved_path
+
 base_fex = os.path.join(WORK, "base-fex.json")
 with open(base_fex, "w") as f:
     json.dump({"Config": {"TSOEnabled": "1"}, "ThunksDB": {"Vulkan": 1, "GL": 1}}, f)

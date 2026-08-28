@@ -2,18 +2,84 @@
 # zz- sorts after armada.conf so its Session= wins (User=/Relogin= stay there).
 set -euo pipefail
 
-desktop_session=armada-plasma.desktop
+PLASMA_CONFIG_DIR=/var/home/armada/.config
+PLASMA_CONFIG_NAME=plasmashellrc
 
-if [[ $(cat /etc/armada/desktop-session 2> /dev/null) == mobile ]]; then
-  desktop_session=armada-plasma-mobile.desktop
-fi
+PLASMA_CONFIG="${PLASMA_CONFIG_DIR}/${PLASMA_CONFIG_NAME}"
+PLASMA_DESKTOP_CONFIG="${PLASMA_CONFIG}.desktop"
+PLASMA_MOBILE_CONFIG="${PLASMA_CONFIG}.mobile"
 
-case "${1:-}" in
-    switch-desktop)  session=$desktop_session ;;
-    switch-gamemode) session=gamescope-session-steam.desktop ;;
-    default-gamemode) session=gamescope-session-steam.desktop; default_only=1 ;;
-    *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode}" >&2; exit 1 ;;
-esac
+initialize_plasma_configs() {
+    install -d \
+        -o armada \
+        -g armada \
+        -m 0700 \
+        "${PLASMA_CONFIG_DIR}"
+
+    # Migrate the existing configuration as a desktop config.
+    if [[ -e "${PLASMA_CONFIG}" && ! -L "${PLASMA_CONFIG}" ]]; then
+        if [[ -e "${PLASMA_DESKTOP_CONFIG}" ]]; then
+            echo "refusing to overwrite existing Desktop Plasma configuration" >&2
+            return 1
+        fi
+
+        mv \
+            "${PLASMA_CONFIG}" \
+            "${PLASMA_DESKTOP_CONFIG}"
+    fi
+
+  # Don't allow for a dangling symlink
+    if [[ ! -e "${PLASMA_DESKTOP_CONFIG}" ]]; then
+        install \
+            -o armada \
+            -g armada \
+            -m 0600 \
+            /dev/null \
+            "${PLASMA_DESKTOP_CONFIG}"
+    fi
+
+    if [[ ! -e "${PLASMA_MOBILE_CONFIG}" ]]; then
+        install \
+            -o armada \
+            -g armada \
+            -m 0600 \
+            /dev/null \
+            "${PLASMA_MOBILE_CONFIG}"
+    fi
+}
+
+
+activate_plasma_config() {
+    local mode="$1"
+    local target
+    local temporary_link="${PLASMA_CONFIG}.new"
+
+    case "${mode}" in
+        desktop)
+            target="${PLASMA_CONFIG_NAME}.desktop"
+            ;;
+        mobile)
+            target="${PLASMA_CONFIG_NAME}.mobile"
+            ;;
+        *)
+            echo "invalid Plasma configuration mode: ${mode}" >&2
+            return 1
+            ;;
+    esac
+
+    # Relative link to allow config to be somewhere else
+    ln -sfn "${target}" "${temporary_link}"
+    chown -h armada:armada "${temporary_link}"
+
+    # Replace active link
+    mv -Tf "${temporary_link}" "${PLASMA_CONFIG}"
+
+    restorecon -F \
+        "${PLASMA_CONFIG}" \
+        "${PLASMA_DESKTOP_CONFIG}" \
+        "${PLASMA_MOBILE_CONFIG}" \
+        2>/dev/null || true
+}
 
 logout_plasma() {
     local user=armada
@@ -40,6 +106,25 @@ logout_plasma() {
         DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
         "${qdbus}" org.kde.Shutdown /Shutdown org.kde.Shutdown.logout
 }
+
+desktop_session=armada-plasma.desktop
+desktop_mode=desktop
+
+if [[ $(cat /etc/armada/desktop-session 2>/dev/null) == mobile ]]; then
+    desktop_session=armada-plasma-mobile.desktop
+    desktop_mode=mobile
+fi
+
+case "${1:-}" in
+    switch-desktop)
+        initialize_plasma_configs
+        activate_plasma_config "${desktop_mode}"
+        session=$desktop_session
+        ;;
+    switch-gamemode) session=gamescope-session-steam.desktop ;;
+    default-gamemode) session=gamescope-session-steam.desktop; default_only=1 ;;
+    *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode}" >&2; exit 1 ;;
+esac
 
 printf '[Autologin]\nSession=%s\n' "${session}" > /etc/sddm.conf.d/zz-steamos-autologin.conf
 systemctl reset-failed sddm.service 2>/dev/null || true

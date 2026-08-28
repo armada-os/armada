@@ -17,7 +17,7 @@ fi
 WORK=$(mktemp -d)
 trap "sudo umount '${WORK}/mnt' 2>/dev/null || true; sudo losetup -d \"\$(cat ${WORK}/loop 2>/dev/null)\" 2>/dev/null || true; rm -rf '${WORK}'" EXIT
 
-curl --connect-timeout 30 --retry 3 -fsSL -o "${WORK}/abl.tar.gz" \
+curl --connect-timeout 30 --retry 12 --retry-delay 10 -fsSL -o "${WORK}/abl.tar.gz" \
     "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
 printf '%s  %s\n' "${ARMADA_ABL_ARCHIVE_SHA256}" "${WORK}/abl.tar.gz" | sha256sum -c -
 mkdir -p "${WORK}/abl-extracted"

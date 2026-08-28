@@ -138,6 +138,32 @@ snapshot_sleep_depth() {
     [[ -s $state_dir/cpuidle-s2idle.before ]] || rm -f "$state_dir/cpuidle-s2idle.before"
 }
 
+snapshot_suspend_stats() {
+    local f
+    : >"$state_dir/suspend-stats.before"
+    for f in success fail; do
+        printf '%s\t%s\n' "$f" "$(read_value "$sys_root/power/suspend_stats/$f" 0)" \
+            >>"$state_dir/suspend-stats.before"
+    done
+}
+
+# A PCM left open at suspend keeps the audio DSP awake for the whole sleep;
+# capture the state at prepare so a bad night is attributable.
+snapshot_audio_state() {
+    local f state
+    : >"$state_dir/audio.before"
+    for f in "$proc_root"/asound/card*/pcm*/sub*/status; do
+        [[ -r $f ]] || continue
+        state=$(head -n 1 "$f" 2>/dev/null)
+        [[ $state == closed ]] && continue
+        printf 'open_pcm\t%s\t%s\n' "$f" "$state" >>"$state_dir/audio.before"
+    done
+    for f in "$sys_root"/kernel/debug/asoc/*/dapm/bias_level; do
+        [[ -r $f ]] || continue
+        printf 'bias\t%s\t%s\n' "$f" "$(head -n 1 "$f" 2>/dev/null)" >>"$state_dir/audio.before"
+    done
+}
+
 enable_tsens_dynamic_debug() {
     local control="$sys_root/kernel/debug/dynamic_debug/control"
 
@@ -170,6 +196,8 @@ prepare() {
     snapshot_charge_state
     snapshot_sleep_depth
     snapshot_input_devices
+    snapshot_suspend_stats
+    snapshot_audio_state
     enable_tsens_dynamic_debug
 
     if [[ -w $pm_debug ]]; then
@@ -896,6 +924,101 @@ kernel_tail() {
     fi
 }
 
+verdict_report() {
+    local window="" exits="" slept="" cycles="" wake_irq wake_name adsp_pct=""
+    local before now dur_delta mdss_delta
+
+    if [[ -r $state_dir/prepared_at ]]; then
+        window=$(( $(date +%s) - $(date -d "$(cat "$state_dir/prepared_at")" +%s 2>/dev/null || echo 0) ))
+        (( window > 0 )) || window=""
+    fi
+    echo "window_seconds=${window:-unavailable}"
+
+    if [[ -r $state_dir/suspend-stats.before ]]; then
+        before=$(awk -F'\t' '$1 == "success" {print $2}' "$state_dir/suspend-stats.before")
+        now=$(read_value "$sys_root/power/suspend_stats/success" 0)
+        exits=$(( now - before ))
+        echo "suspend_exits_in_window=$exits"
+    else
+        echo "suspend_exits_in_window=unavailable (no prepare baseline)"
+    fi
+
+    # printk time freezes while timekeeping is suspended, so PM-entry/exit
+    # timestamps understate sleep; the printed chunk durations are authoritative.
+    if [[ -x $journalctl_bin ]]; then
+        read -r cycles slept < <($journalctl_bin -k -b 0 --no-pager 2>/dev/null |
+            grep -oE 'Timekeeping suspended for [0-9.]+' |
+            awk '{n++; s+=$4} END {printf "%d %.0f", n, s}')
+        if [[ ${cycles:-0} -gt 0 ]]; then
+            echo "real_sleep_this_boot=${slept}s across ${cycles} timekeeping cycles"
+        else
+            # the kernel only prints these under pm_debug_messages, which prepare enables
+            echo "real_sleep_this_boot=none-recorded (only sleeps after a prepare are measured)"
+        fi
+    fi
+
+    wake_irq=$(read_value "$sys_root/power/pm_wakeup_irq" "")
+    if [[ -n $wake_irq ]]; then
+        wake_name=$(awk -v irq="$wake_irq:" '$1 == irq {print $NF}' "$proc_root/interrupts")
+        echo "last_wake_irq=$wake_irq (${wake_name:-unknown})"
+    else
+        echo "last_wake_irq=none-recorded"
+    fi
+
+    if [[ -r $state_dir/qcom-stats.before && -r $sys_root/kernel/debug/qcom_stats/adsp && -n $window ]]; then
+        before=$(awk -F'\t' '$1 == "adsp" {print $3}' "$state_dir/qcom-stats.before")
+        now=$(sed -n 's/^Accumulated Duration: //p' "$sys_root/kernel/debug/qcom_stats/adsp" | head -n 1)
+        if [[ -n $before && -n $now ]]; then
+            # 19.2 MHz ticks
+            adsp_pct=$(awk -v d=$((now - before)) -v w="$window" 'BEGIN {printf "%.1f", d / 192000 / w}')
+            echo "adsp_sleep_pct_of_window=${adsp_pct}% (near 0 with the system suspended usually means an audio path was left open)"
+        fi
+    fi
+
+    if [[ -r $state_dir/audio.before ]]; then
+        echo "open_pcms_at_prepare=$(grep -c '^open_pcm' "$state_dir/audio.before")"
+    fi
+
+    if [[ -r $state_dir/interrupts.before ]]; then
+        mdss_delta=$(awk 'FNR == NR { if (/msm_mdss/) { t=0; for (i=2; i<=9; i++) if ($i ~ /^[0-9]+$/) t+=$i; b+=t }; next }
+            /msm_mdss/ { t=0; for (i=2; i<=9; i++) if ($i ~ /^[0-9]+$/) t+=$i; a+=t }
+            END {print a - b}' "$state_dir/interrupts.before" "$proc_root/interrupts")
+        if [[ -n $mdss_delta ]] && (( mdss_delta > 1000 )); then
+            echo "display_irqs_in_window=+$mdss_delta (screen rendered during the window; part of it was normal use, not sleep)"
+        fi
+    fi
+}
+
+audio_state_report() {
+    local f state
+    if [[ -r $state_dir/audio.before ]]; then
+        echo "at prepare:"
+        sed 's/^/  /' "$state_dir/audio.before"
+    else
+        echo "at prepare: unavailable (no baseline)"
+    fi
+    echo "now:"
+    for f in "$proc_root"/asound/card*/pcm*/sub*/status; do
+        [[ -r $f ]] || continue
+        state=$(head -n 1 "$f" 2>/dev/null)
+        [[ $state == closed ]] && continue
+        printf '  open_pcm\t%s\t%s\n' "$f" "$state"
+    done
+    for f in "$sys_root"/kernel/debug/asoc/*/dapm/bias_level; do
+        [[ -r $f ]] || continue
+        printf '  bias\t%s\t%s\n' "$f" "$(head -n 1 "$f" 2>/dev/null)"
+    done
+}
+
+wake_ledger_report() {
+    local ledger=/var/lib/armada/wake-ledger.log
+    if [[ -r $ledger ]]; then
+        tail -n 40 "$ledger"
+    else
+        echo "unavailable (ledger hook not installed or no wakes recorded)"
+    fi
+}
+
 collect() {
     local current_boot baseline_boot device_info sleep_mode
 
@@ -927,6 +1050,9 @@ collect() {
     else
         echo "baseline_boot=unavailable"
     fi
+
+    section "Verdict"
+    verdict_report
 
     section "Sleep state"
     single_line_file power_state "$sys_root/power/state"
@@ -961,6 +1087,12 @@ collect() {
 
     section "First wake IRQ"
     wakeup_irq_report
+
+    section "Wake ledger"
+    wake_ledger_report
+
+    section "Audio state"
+    audio_state_report
 
     section "Wakeup source changes"
     wakeup_source_report

@@ -1,0 +1,78 @@
+name: "Feature request"
+description: "Request a new feature or improvement for Armada."
+type: feature
+assignees: []
+body:
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware Device
+      description: Please select the device you are using.
+      options:
+        - 'Select a device...'
+        - 'AYANEO Pocket EVO'
+        - 'AYANEO Pocket S2'
+        - 'AYANEO Pocket ACE'
+        - 'AYANEO Pocket DS'
+        - 'AYANEO Pocket DMG'
+        - 'AYANEO Pocket S 2K'
+        - 'AYN Odin 2 Portal'
+        - 'AYN Odin 2 Mini'
+        - 'AYN Odin 2'
+        - 'AYN Thor'
+        - 'AYN Odin 3'
+        - 'Retroid Pocket 5'
+        - 'Retroid Pocket Flip 2'
+        - 'Retroid Pocket Mini'
+        - 'Retroid Pocket Mini V2'
+        - 'Retroid Pocket 6'
+        - 'Retroid Pocket Nova'
+        - 'KONKR Pocket FIT (8 Elite)'
+        - 'KONKR Pocket FIT (G3 Gen 3)'
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS Version
+      description: |
+        Please follow these steps to find and paste the Armada OS Version:
+        1. Open Steam's quick access menu
+        2. Navigate to Decky (plug icon)
+        3. Select Armada Control
+        4. Navigate to Armada Control's settings (cog icon)
+        5. Copy the text below OS Version and paste it here
+      placeholder: AAAAMMDD.xxxxxxx
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the feature you are requesting.
+    validations:
+      required: true
+
+  - type: textarea
+    id: comments
+    attributes:
+      label: Additional comments
+      description: Any other context, rationale, or constraints that will help evaluate or implement this feature.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have read the project's README and documentation.
+          required: true
+        - label: I searched existing issues and feature requests and confirm this is not a duplicate.
+          required: true
+        - label: I included a clear use case and expected user benefit.
+          required: true
+        - label: I attached mockups, examples, or links if they help explain the request.
+          required: false

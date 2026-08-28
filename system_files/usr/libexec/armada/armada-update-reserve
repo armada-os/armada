@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+source "${ARMADA_UPDATE_LIB:-/usr/lib/armada/update-lib}"
+
+repo="${ARMADA_MIGRATION_OSTREE_REPO:-${ARMADA_OSTREE_REPO}}"
+reserve="${ARMADA_UPDATE_RESERVE_SIZE}"
+
+current="$(ostree config --repo="${repo}" get core.min-free-space-size 2>/dev/null || true)"
+if [[ "${1:-}" == "--needed" ]]; then
+    [[ "${current}" != "${reserve}" ]]
+    exit
+fi
+
+if [[ "${current}" != "${reserve}" ]]; then
+    ostree config --repo="${repo}" set core.min-free-space-size "${reserve}"
+fi
+
+current="$(ostree config --repo="${repo}" get core.min-free-space-size 2>/dev/null || true)"
+if [[ "${current}" != "${reserve}" ]]; then
+    echo "armada-update-reserve: expected ${reserve}, found ${current:-unset}" >&2
+    exit 1
+fi
+
+echo "Configured OSTree update reserve to ${reserve}"

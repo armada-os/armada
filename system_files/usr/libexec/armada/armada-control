@@ -18,6 +18,7 @@ import armada_perf
 SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
 ABL_VERSION_TOOL = "/usr/lib/armada/abl-version"
+RGB_TOOL = "/usr/bin/armada-rgb"
 ABL_CONFIG = Path("/etc/armada/abl.conf")
 ABL_MANIFEST = Path("/usr/lib/armada/abl/manifest")
 ABL_PARTITIONS = (
@@ -307,6 +308,51 @@ def action_get_abl_version(request):
     return {"version": abl_version()}
 
 
+def run_rgb(command):
+    output = subprocess.check_output([RGB_TOOL, *command], text=True, timeout=5)
+    config = json.loads(output)
+    if not isinstance(config, dict):
+        raise RuntimeError("invalid armada-rgb response")
+    return config
+
+
+def action_get_rgb(request):
+    if not device_env().get("ARMADA_RGB_BACKEND"):
+        return None
+    return run_rgb(["get"])
+
+
+def action_set_rgb(request):
+    if not device_env().get("ARMADA_RGB_BACKEND"):
+        raise RuntimeError("RGB lighting is not supported on this device")
+
+    enabled = request.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("invalid RGB enabled state")
+    if not enabled:
+        return run_rgb(["off"])
+
+    color = request.get("color")
+    brightness = request.get("brightness")
+    valid_color = (
+        isinstance(color, str)
+        and len(color) == 6
+        and all(character in "0123456789abcdefABCDEF" for character in color)
+    )
+    if not valid_color:
+        raise ValueError("invalid RGB color")
+    valid_brightness = (
+        isinstance(brightness, int)
+        and not isinstance(brightness, bool)
+        and 0 <= brightness <= 100
+    )
+    if not valid_brightness:
+        raise ValueError("invalid RGB brightness")
+
+    command = ["set", "--color", color, "--brightness", str(brightness)]
+    return run_rgb(command)
+
+
 def action_inputplumber_intercept(request):
     mode = str(request.get("mode", ""))
     if mode not in INTERCEPT_MODES:
@@ -511,6 +557,8 @@ ACTIONS = {
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
     "get_abl_version": action_get_abl_version,
+    "get_rgb": action_get_rgb,
+    "set_rgb": action_set_rgb,
     "get_abl_auto_enabled": action_get_abl_auto_enabled,
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,

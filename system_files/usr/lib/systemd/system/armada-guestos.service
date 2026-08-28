@@ -1,6 +1,7 @@
 [Unit]
 Description=Present the FEX x86 rootfs at the path Steam's FEX compat tool expects
 ConditionPathExists=/usr/share/fex-emu/RootFS/ArchLinux.sqsh
+ConditionPathExists=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh
 Before=systemd-user-sessions.service graphical.target
 
 [Service]

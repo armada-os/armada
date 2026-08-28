@@ -2,7 +2,7 @@ import threading
 import time
 from collections import OrderedDict
 
-from . import catalog, installers, store
+from . import catalog, installers, paths, postinstall, store
 
 ACTIVE_PHASES = {"queued", "resolving", "downloading", "installing", "extracting", "removing"}
 DONE_TTL = 10.0
@@ -35,7 +35,7 @@ class Job:
 
 
 def start(app_id, action):
-    if action not in ("install", "uninstall"):
+    if action not in ("install", "uninstall", "replace"):
         raise ValueError("Unknown action: " + str(action))
     app = catalog.find_app(app_id)
     if app is None:
@@ -106,7 +106,7 @@ def _run():
             job.finished_at = time.monotonic()
 
 
-# Compat installs download then extract; each phase reports 0-100 of itself,
+# Plugin installs download then extract; each phase reports 0-100 of itself,
 # so they are weighted into one bar rather than restarting halfway through.
 DOWNLOAD_SPAN = (0, 80)
 EXTRACT_SPAN = (80, 100)
@@ -141,8 +141,16 @@ def _execute(job):
     try:
         if app is None:
             raise RuntimeError("App is no longer in the catalog")
-        if job.action == "install":
-            _execute_install(job, install, kind)
+        if job.action in ("install", "replace"):
+            _execute_install(job, app, install, kind)
+            # After the install, never before: a download that fails partway
+            # would otherwise leave the user with neither packaging.
+            if job.action == "replace":
+                # Before the removal: dying in between must not strand the
+                # shortcut on a packaging that is gone.
+                store.add_pending_shortcut(job.app_id, force=True)
+                _remove_conflicts(job, app)
+            postinstall.run(app)
         else:
             _execute_uninstall(job, install, kind)
         job.phase = "done"
@@ -156,7 +164,24 @@ def _execute(job):
         job.error = str(error) or error.__class__.__name__
 
 
-def _execute_install(job, install, kind):
+def _remove_conflicts(job, app):
+    job.phase = "removing"
+    job.percent = None
+    for entry in catalog.present_conflicts(app, catalog.flatpak_refs()):
+        if entry.get("type") == "flatpak":
+            installers.uninstall_flatpak(entry["ref"], job.cancel)
+            catalog.invalidate_flatpak_cache()
+        elif entry.get("type") == "appimage":
+            installers.remove_appimage(entry, None)
+            # The entry and the record are keyed by app id, so the replacement
+            # packaging does not inherit them.
+            installers.remove_desktop_entry(job.app_id)
+            store.clear_appimage(job.app_id)
+        else:
+            raise RuntimeError("Unknown conflict type: " + str(entry.get("type")))
+
+
+def _execute_install(job, app, install, kind):
     if kind == "flatpak":
         # Indeterminate until the first parsed percent, not a misleading 0%.
         job.phase = "installing"
@@ -166,30 +191,47 @@ def _execute_install(job, install, kind):
             job.percent = value
 
         installers.install_flatpak(install["ref"], job.cancel, on_percent)
+        installers.override_flatpak(install["ref"], install.get("overrides"))
         catalog.invalidate_flatpak_cache()
         store.add_pending_shortcut(job.app_id)
     elif kind == "appimage":
         job.phase = "resolving"
-        filename, tag = installers.install_appimage(install, job.cancel, _download_progress(job))
-        store.record_appimage(job.app_id, filename, tag)
-        store.add_pending_shortcut(job.app_id)
-    elif kind == "compat":
+        previous = ((store.load_state().get("appimages") or {}).get(job.app_id) or {}).get("filename")
+        filename, tag, stamp = installers.install_appimage(install, job.cancel, _download_progress(job))
+        store.record_appimage(job.app_id, filename, tag, stamp)
+        # A catalog filename change (ES-DE matches emulators by name) would
+        # otherwise strand the old download in ~/Applications.
+        if previous and previous != filename:
+            try:
+                installers.remove_appimage({}, {"filename": previous})
+            except Exception:
+                pass
+        # Best-effort: the app is installed and usable from Steam without it.
+        try:
+            installers.write_desktop_entry(app, str(paths.apps_dir() / filename))
+        except Exception as error:
+            print("armada-store: desktop entry skipped: {}".format(error))
+        # An app with no launch spec can never become a shortcut, so a pending
+        # record for it would never clear.
+        if catalog.launch_spec(app):
+            store.add_pending_shortcut(job.app_id)
+    elif kind == "deckyplugin":
         job.phase = "resolving"
-        previous = ((store.load_state().get("compat") or {}).get(job.app_id) or {}).get("dir")
-        dirname, tag = installers.install_compat(
+        previous = ((store.load_state().get("plugins") or {}).get(job.app_id) or {}).get("dir")
+        dirname, tag, stamp = installers.install_decky_plugin(
             install,
             job.cancel,
             _download_progress(job, DOWNLOAD_SPAN),
             _extract_progress(job, EXTRACT_SPAN),
         )
-        store.record_compat(job.app_id, dirname, tag)
-        # Best-effort only: the new install is already recorded, so a cleanup
-        # failure must not fail the job or untrack the published tool.
+        store.record_plugin(job.app_id, dirname, tag, stamp)
         if previous and previous != dirname:
             try:
-                installers.remove_compat({"dir": previous})
+                installers.remove_decky_plugin({"dir": previous})
             except Exception:
                 pass
+        if previous:
+            installers.restart_decky()
     else:
         raise RuntimeError("Unknown install type: " + str(kind))
 
@@ -203,9 +245,10 @@ def _execute_uninstall(job, install, kind):
         catalog.invalidate_flatpak_cache()
     elif kind == "appimage":
         installers.remove_appimage(install, (state.get("appimages") or {}).get(job.app_id))
+        installers.remove_desktop_entry(job.app_id)
         store.clear_appimage(job.app_id)
-    elif kind == "compat":
-        installers.remove_compat((state.get("compat") or {}).get(job.app_id))
-        store.clear_compat(job.app_id)
+    elif kind == "deckyplugin":
+        installers.remove_decky_plugin((state.get("plugins") or {}).get(job.app_id))
+        store.clear_plugin(job.app_id)
     else:
         raise RuntimeError("Unknown install type: " + str(kind))

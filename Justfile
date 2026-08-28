@@ -237,7 +237,6 @@ build-armada-image $target_image=("localhost/" + image_name) $tag=default_tag: (
     echo "Finalizing the freshly-built raw image..."
     version=$(podman inspect -t image "${target_image}:${tag}" \
                 | jq -r '.[0].Config.Labels["org.opencontainers.image.version"] // empty')
-    ./post_process/preseed-flatpaks.sh output/image/disk.raw
     ./post_process/make-bootimg.sh output/image/disk.raw
     # Name from the container's version so a flashed device traces to its build.
     if [[ -n "$version" && "$version" != unknown ]]; then

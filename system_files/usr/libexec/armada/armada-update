@@ -18,12 +18,12 @@ if ! grep -qs '"AccountName"' /var/home/armada/.local/share/Steam/config/loginus
 fi
 
 command -v bootc >/dev/null || exit 7
+reserve_bytes=$(armada_update_reserve_bytes) || exit 7
 
 booted_ref=$(armada_booted_ref)
 booted=$(armada_tag_from_ref "$booted_ref")
-registry=$(armada_registry_from_ref "$booted_ref")
-registry=${registry:-$ARMADA_CANONICAL_REGISTRY}
-desired=$(armada_desired_channel "$booted")
+target=$(armada_update_target "$booted_ref") || exit 7
+read -r repository desired <<<"$target"
 case "$booted_ref" in ostree-image-signed:*) verified=1 ;; *) verified=0 ;; esac
 
 # Steam parses check stdout as the update's version and refuses to re-offer a
@@ -37,16 +37,28 @@ if [ "${check}" = 1 ]; then
     # Fail closed without deployment state (bootc status needs root).
     [ -n "${b_digest}" ] || exit 7
     staged=$(armada_tag_from_ref "${s_ref}")
+    remote_info=$(armada_remote_info "${desired}" "${repository}")
+    remote_status=$?
+    if [ "${remote_status}" != 0 ]; then
+        armada_log_remote_info_failure "${remote_status}" "${repository}:${desired}"
+        exit 7
+    fi
+    read -r r_required r_digest r_ver <<<"${remote_info}"
+    [ "${r_ver:-}" = "-" ] && r_ver=""
+    if [ -z "${r_digest:-}" ] || ! [[ "${r_required:-}" =~ ^[0-9]+$ ]]; then
+        armada_update_log "update target ${repository}:${desired} returned incomplete metadata"
+        exit 7
+    fi
     # A pending or stale channel switch is itself an available update.
     if [ "${staged}" != "${desired}" ] && { [ "${desired}" != "${booted}" ] || [ -n "${staged}" ]; }; then
-        armada_remote_version "${desired}" "${registry}"
+        armada_update_fits "${r_required}" "${reserve_bytes}" || exit 7
+        printf '%s\n' "${r_ver:-${r_digest}}"
         exit 0
     fi
     # Registry digests, not `bootc upgrade --check`: it caches its verdict, so
     # repeat checks cannot answer "newer than what is already held".
-    read -r r_digest r_ver <<<"$(armada_remote_info "${desired}" "${registry}")" || true
-    [ -n "${r_digest:-}" ] || exit 7
     if [ "${r_digest}" != "${b_digest}" ] && [ "${r_digest}" != "${s_digest}" ]; then
+        armada_update_fits "${r_required}" "${reserve_bytes}" || exit 7
         printf '%s\n' "${r_ver:-${r_digest}}"
         exit 0
     fi
@@ -58,25 +70,31 @@ if [ "${check}" = 1 ]; then
     exit 7
 fi
 
-# Bail if there isn't enough free disk space.
-avail_b=$(df -B1 --output=avail /var 2>/dev/null | tail -1 | tr -dc '0-9')
-if [ "${avail_b:-0}" -lt $((5 * 1024 * 1024 * 1024)) ]; then
-    echo "armada-update: under 5 GB free on /var, skipping update" >&2
+# Recheck immediately before applying in case free space changed after Steam's
+# availability probe. bootc repeats its own equivalent preflight as a backstop.
+remote_info=$(armada_remote_info "${desired}" "${repository}")
+remote_status=$?
+if [ "${remote_status}" != 0 ]; then
+    armada_log_remote_info_failure "${remote_status}" "${repository}:${desired}"
     exit 7
 fi
+read -r r_required _ <<<"${remote_info}"
+armada_update_fits "${r_required:-}" "${reserve_bytes}" || exit 7
 
 staged=$(armada_tag_from_ref "$(armada_staged_ref)")
 
 # Stage only; /KERNEL is regenerated for the finalized deployment at shutdown by
 # armada-bootimg-sync. Switch when the staged tag misses the desired channel or
 # to re-assert a verified origin; else upgrade in place, which also re-stages
-# past a pending older build. desired is validated (stable|beta|testing).
+# past a pending older build.
 if [ "${staged}" != "${desired}" ] && { [ "${desired}" != "${booted}" ] || [ -n "${staged}" ]; } || [ "${verified}" = 0 ]; then
-    if ! armada_bootc_with_progress bootc switch --enforce-container-sigpolicy "${registry}:${desired}"; then
-        # Target tag may not exist (e.g. unpublished channel) — revert so we don't nag forever.
-        mkdir -p "$(dirname "${ARMADA_CHANNEL_STATE}")" 2>/dev/null
-        printf '%s\n' "${booted}" > "${ARMADA_CHANNEL_STATE}" 2>/dev/null \
-            || echo "armada-update: could not revert channel state to ${booted}" >&2
+    if ! armada_bootc_with_progress bootc switch --enforce-container-sigpolicy "${repository}:${desired}"; then
+        if armada_steam_channels_apply "$repository" "$desired"; then
+            # Target tag may not exist (e.g. unpublished channel) — revert so we don't nag forever.
+            mkdir -p "$(dirname "${ARMADA_CHANNEL_STATE}")" 2>/dev/null
+            printf '%s\n' "${booted}" > "${ARMADA_CHANNEL_STATE}" 2>/dev/null \
+                || echo "armada-update: could not revert channel state to ${booted}" >&2
+        fi
         exit 7
     fi
 else

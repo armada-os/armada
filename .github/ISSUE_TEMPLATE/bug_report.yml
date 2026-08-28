@@ -1,0 +1,107 @@
+name: "Bug report"
+description: "Report a bug in Armada."
+type: bug
+assignees: []
+body:
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware Device
+      description: Please select the device you are using.
+      options:
+        - 'Select a device...'
+        - 'AYANEO Pocket EVO'
+        - 'AYANEO Pocket S2'
+        - 'AYANEO Pocket ACE'
+        - 'AYANEO Pocket DS'
+        - 'AYANEO Pocket DMG'
+        - 'AYANEO Pocket S 2K'
+        - 'AYN Odin 2 Portal'
+        - 'AYN Odin 2 Mini'
+        - 'AYN Odin 2'
+        - 'AYN Thor'
+        - 'AYN Odin 3'
+        - 'Retroid Pocket 5'
+        - 'Retroid Pocket Flip 2'
+        - 'Retroid Pocket Mini'
+        - 'Retroid Pocket Mini V2'
+        - 'Retroid Pocket 6'
+        - 'Retroid Pocket Nova'
+        - 'KONKR Pocket FIT (8 Elite)'
+        - 'KONKR Pocket FIT (G3 Gen 3)'
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: OS Version
+      description: |
+        Please follow these steps to find and paste the Armada OS Version:
+        1. Open Steam's quick access menu
+        2. Navigate to Decky (plug icon)
+        3. Select Armada Control
+        4. Navigate to Armada Control's settings (cog icon)
+        5. Copy the text below OS Version and paste it here
+      placeholder: AAAAMMDD.xxxxxxx
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include exact commands, menu clicks, or actions. If applicable, attach logs or screenshots.
+      placeholder: |
+        Step Example:
+        1. Open QAM
+        2. Go to Armada Control
+        3. X thing happened when I expected Y
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: input
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: comments
+    attributes:
+      label: Additional comments
+      description: Any other information that might help diagnose the issue.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have read the project's README and documentation.
+          required: true
+        - label: I searched existing issues and confirm this is not a duplicate.
+          required: true
+        - label: I can reproduce this issue on the latest Armada release (or I noted the exact release above).
+          required: true
+        - label: I attached relevant logs, screenshots, or a minimal reproduction if applicable.
+          required: false

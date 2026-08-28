@@ -10,7 +10,8 @@ from armada_control.calibration import (
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
 from armada_control.power import save_power_config
-from armada_control.steam import installed_games
+from armada_control.rgb import get_rgb, set_rgb
+from armada_control.steam import compat_mapped_appids, installed_games
 from armada_control.system import (
     reapply_perf,
     restart_game_mode,
@@ -21,6 +22,8 @@ from armada_control.system import (
     set_ssh_enabled,
 )
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
+from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves
+from armada_control.fan_sensors import get_current_temp
 
 
 class Plugin:
@@ -30,6 +33,9 @@ class Plugin:
 
     async def get_installed_games(self):
         return await asyncio.to_thread(installed_games)
+
+    async def get_compat_mapped_appids(self, tool):
+        return await asyncio.to_thread(compat_mapped_appids, tool)
 
     async def save_power_config(self, data):
         await asyncio.to_thread(save_power_config, data)
@@ -69,6 +75,12 @@ class Plugin:
     async def set_controller_type(self, value):
         return await asyncio.to_thread(set_controller_type, value)
 
+    async def get_rgb(self):
+        return await asyncio.to_thread(get_rgb)
+
+    async def set_rgb(self, enabled, color, brightness):
+        return await asyncio.to_thread(set_rgb, enabled, color, brightness)
+
     async def get_controller_state(self):
         return await asyncio.to_thread(controller_state)
 
@@ -83,3 +95,13 @@ class Plugin:
 
     async def end_calibration_session(self, token=None):
         return await asyncio.to_thread(end_session, token)
+
+    async def get_fans_state(self):
+        return await asyncio.to_thread(get_fans_state)
+
+    async def save_fan_curves(self, fan_curves, fan_settings):
+        return await asyncio.to_thread(save_fan_curves, fan_curves, fan_settings)
+
+    # Polled separately from get_fans_state -- see hooks/useCurrentTemp.
+    async def get_current_temp(self):
+        return await asyncio.to_thread(get_current_temp)

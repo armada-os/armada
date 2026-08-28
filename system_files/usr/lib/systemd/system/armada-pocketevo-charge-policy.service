@@ -1,15 +1,20 @@
 [Unit]
-Description=AYANEO Pocket EVO HL7139 direct-charge policy
+Description=Experimental AYANEO Pocket EVO HL7139 direct-charge policy
 After=systemd-modules-load.service
 ConditionPathExists=/sys/class/power_supply/hl7139-master
 ConditionPathExists=/sys/class/power_supply/hl7139-slave
+ConditionPathExists=/etc/armada/experimental/pocketevo-direct-charge
 
 [Service]
-Type=simple
-ExecStart=/usr/libexec/armada-pocketevo-charge-policy
-Restart=always
-RestartSec=5s
-TimeoutStopSec=5s
+Type=notify
+NotifyAccess=all
+WatchdogSec=600s
+ExecStart=/usr/libexec/armada/armada-pocketevo-charge-policy
+ExecStopPost=/usr/libexec/armada/armada-pocketevo-charge-cleanup
+Restart=no
+TimeoutStopSec=10s
+RuntimeDirectory=armada-pocketevo-charge-policy
+RuntimeDirectoryPreserve=yes
 
 [Install]
 WantedBy=multi-user.target

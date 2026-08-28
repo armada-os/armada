@@ -41,6 +41,7 @@ dnf5 -y install --setopt=install_weak_deps=False \
     dbus-x11 \
     xdg-user-dirs \
     xdg-terminal-exec \
+    desktop-file-utils \
     btrfs-progs \
     parted \
     gdisk \
@@ -57,7 +58,33 @@ dnf5 -y install --setopt=install_weak_deps=False \
     seatd \
     cage \
     wlr-randr \
-    distrobox
+    distrobox \
+    wl-clipboard \
+    binutils \
+    btop \
+    tailscale
+
+curl --connect-timeout 30 --max-time 120 --retry 3 -fsSL \
+    -o /etc/yum.repos.d/negativo17-fedora-multimedia.repo \
+    https://negativo17.org/repos/fedora-multimedia.repo
+
+dnf5 -y install --setopt=install_weak_deps=False \
+    ffmpeg \
+    ffmpeg-libs \
+    libavcodec \
+    libfdk-aac \
+    gstreamer1-plugins-ugly \
+    gstreamer1-plugin-libav
+
+# Install the remaining plugins from Fedora; Negativo17's full -bad package
+# pulls a large soundfont payload that Armada does not need.
+rm -f /etc/yum.repos.d/negativo17-fedora-multimedia.repo
+
+dnf5 -y install --setopt=install_weak_deps=False \
+    gstreamer1-plugins-good \
+    gstreamer1-plugins-bad-free \
+    gstreamer1-plugin-openh264 \
+    gstreamer1-plugin-dav1d
 
 dnf5 -y install --setopt=install_weak_deps=False \
     /packages/umtp-responder/umtp-responder-*.rpm
@@ -73,12 +100,13 @@ dnf5 -y install --setopt=install_weak_deps=False glibc-langpack-en
 
 dnf5 -y install --setopt=install_weak_deps=False \
     google-noto-sans-vf-fonts \
-    google-noto-sans-cjk-vf-fonts \
+    google-noto-sans-cjk-fonts \
     google-noto-sans-thai-vf-fonts \
     google-noto-sans-arabic-vf-fonts \
     google-noto-sans-hebrew-vf-fonts \
     google-noto-sans-devanagari-vf-fonts \
-    google-noto-color-emoji-fonts
+    google-noto-color-emoji-fonts \
+    google-noto-sans-mono-fonts
 
 dnf5 -y install --setopt=install_weak_deps=False \
     plasma-workspace \
@@ -113,6 +141,8 @@ dnf5 -y install --setopt=install_weak_deps=False \
 
 # PowerDevil's KWin backend treats 0 as safe; reserve 5% for internal panels.
 dnf5 -y install --setopt=install_weak_deps=False /packages/powerdevil/powerdevil-*.fc44.armada.*.rpm
+
+dnf5 -y install --setopt=install_weak_deps=False firefox
 
 dnf5 -y install --setopt=install_weak_deps=False \
     heroic-games-launcher

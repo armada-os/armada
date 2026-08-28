@@ -14,7 +14,7 @@ import {
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { reapplyPerf, restartGameMode, saveCompatApplied, saveTweaks } from "../backend";
+import { getCompatMappedAppids, reapplyPerf, restartGameMode, saveCompatApplied, saveTweaks } from "../backend";
 import { SelectEdit, SliderEdit } from "../components/widgets";
 import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
 import { clone } from "../lib/util";
@@ -217,23 +217,35 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
   const [coresDraft, setCoresDraft] = useState<string | null>(null);
   const [gsCoresDraft, setGsCoresDraft] = useState<string | null>(null);
   const [reapplyStatus, setReapplyStatus] = useState("");
+  const [switchingDefault, setSwitchingDefault] = useState(false);
   const [compatTools, setCompatTools] = useState<CompatTool[]>([]);
   const [perGameTools, setPerGameTools] = useState<CompatTool[]>([]);
   const [currentTool, setCurrentTool] = useState("");
   const [globalTool, setGlobalTool] = useState(
     String(config.tweaks?.global?.windowsCompatTool || DEFAULT_WINDOWS_COMPAT_TOOL),
   );
+  // The setting is kept rather than rewritten: reinstalling the tool restores the choice.
+  const globalToolMissing = compatTools.length > 0 && !compatTools.some((tool) => tool.id === globalTool);
+  const activeGlobalTool = globalToolMissing ? DEFAULT_WINDOWS_COMPAT_TOOL : globalTool;
   const runtimeGame = config.game;
   const games = availableGames(config);
   const selectedGame = config.selectedGame || runtimeGame || null;
   const game = selectedGame;
   const selectedAppidRef = useRef("");
+  const activeGlobalToolRef = useRef(activeGlobalTool);
+  activeGlobalToolRef.current = activeGlobalTool;
   selectedAppidRef.current = game?.appid || "";
   const tweaks = config.tweaks;
   const tweaksRef = useRef(tweaks);
   tweaksRef.current = tweaks;
   const apps = window.SteamClient?.Apps;
   const persistHandledGames = () => saveCompatApplied(handledGameAppids()).catch(() => {});
+  // null means the pin state could not be established, which callers must not read as "none".
+  const pinnedToMissingTool = async (): Promise<string[] | null | undefined> => {
+    if (!compatTools.length) return null;
+    if (!globalToolMissing) return undefined;
+    return getCompatMappedAppids(globalTool).catch(() => null);
+  };
   useEffect(() => {
     let cancelled = false;
     async function loadResolution() {
@@ -284,7 +296,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     let cancelled = false;
     setCurrentTool(FOLLOW_STEAM_COMPAT);
     resolveCompatState(appid).then((state) => {
-      if (!cancelled) setCurrentTool(compatSelection(state));
+      if (!cancelled) setCurrentTool(compatSelection(state, activeGlobalTool));
     });
     getAppCompatTools(appid).then((tools) => {
       if (!cancelled) setPerGameTools(tools);
@@ -292,7 +304,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     return () => {
       cancelled = true;
     };
-  }, [game?.appid]);
+  }, [game?.appid, activeGlobalTool]);
   useEffect(() => {
     if (!apps?.RegisterForAppOverviewChanges) return;
     let cancelled = false;
@@ -303,7 +315,9 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         resolveCompatState(appid).then((state) => {
-          if (!cancelled && selectedAppidRef.current === appid) setCurrentTool(compatSelection(state));
+          if (!cancelled && selectedAppidRef.current === appid) {
+            setCurrentTool(compatSelection(state, activeGlobalToolRef.current));
+          }
         }).catch(() => {});
       }, 250);
     });
@@ -346,9 +360,9 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     });
     try {
       try {
-        const tool = await resetCompatToolToDefault(appid);
+        const tool = await resetCompatToolToDefault(appid, await pinnedToMissingTool());
         if (selectedAppidRef.current === appid) {
-          setCurrentTool(tool === globalTool ? USE_DEFAULT_COMPAT : tool || FOLLOW_STEAM_COMPAT);
+          setCurrentTool(tool === activeGlobalTool ? USE_DEFAULT_COMPAT : tool || FOLLOW_STEAM_COMPAT);
         }
         persistHandledGames();
       } catch (error) {
@@ -400,6 +414,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     });
     try {
       const gameAppids = await resolveProfileAppids(games.map((installed) => installed.appid));
+      const pinned = await pinnedToMissingTool();
       let nextResolution = 0;
       const resetResolution = async () => {
         while (nextResolution < gameAppids.length) {
@@ -412,14 +427,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         }
       };
       await Promise.all([
-        resetAllGamePolicies(gameAppids),
+        resetAllGamePolicies(gameAppids, pinned),
         Promise.all(Array.from({ length: Math.min(10, gameAppids.length) }, resetResolution)),
       ]);
       await saveCompatApplied(handledGameAppids());
       setResolution("Default");
       if (selectedAppid && selectedAppidRef.current === selectedAppid) {
         const state = await resolveCompatState(selectedAppid);
-        if (selectedAppidRef.current === selectedAppid) setCurrentTool(compatSelection(state));
+        if (selectedAppidRef.current === selectedAppid) setCurrentTool(compatSelection(state, activeGlobalTool));
       }
     } catch (error) {
     } finally {
@@ -454,17 +469,25 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
 
   const toolOptions = compatTools.map((tool) => ({ data: tool.id, label: tool.label }));
   const onSelectGlobalDefault = async (choice: any) => {
+    if (switchingDefault) return;
     const name = String(choice);
     const oldTool = String(tweaks.global.windowsCompatTool || DEFAULT_WINDOWS_COMPAT_TOOL);
-    setGlobalTool(name);
-    setWindowsCompatTool(name);
-    patchSettings({ windowsCompatTool: name });
-    await migrateWindowsCompatTool(
-      config.installedGames.filter((installed) => !installed.nonSteam).map((installed) => installed.appid),
-      oldTool,
-      name,
-    );
-    persistHandledGames();
+    setSwitchingDefault(true);
+    try {
+      const pinned = await pinnedToMissingTool();
+      setGlobalTool(name);
+      setWindowsCompatTool(name);
+      patchSettings({ windowsCompatTool: name });
+      await migrateWindowsCompatTool(
+        config.installedGames.filter((installed) => !installed.nonSteam).map((installed) => installed.appid),
+        oldTool,
+        name,
+        pinned,
+      );
+      persistHandledGames();
+    } finally {
+      setSwitchingDefault(false);
+    }
   };
   const selectableTools = new Map<string, CompatTool>();
   for (const tool of [...perGameTools, ...compatTools]) selectableTools.set(tool.id, tool);
@@ -480,7 +503,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     if (!game?.appid) return;
     const selection = String(choice);
     const target = selection === USE_DEFAULT_COMPAT
-      ? globalTool
+      ? activeGlobalTool
       : selection === FOLLOW_STEAM_COMPAT
         ? ""
         : selection;
@@ -744,7 +767,20 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       <PanelSection title="PROFILE SETTINGS">
         {editingDefault ? (
           <>
-            <SelectEdit labelBelow label="Default Proton" value={globalTool} options={toolOptions} onChange={onSelectGlobalDefault} />
+            <SelectEdit
+              labelBelow
+              label="Default Proton"
+              value={globalTool}
+              options={toolOptions}
+              onChange={onSelectGlobalDefault}
+              disabled={switchingDefault}
+              placeholder={globalToolMissing ? "Choose a Proton" : undefined}
+            />
+            {globalToolMissing ? (
+              <div className="armada-compat-note armada-note-error">
+                {globalTool} is no longer installed. Choose a new default for your games.
+              </div>
+            ) : null}
             <ToggleField
               label="Apply to New Games"
               checked={tweaks.global.autoApplyCompat !== false}

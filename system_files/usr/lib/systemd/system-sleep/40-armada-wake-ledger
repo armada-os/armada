@@ -1,0 +1,19 @@
+#!/bin/bash
+# pm_wakeup_irq only keeps the LAST wake, so overnight drain reports cannot
+# say what ended each sleep. Record every resume's wake IRQ with a timestamp.
+[ "$1" = post ] || exit 0
+
+ledger=/var/lib/armada/wake-ledger.log
+mkdir -p /var/lib/armada || exit 0
+
+irq=$(cat /sys/power/pm_wakeup_irq 2>/dev/null)
+name=
+[ -n "$irq" ] && name=$(awk -v irq="$irq:" '$1 == irq {print $NF}' /proc/interrupts)
+printf '%s wake_irq=%s (%s) mode=%s\n' \
+    "$(date --iso-8601=seconds)" "${irq:-none}" "${name:-unknown}" "${2:-unknown}" >>"$ledger"
+
+# cap the ledger so it can never grow unbounded
+if [ "$(wc -l <"$ledger" 2>/dev/null)" -gt 500 ]; then
+    tail -n 250 "$ledger" >"$ledger.tmp" && mv "$ledger.tmp" "$ledger"
+fi
+exit 0

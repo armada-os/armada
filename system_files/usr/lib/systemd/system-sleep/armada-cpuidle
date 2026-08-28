@@ -1,0 +1,16 @@
+#!/bin/bash
+# device-quirks keeps cpu0 deep power-collapse disabled on SM8550 (A740 GMU
+# wedge under rendering). Nothing renders inside a suspend window, so clear
+# the quirk on the way in and restore it before anything renders again.
+[ -z "${ARMADA_SOC_CLASS:-}" ] && eval "$(/usr/libexec/armada/device-env 2>/dev/null)"
+[ "${ARMADA_SOC_CLASS:-}" = "SM8550" ] || exit 0
+cpu0_deep_idle=/sys/devices/system/cpu/cpu0/cpuidle/state1/disable
+case "$1" in
+pre)
+    [ -w "$cpu0_deep_idle" ] && echo 0 > "$cpu0_deep_idle"
+    ;;
+post)
+    [ -w "$cpu0_deep_idle" ] && echo 1 > "$cpu0_deep_idle"
+    ;;
+esac
+exit 0

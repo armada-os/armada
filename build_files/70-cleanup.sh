@@ -42,6 +42,8 @@ for package in \
     fex-emu-utils \
     terra-gamescope \
     terra-gamescope-libs \
+    gamescope-session \
+    gamescope-session-steam \
     inputplumber \
     mangohud \
     mesa-vulkan-drivers \

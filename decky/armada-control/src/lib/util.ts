@@ -2,6 +2,10 @@ export function clone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj));
 }
 
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 export function update<T>(obj: T, path: (string | number)[], value: any): T {
   const next = clone(obj);
   let cursor: any = next;

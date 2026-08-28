@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 
-function Icon({ path }: { path: ReactNode }) {
+function Icon({ path, size = 20 }: { path: ReactNode; size?: number }) {
   return (
     <svg
       style={{ display: "block" }}
-      width="20"
-      height="20"
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -18,9 +18,12 @@ function Icon({ path }: { path: ReactNode }) {
   );
 }
 
+const TAB_ICON_SIZE = 18;
+
 export const tabIcons = {
   Compatibility: (
     <Icon
+      size={TAB_ICON_SIZE}
       path={
         <>
           <line x1="6" x2="10" y1="11" y2="11" />
@@ -34,6 +37,7 @@ export const tabIcons = {
   ),
   Power: (
     <Icon
+      size={TAB_ICON_SIZE}
       path={
         <>
           <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
@@ -41,8 +45,35 @@ export const tabIcons = {
       }
     />
   ),
+  // "fan" icon from Lucide (https://lucide.dev), ISC License.
+  Fans: (
+    <Icon
+      size={TAB_ICON_SIZE}
+      path={
+        <>
+          <path d="M10.827 16.379a6.082 6.082 0 0 1-8.618-7.002l5.412 1.45a6.082 6.082 0 0 1 7.002-8.618l-1.45 5.412a6.082 6.082 0 0 1 8.618 7.002l-5.412-1.45a6.082 6.082 0 0 1-7.002 8.618l1.45-5.412Z" />
+          <path d="M12 12v.01" />
+        </>
+      }
+    />
+  ),
+  // "lightbulb" icon from Lucide (https://lucide.dev), ISC License.
+  RGB: (
+    <Icon
+      size={TAB_ICON_SIZE}
+      path={
+        <>
+          <path d="M9 18h6" />
+          <path d="M10 22h4" />
+          <path d="M15.09 14c.18-.88.65-1.39 1.41-2.25A6 6 0 0 0 9.33 2.35a6 6 0 0 0-1.83 9.4c.75.85 1.23 1.37 1.41 2.25" />
+          <path d="M9 14h6" />
+        </>
+      }
+    />
+  ),
   Advanced: (
     <Icon
+      size={TAB_ICON_SIZE}
       path={
         <>
           <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />

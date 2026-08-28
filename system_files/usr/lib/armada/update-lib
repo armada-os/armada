@@ -5,6 +5,15 @@ ARMADA_CANONICAL_REGISTRY="ghcr.io/armada-os/armada"
 ARMADA_LEGACY_REGISTRY="ghcr.io/virtudude/armada"
 ARMADA_CHANNEL_STATE="/var/lib/armada/update-channel"
 ARMADA_CHANNELS="stable beta testing"
+ARMADA_OSTREE_REPO="/ostree/repo"
+ARMADA_UPDATE_RESERVE_GIB=2
+ARMADA_UPDATE_RESERVE_SIZE="${ARMADA_UPDATE_RESERVE_GIB}GB"
+ARMADA_UPDATE_RESERVE_BYTES=$((ARMADA_UPDATE_RESERVE_GIB * 1024 * 1024 * 1024))
+
+armada_update_log() {
+    echo "armada-update: $*" >&2
+    logger -t armada-update -- "$*" 2>/dev/null || true
+}
 
 # Steam's picker speaks Valve's branch tokens; translate to/from our ghcr tags.
 armada_token_to_channel() {
@@ -39,6 +48,31 @@ armada_registry_from_ref() {
     esac
 }
 
+# Non-registry transports cannot be checked for network updates.
+armada_repository_from_ref() {
+    local r
+    case "$1" in
+        *docker://*) r="${1##*docker://}" ;;
+        *) return 1 ;;
+    esac
+    r="${r%%@*}"
+    [[ "${r##*/}" == *:* ]] && r="${r%:*}"
+    [[ -n "$r" && "$r" == */* && "$r" != *[[:space:]]* ]] || return 1
+    echo "$r"
+}
+
+armada_steam_channels_apply() {
+    local channel
+    case "$1" in
+        "$ARMADA_CANONICAL_REGISTRY"|"$ARMADA_LEGACY_REGISTRY") ;;
+        *) return 1 ;;
+    esac
+    for channel in ${ARMADA_CHANNELS}; do
+        [[ "$2" == "$channel" ]] && return 0
+    done
+    return 1
+}
+
 # Raw container-image-reference of the booted deployment. rpm-ostree works
 # unprivileged (bootc status needs root), so the -c query can call this.
 armada_booted_ref() {
@@ -67,21 +101,138 @@ print(" ".join(v or "-" for v in out))
 ' 2>/dev/null || true
 }
 
-# "<digest> <version-label>" of a channel's published image in the registry.
+# "<missing-layer-bytes> <digest> <version-label-or-dash>" for a channel's
+# published image. Full skopeo inspection resolves an image index to this host's
+# platform and provides layer sizes without a second registry request.
 armada_remote_info() {
     local registry="${2:-}"
     [[ -n "$registry" ]] || registry="$(armada_booted_registry)"
     [[ -n "$registry" ]] || registry="$ARMADA_CANONICAL_REGISTRY"
-    skopeo inspect --format '{{.Digest}} {{index .Labels "org.opencontainers.image.version"}}' \
-        "docker://${registry}:$1" 2>/dev/null || true
+    skopeo inspect "docker://${registry}:$1" 2>/dev/null | \
+        python3 -c '
+import json
+import subprocess
+import sys
+
+try:
+    image = json.load(sys.stdin)
+    digest = image["Digest"]
+    layers = image["LayersData"]
+    labels = image.get("Labels") or {}
+    version = labels.get("org.opencontainers.image.version") or "-"
+    if (not isinstance(digest, str) or not digest or not isinstance(version, str)
+            or "\n" in version or "\r" in version):
+        raise ValueError
+    if not isinstance(layers, list):
+        raise ValueError
+except (KeyError, ValueError):
+    raise SystemExit(1)
+
+try:
+    refs = set(subprocess.check_output(
+        ["ostree", "--repo=" + sys.argv[1], "refs"],
+        stderr=subprocess.DEVNULL,
+        text=True,
+    ).splitlines())
+except (OSError, subprocess.SubprocessError):
+    raise SystemExit(2)
+
+try:
+    required = 0
+    for layer in layers:
+        layer_digest = layer["Digest"]
+        size = layer["Size"]
+        if not isinstance(layer_digest, str) or not isinstance(size, int) or size < 0:
+            raise ValueError
+        ref = "ostree/container/blob/" + layer_digest.replace(":", "_3A_", 1)
+        if ref not in refs:
+            required += size
+except (KeyError, ValueError):
+    raise SystemExit(1)
+
+print(required, digest, version)
+' "${ARMADA_OSTREE_REPO}"
 }
 
-# Channel version for Steam duplicate detection: digest keeps the fallback
-# per-build; channel name only when the probe fails outright.
-armada_remote_version() {
-    local d v registry="${2:-}"
-    read -r d v <<<"$(armada_remote_info "$1" "$registry")" || true
-    printf '%s\n' "${v:-${d:-$1}}"
+armada_log_remote_info_failure() {
+    if [[ "$1" == 2 ]]; then
+        armada_update_log "could not read local OSTree layer references"
+    else
+        armada_update_log "could not inspect update target $2"
+    fi
+}
+
+armada_filesystem_bytes() {
+    local block_size blocks
+    read -r block_size blocks < <(
+        stat -f -c "%S $1" "${ARMADA_OSTREE_REPO}" 2>/dev/null
+    ) || return 1
+    [[ "${block_size}" =~ ^[0-9]+$ && "${blocks}" =~ ^[0-9]+$ ]] || return 1
+    echo $((block_size * blocks))
+}
+
+armada_available_bytes() {
+    # OSTree enforces its reserve against f_bfree, not non-root f_bavail.
+    armada_filesystem_bytes %f
+}
+
+armada_total_bytes() {
+    armada_filesystem_bytes %b
+}
+
+# Until the fixed-reserve migration succeeds, OSTree retains its 3% default.
+# Keep the availability check at least as conservative as either reserve.
+armada_fallback_reserve_bytes() {
+    local total percent
+    total="$(armada_total_bytes)" || return 1
+    [[ "${total}" =~ ^[0-9]+$ ]] || return 1
+    percent=$(((total * 3 + 99) / 100))
+    if (( percent > ARMADA_UPDATE_RESERVE_BYTES )); then
+        echo "${percent}"
+    else
+        echo "${ARMADA_UPDATE_RESERVE_BYTES}"
+    fi
+}
+
+armada_update_reserve_bytes() {
+    local current
+    current="$(ostree config --repo="${ARMADA_OSTREE_REPO}" \
+        get core.min-free-space-size 2>/dev/null || true)"
+    if [[ "${current}" == "${ARMADA_UPDATE_RESERVE_SIZE}" ]]; then
+        echo "${ARMADA_UPDATE_RESERVE_BYTES}"
+        return
+    fi
+    armada_update_log "fixed OSTree reserve migration is not active; using the larger of ${ARMADA_UPDATE_RESERVE_GIB} GiB and OSTree's 3% default"
+    armada_fallback_reserve_bytes || {
+        armada_update_log "could not compute fallback OSTree reserve"
+        return 1
+    }
+}
+
+# Return success only when bootc can fetch every missing layer and still leave
+# the configured reserve. A fully cached target remains valid below the reserve.
+armada_update_fits() {
+    local required="$1" reserve="${2:-$ARMADA_UPDATE_RESERVE_BYTES}" avail usable
+    if ! [[ "${required}" =~ ^[0-9]+$ && "${reserve}" =~ ^[0-9]+$ ]]; then
+        armada_update_log "could not compute target update storage requirement"
+        return 2
+    fi
+    if ! avail="$(armada_available_bytes)"; then
+        armada_update_log "could not determine available update storage"
+        return 2
+    fi
+    if ! [[ "${avail}" =~ ^[0-9]+$ ]]; then
+        armada_update_log "could not determine available update storage"
+        return 2
+    fi
+    if (( avail > reserve )); then
+        usable=$((avail - reserve))
+    else
+        usable=0
+    fi
+    (( required <= usable )) && return 0
+    armada_update_log "update does not fit: ${required} bytes needed plus ${reserve} bytes reserved; ${avail} bytes available"
+    return 1
 }
 
 # Channel the user selected, validated to a known channel; else $1 (a caller-
@@ -95,6 +246,30 @@ armada_desired_channel() {
         [[ "$c" == "$ch" ]] && { echo "$c"; return; }
     done
     if [[ -n "${1:-}" ]]; then echo "$1"; else armada_booted_channel; fi
+}
+
+armada_update_target() {
+    local ref="$1" booted repository desired
+    booted="$(armada_tag_from_ref "$ref")"
+    if repository="$(armada_repository_from_ref "$ref")"; then
+        if [[ -z "$booted" ]]; then
+            case "$repository" in
+                "$ARMADA_CANONICAL_REGISTRY"|"$ARMADA_LEGACY_REGISTRY") ;;
+                *) return 1 ;;
+            esac
+        fi
+        if [[ -n "$booted" ]] && ! armada_steam_channels_apply "$repository" "$booted"; then
+            desired="$booted"
+        else
+            desired="$(armada_desired_channel "$booted")"
+        fi
+    else
+        repository="$ARMADA_CANONICAL_REGISTRY"
+        desired="$(armada_desired_channel "$booted")"
+    fi
+    [[ -n "$repository" && -n "$desired" && \
+        "$repository" != *[[:space:]]* && "$desired" != *[[:space:]]* ]] || return 1
+    printf '%s %s\n' "$repository" "$desired"
 }
 
 # Run a bootc command with progress wired to the Steam N% translator. fd 3 must

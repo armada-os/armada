@@ -2,6 +2,7 @@ from pathlib import Path
 
 STEAM_ROOT = Path("/var/home/armada/.local/share/Steam")
 STEAM_APPS_DIR = STEAM_ROOT / "steamapps"
+CONFIG_VDF = STEAM_ROOT / "config/config.vdf"
 
 
 def _read_cstring(data, offset):
@@ -50,6 +51,38 @@ def _shortcut_games():
             if isinstance(appid, int) and appid and isinstance(name, str) and name:
                 games.append({"appid": str(appid), "name": name, "nonSteam": True})
     return games
+
+
+def compat_mapped_appids(tool_name):
+    # Steam reports an unresolvable tool as unset, so this is the only record of those pins.
+    if not tool_name:
+        return []
+    # A read failure must reach the caller: an empty result reads as "nothing is pinned".
+    lines = CONFIG_VDF.read_text(encoding="utf-8", errors="replace").splitlines()
+    appids = []
+    stack = []
+    pending = None
+    for line in lines:
+        text = line.strip()
+        if text == "{":
+            stack.append(pending)
+            pending = None
+            continue
+        if text == "}":
+            if stack:
+                stack.pop()
+            continue
+        parts = text.split('"')
+        if len(parts) >= 5:
+            appid = stack[-1] if stack else None
+            # "0" is the wildcard mapping, not a game.
+            if (parts[1] == "name" and parts[3] == tool_name and len(stack) >= 2
+                    and stack[-2] == "CompatToolMapping"
+                    and appid and appid.isdigit() and appid != "0"):
+                appids.append(appid)
+        elif len(parts) >= 3:
+            pending = parts[1]
+    return appids
 
 
 def installed_games():

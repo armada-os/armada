@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-SESSION="$ROOT/system_files/etc/gamescope-session-plus/sessions.d/steam"
+SESSION="$ROOT/system_files/usr/share/gamescope-session-plus/sessions.d/steam"
 
 if grep -Fq 'ENABLE_GAMESCOPE_HDR=' "$SESSION"; then
     printf 'Odin 3 session still force-enables HDR output\n' >&2

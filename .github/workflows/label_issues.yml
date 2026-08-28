@@ -1,0 +1,79 @@
+name: Label device from issue template
+
+on:
+  issues:
+    types:
+      - opened
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    name: Apply device label
+    runs-on: ubuntu-22.04
+    if: contains(github.event.issue.body, '### Hardware Device')
+    steps:
+      - name: Determine device label
+        id: device
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          device=$(printf '%s' "$BODY" | sed -n '/^### Hardware Device[[:space:]]*$/{n;n;p;q}')
+          device=$(printf '%s' "$device" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+          case "$device" in
+            'Select a device...')
+              label='device: unknown'
+              ;;
+            'AYANEO Pocket EVO' | 'AYANEO Pocket ACE')
+              label='device: generic'
+              ;;
+            'AYANEO Pocket S2' | 'AYANEO Pocket S 2K')
+              label='device: ayaneo-pocket-s'
+              ;;
+            'AYANEO Pocket DS')
+              label='device: ayaneo-pocket-ds'
+              ;;
+            'AYANEO Pocket DMG')
+              label='device: ayaneo-pocket-dmg'
+              ;;
+            'AYN Odin 2 Portal')
+              label='device: ayn-odin-2-portal'
+              ;;
+            'AYN Odin 2 Mini' | 'AYN Odin 2')
+              label='device: ayn-odin-2'
+              ;;
+            'AYN Thor')
+              label='device: ayn-thor'
+              ;;
+            'AYN Odin 3')
+              label='device: ayn-odin-3'
+              ;;
+            'Retroid Pocket 5')
+              label='device: retroid-pocket-5'
+              ;;
+            'Retroid Pocket Flip 2' | 'Retroid Pocket Mini' | 'Retroid Pocket Mini V2' | 'Retroid Pocket Nova')
+              label='device: generic'
+              ;;
+            'Retroid Pocket 6')
+              label='device: retroid-pocket-6'
+              ;;
+            'KONKR Pocket FIT (8 Elite)' | 'KONKR Pocket FIT (G3 Gen 3)')
+              label='device: konkr-pocket-fit'
+              ;;
+            *)
+              label='device: unknown'
+              ;;
+          esac
+
+          echo "Selected device: '$device' -> '$label'"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+
+      - name: Apply label
+        env:
+          num: ${{ github.event.issue.number }}
+          GITHUB_TOKEN: ${{ github.token }}
+          LABEL: ${{ steps.device.outputs.label }}
+        run: |
+          gh issue edit "$num" --repo "$GITHUB_REPOSITORY" --add-label "$LABEL"

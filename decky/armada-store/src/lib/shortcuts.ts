@@ -46,15 +46,3 @@ export function launchShortcut(appid: number): void {
   }
   throw new Error("Steam launch API unavailable");
 }
-
-export function restartSteam(): boolean {
-  try {
-    const user = window.SteamClient?.User;
-    if (user?.StartRestart) {
-      user.StartRestart(false);
-      return true;
-    }
-  } catch (error) {
-  }
-  return false;
-}

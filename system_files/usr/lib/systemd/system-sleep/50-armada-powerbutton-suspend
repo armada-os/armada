@@ -1,0 +1,94 @@
+#!/bin/bash
+# Gate power-key wake for a suspend initiated by a fresh lid-close event.
+set -uo pipefail
+
+run_dir=${ARMADA_RUN_DIR:-/run/armada}
+state_file="$run_dir/powerkey-wakeup-lid-gated"
+sysfs_root=${ARMADA_SYSFS_ROOT:-/sys}
+
+restore_powerkey_wakeup() {
+    local wake
+
+    [[ -r "$state_file" ]] || return 0
+    read -r wake <"$state_file" || return 1
+    wake="$(readlink -f -- "$wake" 2>/dev/null)" || return 1
+    [[ "$wake" == "$sysfs_root"/*/power/wakeup ]] || return 1
+    [[ -w "$wake" ]] && printf 'enabled\n' >"$wake" || return 1
+    rm -f -- "$state_file"
+}
+
+[[ "${2:-}" == suspend ]] || exit 0
+if [[ "${1:-}" == pre ]]; then
+    restore_powerkey_wakeup || exit 0
+
+    marker=${ARMADA_LID_CLOSE_MARKER:-}
+    if [[ -z "$marker" ]]; then
+        session_uid="$(id -u "${ARMADA_SESSION_USER:-armada}" 2>/dev/null)" || exit 0
+        user_runtime_dir=${ARMADA_USER_RUNTIME_DIR:-/run/user/$session_uid}
+        marker=$user_runtime_dir/armada-powerbuttond/lid-close-ms
+    fi
+    [[ -r "$marker" ]] || exit 0
+    read -r close_ms <"$marker" || exit 0
+    now_ms=${ARMADA_NOW_MS:-$(date +%s%3N)}
+    max_age_ms=${ARMADA_LID_CLOSE_MAX_AGE_MS:-15000}
+    [[ "$close_ms" =~ ^[0-9]+$ && "$now_ms" =~ ^[0-9]+$ ]] || exit 0
+    (( now_ms >= close_ms && now_ms - close_ms <= max_age_ms )) || exit 0
+
+    input_lib=${ARMADA_INPUT_LIB:-/usr/lib/armada/input-lib}
+    source "$input_lib" 2>/dev/null || exit 0
+    armada_lid_closed 2>/dev/null || exit 0
+
+    input_class=${ARMADA_INPUT_CLASS_DIR:-/sys/class/input}
+    wake=
+    for event in "$input_class"/event*; do
+        read -r switches <"$event/device/capabilities/sw" 2>/dev/null || continue
+        [[ "$switches" =~ ^[0-9a-fA-F]+$ ]] || continue
+        (( (16#$switches & 1) == 0 )) || continue
+        read -r name <"$event/device/name" 2>/dev/null || continue
+        case "$name" in
+            *pwrkey*|*[Pp]ower\ [Bb]utton*) ;;
+            *) continue ;;
+        esac
+        device="$(readlink -f "$event/device/../.." 2>/dev/null)" || continue
+        [[ -e "$device/power/wakeup" ]] || continue
+        wake="$device/power/wakeup"
+        break
+    done
+    [[ -n "$wake" ]] || exit 0
+    read -r state <"$wake" 2>/dev/null || exit 0
+    [[ "$state" == enabled && -w "$wake" ]] || exit 0
+    mkdir -p "$run_dir" || exit 0
+    printf '%s\n' "$wake" >"$state_file" || exit 0
+    if printf 'disabled\n' >"$wake"; then
+        rm -f -- "$marker"
+    else
+        rm -f -- "$state_file"
+    fi
+    exit 0
+fi
+
+[[ "${1:-}" == post ]] || exit 0
+restore_powerkey_wakeup ||
+    printf 'armada-powerbutton-suspend: failed to restore power-key wake\n' >&2
+
+# user.slice is frozen here, so USR1 precedes resumed user input.
+eval "$(/usr/libexec/armada/device-env 2>/dev/null)" || exit 0
+[[ "${ARMADA_SUSPEND_MODE:-fake}" != fake ]] || exit 0
+
+session_user="${ARMADA_SESSION_USER:-armada}"
+session_uid="$(id -u "$session_user" 2>/dev/null)" || exit 0
+user_runtime_dir=${ARMADA_USER_RUNTIME_DIR:-/run/user/$session_uid}
+pid_file="$user_runtime_dir/armada-powerbuttond/pid"
+[[ -r "$pid_file" ]] || exit 0
+
+read -r pid <"$pid_file" || exit 0
+[[ "$pid" =~ ^[0-9]+$ && -r "/proc/$pid/status" ]] || exit 0
+
+process_uid="$(sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$pid/status")"
+[[ "$process_uid" == "$session_uid" ]] || exit 0
+
+argv=()
+mapfile -d '' -t argv <"/proc/$pid/cmdline" 2>/dev/null || true
+[[ "${argv[0]:-}" == */bash && "${argv[1]:-}" == /usr/libexec/armada/powerbuttond ]] || exit 0
+
+kill -USR1 "$pid" 2>/dev/null || true

@@ -4,15 +4,21 @@ set -euxo pipefail
 cp -a /ctx/system_files/. /
 install -Dpm 0755 /packages/extest/libextest.so /usr/lib/extest/libextest.so
 
+# The vendored entries land after the RPM scriptlets ran, so mimeinfo.cache
+# would not otherwise list them.
+update-desktop-database -q /usr/share/applications
+
 cp -a /packages/mesa-android/waydroid/vendor /usr/share/armada/waydroid/
 
-# x86 Turnip payload for the guestos overlay; the rootfs's driver lacks armada's mesa patches
-mkdir -p /usr/share/armada/guestos-x86-mesa
-cp -a /packages/mesa-x86/guestos-x86-mesa/usr /usr/share/armada/guestos-x86-mesa/
+mesa_sqsh=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh
+install -Dm0644 /packages/mesa-x86/ArmadaMesa.sqsh "${mesa_sqsh}"
+# A separate rechunk component keeps Mesa-only updates from invalidating ArchLinux.sqsh.
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-mesa")' "${mesa_sqsh}"
 
 # Status text font for armada-splash (falls back to its embedded bitmap font
-# if this link dangles).
-splash_font="$(rpm -ql google-noto-sans-vf-fonts | grep -m1 '\.ttf$')"
+# if this link dangles). Static face: stb_truetype renders a VF's default
+# instance only. Exact name: condensed faces sort first.
+splash_font="$(rpm -ql google-noto-sans-mono-fonts | grep -m1 '/NotoSansMono-SemiBold\.ttf$')"
 [ -n "${splash_font}" ]
 ln -sf "${splash_font}" /usr/share/armada/splash/font.ttf
 
@@ -72,11 +78,12 @@ systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
 systemctl enable armada-guestos.service
 systemctl enable armada-device-quirks.service
+systemctl enable armada-rgb.service
 systemctl enable armada-fixups.service
+systemctl enable armada-update-reserve.service
 systemctl enable armada-installer-visibility.service
 systemctl enable armada-steamapps.service
 systemctl enable armada-powerd.service
-systemctl enable armada-pocketevo-charge-policy.service
 systemctl enable armada-control.service
 systemctl enable armada-steamos-manager.service
 systemctl --global enable armada-steamos-manager.service

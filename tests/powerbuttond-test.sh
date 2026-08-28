@@ -80,8 +80,21 @@ kill "$daemon_pid"
 wait "$daemon_pid" 2>/dev/null || true
 daemon_pid=
 
+# Standalone defaults must agree with the root hook's runtime-directory path.
+(
+    unset ARMADA_POWERBUTTON_PID_FILE ARMADA_LID_CLOSE_MARKER ARMADA_USER_RUNTIME_DIR
+    XDG_RUNTIME_DIR="$tmp/default-runtime"
+    source "$ROOT/system_files/usr/libexec/armada/powerbuttond"
+    [[ "$PID_FILE" == "$tmp/default-runtime/armada-powerbuttond/pid" ]]
+    [[ "$LID_CLOSE_MARKER" == "$tmp/default-runtime/armada-powerbuttond/lid-close-ms" ]]
+)
+
 # Killing a pipeline parent does not terminate its children.
 source "$ROOT/system_files/usr/libexec/armada/powerbuttond"
+LID_CLOSE_MARKER="$tmp/lid-close-ms"
+powerbutton_mark_lid_close
+[[ "$(<"$LID_CLOSE_MARKER")" =~ ^[0-9]+$ ]]
+rm -f -- "$LID_CLOSE_MARKER"
 (
     sleep 100 | while read -r _; do :; done
 ) &
@@ -95,13 +108,22 @@ while (( attempts > 0 )); do
     attempts=$((attempts - 1))
 done
 ((${#lid_children[@]} > 0))
+lid_parent_pid=$lidpid
 powerbutton_stop_watchers
-if kill -0 "$lidpid" 2>/dev/null; then
+wait_for_pid_exit() {
+    local pid=$1 attempts=100
+    while kill -0 "$pid" 2>/dev/null && (( attempts > 0 )); do
+        sleep 0.01
+        attempts=$((attempts - 1))
+    done
+    ! kill -0 "$pid" 2>/dev/null
+}
+if ! wait_for_pid_exit "$lid_parent_pid"; then
     printf 'lid watcher parent survived cleanup\n' >&2
     exit 1
 fi
 for child_pid in "${lid_children[@]}"; do
-    if kill -0 "$child_pid" 2>/dev/null; then
+    if ! wait_for_pid_exit "$child_pid"; then
         printf 'lid watcher child survived cleanup: %s\n' "$child_pid" >&2
         exit 1
     fi

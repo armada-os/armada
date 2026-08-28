@@ -17,7 +17,7 @@
       "config": {
         "TSOEnabled": "1",
         "X87ReducedPrecision": "1",
-        "Multiblock": "0",
+        "Multiblock": "1",
         "VectorTSOEnabled": "0",
         "MemcpySetTSOEnabled": "0",
         "HalfBarrierTSOEnabled": "1"

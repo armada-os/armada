@@ -1,0 +1,17 @@
+[Unit]
+Description=Configure Armada OSTree update reserve
+After=local-fs.target
+Before=display-manager.service
+RequiresMountsFor=/ostree/repo
+
+[Service]
+Type=oneshot
+PrivateMounts=yes
+ExecCondition=/usr/libexec/armada/armada-update-reserve --needed
+ExecStartPre=/usr/bin/mount -o remount,rw /sysroot
+ExecStart=/usr/libexec/armada/armada-update-reserve
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

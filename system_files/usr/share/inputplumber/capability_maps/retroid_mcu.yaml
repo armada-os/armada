@@ -245,5 +245,25 @@ mapping:
       gamepad:
         button: DPadUp
 
+  - name: Left Paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_C
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftPaddle1
+
+  - name: Right Paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: BTN_Z
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightPaddle1
+
 # List of events to filter from the source devices
 filtered_events: []

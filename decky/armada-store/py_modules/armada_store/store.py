@@ -38,20 +38,22 @@ def _mutate_state(mutate):
         return state
 
 
-def record_appimage(app_id, filename, tag):
-    _mutate_state(lambda s: s.setdefault("appimages", {}).__setitem__(app_id, {"filename": filename, "tag": tag}))
+def record_appimage(app_id, filename, tag, stamp=""):
+    _mutate_state(lambda s: s.setdefault("appimages", {}).__setitem__(
+        app_id, {"filename": filename, "tag": tag, "stamp": stamp}))
 
 
 def clear_appimage(app_id):
     _mutate_state(lambda s: s.setdefault("appimages", {}).pop(app_id, None))
 
 
-def record_compat(app_id, dirname, tag):
-    _mutate_state(lambda s: s.setdefault("compat", {}).__setitem__(app_id, {"dir": dirname, "tag": tag}))
+def record_plugin(app_id, dirname, tag, stamp=""):
+    _mutate_state(lambda s: s.setdefault("plugins", {}).__setitem__(
+        app_id, {"dir": dirname, "tag": tag, "stamp": stamp}))
 
 
-def clear_compat(app_id):
-    _mutate_state(lambda s: s.setdefault("compat", {}).pop(app_id, None))
+def clear_plugin(app_id):
+    _mutate_state(lambda s: s.setdefault("plugins", {}).pop(app_id, None))
 
 
 def record_shortcut(app_id, steam_appid):
@@ -62,8 +64,22 @@ def record_shortcut(app_id, steam_appid):
     _mutate_state(mutate)
 
 
-def clear_shortcut(app_id):
-    _mutate_state(lambda s: s.setdefault("shortcuts", {}).pop(app_id, None))
+# keep_pending: the removal half of a replacement, which still owes an add.
+# expected: that call can arrive after the swap was cancelled and a new shortcut
+# recorded, so it clears only the record it set out to remove.
+def clear_shortcut(app_id, keep_pending=False, expected=None):
+    def mutate(state):
+        shortcuts = state.setdefault("shortcuts", {})
+        if expected is not None:
+            if shortcuts.get(app_id) != int(expected):
+                return
+            if app_id not in (state.get("pendingShortcuts") or []):
+                return
+        shortcuts.pop(app_id, None)
+        if not keep_pending:
+            _drop_pending(state, app_id)
+
+    _mutate_state(mutate)
 
 
 def shortcuts():
@@ -78,10 +94,13 @@ def _drop_pending(state, app_id):
 
 # Survives a closed panel and a backend restart, unlike the job list, which is
 # pruned once a completed job passes its TTL.
-def add_pending_shortcut(app_id):
+def add_pending_shortcut(app_id, force=False):
     def mutate(state):
         pending = state.setdefault("pendingShortcuts", [])
-        if app_id not in pending and app_id not in (state.get("shortcuts") or {}):
+        if app_id in pending:
+            return
+        # A replacement keeps its old record until the new shortcut exists.
+        if force or app_id not in (state.get("shortcuts") or {}):
             pending.append(app_id)
 
     _mutate_state(mutate)

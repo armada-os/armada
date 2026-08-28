@@ -7,7 +7,9 @@ STEAM_DIR="/var/home/${SESSION_USER}/.local/share/Steam/steamrtarm64"
 STEAM_BIN="${STEAM_DIR}/steam"
 LONG_MS="${ARMADA_POWERBUTTON_LONG_MS:-1000}"
 POWER_DEVICE_WAIT_SEC="${ARMADA_POWERBUTTON_DEVICE_WAIT_SEC:-15}"
-PID_FILE="${ARMADA_POWERBUTTON_PID_FILE:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/armada-powerbuttond.pid}"
+USER_RUNTIME_DIR="${ARMADA_USER_RUNTIME_DIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
+PID_FILE="${ARMADA_POWERBUTTON_PID_FILE:-${USER_RUNTIME_DIR}/armada-powerbuttond/pid}"
+LID_CLOSE_MARKER="${ARMADA_LID_CLOSE_MARKER:-${USER_RUNTIME_DIR}/armada-powerbuttond/lid-close-ms}"
 
 log() { logger -t armada-powerbuttond -- "$*"; }
 source /usr/lib/armada/input-lib 2>/dev/null || true
@@ -59,9 +61,15 @@ powerbutton_stop_watchers() {
 
 powerbutton_cleanup() {
     powerbutton_stop_watchers
+    rm -f -- "$LID_CLOSE_MARKER"
     if [[ -f "$PID_FILE" ]] && [[ "$(<"$PID_FILE")" == "$$" ]]; then
         rm -f -- "$PID_FILE"
     fi
+}
+
+powerbutton_mark_lid_close() {
+    printf '%s\n' "$(date +%s%3N)" >"$LID_CLOSE_MARKER"
+    chmod 0600 "$LID_CLOSE_MARKER"
 }
 
 powerbutton_reexec() {
@@ -82,6 +90,9 @@ powerbutton_write_pid() {
 powerbutton_main() {
     local liddev lid_line pdev line rem read_result state press_ms
 
+    trap 'exit 0' INT TERM
+    trap powerbutton_reexec USR1
+
     pdev="$(wait_for_power_device || true)"
     if [[ -z "$pdev" ]]; then
         log "power-button device not found after ${POWER_DEVICE_WAIT_SEC}s"
@@ -89,8 +100,6 @@ powerbutton_main() {
     fi
 
     trap powerbutton_cleanup EXIT
-    trap 'exit 0' INT TERM
-    trap powerbutton_reexec USR1
     powerbutton_write_pid || return 1
 
     liddev="$(armada_find_lid_dev 2>/dev/null || true)"
@@ -100,9 +109,11 @@ powerbutton_main() {
             evtest "$liddev" 2>/dev/null | while read -r lid_line; do
                 case "$lid_line" in
                     *"(SW_LID), value 1"*)
+                        powerbutton_mark_lid_close || true
                         log "lid close -> shortpowerpress"
                         steam_uri shortpowerpress
                         ;;
+                    *"(SW_LID), value 0"*) rm -f -- "$LID_CLOSE_MARKER" ;;
                 esac
             done
         ) &

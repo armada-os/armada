@@ -1,0 +1,4 @@
+# An active DWC3 holds a 1 GB/s USB-to-DDR interconnect vote in every RPMh
+# bucket including the sleep set, blocking the DDR low-power tiers.
+ACTION=="add|bind", SUBSYSTEM=="platform", KERNEL=="*.usb", DRIVERS=="dwc3-qcom", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="usb", TEST=="power/control", ATTR{power/control}="auto"

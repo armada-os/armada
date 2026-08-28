@@ -29,7 +29,7 @@ set_pocket_ds() {
     panel_orientation=left
     ARMADA_SECONDARY_CONNECTOR=DSI-2
     ARMADA_PRIMARY_TOUCHSCREEN='generic ft5x06 (44)'
-    ARMADA_SECONDARY_TOUCHSCREEN='Goodix Capacitive TouchScreen'
+    ARMADA_SECONDARY_TOUCHSCREEN='bottom_touchscreen'
 }
 
 # shellcheck source=/dev/null
@@ -44,7 +44,7 @@ assert_eq "$scale_complete" 0 'fresh scale'
 assert_eq "$dual_complete" 0 'fresh dual layout'
 assert_eq "$rotation_signature" 'v1|ayaneo-pocket-ds|DSI-1|left' 'rotation signature'
 assert_eq "$scale_signature" 'v1|ayaneo-pocket-ds|DSI-1|1.5' 'scale signature'
-assert_eq "$dual_signature" 'v1|ayaneo-pocket-ds|DSI-1|DSI-2|generic ft5x06 (44)|Goodix Capacitive TouchScreen|left|1.5' 'dual signature'
+assert_eq "$dual_signature" 'v1|ayaneo-pocket-ds|DSI-1|DSI-2|generic ft5x06 (44)|bottom_touchscreen|left|1.5' 'dual signature'
 
 armada_write_marker "$rotation_done" "$rotation_signature"
 armada_write_marker "$scale_done" "$scale_signature"

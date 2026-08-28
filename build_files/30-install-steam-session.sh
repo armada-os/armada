@@ -9,6 +9,7 @@ dnf5 -y install --setopt=install_weak_deps=False /packages/mangohud/mangohud-*.f
 
 dnf5 -y install --setopt=install_weak_deps=False \
     /packages/gamescope/terra-gamescope{,-libs}-[0-9]*.aarch64.rpm \
+    steam-devices \
     vulkan-loader \
     vulkan-tools \
     gamemode \
@@ -25,6 +26,8 @@ dnf5 -y install --setopt=install_weak_deps=False /packages/networkmanager/*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False /packages/armada-splash/*.rpm
 
+dnf5 -y install --setopt=install_weak_deps=False /packages/armada-rgb/*.rpm
+
 dnf5 -y install --setopt=install_weak_deps=False /packages/jupiter-hw-support/*.rpm
 
 # Avoid gamescope-session-ogui-steam/-powerstation; Terra's aarch64 deps are broken.
@@ -35,6 +38,9 @@ dnf5 -y install --setopt=install_weak_deps=False --enable-repo=terra \
 # integration patches for the common session launcher.
 dnf5 -y install --setopt=install_weak_deps=False \
     /packages/gamescope-session/gamescope-session-*.rpm
+
+dnf5 -y install --setopt=install_weak_deps=False \
+    /packages/gamescope-session-steam/gamescope-session-steam-*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False \
     erofs-fuse \
@@ -86,12 +92,6 @@ cat > /usr/share/fex-emu/Config.json <<'EOF'
 }
 EOF
 
-# Bypass Terra's i686-only steam dependency; armada launches native ARM Steam.
-mkdir -p /tmp/gss-rpm
-dnf5 download --enable-repo=terra --destdir=/tmp/gss-rpm gamescope-session-steam
-rpm -ivh --nodeps /tmp/gss-rpm/gamescope-session-steam-*.rpm
-rm -rf /tmp/gss-rpm
-
 STEAM_BOOTSTRAP_HOME=/var/home/armada
 STEAM_HOME="${STEAM_BOOTSTRAP_HOME}/.local/share/Steam"
 
@@ -106,8 +106,8 @@ PROTON_TAR="${PROTON_ARCHIVE_NAME}.tar.xz"
 PROTON_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_TAR}"
 PROTON_SHA512_URL="https://github.com/CachyOS/proton-cachyos/releases/download/cachyos-${PROTON_VER}/${PROTON_ARCHIVE_NAME}.sha512sum"
 
-curl --retry 3 --retry-delay 2 -fsSL -o "/tmp/${PROTON_TAR}" "${PROTON_URL}"
-curl --retry 3 --retry-delay 2 -fsSL -o "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum" "${PROTON_SHA512_URL}"
+curl --retry 12 --retry-delay 10 -fsSL -o "/tmp/${PROTON_TAR}" "${PROTON_URL}"
+curl --retry 12 --retry-delay 10 -fsSL -o "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum" "${PROTON_SHA512_URL}"
 cd /tmp
 sha512sum -c "${PROTON_ARCHIVE_NAME}.sha512sum"
 
@@ -133,6 +133,6 @@ rm -f "/tmp/${PROTON_TAR}" "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum"
 # user.component xattr) so a system_files change doesn't re-pull them every OTA.
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"steam")' "${STEAM_HOME}"
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"proton")' "${PROTON_DIR}/${PROTON_TOOL_NAME}"
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-rootfs")' /usr/share/fex-emu/RootFS
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-rootfs")' /usr/share/fex-emu/RootFS/ArchLinux.sqsh
 
 echo "Pre-staged: ARM64 Steam bootstrap + CachyOS Proton 11 ${PROTON_VER}"
