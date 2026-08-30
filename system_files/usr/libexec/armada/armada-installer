@@ -33,13 +33,13 @@ cleanup() {
     if (( rc != 0 && destructive == 1 )); then
         case $OPERATION in
             reset)
-                echo "ERROR: reset did not finish after internal storage was modified. Re-run the installer from the SD card to finish. Only if the device won't boot the SD: recover with a PC (fastboot erase ROCKNIX)." >&2
+                echo "ERROR: reset did not finish after internal storage was modified. Re-run the installer from the SD card to finish. Only if the device won't boot the SD: recover with UNINSTALL CFW in ABL." >&2
                 ;;
             replace)
-                echo "ERROR: install did not finish after internal storage was modified, but Android is unchanged. Do NOT boot internal storage; re-run the installer from the SD card to finish. Only if the device won't boot the SD: recover with a PC (fastboot erase ROCKNIX)." >&2
+                echo "ERROR: install did not finish after internal storage was modified, but Android is unchanged. Do NOT boot internal storage; re-run the installer from the SD card to finish. Only if the device won't boot the SD: recover with UNINSTALL CFW in ABL." >&2
                 ;;
             *)
-                echo "ERROR: install did not finish after internal storage was modified. Do NOT boot internal storage. Re-run the installer from the SD card; only if the device won't boot the SD, recover with a PC (fastboot erase ROCKNIX, then reflash the SD card)." >&2
+                echo "ERROR: install did not finish after internal storage was modified. Do NOT boot internal storage. Re-run the installer from the SD card; only if the device won't boot the SD, recover with UNINSTALL CFW in ABL." >&2
                 ;;
         esac
     fi
@@ -153,33 +153,6 @@ list_partitions() {
         | @tsv'
 }
 
-partition_names() {
-    list_partitions | cut -f4
-}
-
-detect_mode() {
-    local name
-    has_rocknix=0
-    has_armada_boot=0
-    has_armada_root=0
-    has_storage=0
-
-    while IFS= read -r name; do
-        case "$name" in
-            ROCKNIX) has_rocknix=1 ;;
-            ARMADA_BOOT) has_armada_boot=1 ;;
-            ARMADA_ROOT) has_armada_root=1 ;;
-            STORAGE) has_storage=1 ;;
-        esac
-    done < <(partition_names)
-
-    if (( has_rocknix || has_armada_boot || has_armada_root || has_storage )); then
-        mode=occupied
-    else
-        mode=fresh
-    fi
-}
-
 find_userdata() {
     mapfile -t ud_line < <(list_partitions | awk -F'\t' '$4=="userdata"')
     if [[ ${#ud_line[@]} -ne 1 ]]; then
@@ -193,6 +166,26 @@ find_userdata() {
     UD_START_MIB=$(( (UD_START + 1048575) / 1048576 ))
     UD_END_MIB=$(( UD_END / 1048576 ))
     UD_ORIG_GIB=$(( (UD_END_MIB - UD_START_MIB) / 1024 ))
+}
+
+detect_mode() {
+    find_userdata
+    local num start_b end_b name
+    has_trailing_partitions=0
+
+    while IFS=$'\t' read -r num start_b end_b name; do
+        (( num == UD_NUM )) && continue
+        if (( start_b >= UD_END )); then
+            has_trailing_partitions=1
+            break
+        fi
+    done < <(list_partitions)
+
+    if (( has_trailing_partitions )); then
+        mode=occupied
+    else
+        mode=fresh
+    fi
 }
 
 require_userdata_last() {
@@ -218,20 +211,17 @@ collect_our_tail() {
     OUR_LABELS=()
     OUR_MAX_END=$UD_END
     LINUX_BYTES=0
-    OUR_FOREIGN_AFTER=0
     while IFS=$'\t' read -r num start_b end_b name; do
         (( num == UD_NUM )) && continue
-        case "$name" in
-            ROCKNIX|ARMADA_BOOT|ARMADA_ROOT|STORAGE)
-                OUR_NUMS+=("$num")
-                OUR_LABELS+=("$name")
-                LINUX_BYTES=$((LINUX_BYTES + end_b - start_b))
-                (( end_b > OUR_MAX_END )) && OUR_MAX_END=$end_b
-                ;;
-            *)
-                (( end_b > UD_END )) && OUR_FOREIGN_AFTER=1
-                ;;
-        esac
+        if (( start_b >= UD_END )); then
+            OUR_NUMS+=("$num")
+            OUR_LABELS+=("${name:-unnamed}")
+            LINUX_BYTES=$((LINUX_BYTES + end_b - start_b))
+            (( end_b > OUR_MAX_END )) && OUR_MAX_END=$end_b
+        elif (( end_b > UD_END )); then
+            echo "ERROR: Partition overlap detected involving userdata. Partition table is corrupted." >&2
+            exit 1
+        fi
     done < <(list_partitions)
 }
 
@@ -274,7 +264,7 @@ choose_userdata_size() {
     done
 }
 
-# Fills [esp_start_mib .. region_end_mib] with ROCKNIX/ARMADA_BOOT/ARMADA_ROOT and
+# Fills [esp_start_mib .. region_end_mib] with ARMADA/ARMADA_BOOT/ARMADA_ROOT and
 # resolves them by label. userdata is the last existing partition either way (fresh
 # recreates it, replace leaves it), so the three claim slots UD_NUM+1..+3.
 create_linux_partitions() {
@@ -289,7 +279,7 @@ create_linux_partitions() {
     root_num=$((UD_NUM + 3))
 
     parted -a optimal -s "$DEVICE" mkpart primary fat32 "${esp_start_mib}MiB" "${esp_end_mib}MiB"
-    parted -s "$DEVICE" name "$esp_num" ROCKNIX
+    parted -s "$DEVICE" name "$esp_num" ARMADA
     parted -s "$DEVICE" set "$esp_num" boot on
     sgdisk --typecode="${esp_num}:${ESP_GUID}" "$DEVICE" >/dev/null
 
@@ -306,7 +296,7 @@ create_linux_partitions() {
     udevadm settle
 
     # Resolve by the labels just set, not by assumed device-node numbers.
-    ESP_PART=$(resolve_partlabel ROCKNIX)
+    ESP_PART=$(resolve_partlabel ARMADA)
     BOOT_PART=$(resolve_partlabel ARMADA_BOOT)
     ROOT_PART=$(resolve_partlabel ARMADA_ROOT)
     for part in "$ESP_PART" "$BOOT_PART" "$ROOT_PART"; do
@@ -359,18 +349,17 @@ install_replace() {
         echo "       Use 'armada-installer reset' to return the disk to Android, then install fresh." >&2
         exit 1
     fi
-    if (( has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
 
     cat <<EOF
 
-Replace ${installed} with Armada, keeping Android?
+Replace existing OS with Armada, keeping Android?
 
   Deleting: ${OUR_LABELS[*]}
   Android userdata (~${UD_ORIG_GIB} GiB): left untouched.
-  Armada fills the ~$((win_mib / 1024)) GiB freed by ${installed}.
+  Armada fills the ~$((win_mib / 1024)) GiB freed by existing OS.
 
 EOF
-    confirm "Replace ${installed} with Armada?" || { echo "Aborted."; exit 0; }
+    confirm "Replace existing OS with Armada?" || { echo "Aborted."; exit 0; }
 
     for n in "${OUR_NUMS[@]}"; do
         p=$(part_node "$DEVICE" "$n")
@@ -539,7 +528,7 @@ deploy_to_internal() {
     destructive=1
     # The working SD ESP (BIB-made) is FAT16, and the ABL reads FAT16, not FAT32.
     # -S 4096 = device 4 KiB sectors; -s 4 keeps the 512 MiB ESP in FAT16 cluster range.
-    mkfs.vfat -F 16 -S 4096 -s 4 -n ROCKNIX "$ESP_PART" >/dev/null
+    mkfs.vfat -F 16 -S 4096 -s 4 -n ARMADA "$ESP_PART" >/dev/null
     mkfs.ext4 -F -L boot "$BOOT_PART" >/dev/null
     ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
     BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
@@ -579,22 +568,19 @@ cmd_detect() {
     check_device
     detect_mode
     if [[ $mode == occupied ]]; then
-        find_userdata
         collect_our_tail
-        local installed
-        if (( has_armada_boot || has_armada_root )); then
-            installed=armada
-        elif (( has_rocknix || has_storage )); then
-            installed=rocknix
-        else
-            installed=unknown
-        fi
+        local installed="Other OS"
+        for label in "${OUR_LABELS[@]}"; do
+            case "$label" in
+                ARMADA|ARMADA_BOOT|ARMADA_ROOT) installed="Armada"; break ;;
+                ROCKNIX|STORAGE) installed="ROCKNIX"; break ;;
+            esac
+        done
         echo "mode=occupied"
         echo "installed=${installed}"
         echo "android_gib=${UD_ORIG_GIB}"
         echo "linux_gib=$(( LINUX_BYTES / 1073741824 ))"
     else
-        find_userdata
         if compute_ud_bounds; then
             echo "mode=fresh"
             echo "android_min_gib=$((MIN_NEW_UD_MIB / 1024))"
@@ -631,18 +617,11 @@ cmd_install() {
         occupied)
             # An existing ROCKNIX/Armada install: replace its Linux partitions in
             # place, keeping Android. (Reclaiming the space for Android is `reset`.)
-            find_userdata
             collect_our_tail
-            (( ${#OUR_NUMS[@]} >= 1 )) || { echo "ERROR: found no removable ROCKNIX/Armada partitions on $DEVICE" >&2; exit 1; }
-            if (( OUR_FOREIGN_AFTER )); then
-                echo "ERROR: an unrecognized partition lies after userdata on $DEVICE; refusing." >&2
-                parted -s "$DEVICE" print >&2
-                exit 1
-            fi
+            (( ${#OUR_NUMS[@]} >= 1 )) || { echo "ERROR: found no removable partitions after userdata on $DEVICE" >&2; exit 1; }
             install_replace
             ;;
         fresh)
-            find_userdata
             require_userdata_last
             cat <<EOF
 
@@ -651,7 +630,7 @@ No internal Armada install was found.
 Current Android userdata: ${UD_ORIG_GIB} GiB (${UD_START_MIB}MiB .. ${UD_END_MIB}MiB)
 
 Fresh install will shrink Android userdata, wipe Android user data, create
-ROCKNIX/ARMADA_BOOT/ARMADA_ROOT, and install the running Armada image.
+ARMADA/ARMADA_BOOT/ARMADA_ROOT, and install the running Armada image.
 
 After install, internal storage boots before SD. To remove it later and give
 the space back to Android, run: armada-installer reset
@@ -691,32 +670,25 @@ cmd_reset() {
     inhibit_sleep
 
     detect_mode
-    [[ $mode == occupied ]] || { echo "Nothing to remove: no ROCKNIX or Armada install found on $DEVICE." >&2; exit 1; }
+    [[ $mode == occupied ]] || { echo "Nothing to remove: no partitions found after userdata on $DEVICE." >&2; exit 1; }
 
-    find_userdata
     collect_our_tail
-    (( ${#OUR_NUMS[@]} >= 1 )) || { echo "ERROR: found no removable ROCKNIX/Armada partitions on $DEVICE" >&2; exit 1; }
-    if (( OUR_FOREIGN_AFTER )); then
-        echo "ERROR: an unrecognized partition lies after userdata on $DEVICE; refusing to remove." >&2
-        parted -s "$DEVICE" print >&2
-        exit 1
-    fi
+    (( ${#OUR_NUMS[@]} >= 1 )) || { echo "ERROR: found no removable partitions after userdata on $DEVICE" >&2; exit 1; }
 
     local new_ud_end_mib new_ud_gib installed n p
     new_ud_end_mib=$(( OUR_MAX_END / 1048576 ))
     new_ud_gib=$(( (new_ud_end_mib - UD_START_MIB) / 1024 ))
-    if (( has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
 
     cat <<EOF
 
-Remove ${installed} from internal storage?
+Remove Linux from internal storage?
 
   Deleting: ${OUR_LABELS[*]}
   Android userdata grows back to ~${new_ud_gib} GiB (full internal storage).
   Android factory-resets (its userdata re-initializes) on next Android boot.
 
 EOF
-    confirm "Remove ${installed} and restore Android to full disk?" || { echo "Aborted."; exit 0; }
+    confirm "Remove Linux and restore Android to full disk?" || { echo "Aborted."; exit 0; }
 
     # Unmount every target BEFORE any destructive change. If one won't unmount,
     # abort here (destructive still 0) rather than delete partitions and have
@@ -750,7 +722,7 @@ EOF
 
     cat <<EOF
 
-${installed} removed. Android userdata restored to full internal storage.
+Linux removed. Android userdata restored to full internal storage.
 Remove the SD card and reboot to use Android, or relaunch the installer to
 install Armada again.
 
@@ -813,7 +785,7 @@ gui_install_flow() {
         || exit 0
 
     gui_run "Installing Armada, do not power off…" install --assume-yes --userdata-gib "$ud" \
-        || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, recover with a PC:\n  fastboot erase ROCKNIX"
+        || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, recover with UNINSTALL CFW in ABL."
     gui_offer_poweroff "<b>Install complete.</b>\n\nPower off, remove the SD card, then power on."
 }
 
@@ -825,7 +797,7 @@ gui_manage_flow() {
     case "$installed" in
         armada) name="Armada";  primary="Reinstall Armada" ;;
         rocknix) name="ROCKNIX"; primary="Switch to Armada" ;;
-        *) gui_die "Internal storage has an unrecognized Linux layout.\n\nThis tool only manages installs it created. Recover from a PC." ;;
+        *) name="Linux"; primary="Install Armada" ;;
     esac
     remove="Remove & Restore Android"
     local name_e remove_e primary_e
@@ -839,7 +811,7 @@ gui_manage_flow() {
 
     if (( rc == 0 )); then
         gui_run "Installing Armada, do not power off…" install --assume-yes \
-            || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, recover with a PC:\n  fastboot erase ROCKNIX"
+            || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, recover with UNINSTALL CFW in ABL."
         gui_offer_poweroff "<b>Armada installed.</b> Your Android is unchanged.\n\nPower off, remove the SD card, then power on."
     elif [[ "$out" == "$remove" ]]; then
         zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=500 --no-wrap \
@@ -881,7 +853,7 @@ Usage: armada-installer <command>
   install [opts]   fresh install of the running image to internal storage
                      -y, --assume-yes        skip prompts
                      --userdata-gib N         new Android userdata size
-  reset [opts]     remove ROCKNIX/Armada and grow Android back to full disk
+  reset [opts]     remove Linux and grow Android back to full disk
                      -y, --assume-yes        skip prompts
 EOF
     exit 2
