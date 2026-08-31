@@ -73,7 +73,7 @@ need_root() {
 
 need_cmds() {
     local missing=0
-    for cmd in blkid btrfs findmnt jq lsblk mkfs.btrfs mkfs.ext4 mkfs.vfat ostree parted partprobe realpath sfdisk sgdisk udevadm; do
+    for cmd in blkid btrfs cryptsetup dmsetup findmnt jq lsblk mkfs.btrfs mkfs.ext4 mkfs.vfat ostree parted partprobe realpath sfdisk sgdisk udevadm wipefs; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             echo "ERROR: missing required command: $cmd" >&2
             missing=1
@@ -636,7 +636,7 @@ deploy_to_internal() {
     mkfs.vfat -F 16 -S 4096 -s 4 -n "$ESP_PARTLABEL" "$ESP_PART" >/dev/null
     mkfs.ext4 -F -L boot "$BOOT_PART" >/dev/null
     # The btrfs UUID (partition's if not encrypted, FS inside the LUKS if it is)
-    ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
+    ROOT_UUID=$(blkid -s UUID -o value "$ROOT_FS_DEV")
     BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
     ESP_UUID=$(blkid -s UUID -o value "$ESP_PART")
 
