@@ -8,7 +8,7 @@ ARG GAMESCOPE_SESSION_PKG=ghcr.io/armada-os/armada-packages/gamescope-session@sh
 ARG GAMESCOPE_SESSION_STEAM_PKG=ghcr.io/armada-os/armada-packages/gamescope-session-steam@sha256:bbfb91cfec0232a240a23463af4ad4bd2f7e2fdb9b3b03b7396c58b37400ba7e
 ARG KWIN_PKG=ghcr.io/armada-os/armada-packages/kwin@sha256:0f9bfcb4d0da4cab4a049cba7d90eb9936b3d4be610ceb00f25ec0f58d0dc812
 ARG POWERDEVIL_PKG=ghcr.io/armada-os/armada-packages/powerdevil@sha256:f6d25143dca84f5f71076a3c992e06de87f7ae25fd046cfeb21999df989c4f8b
-ARG KERNEL_PKG=ghcr.io/armada-os/armada-packages/kernel@sha256:d7ec91a4dc38557e7efed0ee7ea39af509614cc8bd2448fd7f59ac8c96fffbe8
+ARG KERNEL_PKG=ghcr.io/silkyshine/armada-packages/kernel@sha256:2480c9f49448ee68a13150a21ea0277021a5e7544e8b249809c1f611fe6707d0
 ARG INPUTPLUMBER_PKG=ghcr.io/armada-os/armada-packages/inputplumber@sha256:6196556fe04882547f16302763e3556b434e37e007b6f260d5f2e3f95fd43dea
 ARG EXTEST_PKG=ghcr.io/armada-os/armada-packages/extest@sha256:c68bd452dd8f9a20527862e87fd446045b86811dc222a2a1744ede8d8b858dfa
 ARG NETWORKMANAGER_PKG=ghcr.io/armada-os/armada-packages/networkmanager@sha256:043eae7f6f236945bc66466337391384949f56ad19807f21fe2e9b6f5c488b5f
@@ -16,6 +16,7 @@ ARG JUPITER_HW_SUPPORT_PKG=ghcr.io/armada-os/armada-packages/jupiter-hw-support@
 ARG ARMADA_SPLASH_PKG=ghcr.io/armada-os/armada-packages/armada-splash@sha256:6b018ab61218ad5b760fc93b27f7f6af4af4fb6301cb1ed4711cd33ded8c0ea0
 ARG ARMADA_RGB_PKG=ghcr.io/armada-os/armada-packages/armada-rgb@sha256:a7b66324d7bf8030e260d5f2fc9074ad9ced7c47852187783f5e3e082d0ebc25
 ARG UMTP_RESPONDER_PKG=ghcr.io/armada-os/armada-packages/umtp-responder@sha256:b0fe59bf87bccdde7273d7ade9f824171a5b4ac5f132b4670b32a73bb1f871b3
+ARG UNL0KR_PKG=ghcr.io/silkyshine/armada-packages/unl0kr@sha256:cb561cbd44e26d44a1a757746cfa60ee6733392397c7a8fbd29dc5fe081c30e3
 ARG CHUNKAH_IMAGE=quay.io/coreos/chunkah@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708
 ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:44
 
@@ -37,6 +38,7 @@ FROM ${EXTEST_PKG} AS extest
 FROM ${ARMADA_SPLASH_PKG} AS armada-splash
 FROM ${ARMADA_RGB_PKG} AS armada-rgb
 FROM ${UMTP_RESPONDER_PKG} AS umtp-responder
+FROM ${UNL0KR_PKG} as unl0kr
 
 FROM docker.io/library/node:22-slim AS decky-build
 WORKDIR /build/armada-control
@@ -81,6 +83,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \
+    --mount=type=bind,from=unl0kr,source=/rpms,target=/packages/unl0kr \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \

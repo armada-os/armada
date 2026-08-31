@@ -15,7 +15,5 @@ kargs = [
     "cgroup_disable=pressure",
     "cgroup.memory=nokmem,nosocket",
 
-    "cpufreq.default_governor=schedutil",
-
     "swiotlb=8192",
 ]

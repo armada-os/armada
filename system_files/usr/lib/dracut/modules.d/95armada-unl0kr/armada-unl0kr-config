@@ -1,0 +1,49 @@
+#!/bin/bash
+# Generate unl0kr's rotation config in the initrd from what Armada already
+# knows about the booted device.
+
+set -uo pipefail
+
+out=/etc/unl0kr.conf.d/90-armada.conf
+mkdir -p "${out%/*}" || exit 0
+
+model=
+if [[ -r /sys/firmware/devicetree/base/model ]]; then
+    IFS= read -r -d '' model < /sys/firmware/devicetree/base/model || true
+fi
+
+# shellcheck disable=SC1090
+eval "$(ARMADA_MODEL="$model" /usr/libexec/armada/device-env 2>/dev/null || true)"
+
+# unl0kr's rotation values are quarter turns clockwise, matching buffyboard's
+# --rotate and /sys/class/graphics/fbcon/rotate.
+
+# If a device somehow disagrees with this mapping, set
+# ARMADA_INITRD_ROTATION in its own profile to override.
+
+rotation=0
+case "${ARMADA_PANEL_ORIENTATION:-normal}" in
+    right)    rotation=1 ;;
+    inverted) rotation=2 ;;
+    left)     rotation=3 ;;
+    normal|*) rotation=0 ;;
+esac
+rotation=${ARMADA_INITRD_ROTATION:-$rotation}
+
+{
+    printf '# Generated in the initrd by armada-unl0kr-config. Do not edit.\n'
+    printf '# model=%s device=%s orientation=%s\n' \
+        "${model:-unknown}" "${ARMADA_DEVICE_ID:-unknown}" \
+        "${ARMADA_PANEL_ORIENTATION:-unset}"
+    printf '[general]\n'
+    printf 'rotation=%s\n' "$rotation"
+    printf 'animations=true'
+    printf '[theme]'
+    printf 'default=breezy-dark'
+    printf 'alternative=breezy-light'
+} > "$out" || exit 0
+
+printf 'armada-unl0kr-config: model=%s device=%s rotation=%s\n' \
+    "${model:-unknown}" "${ARMADA_DEVICE_ID:-unknown}" "$rotation" \
+    > /dev/kmsg 2>/dev/null || true
+exit 0

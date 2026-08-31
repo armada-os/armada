@@ -62,7 +62,8 @@ dnf5 -y install --setopt=install_weak_deps=False \
     wl-clipboard \
     binutils \
     btop \
-    tailscale
+    tailscale \
+    cryptsetup
 
 curl --connect-timeout 30 --max-time 120 --retry 3 -fsSL \
     -o /etc/yum.repos.d/negativo17-fedora-multimedia.repo \
@@ -141,6 +142,8 @@ dnf5 -y install --setopt=install_weak_deps=False \
 
 # PowerDevil's KWin backend treats 0 as safe; reserve 5% for internal panels.
 dnf5 -y install --setopt=install_weak_deps=False /packages/powerdevil/powerdevil-*.fc44.armada.*.rpm
+
+dnf5 -y install --setopt=install_weak_deps=False /packages/unl0kr/unl0kr-*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False firefox
 

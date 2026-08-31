@@ -20,6 +20,12 @@ UD_GIB=""
 OPERATION=install
 INHIBIT_PID=""
 SELF=/usr/libexec/armada/armada-installer
+ENCRYPT=0
+PASSPHRASE=""
+LUKS_NAME="armada-root"
+LUKS_UUID=""
+# The device the btrfs root is actually on: a raw partition (unencrypted) or a /dev/mapper entry (encrypted).
+ROOT_FS_DEV=""
 
 # Installed before any destructive step (repartition, mkfs, or reset), so a
 # failure after internal storage is modified surfaces the recovery instructions
@@ -28,6 +34,7 @@ cleanup() {
     local rc=$?
     [[ -n "$INHIBIT_PID" ]] && kill "$INHIBIT_PID" 2>/dev/null || true
     [[ -n "$TARGET" ]] && { umount -R "$TARGET" 2>/dev/null || true; rmdir "$TARGET" 2>/dev/null || true; }
+    (( ENCRYPT )) && cryptsetup close "$LUKS_NAME" 2>/dev/null || true
     # A half-done operation is recoverable from the SD card (re-run the installer);
     # UNINSTALL CFW in ABL is the fallback. On a replace, Android was never touched,
     # so it's safe to say so.
@@ -101,6 +108,27 @@ refuse_self() {
     esac
 }
 
+# `read` strips the trailing \n so the key matches what systemd-cryptsetup sends
+# from the boot prompt (--key-file - does not stop at a newline).
+read_passphrase_stdin() {
+    IFS= read -r PASSPHRASE || true
+    [[ -n $PASSPHRASE ]] || { echo "ERROR: --passphrase-stdin given but stdin was empty" >&2; exit 2; }
+}
+
+prompt_passphrase() {
+    local again
+    while :; do
+        read -rsp "Passphrase for internal storage: " PASSPHRASE; echo >&2
+        if [[ -z $PASSPHRASE ]]; then
+            echo "Passphrase cannot be empty." >&2
+            continue
+        fi
+        read -rsp "Repeat passphrase: " again; echo >&2
+        [[ $PASSPHRASE == "$again" ]] && break
+        echo "Passphrases did not match; try again." >&2
+    done
+}
+
 confirm() {
     (( ASSUME_YES )) && return 0
     local prompt="$1"
@@ -129,6 +157,40 @@ resolve_partlabel() {
         exit 1
     fi
     printf '%s\n' "${matches[0]}"
+}
+
+# Unmount and close all LUKS volumes and all volumes within them.
+unmount_and_close_all_luks() {
+    local part="$1" base holder name tgt
+    base=$(basename "$(readlink -f "$part")")
+    [[ -d /sys/class/block/$base/holders ]] || return 0
+    for holder in /sys/class/block/"$base"/holders/*; do
+        [[ -e $holder ]] || continue
+        holder=$(basename "$holder")
+        [[ $holder == dm-* ]] || continue
+        name=$(cat "/sys/class/block/$holder/dm/name" 2>/dev/null) || continue
+        # btrfs subvolumes give one mapper several mountpoints; clear them all.
+        while tgt=$(findmnt -n -o TARGET --first-only "/dev/mapper/$name" 2>/dev/null) && [[ -n $tgt ]]; do
+            umount "$tgt" || { echo "ERROR: $tgt (on /dev/mapper/$name) could not be unmounted; aborting before any change." >&2; exit 1; }
+        done
+        cryptsetup close "$name" 2>/dev/null || dmsetup remove "$name" 2>/dev/null || {
+            echo "ERROR: could not close mapper $name on $part; aborting before any change." >&2
+            exit 1
+        }
+    done
+}
+
+# Deleting a partition leaves its LUKS header and ciphertext on disk.
+# We might as well try to wipe the keyslots to make sure it's really unrecoverable.
+erase_luks_keyslots_if_present() {
+    local part="$1" type
+    type=$(blkid -s TYPE -o value "$part" 2>/dev/null || true)
+    [[ $type == crypto_LUKS ]] || return 0
+    echo "Erasing LUKS keyslots on ${part}..."
+    if ! cryptsetup luksErase --batch-mode "$part"; then
+        echo "WARNING: could not erase LUKS keyslots on ${part}; the header remains." >&2
+        return 0
+    fi
 }
 
 part_node() {
@@ -377,6 +439,7 @@ EOF
 
     for n in "${OUR_NUMS[@]}"; do
         p=$(part_node "$DEVICE" "$n")
+        unmount_and_close_all_luks "$p"
         if findmnt -n "$p" >/dev/null 2>&1; then
             umount "$p" || { echo "ERROR: $p is mounted and could not be unmounted; aborting before any change." >&2; exit 1; }
         fi
@@ -385,6 +448,9 @@ EOF
     # Past this point the old Linux install is being torn down; a failure leaves no
     # bootable internal layout, so arm the recovery message. Android is untouched.
     destructive=1
+    for n in "${OUR_NUMS[@]}"; do
+        erase_luks_keyslots_if_present "$(part_node "$DEVICE" "$n")"
+    done
     for n in $(printf '%s\n' "${OUR_NUMS[@]}" | sort -rn); do
         parted -s "$DEVICE" rm "$n"
     done
@@ -480,6 +546,10 @@ rewrite_bls() {
     [[ $initrd == /boot/* ]] || initrd="/boot${initrd}"
 
     options="root=UUID=${ROOT_UUID} rw boot=UUID=${BOOT_UUID}"
+    # add LUKS container UUID, too, if we're encrypting the root
+    if [[ -n $LUKS_UUID ]]; then
+        options="${options} rd.luks.uuid=${LUKS_UUID}"
+    fi
     while IFS= read -r karg; do
         # Armada always uses the btrfs subvol layout, so these rootflags replace kargs.d's.
         [[ $karg == rootflags=* ]] && continue
@@ -503,9 +573,29 @@ EOF
 
 format_root() {
     local tmp
-    mkfs.btrfs -f -L root "$ROOT_PART" >/dev/null
+    if (( ENCRYPT )); then
+        # An interrupted run can leave the mapper open. Close before wipefs.
+        if cryptsetup status "$LUKS_NAME" >/dev/null 2>&1; then
+            cryptsetup close "$LUKS_NAME"
+        fi
+    fi
+
+    wipefs -a "$ROOT_PART" >/dev/null
+
+    if (( ENCRYPT )); then
+        printf '%s' "$PASSPHRASE" | cryptsetup luksFormat --batch-mode --type luks2 \
+            --cipher aes-xts-plain64 --key-size 512 --pbkdf argon2id \
+            --key-file - "$ROOT_PART"
+        printf '%s' "$PASSPHRASE" | cryptsetup open --key-file - "$ROOT_PART" "$LUKS_NAME"
+        LUKS_UUID=$(cryptsetup luksUUID "$ROOT_PART")
+        ROOT_FS_DEV="/dev/mapper/${LUKS_NAME}"
+    else
+        ROOT_FS_DEV="$ROOT_PART"
+    fi
+
+    mkfs.btrfs -f -L root "$ROOT_FS_DEV" >/dev/null
     tmp=$(mktemp -d -t armada-root.XXXXXX)
-    mount "$ROOT_PART" "$tmp"
+    mount "$ROOT_FS_DEV" "$tmp"
     btrfs subvolume create "$tmp/root" >/dev/null
     btrfs subvolume create "$tmp/var" >/dev/null
     btrfs subvolume create "$tmp/home" >/dev/null
@@ -514,17 +604,18 @@ format_root() {
 }
 
 mount_root() {
-    mount -o "${BTRFS_OPTS},subvol=root" "$ROOT_PART" "$TARGET"
+    mount -o "${BTRFS_OPTS},subvol=root" "$ROOT_FS_DEV" "$TARGET"
     mkdir -p "$TARGET/var"
-    mount -o "${BTRFS_OPTS},subvol=var" "$ROOT_PART" "$TARGET/var"
+    mount -o "${BTRFS_OPTS},subvol=var" "$ROOT_FS_DEV" "$TARGET/var"
     mkdir -p "$TARGET/var/home"
-    mount -o "${BTRFS_OPTS},subvol=home" "$ROOT_PART" "$TARGET/var/home"
+    mount -o "${BTRFS_OPTS},subvol=home" "$ROOT_FS_DEV" "$TARGET/var/home"
 }
 
 deploy_to_internal() {
     local commit
 
     for part in "$ESP_PART" "$BOOT_PART" "$ROOT_PART"; do
+        unmount_and_close_all_luks "$part"
         if findmnt -n "$part" >/dev/null 2>&1; then
             umount "$part"
         fi
@@ -544,6 +635,7 @@ deploy_to_internal() {
     # -S 4096 = device 4 KiB sectors; -s 4 keeps the 512 MiB ESP in FAT16 cluster range.
     mkfs.vfat -F 16 -S 4096 -s 4 -n "$ESP_PARTLABEL" "$ESP_PART" >/dev/null
     mkfs.ext4 -F -L boot "$BOOT_PART" >/dev/null
+    # The btrfs UUID (partition's if not encrypted, FS inside the LUKS if it is)
     ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
     BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
     ESP_UUID=$(blkid -s UUID -o value "$ESP_PART")
@@ -612,9 +704,17 @@ cmd_detect() {
 }
 
 cmd_install() {
+    need_root
+    need_cmds
+    check_device
+    refuse_self
+    local passphrase_stdin=0
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -y|--assume-yes) ASSUME_YES=1 ;;
+            --encrypt) ENCRYPT=1 ;;
+            --passphrase-stdin) passphrase_stdin=1 ;;
             --userdata-gib) UD_GIB="${2:-}"; shift ;;
             --userdata-gib=*) UD_GIB="${1#*=}" ;;
             *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
@@ -622,10 +722,21 @@ cmd_install() {
         shift
     done
 
-    need_root
-    need_cmds
-    check_device
-    refuse_self
+    if (( ENCRYPT )); then
+        if (( passphrase_stdin )); then
+            read_passphrase_stdin
+        elif (( ASSUME_YES )); then
+            # No prompting under --assume-yes, so we need the password too.
+            echo "ERROR: --encrypt with --assume-yes requires --passphrase-stdin" >&2
+            exit 2
+        else
+            prompt_passphrase
+        fi
+    elif (( passphrase_stdin )); then
+        echo "ERROR: --passphrase-stdin requires --encrypt" >&2
+        exit 2
+    fi
+
     trap cleanup EXIT
     inhibit_sleep
 
@@ -726,6 +837,7 @@ EOF
     # parted refuse the resize later, mid-teardown.
     for n in "${OUR_NUMS[@]}"; do
         p=$(part_node "$DEVICE" "$n")
+        unmount_and_close_all_luks "$p"
         if findmnt -n "$p" >/dev/null 2>&1; then
             umount "$p" || { echo "ERROR: $p is mounted and could not be unmounted; aborting before any change." >&2; exit 1; }
         fi
@@ -737,6 +849,9 @@ EOF
     # Past this point the layout is being torn down; a failure leaves internal
     # storage half-modified, so arm the recovery message.
     destructive=1
+    for n in "${OUR_NUMS[@]}"; do
+        erase_luks_keyslots_if_present "$(part_node "$DEVICE" "$n")"
+    done
     # Highest number first: deleting a lower number would renumber the rest.
     for n in $(printf '%s\n' "${OUR_NUMS[@]}" | sort -rn); do
         parted -s "$DEVICE" rm "$n"
@@ -776,7 +891,12 @@ gui_die() {
 # Heartbeat drives the dialog (the install's output is too sparse to); wait gives the true code.
 gui_run() {
     local text="$1" pid; shift
-    sudo "$SELF" "$@" >"$GUI_LOG" 2>&1 &
+    # Passphrase over stdin, never argv
+    if [[ -n ${GUI_PASSPHRASE:-} ]]; then
+        sudo "$SELF" "$@" <<<"$GUI_PASSPHRASE" >"$GUI_LOG" 2>&1 &
+    else
+        sudo "$SELF" "$@" >"$GUI_LOG" 2>&1 &
+    fi
     pid=$!
     ( while kill -0 "$pid" 2>/dev/null; do printf '\n'; sleep 1; done ) \
         | zenity --progress --pulsate --auto-close --no-cancel \
@@ -788,6 +908,40 @@ gui_offer_poweroff() {
     zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=460 --no-wrap \
         --ok-label="Power off" --cancel-label="Close" --text="$1" \
         && sudo systemctl poweroff || true
+}
+
+gui_ask_encryption() {
+    local out p1 p2
+    GUI_PASSPHRASE=""
+    GUI_ENCRYPT_ARGS=()
+    zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=540 --no-wrap \
+        --ok-label="Encrypt" --cancel-label="Don't encrypt" \
+        --text="<b>Encrypt internal storage?</b>\n\nAll of Armada's data will be encrypted with a passphrase you enter each time the device starts.\n\nAn on-screen keyboard will be presented at boot time for passphrase entry.\n\n<b>If the passphrase is lost, your data cannot be recovered.</b>" \
+        || return 0
+
+    while :; do
+        # \x1f (unit separator) can't collide with a passphrase the way "|" can.
+        out=$(zenity --forms --title="$GUI_TITLE" --width=460 \
+            --text="Set the startup passphrase" \
+            --add-password="Passphrase" \
+            --add-password="Repeat passphrase" \
+            --separator=$'\x1f') || return 1
+        p1=${out%%$'\x1f'*}
+        p2=${out#*$'\x1f'}
+        if [[ -z $p1 ]]; then
+            zenity --error --title="$GUI_TITLE" --width=380 \
+                --text="The passphrase cannot be empty." >/dev/null 2>&1
+            continue
+        fi
+        if [[ $p1 != "$p2" ]]; then
+            zenity --error --title="$GUI_TITLE" --width=380 \
+                --text="The passphrases did not match." >/dev/null 2>&1
+            continue
+        fi
+        GUI_PASSPHRASE="$p1"
+        GUI_ENCRYPT_ARGS=(--encrypt --passphrase-stdin)
+        return 0
+    done
 }
 
 gui_install_flow() {
@@ -810,12 +964,16 @@ gui_install_flow() {
         --min-value="$amin" --max-value="$amax" --value="$default_android" --step=4) \
         || exit 0
 
+    gui_ask_encryption || exit 0
+    local enc_line="Encryption:  <b>Off</b>"
+    (( ${#GUI_ENCRYPT_ARGS[@]} )) && enc_line="Encryption:  <b>On</b> (passphrase at every startup)"
+
     zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=480 --no-wrap \
         --ok-label="Install" --cancel-label="Cancel" \
-        --text="<b>Ready to install</b>\n\nAndroid:  <b>${ud} GB</b>\nArmada:  <b>$((acur - ud)) GB</b>\n\nResizing Android <b>factory-resets it</b>: you lose installed apps and data (the Android system is kept)." \
+        --text="<b>Ready to install</b>\n\nAndroid:  <b>${ud} GB</b>\nArmada:  <b>$((acur - ud)) GB</b>\n${enc_line}\n\nResizing Android <b>factory-resets it</b>: you lose installed apps and data (the Android system is kept)." \
         || exit 0
 
-    gui_run "Installing Armada, do not power off…" install --assume-yes --userdata-gib "$ud" \
+    gui_run "Installing Armada, do not power off…" install --assume-yes --userdata-gib "$ud" "${GUI_ENCRYPT_ARGS[@]}" \
         || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, select UNINSTALL CFW in ABL to abandon the installation."
     gui_offer_poweroff "<b>Install complete.</b>\n\nPower off, remove the SD card, then power on."
 }
@@ -841,7 +999,8 @@ gui_manage_flow() {
         --text="<b>${name_e} is installed on internal storage.</b>\n\nAndroid:  <b>${android} GB</b>\n${name_e}:  <b>${linux} GB</b>\n\n<b>${remove_e}</b> erases everything and gives the disk back to Android.\n<b>${primary_e}</b> keeps your Android.") && rc=0 || rc=$?
 
     if (( rc == 0 )); then
-        gui_run "Installing Armada, do not power off…" install --assume-yes \
+        gui_ask_encryption || exit 0
+        gui_run "Installing Armada, do not power off…" install --assume-yes "${GUI_ENCRYPT_ARGS[@]}" \
             || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, select UNINSTALL CFW in ABL to abandon the installation."
         gui_offer_poweroff "<b>Armada installed.</b> Your Android is unchanged.\n\nPower off, remove the SD card, then power on."
     elif [[ "$out" == "$remove" ]]; then
@@ -859,6 +1018,8 @@ cmd_gui() {
     GUI_TITLE="Armada Installer"
     GUI_ICON="drive-harddisk"
     GUI_LOG=/tmp/armada-installer.log
+    GUI_PASSPHRASE=""
+    GUI_ENCRYPT_ARGS=()
     command -v zenity >/dev/null 2>&1 || { echo "zenity not installed" >&2; exit 1; }
 
     local info gmode
@@ -884,6 +1045,9 @@ Usage: armada-installer <command>
   install [opts]   fresh install of the running image to internal storage
                      -y, --assume-yes        skip prompts
                      --userdata-gib N         new Android userdata size
+                     --encrypt                LUKS2-encrypt the root partition
+                     --passphrase-stdin       read LUKS passphrase from stdin
+                                              (required with --encrypt -y)
   reset [opts]     remove ROCKNIX/Armada and grow Android back to full disk
                      -y, --assume-yes        skip prompts
 EOF
