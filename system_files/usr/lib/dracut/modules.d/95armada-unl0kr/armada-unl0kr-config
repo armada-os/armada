@@ -37,10 +37,6 @@ rotation=${ARMADA_INITRD_ROTATION:-$rotation}
         "${ARMADA_PANEL_ORIENTATION:-unset}"
     printf '[general]\n'
     printf 'rotation=%s\n' "$rotation"
-    printf 'animations=true'
-    printf '[theme]'
-    printf 'default=breezy-dark'
-    printf 'alternative=breezy-light'
 } > "$out" || exit 0
 
 printf 'armada-unl0kr-config: model=%s device=%s rotation=%s\n' \
