@@ -2,6 +2,7 @@ import { toaster } from "@decky/api";
 import { PanelSection } from "@decky/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getRgb, setRgb } from "../backend";
+import { t } from "../i18n";
 import type { RgbConfig } from "../types";
 import { SliderEdit, ToggleRow } from "./widgets";
 
@@ -56,7 +57,7 @@ export function RgbLighting() {
       savedConfig.current = JSON.stringify(next);
       setConfig(next);
     } catch (error) {
-      toaster.toast({ title: "Could not load RGB lighting", body: String(error) });
+      toaster.toast({ title: t("Could not load RGB lighting"), body: String(error) });
     }
   }, []);
 
@@ -77,7 +78,7 @@ export function RgbLighting() {
         await setRgb(config.enabled, config.color, config.brightness);
         savedConfig.current = current;
       } catch (error) {
-        toaster.toast({ title: "Could not change RGB lighting", body: String(error) });
+        toaster.toast({ title: t("Could not change RGB lighting"), body: String(error) });
         load();
       }
     }, delay);
@@ -88,14 +89,14 @@ export function RgbLighting() {
   if (!config) return null;
 
   return (
-    <PanelSection title="RGB Lighting">
+    <PanelSection title={t("RGB Lighting")}>
       <ToggleRow
-        label="Enabled"
+        label={t("Enabled")}
         value={config.enabled}
         onChange={(enabled: boolean) => setConfig({ ...config, enabled })}
       />
       <SliderEdit
-        label="Brightness"
+        label={t("Brightness")}
         value={config.brightness}
         min={0}
         max={100}
@@ -104,7 +105,7 @@ export function RgbLighting() {
         onChange={(brightness: number) => setConfig({ ...config, brightness })}
       />
       <SliderEdit
-        label="Color"
+        label={t("Color")}
         value={colorHue(config.color)}
         min={0}
         max={359}

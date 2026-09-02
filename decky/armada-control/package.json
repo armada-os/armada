@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && rollup -c",
+    "test:i18n": "node tests/i18n.test.mjs",
     "watch": "rollup -c -w"
   },
   "dependencies": {

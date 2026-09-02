@@ -11,6 +11,7 @@ import {
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
 import { SelectEdit, ToggleRow } from "../components/widgets";
+import { t, translateLabel } from "../i18n";
 import type { Config } from "../types";
 
 export function Settings({ config, setConfig }: {
@@ -71,7 +72,7 @@ export function Settings({ config, setConfig }: {
       setConfig((current: Config | null) => (current ? { ...current, desktopMode: applied } : current));
     } catch (error) {
       setConfig((current: Config | null) => (current ? { ...current, desktopMode: previous } : current));
-      toaster.toast({ title: "Could not change desktop mode", body: String(error) });
+      toaster.toast({ title: t("Could not change desktop mode"), body: String(error) });
     }
   }
   const setSleepMode = async (value: string) => {
@@ -82,51 +83,51 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, sleepMode: applied } : current));
     } catch (error) {
       setConfig((current) => (current ? { ...current, sleepMode: previous } : current));
-      toaster.toast({ title: "Could not change sleep mode", body: String(error) });
+      toaster.toast({ title: t("Could not change sleep mode"), body: String(error) });
     }
   };
   return (
     <>
-      <PanelSection title="Controller">
+      <PanelSection title={t("Controller")}>
         <SelectEdit
-          label="Emulation"
+          label={t("Emulation")}
           value={config.controllerType || "deck-uhid"}
-          options={config.controllerTypes || []}
+          options={(config.controllerTypes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
           onChange={setControllerType}
         />
-        <ButtonItem layout="below" onClick={openCalibration}>Launch Calibration</ButtonItem>
+        <ButtonItem layout="below" onClick={openCalibration}>{t("Launch Calibration")}</ButtonItem>
       </PanelSection>
-      <PanelSection title="System">
-        <ToggleRow label="Enable SSH" value={!!config.sshEnabled} onChange={setSshEnabled} />
-        <Field label="OS Version" description={config.osVersion || "unknown"} />
-        <Field label="ABL Version" description={config.ablVersion || "unknown"} />
+      <PanelSection title={t("System")}>
+        <ToggleRow label={t("Enable SSH")} value={!!config.sshEnabled} onChange={setSshEnabled} />
+        <Field label={t("OS Version")} description={config.osVersion || t("unknown")} />
+        <Field label={t("ABL Version")} description={config.ablVersion || t("unknown")} />
       </PanelSection>
-      <PanelSection title="Experimental">
+      <PanelSection title={t("Experimental")}>
         {(config.sleepModes?.length || 0) > 1 && (
           <SelectEdit
-            label="Sleep Mode"
+            label={t("Sleep Mode")}
             value={config.sleepMode || "fake"}
-            options={config.sleepModes || []}
+            options={(config.sleepModes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
             onChange={setSleepMode}
           />
         )}
         {(config.desktopModes?.length || 0) > 1 && (
           <SelectEdit
-            label="Desktop Mode"
+            label={t("Desktop Mode")}
             value={config.desktopMode || "desktop"}
-            options={config.desktopModes || []}
+            options={(config.desktopModes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
             onChange={setDesktopMode}
           />
         )}
         <ToggleRow
-          label="USB File Transfer"
-          description={config.mtpEnabled ? "Enabled until shutdown" : undefined}
+          label={t("USB File Transfer")}
+          description={config.mtpEnabled ? t("Enabled until shutdown") : undefined}
           value={!!config.mtpEnabled}
           onChange={setMtpEnabled}
         />
         <ToggleRow
-          label="Automatic ABL Updates"
-          description="Updates during shutdown"
+          label={t("Automatic ABL Updates")}
+          description={t("Updates during shutdown")}
           value={!!config.ablAutoEnabled}
           onChange={setAblAutoEnabled}
         />
