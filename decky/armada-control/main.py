@@ -48,8 +48,8 @@ class Plugin:
     async def get_compat_applied(self):
         return await asyncio.to_thread(load_compat_applied)
 
-    async def save_compat_applied(self, appids):
-        return await asyncio.to_thread(save_compat_applied, appids)
+    async def save_compat_applied(self, appids, proton_default=None):
+        return await asyncio.to_thread(save_compat_applied, appids, proton_default)
 
     async def set_ssh_enabled(self, enabled):
         return await asyncio.to_thread(set_ssh_enabled, enabled)

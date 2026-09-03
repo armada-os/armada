@@ -35,6 +35,11 @@ export interface Tweaks {
   games: Record<string, GameTweak>;
 }
 
+export interface CompatAppliedState {
+  appids: string[];
+  protonDefault: string;
+}
+
 export interface InstalledGame {
   appid: string;
   name: string;
@@ -95,6 +100,7 @@ export interface Config {
   perf?: PerfInfo;
   cpuDeviceClass: string;
   rgbSupported: boolean;
+  protonDefaults: string[];
   osVersion: string;
   ablVersion: string;
   ablAutoEnabled: boolean;

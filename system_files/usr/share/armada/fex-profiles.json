@@ -1,16 +1,4 @@
 {
-  "defaults": {
-    "global": {
-      "thunks": {
-        "Vulkan": true,
-        "GL": true,
-        "drm": true,
-        "WaylandClient": true,
-        "asound": true
-      }
-    },
-    "games": {}
-  },
   "profiles": {
     "default": {
       "label": "Default",

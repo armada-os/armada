@@ -1,7 +1,11 @@
-export interface CompatTool {
-  id: string;
-  label: string;
-}
+import {
+  defaultWindowsCompatTool,
+  type CompatTool,
+} from "./protonPolicy";
+export {
+  defaultWindowsCompatTool,
+} from "./protonPolicy";
+export type { CompatTool } from "./protonPolicy";
 
 export interface CompatState {
   tool: string;
@@ -15,11 +19,10 @@ const STEAM_SHORTCUT_APP_TYPE = 1073741824;
 const apps = () => window.SteamClient?.Apps;
 const settings = () => window.SteamClient?.Settings;
 
-// Keep in sync with PROTON_TOOL_NAME (build) and PROTON_11_STABLE (armada-fixups).
-export const DEFAULT_WINDOWS_COMPAT_TOOL = "proton-cachyos-11.0-arm64";
 export const USE_DEFAULT_COMPAT = "__armada_default__";
 export const FOLLOW_STEAM_COMPAT = "__steam_default__";
-let windowsCompatTool = DEFAULT_WINDOWS_COMPAT_TOOL;
+let windowsCompatTool = "";
+let windowsCompatDefaults: string[] = [];
 let autoApplyCompat = true;
 const handledAppids = new Set<string>();
 let protonToolsCache: CompatTool[] = [];
@@ -27,15 +30,15 @@ let protonToolsCachedAt = 0;
 let protonToolsRequest: Promise<CompatTool[]> | null = null;
 
 export function setWindowsCompatTool(toolName: string | undefined): void {
-  windowsCompatTool = toolName || DEFAULT_WINDOWS_COMPAT_TOOL;
+  windowsCompatTool = toolName || "";
 }
 
 // A saved default can name a tool a later release stopped shipping.
 async function effectiveWindowsCompatTool(): Promise<string> {
   const tools = await getProtonTools();
   if (!tools.length) return "";
-  if (tools.some((tool) => tool.id === windowsCompatTool)) return windowsCompatTool;
-  return tools.some((tool) => tool.id === DEFAULT_WINDOWS_COMPAT_TOOL) ? DEFAULT_WINDOWS_COMPAT_TOOL : "";
+  if (windowsCompatTool && tools.some((tool) => tool.id === windowsCompatTool)) return windowsCompatTool;
+  return defaultWindowsCompatTool(tools, windowsCompatDefaults);
 }
 
 // Steam keeps reporting stale details for an app whose tool went missing, so a write
@@ -50,8 +53,14 @@ async function repinToTool(appid: string, tool: string): Promise<boolean> {
   return true;
 }
 
-export function configureCompatPolicy(toolName: string | undefined, autoApply: boolean, appids: string[]): void {
+export function configureCompatPolicy(
+  toolName: string | undefined,
+  autoApply: boolean,
+  appids: string[],
+  defaults: string[] = [],
+): void {
   setWindowsCompatTool(toolName);
+  windowsCompatDefaults = defaults.map(String).filter(Boolean);
   autoApplyCompat = autoApply;
   handledAppids.clear();
   for (const appid of appids) {

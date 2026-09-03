@@ -1,0 +1,58 @@
+#!/bin/bash
+# Runs before the ESP mount because fatlabel cannot safely modify a mounted filesystem.
+set -euo pipefail
+
+source "${ARMADA_STORAGE_LIB:-/usr/lib/armada/storage-lib}"
+
+OLD_LABEL="ROCKNIX"
+NEW_LABEL="ARMADA"
+
+# Root-disk scoping and sibling labels exclude SD cards and unrelated GPTs.
+parent=$(armada_root_device 2>/dev/null || true)
+parent=$(readlink -f -- "$parent" 2>/dev/null || true)
+[[ -b $parent ]] || { echo "armada-esp-rename: cannot resolve the root disk; skipping" >&2; exit 0; }
+
+layout=$(lsblk --json --paths --output NAME,PTTYPE,PARTLABEL,PARTN "$parent" 2>/dev/null) \
+    || { echo "armada-esp-rename: cannot inspect $parent; skipping" >&2; exit 0; }
+candidate=$(jq -r --arg old "$OLD_LABEL" --arg new "$NEW_LABEL" '
+    .blockdevices[0]? as $disk
+    | ($disk.children // []) as $parts
+    | select($disk.pttype == "gpt")
+    | select(any($parts[]; .partlabel == "ARMADA_BOOT"))
+    | select(any($parts[]; .partlabel == "ARMADA_ROOT"))
+    | [$parts[] | select(.partlabel == $old or .partlabel == $new)]
+    | select(length == 1)
+    | .[0]
+    | [.name, .partlabel, ((.partn // "") | tostring)]
+    | @tsv
+' <<<"$layout" 2>/dev/null || true)
+[[ -n $candidate ]] || exit 0
+IFS=$'\t' read -r esp partlabel partnum <<<"$candidate"
+esp=$(readlink -f -- "$esp" 2>/dev/null || true)
+[[ $partnum =~ ^[0-9]+$ ]] \
+    || { echo "armada-esp-rename: candidate has no partition number; skipping" >&2; exit 0; }
+[[ -b $esp ]] || { echo "armada-esp-rename: candidate is not a block device; skipping" >&2; exit 0; }
+
+fstype=$(blkid -p -s TYPE -o value "$esp" 2>/dev/null || true)
+fslabel=$(blkid -p -s LABEL -o value "$esp" 2>/dev/null || true)
+[[ $fstype == vfat ]] || { echo "armada-esp-rename: $esp is not vfat; skipping" >&2; exit 0; }
+[[ $fslabel == "$OLD_LABEL" || $fslabel == "$NEW_LABEL" ]] \
+    || { echo "armada-esp-rename: $esp has unexpected filesystem label; skipping" >&2; exit 0; }
+[[ $partlabel == "$NEW_LABEL" && $fslabel == "$NEW_LABEL" ]] && exit 0
+
+# Keep manual starts safe; unit ordering normally leaves the ESP unmounted.
+if findmnt -rn --source "$esp" >/dev/null 2>&1; then
+    echo "armada-esp-rename: $esp is mounted; skipping" >&2
+    exit 0
+fi
+
+if [[ $fslabel == "$OLD_LABEL" ]]; then
+    fatlabel "$esp" "$NEW_LABEL"
+fi
+if [[ $partlabel == "$OLD_LABEL" ]]; then
+    sgdisk --change-name="${partnum}:${NEW_LABEL}" "$parent" >/dev/null
+fi
+sync
+
+# Labels are durable retry markers for any partial failure.
+echo "armada-esp-rename: internal ESP filesystem and GPT labels are now $NEW_LABEL"

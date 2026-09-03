@@ -28,6 +28,11 @@ def build_config(include_games=True):
         "perf": perf_info(),
         "cpuDeviceClass": env.get("ARMADA_SOC_CLASS", ""),
         "rgbSupported": bool(env.get("ARMADA_RGB_BACKEND")),
+        "protonDefaults": [
+            default.strip()
+            for default in env.get("ARMADA_PROTON_DEFAULTS", "").split(":")
+            if default.strip()
+        ],
         "osVersion": os_version(),
         "ablVersion": abl_version(),
         "ablAutoEnabled": abl_auto_enabled(),

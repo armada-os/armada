@@ -21,6 +21,8 @@ assert_registry "$ARMADA_CANONICAL_REGISTRY" \
     "ostree-image-signed:docker://${ARMADA_CANONICAL_REGISTRY}@sha256:deadbeef"
 assert_registry "$ARMADA_CANONICAL_REGISTRY" \
     "docker://${ARMADA_CANONICAL_REGISTRY}:testing"
+assert_registry "$ARMADA_CANONICAL_REGISTRY" \
+    "ostree-unverified-registry:${ARMADA_CANONICAL_REGISTRY}:testing"
 assert_registry "" \
     "ostree-image-signed:docker://example.invalid/${ARMADA_LEGACY_REGISTRY}:stable"
 
@@ -36,6 +38,8 @@ assert_repository() {
 
 assert_repository "local.armadaos.dev/armada" \
     "ostree-unverified-registry:docker://local.armadaos.dev/armada:feature-a"
+assert_repository "$ARMADA_CANONICAL_REGISTRY" \
+    "ostree-unverified-registry:${ARMADA_CANONICAL_REGISTRY}:testing"
 assert_repository "example.invalid/${ARMADA_LEGACY_REGISTRY}" \
     "ostree-image-signed:docker://example.invalid/${ARMADA_LEGACY_REGISTRY}:stable"
 assert_repository "" "containers-storage:localhost/armada:latest"

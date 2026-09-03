@@ -6,6 +6,7 @@ source /usr/lib/armada/update-lib
 
 DEVICE="${ARMADA_INTERNAL_DEVICE:-$(armada_internal_device || true)}"
 ESP_GUID="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+ESP_PARTLABEL="ARMADA"
 ESP_MIB=512
 BOOT_MIB=1024
 # Floor, not target: enough for two bootc deployments plus OTA staging headroom.
@@ -28,18 +29,18 @@ cleanup() {
     [[ -n "$INHIBIT_PID" ]] && kill "$INHIBIT_PID" 2>/dev/null || true
     [[ -n "$TARGET" ]] && { umount -R "$TARGET" 2>/dev/null || true; rmdir "$TARGET" 2>/dev/null || true; }
     # A half-done operation is recoverable from the SD card (re-run the installer);
-    # PC recovery is the last resort for a device that won't boot the SD at all. On
-    # a replace, Android was never touched, so it's safe to say so.
+    # UNINSTALL CFW in ABL is the fallback. On a replace, Android was never touched,
+    # so it's safe to say so.
     if (( rc != 0 && destructive == 1 )); then
         case $OPERATION in
             reset)
-                echo "ERROR: reset did not finish after internal storage was modified. Re-run the installer from the SD card to finish. Only if the device won't boot the SD: recover with a PC (fastboot erase ROCKNIX)." >&2
+                echo "ERROR: reset did not finish after internal storage was modified. To finish the removal, select UNINSTALL CFW in ABL." >&2
                 ;;
             replace)
-                echo "ERROR: install did not finish after internal storage was modified, but Android is unchanged. Do NOT boot internal storage; re-run the installer from the SD card to finish. Only if the device won't boot the SD: recover with a PC (fastboot erase ROCKNIX)." >&2
+                echo "ERROR: install did not finish after internal storage was modified, but Android is unchanged. Do NOT boot internal storage; re-run the installer from the SD card to finish, or select UNINSTALL CFW in ABL to abandon the installation." >&2
                 ;;
             *)
-                echo "ERROR: install did not finish after internal storage was modified. Do NOT boot internal storage. Re-run the installer from the SD card; only if the device won't boot the SD, recover with a PC (fastboot erase ROCKNIX, then reflash the SD card)." >&2
+                echo "ERROR: install did not finish after internal storage was modified. Do NOT boot internal storage. Re-run the installer from the SD card to finish, or select UNINSTALL CFW in ABL to abandon the installation." >&2
                 ;;
         esac
     fi
@@ -160,6 +161,7 @@ partition_names() {
 detect_mode() {
     local name
     has_rocknix=0
+    has_armada=0
     has_armada_boot=0
     has_armada_root=0
     has_storage=0
@@ -167,13 +169,14 @@ detect_mode() {
     while IFS= read -r name; do
         case "$name" in
             ROCKNIX) has_rocknix=1 ;;
+            ARMADA) has_armada=1 ;;
             ARMADA_BOOT) has_armada_boot=1 ;;
             ARMADA_ROOT) has_armada_root=1 ;;
             STORAGE) has_storage=1 ;;
         esac
     done < <(partition_names)
 
-    if (( has_rocknix || has_armada_boot || has_armada_root || has_storage )); then
+    if (( has_rocknix || has_armada || has_armada_boot || has_armada_root || has_storage )); then
         mode=occupied
     else
         mode=fresh
@@ -222,7 +225,7 @@ collect_our_tail() {
     while IFS=$'\t' read -r num start_b end_b name; do
         (( num == UD_NUM )) && continue
         case "$name" in
-            ROCKNIX|ARMADA_BOOT|ARMADA_ROOT|STORAGE)
+            ROCKNIX|ARMADA|ARMADA_BOOT|ARMADA_ROOT|STORAGE)
                 OUR_NUMS+=("$num")
                 OUR_LABELS+=("$name")
                 LINUX_BYTES=$((LINUX_BYTES + end_b - start_b))
@@ -274,7 +277,7 @@ choose_userdata_size() {
     done
 }
 
-# Fills [esp_start_mib .. region_end_mib] with ROCKNIX/ARMADA_BOOT/ARMADA_ROOT and
+# Fills [esp_start_mib .. region_end_mib] with ARMADA/ARMADA_BOOT/ARMADA_ROOT and
 # resolves them by label. userdata is the last existing partition either way (fresh
 # recreates it, replace leaves it), so the three claim slots UD_NUM+1..+3.
 create_linux_partitions() {
@@ -289,7 +292,7 @@ create_linux_partitions() {
     root_num=$((UD_NUM + 3))
 
     parted -a optimal -s "$DEVICE" mkpart primary fat32 "${esp_start_mib}MiB" "${esp_end_mib}MiB"
-    parted -s "$DEVICE" name "$esp_num" ROCKNIX
+    parted -s "$DEVICE" name "$esp_num" "$ESP_PARTLABEL"
     parted -s "$DEVICE" set "$esp_num" boot on
     sgdisk --typecode="${esp_num}:${ESP_GUID}" "$DEVICE" >/dev/null
 
@@ -306,7 +309,7 @@ create_linux_partitions() {
     udevadm settle
 
     # Resolve by the labels just set, not by assumed device-node numbers.
-    ESP_PART=$(resolve_partlabel ROCKNIX)
+    ESP_PART=$(resolve_partlabel "$ESP_PARTLABEL")
     BOOT_PART=$(resolve_partlabel ARMADA_BOOT)
     ROOT_PART=$(resolve_partlabel ARMADA_ROOT)
     for part in "$ESP_PART" "$BOOT_PART" "$ROOT_PART"; do
@@ -359,7 +362,7 @@ install_replace() {
         echo "       Use 'armada-installer reset' to return the disk to Android, then install fresh." >&2
         exit 1
     fi
-    if (( has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
+    if (( has_armada || has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
 
     cat <<EOF
 
@@ -421,25 +424,109 @@ set_origin() {
 }
 
 copy_bootc_ref() {
-    local ref="$1" target_commit="$2"
-    ostree refs --repo="$TARGET/ostree/repo" --force --create="$ref" "$target_commit"
+    local ref="$1"
+    ostree pull-local --repo="$TARGET/ostree/repo" /sysroot/ostree/repo "$ref"
 }
 
 copy_current_bootc_deployment() {
-    local parent ref target_commit
+    local parent ref target_commit manifest blob_refs image_refs
+    local image_ref_count=0
+    local -a required_refs=("$commit")
 
-    ostree pull-local --repo="$TARGET/ostree/repo" /sysroot/ostree/repo "$commit"
+    copy_bootc_ref "$commit" || {
+        echo "ERROR: could not copy booted deployment commit $commit" >&2
+        return 1
+    }
 
     parent=$(ostree show --repo=/sysroot/ostree/repo "$commit" |
         sed -n 's/^Parent:[[:space:]]*//p' | head -n1)
-    [[ -n $parent ]] && ostree pull-local --repo="$TARGET/ostree/repo" /sysroot/ostree/repo "$parent"
+    if [[ -n $parent ]]; then
+        copy_bootc_ref "$parent" || {
+            echo "ERROR: could not copy container-image parent commit $parent" >&2
+            return 1
+        }
+        required_refs+=("$parent")
+    fi
 
+    # Generic OCI layers are cached as independent commits. The final image commit
+    # does not reference them through OSTree history, but bootc still requires each
+    # manifest layer's blob ref to read deployment metadata and reuse cached layers.
+    if ! manifest=$(ostree show --repo=/sysroot/ostree/repo \
+        --print-metadata-key=ostree.manifest "$commit" 2>/dev/null); then
+        [[ -n $parent ]] || {
+            echo "ERROR: booted commit has no container manifest" >&2
+            return 1
+        }
+        manifest=$(ostree show --repo=/sysroot/ostree/repo \
+            --print-metadata-key=ostree.manifest "$parent") || {
+            echo "ERROR: container-image parent has no manifest" >&2
+            return 1
+        }
+    fi
+    # ostree prints string metadata in GVariant form, including outer quotes.
+    manifest=${manifest#\'}
+    manifest=${manifest%\'}
+    blob_refs=$(jq -er '
+        .layers as $layers
+        | if ($layers | type) != "array" or ($layers | length) == 0 then
+              error("container manifest has no layers")
+          else
+              $layers
+              | map(
+                  .digest
+                  | if type == "string" and test("^sha256:[0-9a-f]{64}$") then
+                        "ostree/container/blob/" + sub(":"; "_3A_")
+                    else
+                        error("invalid container layer digest")
+                    end
+                )
+              | unique[]
+          end
+    ' <<<"$manifest") || {
+        echo "ERROR: could not read container layer refs from booted commit" >&2
+        return 1
+    }
     while IFS= read -r ref; do
+        copy_bootc_ref "$ref" || {
+            echo "ERROR: could not copy bootc layer ref $ref" >&2
+            return 1
+        }
+        required_refs+=("$ref")
+    done <<<"$blob_refs"
+
+    # A source with a staged update may have image refs for multiple commits. Copy
+    # only refs for the deployment being installed (or its container-image parent).
+    image_refs=$(ostree refs --repo=/sysroot/ostree/repo |
+        sed -n 's#^\(ostree/container/image/.*\)#\1#p') || {
+        echo "ERROR: could not list container image refs" >&2
+        return 1
+    }
+    while IFS= read -r ref; do
+        [[ -n $ref ]] || continue
         target_commit=$(ostree rev-parse --repo=/sysroot/ostree/repo "$ref" 2>/dev/null || true)
         if [[ $target_commit == "$commit" || ( -n $parent && $target_commit == "$parent" ) ]]; then
-            copy_bootc_ref "$ref" "$target_commit"
+            copy_bootc_ref "$ref" || {
+                echo "ERROR: could not copy bootc image ref $ref" >&2
+                return 1
+            }
+            required_refs+=("$ref")
+            image_ref_count=$((image_ref_count + 1))
         fi
-    done < <(ostree refs --repo=/sysroot/ostree/repo | sed -n 's#^\(ostree/container/\(image\|blob\)/.*\)#\1#p')
+    done <<<"$image_refs"
+
+    if (( image_ref_count == 0 )); then
+        echo "ERROR: no container image ref matches the booted deployment" >&2
+        return 1
+    fi
+
+    # Do not create a boot entry for a partial copy. In particular, a deployment
+    # can boot without these layer refs while `bootc status` and upgrades are broken.
+    for ref in "${required_refs[@]}"; do
+        ostree rev-parse --repo="$TARGET/ostree/repo" "$ref" >/dev/null 2>&1 || {
+            echo "ERROR: copied bootc ref is missing from target repository: $ref" >&2
+            return 1
+        }
+    done
 }
 
 seed_kernel() {
@@ -539,7 +626,7 @@ deploy_to_internal() {
     destructive=1
     # The working SD ESP (BIB-made) is FAT16, and the ABL reads FAT16, not FAT32.
     # -S 4096 = device 4 KiB sectors; -s 4 keeps the 512 MiB ESP in FAT16 cluster range.
-    mkfs.vfat -F 16 -S 4096 -s 4 -n ROCKNIX "$ESP_PART" >/dev/null
+    mkfs.vfat -F 16 -S 4096 -s 4 -n "$ESP_PARTLABEL" "$ESP_PART" >/dev/null
     mkfs.ext4 -F -L boot "$BOOT_PART" >/dev/null
     ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
     BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
@@ -582,7 +669,7 @@ cmd_detect() {
         find_userdata
         collect_our_tail
         local installed
-        if (( has_armada_boot || has_armada_root )); then
+        if (( has_armada || has_armada_boot || has_armada_root )); then
             installed=armada
         elif (( has_rocknix || has_storage )); then
             installed=rocknix
@@ -651,7 +738,7 @@ No internal Armada install was found.
 Current Android userdata: ${UD_ORIG_GIB} GiB (${UD_START_MIB}MiB .. ${UD_END_MIB}MiB)
 
 Fresh install will shrink Android userdata, wipe Android user data, create
-ROCKNIX/ARMADA_BOOT/ARMADA_ROOT, and install the running Armada image.
+ARMADA/ARMADA_BOOT/ARMADA_ROOT, and install the running Armada image.
 
 After install, internal storage boots before SD. To remove it later and give
 the space back to Android, run: armada-installer reset
@@ -705,7 +792,7 @@ cmd_reset() {
     local new_ud_end_mib new_ud_gib installed n p
     new_ud_end_mib=$(( OUR_MAX_END / 1048576 ))
     new_ud_gib=$(( (new_ud_end_mib - UD_START_MIB) / 1024 ))
-    if (( has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
+    if (( has_armada || has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
 
     cat <<EOF
 
@@ -795,7 +882,7 @@ gui_install_flow() {
 
     zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=480 --no-wrap \
         --ok-label="Continue" --cancel-label="Cancel" \
-        --text="<b>Install Armada alongside Android?</b>\n\nThis <b>factory-resets Android</b>: you lose installed Android apps and data\n(the Android system itself is kept). Your SD card is not touched.\n\nRecovery from a failed install needs a PC." \
+        --text="<b>Install Armada alongside Android?</b>\n\nThis <b>factory-resets Android</b>: you lose installed Android apps and data\n(the Android system itself is kept). Your SD card is not touched." \
         || exit 0
 
     # Default Android to a usable size when there's room, else the floor
@@ -809,11 +896,11 @@ gui_install_flow() {
 
     zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=480 --no-wrap \
         --ok-label="Install" --cancel-label="Cancel" \
-        --text="<b>Ready to install</b>\n\nAndroid:  <b>${ud} GB</b>\nArmada:  <b>$((acur - ud)) GB</b>\n\nResizing Android <b>factory-resets it</b>: you lose installed apps and data (the Android system is kept).\n\nThis <b>can't be undone</b> without a PC." \
+        --text="<b>Ready to install</b>\n\nAndroid:  <b>${ud} GB</b>\nArmada:  <b>$((acur - ud)) GB</b>\n\nResizing Android <b>factory-resets it</b>: you lose installed apps and data (the Android system is kept)." \
         || exit 0
 
     gui_run "Installing Armada, do not power off…" install --assume-yes --userdata-gib "$ud" \
-        || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, recover with a PC:\n  fastboot erase ROCKNIX"
+        || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, select UNINSTALL CFW in ABL to abandon the installation."
     gui_offer_poweroff "<b>Install complete.</b>\n\nPower off, remove the SD card, then power on."
 }
 
@@ -825,7 +912,7 @@ gui_manage_flow() {
     case "$installed" in
         armada) name="Armada";  primary="Reinstall Armada" ;;
         rocknix) name="ROCKNIX"; primary="Switch to Armada" ;;
-        *) gui_die "Internal storage has an unrecognized Linux layout.\n\nThis tool only manages installs it created. Recover from a PC." ;;
+        *) gui_die "Internal storage has an unrecognized Linux layout.\n\nThis tool only manages installs it created. To remove it, select UNINSTALL CFW in ABL." ;;
     esac
     remove="Remove & Restore Android"
     local name_e remove_e primary_e
@@ -839,7 +926,7 @@ gui_manage_flow() {
 
     if (( rc == 0 )); then
         gui_run "Installing Armada, do not power off…" install --assume-yes \
-            || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, recover with a PC:\n  fastboot erase ROCKNIX"
+            || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, select UNINSTALL CFW in ABL to abandon the installation."
         gui_offer_poweroff "<b>Armada installed.</b> Your Android is unchanged.\n\nPower off, remove the SD card, then power on."
     elif [[ "$out" == "$remove" ]]; then
         zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=500 --no-wrap \
@@ -847,7 +934,7 @@ gui_manage_flow() {
             --text="<b>Remove ${name_e} and give all storage back to Android?</b>\n\nThis ERASES ${name_e} and factory-resets Android. <b>It can't be undone.</b>" \
             || exit 0
         gui_run "Removing ${name}, do not power off…" reset --assume-yes \
-            || gui_die "Remove failed (details in ${GUI_LOG})."
+            || gui_die "Remove failed (details in ${GUI_LOG}).\n\nTo finish removing ${name_e}, select UNINSTALL CFW in ABL."
         gui_offer_poweroff "<b>${name_e} removed.</b> Android has the full internal disk again.\n\nPower off and remove the SD card to boot Android, or relaunch to install Armada."
     fi
 }

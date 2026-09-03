@@ -3,7 +3,7 @@ ARG MESA_PKG=ghcr.io/armada-os/armada-packages/mesa@sha256:713eddabb61575b1d9fed
 ARG MESA_ANDROID_PKG=ghcr.io/armada-os/armada-packages/mesa-android@sha256:57b03a625ebdfa12d67210c9642f24f8389c22b319e86ab32715eedfd7ee963b
 ARG MESA_X86_PKG=ghcr.io/armada-os/armada-packages/mesa-x86@sha256:68ea12e625f577a311cd4bf65d2ea1110628200759598bc4a788c9afdaf8b81c
 ARG MANGOHUD_PKG=ghcr.io/armada-os/armada-packages/mangohud@sha256:6ed92b44d267a8d2e1339968b59c2679cfd30e81494d4990dcc2c92e0be4fc10
-ARG GAMESCOPE_PKG=ghcr.io/armada-os/armada-packages/gamescope@sha256:812842a92041f5ebfffeb7d080798ecc6f282d1e855ccdf8320194f9e98efafd
+ARG GAMESCOPE_PKG=ghcr.io/armada-os/armada-packages/gamescope@sha256:d774bf38913f6c6e06df85e7b2bbe202ee4ea18947bb5cbb6e2c177802acce2d
 ARG GAMESCOPE_SESSION_PKG=ghcr.io/armada-os/armada-packages/gamescope-session@sha256:f778b6def98b813d24f2a40ef038d40e8a85dc60be41d17efafbb9d4baff345b
 ARG GAMESCOPE_SESSION_STEAM_PKG=ghcr.io/armada-os/armada-packages/gamescope-session-steam@sha256:bbfb91cfec0232a240a23463af4ad4bd2f7e2fdb9b3b03b7396c58b37400ba7e
 ARG KWIN_PKG=ghcr.io/armada-os/armada-packages/kwin@sha256:0f9bfcb4d0da4cab4a049cba7d90eb9936b3d4be610ceb00f25ec0f58d0dc812
@@ -43,7 +43,7 @@ WORKDIR /build/armada-control
 COPY decky/armada-control/package.json decky/armada-control/package-lock.json ./
 RUN npm ci
 COPY decky/armada-control/ ./
-RUN npm run build
+RUN npm test && npm run build
 WORKDIR /build/armada-store
 COPY decky/armada-store/package.json decky/armada-store/package-lock.json ./
 RUN npm ci

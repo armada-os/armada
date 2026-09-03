@@ -1,0 +1,13 @@
+[Unit]
+Description=Rename the legacy internal Armada ESP before it is mounted
+ConditionPathExists=/run/ostree-booted
+DefaultDependencies=no
+Before=boot-efi.mount local-fs.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=30
+ExecStart=-/usr/libexec/armada/armada-esp-rename
+
+[Install]
+WantedBy=local-fs.target

@@ -3,10 +3,14 @@ import { getCompatApplied, getConfig, getInstalledGames, saveCompatApplied } fro
 import { Content } from "./Content";
 import {
   configureCompatPolicy,
+  defaultWindowsCompatTool,
+  getProtonTools,
   handledGameAppids,
+  migrateWindowsCompatTool,
   registerDownloadWatcher,
   sweepInstalledGames,
 } from "./lib/steamCompat";
+import { factoryDefaultTransition } from "./lib/protonPolicy";
 
 export default definePlugin(() => {
   let unregisterDownloadWatcher = () => {};
@@ -15,23 +19,50 @@ export default definePlugin(() => {
   };
   let cancelled = false;
   const handledRequest = getCompatApplied()
-    .then((appids) => ({ appids, loaded: true }))
-    .catch(() => ({ appids: [] as string[], loaded: false }));
+    .then((state) => ({ state, loaded: true }))
+    .catch(() => ({ state: { appids: [] as string[], protonDefault: "" }, loaded: false }));
   Promise.all([getConfig(), getInstalledGames(), handledRequest])
-    .then(([config, games, handled]) => {
+    .then(async ([config, games, handled]) => {
       if (cancelled) return;
+      const explicitTool = config.tweaks?.global?.windowsCompatTool;
       configureCompatPolicy(
-        config.tweaks?.global?.windowsCompatTool,
+        explicitTool,
         handled.loaded && config.tweaks?.global?.autoApplyCompat !== false,
-        handled.appids,
+        handled.state.appids,
+        config.protonDefaults,
       );
       const persist = handled.loaded ? persistHandledGames : () => {};
       unregisterDownloadWatcher = registerDownloadWatcher(persist);
       window.setTimeout(() => {
-        if (cancelled) return;
-        sweepInstalledGames(games)
-          .then(persist)
-          .catch(() => {});
+        void (async () => {
+          if (cancelled) return;
+          await sweepInstalledGames(games);
+          if (cancelled) return;
+          if (handled.loaded && !explicitTool) {
+            const tools = await getProtonTools();
+            if (cancelled) return;
+            const nextTool = defaultWindowsCompatTool(tools, config.protonDefaults);
+            const transition = factoryDefaultTransition(
+              explicitTool, handled.loaded, handled.state.protonDefault, nextTool,
+            );
+            if (transition) {
+              try {
+                if (transition.oldTool !== transition.newTool) {
+                  await migrateWindowsCompatTool(
+                    games.filter((game) => !game.nonSteam).map((game) => game.appid),
+                    transition.oldTool,
+                    transition.newTool,
+                  );
+                }
+                if (cancelled) return;
+                await saveCompatApplied(handledGameAppids(), transition.newTool);
+                return;
+              } catch (error) {
+              }
+            }
+          }
+          persist();
+        })().catch(() => {});
       }, 3000);
     })
     .catch(() => {});

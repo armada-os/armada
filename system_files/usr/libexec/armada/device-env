@@ -66,6 +66,14 @@ if [[ "${ARMADA_SUSPEND_MODE:-fake}" == "mem" ]]; then
     fi
 fi
 
+# Proton defaults are tried in order and must match Steam compatibility
+# tool IDs.
+if [[ "${ARMADA_SOC_CLASS:-}" == SM8250 ]]; then
+    ARMADA_PROTON_DEFAULTS=proton-cachyos-11.0-arm64
+else
+    ARMADA_PROTON_DEFAULTS=proton-experimental-arm64:proton_11-arm64:proton-cachyos-11.0-arm64
+fi
+
 # CPU topology by SoC (device conf may override). Cpulists are ordered:
 # presets expand in host order, WINE_CPU_TOPOLOGY consumers keep the order.
 # BIG includes the prime cores; PRIME is the strict subset. Empty
@@ -103,6 +111,7 @@ vars=(
     ARMADA_DEVICE_ID
     ARMADA_DEVICE_NAME
     ARMADA_SOC_CLASS
+    ARMADA_PROTON_DEFAULTS
     ARMADA_SUSPEND_MODE
     ARMADA_SYNC_SUSPEND
     ARMADA_PRIMARY_CONNECTOR

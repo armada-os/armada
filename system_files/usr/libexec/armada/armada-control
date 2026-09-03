@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, "/usr/lib/armada")
+import armada_game_tweaks
 import armada_perf
 
 SOCKET = Path("/run/armada/control.sock")
@@ -422,12 +423,12 @@ class PerfManager:
 
     def refresh(self, keep_override=False):
         # recomputed from game-tweaks.json; powerd applies on its next tick
-        tweaks = armada_perf.load_tweaks()
+        tweaks = armada_game_tweaks.load()
         state = {"global": self.gamescope_layer(tweaks.get("global") or {})}
         if keep_override:
             old = armada_perf.read_state().get("override")
             if isinstance(old, dict) and self.pid_alive(old.get("pid")):
-                merged = armada_perf.merged_settings(tweaks, old.get("appid"))
+                merged = armada_game_tweaks.merged_settings(tweaks, old.get("appid"))
                 override = self.gamescope_layer(merged)
                 override.update({"appid": old.get("appid"), "pid": old["pid"]})
                 state["override"] = override
@@ -494,8 +495,8 @@ class PerfManager:
         return match if match is not None else pid
 
     def game_launched(self, appid, pid):
-        tweaks = armada_perf.load_tweaks()
-        merged = armada_perf.merged_settings(tweaks, appid)
+        tweaks = armada_game_tweaks.load()
+        merged = armada_game_tweaks.merged_settings(tweaks, appid)
         clean = armada_perf.sanitize_perf(merged, self.env)
         nice = clean.get("nice", 0)
         if nice < 0:
@@ -521,9 +522,9 @@ class PerfManager:
         override = state.get("override")
         if not isinstance(override, dict) or not self.pid_alive(override.get("pid")):
             raise RuntimeError("no running game to re-apply")
-        tweaks = armada_perf.load_tweaks()
+        tweaks = armada_game_tweaks.load()
         clean = armada_perf.sanitize_perf(
-            armada_perf.merged_settings(tweaks, override.get("appid")), self.env)
+            armada_game_tweaks.merged_settings(tweaks, override.get("appid")), self.env)
         cores = clean.get("cores")
         if clean.get("scheduler") == "cosmos":
             cores = None  # composition: cosmos gets the domain, no hard mask
