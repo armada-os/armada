@@ -40,7 +40,7 @@ def build_config(include_games=True):
         "mtpEnabled": mtp_enabled(),
         "desktopMode": desktop_mode(),
         "desktopModes": desktop_modes(),
-        "sleepMode": env.get("ARMADA_SUSPEND_MODE", "fake"),
+        "sleepMode": env.get("ARMADA_SUSPEND_MODE", "s2idle"),
         "sleepModes": sleep_modes(),
         "controllerType": controller_type(),
         "controllerTypes": [{"data": key, "label": label} for key, label in CONTROLLER_TYPES.items()],
