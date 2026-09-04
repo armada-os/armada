@@ -9,9 +9,8 @@ from .privileged import call
 OS_VERSION_PATH = Path("/usr/lib/armada/version")
 MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
 SLEEP_MODE_LABELS = {
+    "s2idle": "Native",
     "fake": "Fake",
-    "s2idle": "s2idle",
-    "deep": "Deep",
 }
 DESKTOP_MODE_LABELS = {
     "mobile": "Plasma Mobile",
@@ -130,9 +129,8 @@ def desktop_modes():
     return [{"data": mode, "label": DESKTOP_MODE_LABELS[mode]} for mode in modes]
 
 def sleep_modes():
-    modes = ["fake"]
     advertised = {word.strip("[]") for word in read_text(MEM_SLEEP_PATH).split()}
-    modes.extend(mode for mode in ("s2idle", "deep") if mode in advertised)
+    modes = (["s2idle"] if "s2idle" in advertised else []) + ["fake"]
     return [{"data": mode, "label": SLEEP_MODE_LABELS[mode]} for mode in modes]
 
 

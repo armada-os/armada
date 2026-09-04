@@ -162,7 +162,7 @@ def set_desktop_mode(mode: str):
     atomic_write(DESKTOP_SESSION_PATH, f"{mode}\n")
 
 def select_mem_sleep(mode):
-    if mode in {"s2idle", "deep"}:
+    if mode == "s2idle":
         MEM_SLEEP_PATH.write_text(f"{mode}\n", encoding="utf-8")
 
 
@@ -270,7 +270,7 @@ def available_sleep_modes():
         }
     except OSError:
         advertised = set()
-    return {"fake"} | ({"s2idle", "deep"} & advertised)
+    return {"fake"} | ({"s2idle"} & advertised)
 
 def action_get_desktop_mode(request):
     return {"value": get_desktop_mode()}

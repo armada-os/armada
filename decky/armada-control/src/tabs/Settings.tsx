@@ -75,7 +75,7 @@ export function Settings({ config, setConfig }: {
     }
   }
   const setSleepMode = async (value: string) => {
-    const previous = config.sleepMode || "fake";
+    const previous = config.sleepMode || "s2idle";
     setConfig((current) => (current ? { ...current, sleepMode: value } : current));
     try {
       const applied = await applySleepMode(value);
@@ -97,19 +97,17 @@ export function Settings({ config, setConfig }: {
         <ButtonItem layout="below" onClick={openCalibration}>Launch Calibration</ButtonItem>
       </PanelSection>
       <PanelSection title="System">
+        <SelectEdit
+          label="Sleep Mode"
+          value={config.sleepMode || "s2idle"}
+          options={config.sleepModes || []}
+          onChange={setSleepMode}
+        />
         <ToggleRow label="Enable SSH" value={!!config.sshEnabled} onChange={setSshEnabled} />
         <Field label="OS Version" description={config.osVersion || "unknown"} />
         <Field label="ABL Version" description={config.ablVersion || "unknown"} />
       </PanelSection>
       <PanelSection title="Experimental">
-        {(config.sleepModes?.length || 0) > 1 && (
-          <SelectEdit
-            label="Sleep Mode"
-            value={config.sleepMode || "fake"}
-            options={config.sleepModes || []}
-            onChange={setSleepMode}
-          />
-        )}
         {(config.desktopModes?.length || 0) > 1 && (
           <SelectEdit
             label="Desktop Mode"
