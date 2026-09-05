@@ -35,6 +35,26 @@ export function Content() {
   useEffect(() => {
     load();
   }, [load]);
+  // Keeps a power/tweaks edit still inside its debounce window instead of overwriting it.
+  const applyConfig = useCallback((next: Config) => {
+    const previousPower = savedPowerSnapshot.current;
+    const previousTweaks = savedTweaksSnapshot.current;
+    savedPowerSnapshot.current = JSON.stringify(next.power);
+    savedTweaksSnapshot.current = JSON.stringify(next.tweaks);
+    setConfig((current) => {
+      if (!current) return next;
+      const powerPending = JSON.stringify(current.power) !== previousPower;
+      const tweaksPending = JSON.stringify(current.tweaks) !== previousTweaks;
+      return {
+        ...next,
+        power: powerPending ? current.power : next.power,
+        tweaks: tweaksPending ? current.tweaks : next.tweaks,
+        installedGames: current.installedGames,
+        game: current.game,
+        selectedGame: current.selectedGame,
+      };
+    });
+  }, []);
   useEffect(() => {
     if (!config || installedGamesRequested.current) return;
     installedGamesRequested.current = true;
@@ -90,7 +110,7 @@ export function Content() {
         tabs={[
           { id: "Compatibility", title: tabIcons.Compatibility, content: tabContent(<Compatibility config={config} setConfig={setConfig} />) },
           { id: "Power", title: tabIcons.Power, content: tabContent(<Power config={config} setConfig={setConfig} />) },
-          { id: "Fans", title: tabIcons.Fans, content: tabContent(<Fans setConfig={setConfig} />) },
+          { id: "Fans", title: tabIcons.Fans, content: tabContent(<Fans applyConfig={applyConfig} />) },
           ...(config.rgbSupported ? [
             { id: "RGB", title: tabIcons.RGB, content: tabContent(<RgbLighting />) },
           ] : []),

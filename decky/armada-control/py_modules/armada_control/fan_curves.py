@@ -56,12 +56,12 @@ def _parse_fan_curves(parser):
         if not section.startswith("fan_curve."):
             continue
         name = section.split(".", 1)[1]
-        curve = parser.get(section, "curve", fallback="")
-        if not curve:
+        points = _parse_curve_points(parser.get(section, "curve", fallback=""))
+        if not points:
             continue
         curves[name] = {
             "label": parser.get(section, "label", fallback="") or default_label(name),
-            "curve": curve,
+            "curve": _canonical_curve(points),
         }
     return curves
 
@@ -105,6 +105,11 @@ def _curve_has_fan_stop(curve_string):
         return False
     lowest = min(points, key=lambda point: point[0])
     return lowest[1] == 0
+
+
+# armada-powerd sorts points, so order is normalized here for the factory compare.
+def _canonical_curve(points):
+    return ",".join(f"{temp}:{pwm}" for temp, pwm in sorted(points))
 
 
 def _read_active_profile(merged, profiles):
@@ -157,7 +162,7 @@ def validate_curve_string(value):
         if not (MIN_CURVE_PWM <= pwm <= MAX_CURVE_PWM):
             raise ValueError(f"curve pwm out of range: {pwm}")
         points.append((temp, pwm))
-    return ",".join(f"{temp}:{pwm}" for temp, pwm in points)
+    return _canonical_curve(points)
 
 
 def _normalize_curves(fan_curves):
@@ -229,15 +234,12 @@ def render_all(fan_curves, fan_settings):
 
     for name, curve in fan_curves.items():
         section = f"fan_curve.{name}"
-        factory_curve = factory_curves.get(name)
-        edited = (
-            factory_curve is None
-            or curve["curve"] != factory_curve.get("curve")
-            or (curve["label"] and curve["label"] != factory_curve.get("label"))
-        )
-        set_or_clear(parser, section, "curve", curve["curve"], edited)
-        if curve["label"]:
-            set_or_clear(parser, section, "label", curve["label"], edited)
+        factory_curve = factory_curves.get(name) or {}
+        is_custom = not factory_curve
+        set_or_clear(parser, section, "curve", curve["curve"],
+                     is_custom or curve["curve"] != factory_curve.get("curve"))
+        set_or_clear(parser, section, "label", curve["label"],
+                     bool(curve["label"]) and (is_custom or curve["label"] != factory_curve.get("label")))
         if parser.has_section(section) and not parser.options(section):
             parser.remove_section(section)
 
@@ -279,4 +281,3 @@ def save_all(fan_curves, fan_settings):
             raise ValueError(f"can't remove '{removed}': still assigned to {names} on the Power tab")
     rendered = render_all(fan_curves, fan_settings)
     call("write_config", name="power", text=rendered)
-    return get_state()

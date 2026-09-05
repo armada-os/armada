@@ -1,6 +1,5 @@
 import { ButtonItem, Field, PanelSection, PanelSectionRow, showModal } from "@decky/ui";
 import { useCallback, useEffect, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
 import { getFansState, saveFanCurves } from "../backend";
 import { CreateCurveModal } from "../components/CreateCurveModal";
 import { FanCurveEditor } from "../components/FanCurveEditor";
@@ -8,10 +7,10 @@ import { FanCurveEditorModal } from "../components/FanCurveEditorModal";
 import { useCurrentTemp } from "../hooks/useCurrentTemp";
 import { useFanCurvesSave } from "../hooks/useFanCurvesSave";
 import { clone } from "../lib/util";
-import type { Config, CurvesState } from "../types";
+import type { Config, CurvesState, FanCurve, FanSettings } from "../types";
 
-export function Fans({ setConfig }: {
-  setConfig: Dispatch<SetStateAction<Config | null>>;
+export function Fans({ applyConfig }: {
+  applyConfig: (next: Config) => void;
 }) {
   const [saved, setSaved] = useState<CurvesState | null>(null);
   const [draft, setDraft] = useState<CurvesState | null>(null);
@@ -35,19 +34,18 @@ export function Fans({ setConfig }: {
     load();
   }, [load]);
 
-  const syncSharedFanCurves = (next: CurvesState) => {
-    setConfig((current) =>
-      current ? { ...current, power: { ...current.power, fan_curves: next.fanCurves } } : current,
-    );
-  };
+  // applyConfig rather than setConfig so the shell's debounced power save doesn't fire a second reload.
+  const save = useCallback(async (fanCurves: Record<string, FanCurve>, fanSettings: FanSettings) => {
+    applyConfig(await saveFanCurves(fanCurves, fanSettings));
+    return getFansState();
+  }, [applyConfig]);
 
   const { dirty, saving, saveError, handleSave, handleRevert } = useFanCurvesSave({
     working: draft,
     saved,
     setSaved,
     setWorking: setDraft,
-    save: saveFanCurves,
-    onSaved: syncSharedFanCurves,
+    save,
   });
 
   if (!draft) {
@@ -66,10 +64,8 @@ export function Fans({ setConfig }: {
         initialSelected={selectedCurve}
         onSelectedChange={setSelectedCurve}
         saved={saved}
-        onSaved={(next) => {
-          setSaved(next);
-          syncSharedFanCurves(next);
-        }}
+        save={save}
+        onSaved={setSaved}
       />,
     );
   const openCreateCurve = () =>

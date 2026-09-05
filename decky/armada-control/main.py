@@ -100,7 +100,8 @@ class Plugin:
         return await asyncio.to_thread(get_fans_state)
 
     async def save_fan_curves(self, fan_curves, fan_settings):
-        return await asyncio.to_thread(save_fan_curves, fan_curves, fan_settings)
+        await asyncio.to_thread(save_fan_curves, fan_curves, fan_settings)
+        return await self.get_config()
 
     # Polled separately from get_fans_state -- see hooks/useCurrentTemp.
     async def get_current_temp(self):

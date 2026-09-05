@@ -1,12 +1,11 @@
 import { DialogBody, DialogButton, DialogFooter, ModalRoot } from "@decky/ui";
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { saveFanCurves } from "../backend";
 import { FanCurveGraphEditor } from "./FanCurveEditor";
 import { useCurrentTemp } from "../hooks/useCurrentTemp";
 import { useFanCurvesSave } from "../hooks/useFanCurvesSave";
 import { styles } from "../styles";
-import type { CurvesState } from "../types";
+import type { CurvesState, FanCurve, FanSettings } from "../types";
 
 export function FanCurveEditorModal({
   initial,
@@ -14,6 +13,7 @@ export function FanCurveEditorModal({
   initialSelected,
   onSelectedChange,
   saved,
+  save,
   onSaved,
   closeModal,
 }: {
@@ -22,6 +22,7 @@ export function FanCurveEditorModal({
   initialSelected: string;
   onSelectedChange: (value: string) => void;
   saved: CurvesState | null;
+  save: (fanCurves: Record<string, FanCurve>, fanSettings: FanSettings) => Promise<CurvesState>;
   onSaved: (next: CurvesState) => void;
   closeModal?: () => void;
 }) {
@@ -47,7 +48,7 @@ export function FanCurveEditorModal({
     saved: savedState,
     setSaved: setSavedState,
     setWorking: setBoth,
-    save: saveFanCurves,
+    save,
     onSaved,
   });
 

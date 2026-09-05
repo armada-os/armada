@@ -34,5 +34,5 @@ export const beginCalibrationSession = (token: string) => call<[string], boolean
 export const endCalibrationSession = (token: string) => call<[string], boolean>("end_calibration_session", token);
 export const getFansState = () => call<[], CurvesState>("get_fans_state");
 export const saveFanCurves = (fanCurves: Record<string, FanCurve>, fanSettings: FanSettings) =>
-  call<[Record<string, FanCurve>, FanSettings], CurvesState>("save_fan_curves", fanCurves, fanSettings);
+  call<[Record<string, FanCurve>, FanSettings], Config>("save_fan_curves", fanCurves, fanSettings);
 export const getCurrentTemp = () => call<[], number | null>("get_current_temp");
