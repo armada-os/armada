@@ -1,0 +1,460 @@
+#!/bin/sh
+set -u
+
+POWER_SUPPLY_ROOT=${ARMADA_POWER_SUPPLY_ROOT:-/sys/class/power_supply}
+USB=${ARMADA_CHARGE_USB:-$POWER_SUPPLY_ROOT/qcom-battmgr-usb}
+BAT=${ARMADA_CHARGE_BATTERY:-$POWER_SUPPLY_ROOT/battery}
+MASTER=${ARMADA_CHARGE_MASTER:-$POWER_SUPPLY_ROOT/hl7139-master}
+SLAVE=${ARMADA_CHARGE_SLAVE:-$POWER_SUPPLY_ROOT/hl7139-slave}
+CLEANUP=${ARMADA_CHARGE_CLEANUP:-/usr/libexec/armada/armada-pocketevo-charge-cleanup}
+STATE_DIR=${ARMADA_CHARGE_STATE_DIR:-/run/armada-pocketevo-charge-policy}
+SLEEP_CMD=${ARMADA_CHARGE_SLEEP_CMD:-sleep}
+SAMPLE_HOOK=${ARMADA_CHARGE_SAMPLE_HOOK:-}
+MAX_EVENTS=${ARMADA_CHARGE_MAX_EVENTS:-0}
+MAX_IDLE_LOOPS=${ARMADA_CHARGE_MAX_IDLE_LOOPS:-0}
+
+events=0
+idle_loops=0
+session_result=control
+session_end_soc=90
+
+mkdir -p "$STATE_DIR"
+
+readv()
+{
+	cat "$1"
+}
+
+pause()
+{
+	"$SLEEP_CMD" "$1"
+}
+
+log()
+{
+	printf 'pocketevo-charge: %s\n' "$*"
+}
+
+notify_status()
+{
+	command -v systemd-notify >/dev/null 2>&1 || return 0
+	systemd-notify "--status=$*" >/dev/null 2>&1 || true
+}
+
+notify_watchdog()
+{
+	command -v systemd-notify >/dev/null 2>&1 || return 0
+	systemd-notify --watchdog >/dev/null 2>&1 || true
+}
+
+run_sample_hook()
+{
+	test -n "$SAMPLE_HOOK" || return 0
+	"$SAMPLE_HOOK" "$POWER_SUPPLY_ROOT" "$STATE_DIR"
+}
+
+absdiff()
+{
+	if test "$1" -ge "$2"; then
+		printf '%s\n' "$(( $1 - $2 ))"
+	else
+		printf '%s\n' "$(( $2 - $1 ))"
+	fi
+}
+
+set_result()
+{
+	session_result=$1
+	shift
+	log "$*"
+	return 1
+}
+
+cleanup_policy()
+{
+	# The cleanup can block on power-supply sysfs reads while the battmgr
+	# class re-registers after a handoff; keep feeding the watchdog from
+	# the main pid while we wait on it.
+	"$CLEANUP" &
+	cleanup_pid=$!
+	while kill -0 "$cleanup_pid" 2>/dev/null; do
+		notify_watchdog
+		pause 2
+	done
+	wait "$cleanup_pid"
+}
+
+charge_end_soc()
+{
+	end=90
+	if test -r "$BAT/charge_control_end_threshold"; then
+		configured=$(readv "$BAT/charge_control_end_threshold") || return 1
+		# 0 means "no end threshold configured" — keep the default; a
+		# configured value clamps the session end below it.
+		if test "$configured" -gt 0 && test "$configured" -lt "$end"; then
+			end=$configured
+		fi
+	fi
+	printf '%s\n' "$end"
+}
+
+pps_available()
+{
+	type=$(readv "$USB/usb_type") || return 1
+	case "$type" in
+	*'[PD_PPS]'*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+eligible()
+{
+	test -d "$USB" || return 1
+	test -d "$BAT" || return 1
+	test -d "$MASTER" || return 1
+	test -d "$SLAVE" || return 1
+	test "$(readv "$USB/online")" = 1 || return 1
+	pps_available || return 1
+	test "$(readv "$MASTER/online")" = 0 || return 1
+	test "$(readv "$SLAVE/online")" = 0 || return 1
+	test "$(readv "$MASTER/health")" = Good || return 1
+	test "$(readv "$SLAVE/health")" = Good || return 1
+
+	# Requiring the Qualcomm path to report Charging preserves charge-control
+	# hysteresis and any firmware-side inhibit before the handoff begins.
+	if test -r "$BAT/status"; then
+		test "$(readv "$BAT/status")" = Charging || return 1
+	fi
+
+	soc=$(readv "$BAT/capacity") || return 1
+	bat_v=$(readv "$BAT/voltage_now") || return 1
+	bat_t=$(readv "$BAT/temp") || return 1
+	session_end_soc=$(charge_end_soc) || return 1
+	test "$session_end_soc" -gt 10 || return 1
+	test "$soc" -ge 10 || return 1
+	test "$soc" -le 88 || return 1
+	test "$soc" -lt "$session_end_soc" || return 1
+	test "$bat_v" -ge 3500000 || return 1
+	test "$bat_v" -le 4430000 || return 1
+	test "$bat_t" -ge 100 || return 1
+	test "$bat_t" -le 400 || return 1
+}
+
+classify_control_failure()
+{
+	if usb_online=$(readv "$USB/online") && test "$usb_online" = 0; then
+		session_result=cable
+	else
+		session_result=$1
+	fi
+}
+
+direct_session()
+{
+	session_result=control
+	log "starting experimental direct charge at SOC $(readv "$BAT/capacity")%"
+	notify_status 'experimental direct charge starting'
+
+	# Confirm the effective type before quiescing the Qualcomm buck. The kernel
+	# voltage setter repeats the raw adapter-type check atomically with the PPS
+	# request, closing a cable-change race after this preflight.
+	if ! pps_available; then
+		set_result non-pps 'guard: source is not PD-PPS'
+		return 1
+	fi
+
+	# Raise the PPS rail to the target BEFORE dropping the Qualcomm input
+	# limit: writing 13 mA while the rail is still at the default 5 V browns
+	# out the adapter contract and the firmware drops the USB supply.
+	if ! bat_v=$(readv "$BAT/voltage_now"); then
+		set_result i2c 'guard: failed to read battery voltage before PPS request'
+		return 1
+	fi
+	target=$((bat_v * 2 + 800000))
+	if test "$target" -lt 8800000; then target=8800000; fi
+	# Keep the rail below the driver's 10.0 V pump enable ceiling with margin:
+	# the adapter can sit a few hundred mV above the request under light load.
+	if test "$target" -gt 9000000; then target=9000000; fi
+	# Qualcomm accepts PPS requests only on the USB-PD 20 mV grid.
+	target=$((target / 20000 * 20000))
+
+	if ! printf '%s\n' "$target" > "$USB/voltage_now"; then
+		classify_control_failure control
+		return 1
+	fi
+	# The adapter settles the new PPS operating point over ~2 s; verifying
+	# too early reads the tail of the previous contract.
+	pause 3
+	notify_watchdog
+
+	if ! usb_v=$(readv "$USB/voltage_now"); then
+		set_result i2c 'guard: failed to verify PPS voltage'
+		return 1
+	fi
+	if test "$usb_v" -lt $((target - 800000)) ||
+	   test "$usb_v" -gt $((target + 500000)); then
+		set_result telemetry "guard: PPS request ${target}uV measured ${usb_v}uV"
+		return 1
+	fi
+
+	# Rail is up; now quiesce the Qualcomm buck.
+	if ! printf '13000\n' > "$USB/input_current_limit"; then
+		classify_control_failure i2c
+		return 1
+	fi
+	pause 2
+	notify_watchdog
+	# The firmware drops the usb supply's `online` flag as part of the quiesce
+	# (buck stops sinking) — that is the expected signature, not a cable pull.
+	# Verify quiesce by the input current instead; online is re-checked later
+	# against the PPS rail voltage, which stays up across the handoff.
+	if ! usb_i=$(readv "$USB/current_now"); then
+		set_result i2c 'guard: failed to read Qualcomm input current'
+		return 1
+	fi
+	if test "$usb_i" -gt 150000; then
+		set_result handoff 'guard: Qualcomm charger did not quiesce'
+		return 1
+	fi
+
+	if ! printf '1\n' > "$MASTER/online"; then
+		classify_control_failure i2c
+		return 1
+	fi
+	pause 0.2
+	if ! printf '1\n' > "$SLAVE/online"; then
+		classify_control_failure i2c
+		return 1
+	fi
+	if test "$(readv "$MASTER/online")" != 1 ||
+	   test "$(readv "$SLAVE/online")" != 1; then
+		set_result pump-state 'guard: both charge pumps did not enable'
+		return 1
+	fi
+	: > "$STATE_DIR/active"
+
+	# Let the inrush settle before the first watch-loop sample.
+	pause 3
+	notify_watchdog
+
+	i=0
+	o_i=0
+	asym_i=0
+	while :; do
+		notify_watchdog
+		run_sample_hook || {
+			set_result test-hook 'guard: sample hook failed'
+			return 1
+		}
+
+		usb_online=$(readv "$USB/online") || { set_result i2c 'guard: USB online read failed'; return 1; }
+		usb_v=$(readv "$USB/voltage_now") || { set_result i2c 'guard: USB voltage read failed'; return 1; }
+		bat_soc=$(readv "$BAT/capacity") || { set_result i2c 'guard: battery SOC read failed'; return 1; }
+		bat_v=$(readv "$BAT/voltage_now") || { set_result i2c 'guard: battery voltage read failed'; return 1; }
+		bat_i=$(readv "$BAT/current_now") || { set_result i2c 'guard: battery current read failed'; return 1; }
+		bat_t=$(readv "$BAT/temp") || { set_result i2c 'guard: battery temperature read failed'; return 1; }
+		master_v=$(readv "$MASTER/voltage_now") || { set_result i2c 'guard: master VIN read failed'; return 1; }
+		master_bat_v=$(readv "$MASTER/voltage_avg") || { set_result i2c 'guard: master VBAT read failed'; return 1; }
+		master_i=$(readv "$MASTER/current_now") || { set_result i2c 'guard: master current read failed'; return 1; }
+		master_t=$(readv "$MASTER/temp") || { set_result i2c 'guard: master temperature read failed'; return 1; }
+		slave_v=$(readv "$SLAVE/voltage_now") || { set_result i2c 'guard: slave VIN read failed'; return 1; }
+		slave_bat_v=$(readv "$SLAVE/voltage_avg") || { set_result i2c 'guard: slave VBAT read failed'; return 1; }
+		slave_i=$(readv "$SLAVE/current_now") || { set_result i2c 'guard: slave current read failed'; return 1; }
+		slave_t=$(readv "$SLAVE/temp") || { set_result i2c 'guard: slave temperature read failed'; return 1; }
+		total_i=$((master_i + slave_i))
+
+		# The buck is quiesced during direct charge, so usb `online` reads 0
+		# by design. A real cable pull collapses the PPS rail instead —
+		# verify the rail is still in the session band.
+		if test "$usb_online" != 1; then
+			usb_rail=$(readv "$USB/voltage_now") || usb_rail=0
+			# Under full pump load the rail can sag below the request; only
+			# a collapse to the 5 V default (or 0 = no contract) means the
+			# source is really gone.
+			if test "$usb_rail" -lt 5400000; then
+				set_result cable 'guard: USB input went offline'
+				return 1
+			fi
+		fi
+		current_end_soc=$(charge_end_soc) || { set_result i2c 'guard: charge endpoint read failed'; return 1; }
+		if test "$bat_soc" -ge "$current_end_soc"; then set_result endpoint "guard: SOC ${bat_soc}% reached configured ${current_end_soc}% limit"; return 1; fi
+		if test "$bat_v" -gt 4500000; then set_result electrical "guard: battery voltage ${bat_v}uV exceeds EVO OVP limit"; return 1; fi
+		if test "$bat_i" -gt 7000000; then set_result electrical "guard: battery current ${bat_i}uA exceeds 7000000uA"; return 1; fi
+		if test "$bat_t" -lt 100 || test "$bat_t" -gt 400; then set_result thermal "guard: battery temperature ${bat_t}dC is outside 100..400dC"; return 1; fi
+		if test "$(readv "$MASTER/online")" != 1; then set_result pump-state 'guard: master charge pump went offline'; return 1; fi
+		if test "$(readv "$SLAVE/online")" != 1; then set_result pump-state 'guard: slave charge pump went offline'; return 1; fi
+		if test "$(readv "$MASTER/health")" != Good; then set_result electrical 'guard: master charge pump reported a fault'; return 1; fi
+		if test "$(readv "$SLAVE/health")" != Good; then set_result electrical 'guard: slave charge pump reported a fault'; return 1; fi
+
+		if test "$master_v" -lt 8000000 || test "$master_v" -gt 10500000 ||
+		   test "$slave_v" -lt 8000000 || test "$slave_v" -gt 10500000; then
+			set_result telemetry "guard: pump VIN out of range ${master_v}/${slave_v}uV"
+			return 1
+		fi
+		# Load sag: at pump start the adapter can sit up to ~1 V below the
+		# request while the pumps spool up; coherence between the usb rail
+		# and the pump VINs is what actually matters.
+		if test "$(absdiff "$master_v" "$slave_v")" -gt 250000 ||
+		   test "$(absdiff "$usb_v" "$master_v")" -gt 800000 ||
+		   test "$(absdiff "$usb_v" "$slave_v")" -gt 800000 ||
+		   test "$usb_v" -lt $((target - 1200000)) ||
+		   test "$usb_v" -gt $((target + 500000)); then
+			set_result telemetry "guard: incoherent VBUS request=${target} usb=${usb_v} master=${master_v} slave=${slave_v}uV"
+			return 1
+		fi
+		# The two pump ADCs are independent measurement points; ~200 mV of
+		# tolerance between them is within sensor variance.
+		# The slave pump's VBAT ADC reads ~150-160 mV above the battery
+		# fuel gauge on this unit (measurement-point offset, consistent
+		# across sessions); 250 mV still catches real divergence.
+		# The slave pump's VBAT sense point sits after additional board
+		# trace; its offset from the fuel gauge scales with charge current
+		# (~100 mV at 2.5 A, ~260 mV at 4.9 A observed). Allow 400 mV on
+		# the slave while keeping the tighter windows on the rest.
+		if test "$(absdiff "$master_bat_v" "$slave_bat_v")" -gt 250000 ||
+		   test "$(absdiff "$bat_v" "$master_bat_v")" -gt 250000 ||
+		   test "$(absdiff "$bat_v" "$slave_bat_v")" -gt 400000; then
+			set_result telemetry "guard: incoherent VBAT battery=${bat_v} master=${master_bat_v} slave=${slave_bat_v}uV"
+			return 1
+		fi
+		if test "$master_i" -gt 1800000 || test "$slave_i" -gt 1800000; then
+			set_result electrical "guard: pump current ${master_i}/${slave_i}uA exceeds 1800000uA"
+			return 1
+		fi
+		if test "$total_i" -gt 1000000 && test "$(absdiff "$master_i" "$slave_i")" -gt 500000; then
+			asym_i=$((asym_i + 1))
+			if test "$asym_i" -ge 3; then
+				set_result asymmetric "guard: asymmetric pump current ${master_i}/${slave_i}uA"
+				return 1
+			fi
+		else
+			asym_i=0
+		fi
+		if test "$total_i" -gt 3120000; then
+			o_i=$((o_i + 1))
+			if test "$o_i" -ge 3; then
+				set_result electrical "guard: combined pump input ${total_i}uA exceeds 3120000uA"
+				return 1
+			fi
+		else
+			o_i=0
+		fi
+		if test "$master_t" -gt 650 || test "$slave_t" -gt 650; then set_result thermal "guard: pump temperature ${master_t}/${slave_t}dC exceeds 650dC"; return 1; fi
+
+		if test "$bat_v" -gt 4450000; then
+			target=$((target - 80000))
+		elif test "$bat_v" -gt 4430000; then
+			:
+		elif test "$total_i" -gt 3080000 || test "$bat_i" -gt 6500000; then
+			target=$((target - 40000))
+		elif test "$total_i" -lt 2300000 && test "$bat_i" -lt 6500000 && test "$target" -le 9860000; then
+			target=$((target + 40000))
+		elif test "$total_i" -lt 3080000 && test "$bat_i" -lt 6500000 && test "$target" -lt 10500000; then
+			target=$((target + 20000))
+		fi
+
+		if test "$target" -lt 8000000; then target=8000000; fi
+		if test "$target" -gt 10500000; then target=10500000; fi
+		if ! printf '%s\n' "$target" > "$USB/voltage_now"; then
+			classify_control_failure i2c
+			return 1
+		fi
+
+		if test $((i % 10)) -eq 0; then
+			device_mw=$((master_v * total_i / 1000000000))
+			request_mw=$((target * total_i / 1000000000))
+			log "SOC=${bat_soc}% request=${target}uV input=${total_i}uA source=${request_mw}mW device=${device_mw}mW battery=${bat_v}uV/${bat_i}uA temps=${bat_t}/${master_t}/${slave_t}dC"
+		fi
+
+		i=$((i + 1))
+		pause 0.5
+	done
+}
+
+latch_until_cable_cycle()
+{
+	reason=$1
+	printf '%s\n' "$reason" > "$STATE_DIR/fault"
+	log "latched fault: $reason; unplug the charger before another direct-charge session"
+	notify_status "latched fault: $reason (unplug charger to clear)"
+
+	if test "$MAX_EVENTS" -gt 0 && test "$events" -ge "$MAX_EVENTS"; then
+		return 1
+	fi
+
+	while :; do
+		notify_watchdog
+		if usb_online=$(readv "$USB/online" 2>/dev/null) && test "$usb_online" = 0; then
+			# Reading pump presence while VBUS is absent clears the kernel's
+			# software fault latch. Do not re-arm until VBUS is absent at both
+			# pumps, rather than trusting an early USB-offline notification.
+			master_present=$(readv "$MASTER/present" 2>/dev/null) || master_present=unknown
+			slave_present=$(readv "$SLAVE/present" 2>/dev/null) || slave_present=unknown
+			if test "$master_present" = 0 && test "$slave_present" = 0; then
+				rm -f "$STATE_DIR/fault"
+				log 'cable cycle observed; fault latch cleared'
+				notify_status 'idle after cable cycle'
+				return 0
+			fi
+		fi
+		pause 1
+	done
+}
+
+on_exit()
+{
+	trap - EXIT
+	# The unit runs the same cleanup as ExecStopPost; skip the duplicate pass
+	# when this exit already completed one (a double run is harmless but slow).
+	cleanup_policy || true
+}
+
+trap 'exit 0' HUP INT TERM
+trap on_exit EXIT
+
+if ! cleanup_policy; then
+	log 'initial pump shutdown could not be verified; refusing to start'
+	exit 1
+fi
+rm -f "$STATE_DIR/fault"
+# Type=notify: readiness also arms the 15 s watchdog. systemd pins watchdog
+# pings to the main pid (WATCHDOG_PID), so the loops below must feed it inline
+# — including inside direct_session, where one iteration can span several
+# seconds of PPS renegotiation and settle waits.
+systemd-notify --ready >/dev/null 2>&1 || true
+notify_status 'idle; experimental direct charge armed'
+
+while :; do
+	notify_watchdog
+	if eligible; then
+		idle_loops=0
+		if ! direct_session; then
+			log "session ended: $session_result"
+		fi
+		events=$((events + 1))
+		if ! cleanup_policy; then
+			log 'pump shutdown could not be verified; Qualcomm charging remains inhibited'
+			exit 1
+		fi
+
+		case "$session_result" in
+		endpoint|cable)
+			notify_status "idle after $session_result"
+			if test "$MAX_EVENTS" -gt 0 && test "$events" -ge "$MAX_EVENTS"; then
+				exit 0
+			fi
+			;;
+		*)
+			if ! latch_until_cable_cycle "$session_result"; then
+				exit 1
+			fi
+			;;
+		esac
+	else
+		idle_loops=$((idle_loops + 1))
+		if test "$MAX_IDLE_LOOPS" -gt 0 && test "$idle_loops" -ge "$MAX_IDLE_LOOPS"; then
+			exit 0
+		fi
+		pause 5
+	fi
+done
