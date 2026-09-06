@@ -15,4 +15,5 @@ export const recordShortcut = (appId: string, steamAppid: number) =>
   call<[string, number], void>("record_shortcut", appId, steamAppid);
 export const clearShortcutRecord = (appId: string, keepPending = false, expected?: number) =>
   call<[string, boolean, number | null], void>("clear_shortcut", appId, keepPending, expected ?? null);
+export const resetConfig = (appId: string) => call<[string], void>("reset_config", appId);
 export const switchToDesktop = () => call<[], void>("switch_to_desktop");

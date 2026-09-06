@@ -1,6 +1,7 @@
 [Unit]
 Description=armada power policy daemon
 StartLimitIntervalSec=0
+Before=display-manager.service
 
 [Service]
 Type=dbus

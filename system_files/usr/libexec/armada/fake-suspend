@@ -16,14 +16,9 @@ SESSION_USER="${ARMADA_SESSION_USER:-armada}"
 SESSION_UID="$(id -u "$SESSION_USER" 2>/dev/null || echo 1000)"
 SESSION_RUNTIME="/run/user/${SESSION_UID}"
 
-as_session() {
-    local s b sock=""
-    for s in "${SESSION_RUNTIME}"/gamescope-*; do
-        [[ -S "$s" ]] || continue
-        b="$(basename "$s")"
-        # gamescope-N, not the -ei input socket.
-        [[ "$b" =~ ^gamescope-[0-9]+$ ]] && { sock="$b"; break; }
-    done
+run_session() {
+    local sock="$1"
+    shift
     # A wedged gamescope must not hang suspend/resume.
     timeout 8 runuser -u "$SESSION_USER" -- env \
         XDG_RUNTIME_DIR="$SESSION_RUNTIME" \
@@ -32,8 +27,31 @@ as_session() {
         "$@"
 }
 
+as_session() {
+    local s b sock=""
+    for s in "${SESSION_RUNTIME}"/gamescope-*; do
+        [[ -S "$s" ]] || continue
+        b="$(basename "$s")"
+        # gamescope-N, not the -ei input socket.
+        [[ "$b" =~ ^gamescope-[0-9]+$ ]] && { sock="$b"; break; }
+    done
+
+    run_session "$sock" "$@"
+}
+
+each_gamescope() {
+    local s b result=1
+    for s in "${SESSION_RUNTIME}"/gamescope-*; do
+        [[ -S "$s" ]] || continue
+        b="$(basename "$s")"
+        [[ "$b" =~ ^gamescope-[0-9]+$ ]] || continue
+        run_session "$b" "$@" && result=0
+    done
+    return "$result"
+}
+
 display_off() {
-    if as_session gamescopectl drm_sleep_internal_screen 1; then
+    if each_gamescope gamescopectl drm_sleep_internal_screen 1; then
         log "display off (gamescope)"
     else
         log "gamescopectl failed -> bl_power fallback"
@@ -41,7 +59,7 @@ display_off() {
     fi
 }
 display_on() {
-    if as_session gamescopectl drm_sleep_internal_screen 0; then
+    if each_gamescope gamescopectl drm_sleep_internal_screen 0; then
         log "display on (gamescope)"
     else
         log "gamescopectl failed -> bl_power fallback"

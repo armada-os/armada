@@ -77,12 +77,6 @@ if [[ "${ARMADA_SYNC_SUSPEND:-0}" == "1" ]]; then
 fi
 
 if [[ "${ARMADA_SOC_CLASS:-}" == "SM8550" ]]; then
-    # A740 wedges the GMU when CPU0 enters its deep power-collapse state.
-    cpu0_deep_idle=/sys/devices/system/cpu/cpu0/cpuidle/state1/disable
-    if [[ -w "$cpu0_deep_idle" ]]; then
-        echo 1 >"$cpu0_deep_idle"
-    fi
-
     # SM8550 UFS needs up to 3 seconds for UIC completion across suspend.
     uic_timeout=/sys/module/ufshcd_core/parameters/uic_cmd_timeout
     if [[ -w "$uic_timeout" ]]; then

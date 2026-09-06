@@ -31,29 +31,45 @@ sha256sum -c <<'EOF'
 EOF
 
 source /ctx/abl/release.env
+abl_releases=/ctx/abl/releases.tsv
 abl_archive=/tmp/rocknix-abl.tar.gz
 curl --connect-timeout 30 --retry 3 -fsSL -o "${abl_archive}" \
     "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
-printf '%s  %s\n' "${ARMADA_ABL_ARCHIVE_SHA256}" "${abl_archive}" | sha256sum -c -
 abl_src=/tmp/rocknix-abl
 mkdir -p "${abl_src}"
 tar -xzf "${abl_archive}" -C "${abl_src}" --strip-components=1
 manifest=/usr/lib/armada/abl/manifest
 install -Dpm 0644 /dev/null "${manifest}"
+install -Dpm 0644 "${abl_releases}" /usr/lib/armada/abl/releases.tsv
 printf 'ARMADA_ABL_VERSION=%s\nARMADA_ABL_AUTO=%s\n' \
     "${ARMADA_ABL_VERSION}" "${ARMADA_ABL_AUTO}" >> "${manifest}"
-abl_version=${ARMADA_ABL_VERSION}
 for soc in SM8250 SM8550 SM8650 SM8750; do
+    approved=$(ARMADA_ABL_RELEASES="${abl_releases}" \
+        python3 /usr/lib/armada/abl-version --lookup "${ARMADA_ABL_VERSION}" "${soc}") || {
+        echo "ERROR: missing approved ${ARMADA_ABL_VERSION} ${soc} payload" >&2
+        exit 1
+    }
+    read -r approved_size approved_hash <<<"${approved}"
     payload="/usr/lib/armada/abl/abl_signed-${soc}.elf"
     install -Dpm 0644 "${abl_src}/abl_signed-${soc}.elf" \
         "${payload}"
-    reported=$(python3 /usr/lib/armada/abl-version "${payload}")
-    [ "${reported}" = "${abl_version}" ] || {
-        echo "ERROR: ${soc} payload reports ${reported}, expected ${abl_version}" >&2
+    [[ $(stat -c %s "${payload}") == "${approved_size}" ]] || {
+        echo "ERROR: ${soc} payload size does not match the approved release" >&2
+        exit 1
+    }
+    actual_hash=$(sha256sum "${payload}" | cut -d ' ' -f 1)
+    [[ ${actual_hash} == "${approved_hash}" ]] || {
+        echo "ERROR: ${soc} payload hash does not match the approved release" >&2
+        exit 1
+    }
+    identity=$(ARMADA_ABL_RELEASES=/usr/lib/armada/abl/releases.tsv \
+        python3 /usr/lib/armada/abl-version --with-soc "${payload}")
+    [[ ${identity} == "${ARMADA_ABL_VERSION} ${soc}" ]] || {
+        echo "ERROR: ${soc} payload catalog identity is ${identity:-unknown}" >&2
         exit 1
     }
     printf 'ARMADA_ABL_SHA256_%s=%s\n' "${soc}" \
-        "$(sha256sum "${payload}" | cut -d ' ' -f 1)" \
+        "${actual_hash}" \
         >> "${manifest}"
 done
 rm -f "${abl_archive}"

@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+    echo "armada-run-bottom: $*" >&2
+    exit 1
+}
+
+[[ "${1:-}" == -- ]] || fail "usage: armada-run-bottom -- <command> [args...]"
+shift
+(( $# > 0 )) || fail "no command specified"
+
+device_env=${ARMADA_DEVICE_ENV:-/usr/libexec/armada/device-env}
+gamescope=${ARMADA_GAMESCOPE:-gamescope}
+lease_socket=${GAMESCOPE_LEASE_SOCK:-/tmp/gamescope-lease.sock}
+
+eval "$("$device_env")"
+[[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]] || fail "device has no secondary display"
+[[ -n "${ARMADA_SECONDARY_TOUCHSCREEN:-}" ]] || fail "device has no secondary touchscreen"
+[[ -n "${ARMADA_PANEL_ORIENTATION:-}" ]] || fail "device has no panel orientation"
+[[ -S "$lease_socket" ]] || fail "DRM lease socket is unavailable: $lease_socket"
+
+unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
+exec "$gamescope" \
+    --backend drm \
+    --drm-lease-client "$lease_socket" \
+    --expose-wayland \
+    --force-windows-fullscreen \
+    --xwayland-count 1 \
+    --default-touch-mode 4 \
+    --force-orientation "$ARMADA_PANEL_ORIENTATION" \
+    -- "$@"

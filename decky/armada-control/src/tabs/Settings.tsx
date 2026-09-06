@@ -1,8 +1,11 @@
 import { toaster } from "@decky/api";
 import { ButtonItem, Field, PanelSection } from "@decky/ui";
+import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import {
   setAblAutoEnabled as applyAblAutoEnabled,
+  setBottomScreenBrightness as applyBottomScreenBrightness,
+  setBottomScreenEnabled as applyBottomScreenEnabled,
   setControllerType as applyControllerType,
   setMtpEnabled as applyMtpEnabled,
   setDesktopMode as applyDesktopMode,
@@ -10,13 +13,24 @@ import {
   setSshEnabled as applySshEnabled,
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
-import { SelectEdit, ToggleRow } from "../components/widgets";
+import { SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
 import type { Config } from "../types";
+
+const BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS: number = 150;
 
 export function Settings({ config, setConfig }: {
   config: Config;
   setConfig: Dispatch<SetStateAction<Config | null>>;
 }) {
+  const bottomScreenBrightnessTimer = useRef<number | undefined>(undefined);
+  const bottomScreenBrightnessRequest = useRef<number>(0);
+  const appliedBottomScreenBrightness = useRef<number>(config.bottomScreenBrightness);
+
+  useEffect(() => () => {
+    window.clearTimeout(bottomScreenBrightnessTimer.current);
+    bottomScreenBrightnessRequest.current += 1;
+  }, []);
+
   const setSshEnabled = async (enabled: boolean) => {
     if (enabled === !!config.sshEnabled) {
       return;
@@ -63,6 +77,39 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, ablAutoEnabled: !enabled } : current));
     }
   };
+  const setBottomScreenEnabled = async (enabled: boolean) => {
+    if (enabled === !!config.bottomScreenEnabled) {
+      return;
+    }
+    setConfig((current) => (current ? { ...current, bottomScreenEnabled: enabled } : current));
+    try {
+      const applied = await applyBottomScreenEnabled(enabled);
+      setConfig((current) => (current ? { ...current, bottomScreenEnabled: applied } : current));
+    } catch (error) {
+      setConfig((current) => (current ? { ...current, bottomScreenEnabled: !enabled } : current));
+      toaster.toast({ title: "Could not change bottom screen", body: String(error) });
+    }
+  };
+  const setBottomScreenBrightness = (brightness: number) => {
+    setConfig((current) => (current ? { ...current, bottomScreenBrightness: brightness } : current));
+    window.clearTimeout(bottomScreenBrightnessTimer.current);
+    const request = ++bottomScreenBrightnessRequest.current;
+    bottomScreenBrightnessTimer.current = window.setTimeout(async () => {
+      try {
+        const applied = await applyBottomScreenBrightness(brightness);
+        if (request !== bottomScreenBrightnessRequest.current) return;
+        appliedBottomScreenBrightness.current = applied;
+        setConfig((current) => (current ? { ...current, bottomScreenBrightness: applied } : current));
+      } catch (error) {
+        if (request !== bottomScreenBrightnessRequest.current) return;
+        setConfig((current) => (current ? {
+          ...current,
+          bottomScreenBrightness: appliedBottomScreenBrightness.current,
+        } : current));
+        toaster.toast({ title: "Could not change bottom-screen brightness", body: String(error) });
+      }
+    }, BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS);
+  };
   const setDesktopMode = async (value: string) => {
     const previous = config.desktopMode || "desktop";
     setConfig((current: Config | null) => (current ? { ...current, desktopMode: value } : current));
@@ -108,6 +155,26 @@ export function Settings({ config, setConfig }: {
         <Field label="ABL Version" description={config.ablVersion || "unknown"} />
       </PanelSection>
       <PanelSection title="Experimental">
+        {config.bottomScreenSupported && (
+          <>
+            <ToggleRow
+              label="Bottom Screen"
+              description="Run Plasma Mobile on the second display"
+              value={!!config.bottomScreenEnabled}
+              onChange={setBottomScreenEnabled}
+            />
+            {config.bottomScreenBrightnessSupported && (
+              <SliderEdit
+                label="Bottom Screen Brightness"
+                value={config.bottomScreenBrightness}
+                min={0}
+                max={100}
+                step={1}
+                onChange={setBottomScreenBrightness}
+              />
+            )}
+          </>
+        )}
         {(config.desktopModes?.length || 0) > 1 && (
           <SelectEdit
             label="Desktop Mode"

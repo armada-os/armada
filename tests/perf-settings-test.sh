@@ -307,7 +307,7 @@ check("device-env non-SM8250 Proton defaults",
       odin3.get("ARMADA_PROTON_DEFAULTS") ==
       "proton-experimental-arm64:proton_11-arm64:proton-cachyos-11.0-arm64")
 thor = run_device_env("AYN Thor")
-check("device-env SM8550 irq littles", thor.get("ARMADA_IRQ_CORES") == "0-2")
+check("device-env SM8550 irq golds", thor.get("ARMADA_IRQ_CORES") == "3-7")
 thor_override = run_device_env("AYN Thor", {"ARMADA_IRQ_CORES": ""})
 check("device-env explicit-empty override honored",
       thor_override.get("ARMADA_IRQ_CORES") == "''")

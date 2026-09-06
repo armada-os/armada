@@ -110,6 +110,32 @@ def set_mtp_enabled(enabled):
 def set_abl_auto_enabled(enabled):
     return bool(call("set_abl_auto_enabled", enabled=bool(enabled)).get("enabled"))
 
+
+def bottom_screen_enabled():
+    try:
+        return bool(call("get_bottom_screen_enabled").get("enabled"))
+    except Exception:
+        return False
+
+
+def set_bottom_screen_enabled(enabled):
+    return bool(call("set_bottom_screen_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def bottom_screen_brightness():
+    try:
+        result = call("get_bottom_screen_brightness")
+        if result.get("supported"):
+            return int(result.get("brightness", 0))
+    except Exception:
+        pass
+    return None
+
+
+def set_bottom_screen_brightness(brightness):
+    return int(call("set_bottom_screen_brightness", brightness=brightness).get("brightness", 0))
+
+
 def desktop_mode() -> str:
     try:
         value = str(call("get_desktop_mode").get("value", ""))

@@ -20,44 +20,51 @@ old="$WORK/old"
 unknown="$WORK/unknown"
 newer="$WORK/newer"
 same_version="$WORK/same-version"
-make_abl() {
-    python3 - "$1" "$2" "$3" <<'PY'
-import lzma
-import struct
+wrong_soc="$WORK/wrong-soc"
+short_old="$WORK/short-old"
+make_blob() {
+    python3 - "$1" "$2" "${3:-8192}" <<'PY'
 import sys
 
-path, version, tag = sys.argv[1:]
-if version == "unknown":
-    volume = b"OEM-ABL\0" + tag.encode()
-else:
-    volume = b"ROCKNIX-ABL\0" + version.encode() + b"\0" + tag.encode()
-filters = [{"id": lzma.FILTER_LZMA1, "dict_size": 16 * 1024 * 1024,
-            "lc": 3, "lp": 0, "pb": 2}]
-compressed = lzma.compress(volume, format=lzma.FORMAT_ALONE, filters=filters)
-guid = bytes.fromhex("98584eee143959429d6edc7bd79403cf")
-image = bytearray(8192)
-struct.pack_into("<16sHHIIIIIHHHHHH", image, 0,
-                 b"\x7fELF\x01\x01\x01" + bytes(9), 2, 40, 1, 0, 52, 0, 0,
-                 52, 32, 1, 0, 0, 0)
-struct.pack_into("<IIIIIIII", image, 52, 1, 0, 0, 0,
-                 len(image), len(image), 7, 4096)
-body = b"_FVH" + bytes(124) + guid + b"\x18\x00\x01\x00" + compressed
-image[128:128 + len(body)] = body
+path, tag, raw_size = sys.argv[1:]
+size = int(raw_size)
+pattern = tag.encode() + b"\0"
 with open(path, "wb") as output:
-    output.write(image)
+    output.write((pattern * (size // len(pattern) + 1))[:size])
 PY
 }
-make_abl "$payload" 1.1.7 target
-make_abl "$old" 1.1.6 old
-make_abl "$unknown" unknown stock
-make_abl "$newer" 1.1.8 newer
-make_abl "$same_version" 1.1.7 alternate-build
+make_blob "$payload" target-1.1.8-sm8550
+make_blob "$old" old-1.1.7-sm8550
+make_blob "$unknown" unknown-stock
+make_blob "$newer" newer-1.1.9-sm8550
+make_blob "$same_version" alternate-1.1.8-sm8550
+make_blob "$wrong_soc" old-1.1.7-sm8650
+make_blob "$short_old" old-1.1.6-sm8550 4096
 target_hash=$(sha256sum "$payload" | cut -d' ' -f1)
+target_size=$(stat -c %s "$payload")
+old_hash=$(sha256sum "$old" | cut -d' ' -f1)
+newer_hash=$(sha256sum "$newer" | cut -d' ' -f1)
+wrong_soc_hash=$(sha256sum "$wrong_soc" | cut -d' ' -f1)
+short_old_hash=$(sha256sum "$short_old" | cut -d' ' -f1)
+
+cat > "$PAYLOAD_DIR/releases.tsv" <<EOF
+version	soc	size	sha256
+1.1.6	SM8550	4096	${short_old_hash}
+1.1.7	SM8550	8192	${old_hash}
+1.1.7	SM8650	8192	${wrong_soc_hash}
+1.1.8	SM8550	8192	${target_hash}
+1.1.9	SM8550	8192	${newer_hash}
+EOF
+catalog="$PAYLOAD_DIR/releases.tsv"
+[[ "$(ARMADA_ABL_RELEASES="$catalog" python3 "$VERSION_TOOL" --with-soc "$payload")" == "1.1.8 SM8550" ]] ||
+    fail "hash catalog did not identify target payload"
+[[ "$(ARMADA_ABL_RELEASES="$catalog" python3 "$VERSION_TOOL" --lookup 1.1.8 SM8550)" == "8192 ${target_hash}" ]] ||
+    fail "catalog lookup did not return target metadata"
 
 write_manifest() {
     local auto=$1
     cat > "$PAYLOAD_DIR/manifest" <<EOF
-ARMADA_ABL_VERSION=1.1.7
+ARMADA_ABL_VERSION=1.1.8
 ARMADA_ABL_AUTO=${auto}
 ARMADA_ABL_SHA256_SM8550=${target_hash}
 EOF
@@ -93,6 +100,7 @@ base_env=(
     ARMADA_TEST_WRITE_LOG="$WORK/writes"
     ARMADA_TEST_SPLASH_LOG="$WORK/splash-log"
     ABL_VERSION_TOOL="$VERSION_TOOL"
+    ARMADA_ABL_RELEASES="$catalog"
     SPLASH="$WORK/splash"
     PATH="$WORK/bin:$PATH"
 )
@@ -118,7 +126,23 @@ set +e; out=$(run_update); rc=$?; set -e
 assert_contains "$out" "not an identifiable ROCKNIX ABL"
 [[ "$(sha256sum "$ABL_A")" == "$before" ]] || fail "unknown ABL was modified"
 
-# notrunc can leave an old image past the ELF load segment; it must be ignored.
+# Recognize a historical payload by its own length even with a stale tail.
+short_tail="$WORK/short-tail"
+cp "$short_old" "$short_tail"
+python3 - "$short_tail" <<'PY'
+import sys
+
+with open(sys.argv[1], "ab") as output:
+    output.write(b"stale partition tail" * 300)
+PY
+[[ "$(ARMADA_ABL_RELEASES="$catalog" python3 "$VERSION_TOOL" --with-soc "$short_tail")" == "1.1.6 SM8550" ]] ||
+    fail "known historical prefix with stale tail was not identified"
+cp "$short_tail" "$ABL_A"; cp "$short_tail" "$ABL_B"; : > "$WORK/writes"
+run_update >/dev/null
+cmp -s -n "$target_size" "$payload" "$ABL_A" || fail "short historical payload was not updated"
+cmp -s -n "$target_size" "$payload" "$ABL_B" || fail "short historical payload was not updated"
+
+# Known bytes outside an approved prefix must not identify a payload.
 stale="$WORK/stale-tail"
 python3 - "$stale" "$old" <<'PY'
 import struct
@@ -141,6 +165,13 @@ set +e; out=$(run_update); rc=$?; set -e
 [[ $rc -eq 7 ]] || fail "stale-tail ABL returned $rc instead of 7"
 assert_contains "$out" "not an identifiable ROCKNIX ABL"
 
+# Even an approved ROCKNIX payload must match the DT-confirmed target SoC.
+cp "$wrong_soc" "$ABL_A"; cp "$wrong_soc" "$ABL_B"; : > "$WORK/writes"
+set +e; out=$(run_update); rc=$?; set -e
+[[ $rc -eq 7 ]] || fail "wrong-SoC ABL returned $rc instead of 7"
+assert_contains "$out" "for SM8650, expected SM8550; refusing to overwrite"
+[[ ! -s "$WORK/writes" ]] || fail "wrong-SoC ABL was overwritten"
+
 cp "$payload" "$ABL_A"; cp "$old" "$ABL_B"
 : > "$WORK/writes"
 run_update >/dev/null
@@ -148,14 +179,18 @@ mapfile -t writes < "$WORK/writes"
 [[ "${#writes[@]}" -eq 1 && "${writes[0]}" == "$ABL_B" ]] ||
     fail "mixed-state repair rewrote the wrong copies: ${writes[*]:-none}"
 
-# User-managed newer or divergent same-version images must never be replaced.
-for fixture in "$newer" "$same_version"; do
-    cp "$fixture" "$ABL_A"; cp "$fixture" "$ABL_B"
-    : > "$WORK/writes"
-    set +e; out=$(run_update); rc=$?; set -e
-    [[ $rc -eq 7 ]] || fail "protected ABL returned $rc instead of 7"
-    [[ ! -s "$WORK/writes" ]] || fail "protected ABL was overwritten"
-done
+# Approved newer and unknown divergent same-version images must never be replaced.
+cp "$newer" "$ABL_A"; cp "$newer" "$ABL_B"; : > "$WORK/writes"
+set +e; out=$(run_update); rc=$?; set -e
+[[ $rc -eq 7 ]] || fail "newer ABL returned $rc instead of 7"
+assert_contains "$out" "is newer than target"
+[[ ! -s "$WORK/writes" ]] || fail "newer ABL was overwritten"
+
+cp "$same_version" "$ABL_A"; cp "$same_version" "$ABL_B"; : > "$WORK/writes"
+set +e; out=$(run_update); rc=$?; set -e
+[[ $rc -eq 7 ]] || fail "unknown same-version ABL returned $rc instead of 7"
+assert_contains "$out" "not an identifiable ROCKNIX ABL"
+[[ ! -s "$WORK/writes" ]] || fail "unknown same-version ABL was overwritten"
 
 cp "$old" "$ABL_A"; cp "$old" "$ABL_B"; : > "$WORK/splash-log"
 set +e

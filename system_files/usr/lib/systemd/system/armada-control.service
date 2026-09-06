@@ -1,6 +1,6 @@
 [Unit]
 Description=Armada Control privileged settings service
-After=inputplumber.service armada-powerd.service
+After=armada-device-quirks.service inputplumber.service armada-powerd.service
 
 [Service]
 Type=simple

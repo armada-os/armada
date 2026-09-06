@@ -15,6 +15,13 @@ export interface CompatState {
 type CompatRoute = "windows" | "linux";
 
 const STEAM_SHORTCUT_APP_TYPE = 1073741824;
+// EAppType 1 Game, 2 Application, 8 Demo. Tool (4) stays out so Proton, the Steam
+// Linux Runtimes and FEX never get launch options or a compat pin.
+const MANAGED_APP_TYPES = new Set([1, 2, 8]);
+
+function isManagedType(type: number | null): boolean {
+  return type !== null && MANAGED_APP_TYPES.has(type);
+}
 
 const apps = () => window.SteamClient?.Apps;
 const settings = () => window.SteamClient?.Settings;
@@ -198,7 +205,7 @@ function resolveSettledCompatDetails(appid: string): Promise<any> {
   return waitForAppDetails(appid, () => true, 1500, 250, true).promise;
 }
 
-// app_type: 1 = Game. Polls because overviews load a beat after plugin init.
+// Polls because overviews load a beat after plugin init.
 async function resolveOverviewType(appid: string): Promise<number | null> {
   for (let i = 0; i < 5; i++) {
     try {
@@ -329,7 +336,7 @@ async function applyCompatDefaultForRoute(appid: string, route: CompatRoute | nu
 export async function applyLaunchWrapperToGame(appid: string, allowShortcut = false): Promise<boolean> {
   const type = await resolveOverviewType(appid);
   if (type === null) return false;
-  if (type !== 1 && !(allowShortcut && type === STEAM_SHORTCUT_APP_TYPE)) return true;
+  if (!isManagedType(type) && !(allowShortcut && type === STEAM_SHORTCUT_APP_TYPE)) return true;
   const details = await resolveDetails(appid);
   if (!details) return false;
   const next = wrapLaunchOptions(String(details.strLaunchOptions || ""));
@@ -348,7 +355,7 @@ export async function resetLaunchOptionsForGame(appid: string, attempts = 3): Pr
   for (let attempt = 0; attempt < attempts; attempt++) {
     const type = await resolveOverviewType(appid);
     if (type !== null) {
-      if (type !== 1) return true;
+      if (!isManagedType(type)) return true;
       const store = apps();
       if (store?.SetAppLaunchOptions) {
         try {
@@ -366,7 +373,7 @@ export async function resetLaunchOptionsForGame(appid: string, attempts = 3): Pr
 async function applyWindowsCompatDefault(appid: string): Promise<boolean> {
   const type = await resolveOverviewType(appid);
   if (type === null) return false;
-  if (type !== 1) return true;
+  if (!isManagedType(type)) return true;
   if (handledAppids.has(appid)) return true;
   const details = await resolveSettledCompatDetails(appid);
   if (!details) return false;
@@ -414,7 +421,7 @@ export async function migrateWindowsCompatTool(
       const appid = appids[next++];
       if (pinned && !pinned.has(appid)) continue;
       const type = await resolveOverviewType(appid);
-      if (type !== 1) continue;
+      if (!isManagedType(type)) continue;
       const details = await resolveDetails(appid);
       if (!details) continue;
       const priority = Number(details.nCompatToolPriority || 0);
@@ -439,7 +446,7 @@ export async function resetCompatToolToDefault(appid: string, pinnedAppids?: str
     await specifyCompatTool(appid, "");
     return "";
   }
-  if (type !== 1) return "";
+  if (!isManagedType(type)) return "";
   const tool = await effectiveWindowsCompatTool();
   // Clearing first needs a default to put back and a known pin state; null is unknown.
   if (!tool || pinnedAppids === null) {
@@ -471,7 +478,7 @@ export async function resetAllGamePolicies(appids: string[], pinnedAppids?: stri
         }
         continue;
       }
-      if (type !== 1) continue;
+      if (!isManagedType(type)) continue;
       if (canResetCompat && pinned?.has(appid)) {
         await repinToTool(appid, tool);
       } else if (canResetCompat) {
@@ -487,7 +494,7 @@ export async function resetAllGamePolicies(appids: string[], pinnedAppids?: stri
 export function isGameApp(appid: string): boolean {
   try {
     const type = (window as any).appStore?.GetAppOverviewByAppID?.(Number(appid))?.app_type;
-    return type == null || type === 1;
+    return type == null || MANAGED_APP_TYPES.has(type);
   } catch (error) {
     return true;
   }
@@ -509,7 +516,7 @@ export async function resolveProfileAppids(appids: string[]): Promise<string[]> 
     while (next < appids.length) {
       const appid = appids[next++];
       const type = await resolveOverviewType(appid);
-      if (type === 1 || type === STEAM_SHORTCUT_APP_TYPE) games.push(appid);
+      if (isManagedType(type) || type === STEAM_SHORTCUT_APP_TYPE) games.push(appid);
     }
   };
   await Promise.all(Array.from({ length: Math.min(10, appids.length) }, worker));

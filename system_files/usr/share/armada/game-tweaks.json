@@ -7,7 +7,7 @@
     "gamescopeRr": false,
     "gamescopeVulkanRealtime": true,
     "nice": 0,
-    "scheduler": "eevdf",
+    "scheduler": null,
     "thunks": {
       "Vulkan": true,
       "GL": true,
