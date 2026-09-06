@@ -6,6 +6,15 @@ export interface PowerProfile {
   gpu_max: string;
   gpu_min: string;
   fan_curve: string;
+  cpu_max_policy0?: string;
+  cpu_max_policy6?: string;
+  [key: string]: string | undefined;
+}
+
+export interface Hardware {
+  cpu: Record<string, number[]>;
+  gpu: number[];
+  governors: string[];
 }
 
 export interface FanCurve {
@@ -15,6 +24,7 @@ export interface FanCurve {
 
 export interface PowerConfig {
   general: { default_profile: string };
+  order?: string[];
   profiles: Record<string, PowerProfile>;
   fan_curves: Record<string, FanCurve>;
   fan: Record<string, string>;
@@ -94,6 +104,7 @@ export interface PerfInfo {
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
+  hardware?: Hardware;
   tweaks: Tweaks;
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
