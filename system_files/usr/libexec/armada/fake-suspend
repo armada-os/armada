@@ -68,7 +68,20 @@ display_on() {
 }
 
 mute_audio()   { as_session wpctl set-mute @DEFAULT_AUDIO_SINK@ 1 2>/dev/null || true; }
-unmute_audio() { as_session wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true; }
+unmute_audio() {
+    # A single fire-and-forget set-mute loses the race when PipeWire is still
+    # coming back after resume: if it fails, the mute from do_suspend persists
+    # and the device wakes silent (WirePlumber restores the saved mute state).
+    # Retry until the sink actually reports unmuted, or give up after ~2s.
+    local i out
+    for (( i = 0; i < 8; i++ )); do
+        as_session wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true
+        out="$(as_session wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null)" || out=""
+        [[ -n "$out" && "$out" != *"[MUTED]"* ]] && return 0
+        sleep 0.25
+    done
+    log "audio still muted after resume; giving up"
+}
 
 radio_soft_blocked() {
     rfkill list "$1" 2>/dev/null | grep -q 'Soft blocked: yes'
