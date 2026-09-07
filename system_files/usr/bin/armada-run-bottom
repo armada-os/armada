@@ -24,6 +24,7 @@ unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
 exec "$gamescope" \
     --backend drm \
     --drm-lease-client "$lease_socket" \
+    --drm-lease-yield \
     --expose-wayland \
     --force-windows-fullscreen \
     --xwayland-count 1 \

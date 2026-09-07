@@ -12,11 +12,15 @@ loader_needs_seed() {
     [[ -f "${loader_version_src}" ]] || return 1
     [[ -f "${homebrew}/services/.loader.version" ]] || return 0
 
-    local bundled current newest
+    local bundled current newest prerelease_marker bundled_sort current_sort
     bundled=$(<"${loader_version_src}")
     current=$(<"${homebrew}/services/.loader.version")
-    newest=$(printf '%s\n%s\n' "${current}" "${bundled}" | sort -V | tail -n1)
-    [[ "${newest}" == "${bundled}" && "${bundled}" != "${current}" ]]
+    # ~ fixes prerelease ordering and must come through a variable; Bash expands it to $HOME inline.
+    prerelease_marker='~'
+    bundled_sort=${bundled/-/${prerelease_marker}}
+    current_sort=${current/-/${prerelease_marker}}
+    newest=$(printf '%s\n%s\n' "${current_sort}" "${bundled_sort}" | sort -V | tail -n1)
+    [[ "${newest}" == "${bundled_sort}" && "${bundled}" != "${current}" ]]
 }
 
 install -d -m 0755 "${homebrew}/services"
