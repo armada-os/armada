@@ -1,6 +1,5 @@
 [Unit]
 Description=Apply Armada controller type
-ConditionPathExists=/etc/armada/controller.conf
 After=inputplumber.service
 Requires=inputplumber.service
 Before=display-manager.service

@@ -29,7 +29,7 @@ ABL_PARTITIONS = (
 )
 MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
-CONTROLLER_TYPES = {"deck-uhid", "xb360", "ds5"}
+CONTROLLER_TYPES = {"deck-uhid", "xbox-series", "xb360", "ds5"}
 INTERCEPT_MODES = {"overlay", "reset"}
 SLEEP_CONFIG = Path("/etc/armada/sleep.conf")
 SUSPEND_MODE_KEY = "suspend_mode"
