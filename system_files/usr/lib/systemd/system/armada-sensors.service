@@ -1,0 +1,13 @@
+[Unit]
+Description=Armada SSC sensor bridge (accel+gyro via sns_iio)
+After=multi-user.target
+Before=inputplumber.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/armada-sensors-start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
