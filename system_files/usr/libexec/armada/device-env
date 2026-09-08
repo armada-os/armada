@@ -24,7 +24,9 @@ case "$model" in
     "KONKR Pocket FIT Elite") profile=konkr-pocket-fit-elite ;;
     "AYN Odin 3") profile=ayn-odin-3 ;;
     "Retroid Pocket 5") profile=retroid-pocket-5 ;;
+    "Retroid Pocket 5 Visionox") profile=retroid-pocket-5 ;;
     "Retroid Pocket Flip2") profile=retroid-pocket-flip2 ;;
+    "Retroid Pocket Flip2 Visionox") profile=retroid-pocket-flip2 ;;
     "Retroid Pocket Mini") profile=retroid-pocket-mini ;;
     "Retroid Pocket Mini V2") profile=retroid-pocket-mini-v2 ;;
     "Retroid Pocket 6") profile=retroid-pocket-6 ;;
@@ -116,6 +118,7 @@ vars=(
     ARMADA_PANEL_ORIENTATION
     ARMADA_HDR_NITS
     ARMADA_GAMEPAD_QUIRK
+    ARMADA_IP_TARGETS
     ARMADA_RGB_BACKEND
     ARMADA_RGB_TARGETS
     ARMADA_RGB_CORRECTION

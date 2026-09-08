@@ -27,9 +27,29 @@ ayaneo_xbox_mode() {
     echo "device-quirks: AYANEO MCU switched to Xbox 360 mode"
 }
 
+ayaneo_default_mode() {
+    local serial_device=/dev/ttyHS0
+
+    if [[ ! -e "$serial_device" ]]; then
+        echo "device-quirks: $serial_device not present, skipping AYANEO default mode"
+        return 0
+    fi
+
+    stty -F "$serial_device" 115200 -clocal -opost -isig -icanon -echo
+    printf '\xe7\x55\x05\x00\x00\x00\x00\x00\x00\x5a\xed' >"$serial_device"
+    sleep 0.1
+    printf '\x35\x35\x30\x35\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30' >"$serial_device"
+    sleep 0.1
+
+    echo "device-quirks: AYANEO MCU switched back to default mode"
+}
+
 case "${ARMADA_GAMEPAD_QUIRK:-none}" in
     ayaneo-xbox)
         ayaneo_xbox_mode
+        ;;
+    ayaneo-default)
+        ayaneo_default_mode
         ;;
     none)
         ;;
