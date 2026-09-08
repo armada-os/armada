@@ -13,7 +13,7 @@ DEVICE_ENV_HELPER = "/usr/libexec/armada/device-env"
 CORE_PRESETS = ("all", "big", "prime", "little")
 SCHEDULERS = ("eevdf", "cosmos", "lavd")
 GAMESCOPE_COMMS = ("gamescope", "gamescope-wl")
-RR_PRIORITY = 40
+RR_PRIORITY = os.sched_get_priority_min(os.SCHED_RR)
 NICE_MIN, NICE_MAX = -20, 19
 GAMESCOPE_NICE_MIN, GAMESCOPE_NICE_MAX = -20, 19
 
