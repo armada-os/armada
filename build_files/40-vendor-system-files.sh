@@ -105,6 +105,7 @@ systemctl enable armada-steamos-manager.service
 systemctl --global enable armada-steamos-manager.service
 systemctl enable armada-bootimg-sync.service
 systemctl enable armada-esp-rename.service
+systemctl enable armada-boot-hotkeys.service
 systemctl enable armada-flatpak-setup.service
 systemctl enable armada-waydroid-input.path
 systemctl enable armada-splash-stall.service

@@ -1,0 +1,14 @@
+[Unit]
+Description=Boot-time hotkeys
+After=basic.target armada-session-default.service
+Before=display-manager.service
+ConditionPathExists=/usr/libexec/armada/armada-boot-hotkeys
+ConditionPathExists=!/etc/armada/boot-hotkeys-disabled
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/armada-boot-hotkeys
+TimeoutStopSec=5
+
+[Install]
+WantedBy=graphical.target
