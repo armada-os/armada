@@ -123,6 +123,7 @@ vars=(
     ARMADA_BIG_CORES
     ARMADA_PRIME_CORES
     ARMADA_IRQ_CORES
+    ARMADA_CONTROLLER_TYPE
 )
 
 for var in "${vars[@]}"; do
