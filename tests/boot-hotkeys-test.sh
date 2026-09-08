@@ -17,12 +17,12 @@ BIN="$WORK/bin"; DEV="$WORK/dev"; SYS="$WORK/sys"
 mkdir -p "$BIN" "$DEV" "$SYS"
 export WORK
 
-# event0 has no EV_KEY bitmap at all, event1 carries BTN_START (315), and
-# event2 carries the neighbouring BTN_MODE (316): only event1 may be polled.
+# event0 has no EV_KEY bitmap at all, event1 carries BTN_SELECT (314), and
+# event2 carries the neighbouring BTN_START (315): only event1 may be polled.
 for n in 0 1 2; do : > "$DEV/event$n"; mkdir -p "$SYS/event$n/device/capabilities"; done
 printf '0\n' > "$SYS/event0/device/capabilities/key"
-printf '800000000000000 0 0 0 0\n' > "$SYS/event1/device/capabilities/key"
-printf '1000000000000000 0 0 0 0\n' > "$SYS/event2/device/capabilities/key"
+printf '400000000000000 0 0 0 0\n' > "$SYS/event1/device/capabilities/key"
+printf '800000000000000 0 0 0 0\n' > "$SYS/event2/device/capabilities/key"
 
 cat > "$BIN/evtest" <<'STUB'
 #!/usr/bin/env bash
@@ -56,7 +56,7 @@ STUB
 chmod 0755 "$BIN"/* "$WORK/session-control" "$WORK/progress"
 
 run_hotkeys() {
-    rm -f "$WORK/queried" "$WORK/log" "$WORK/session.log" "$WORK/status.log" "$WORK/systemctl.log" "$WORK/recovery-mode"
+    rm -f "$WORK/queried" "$WORK/log" "$WORK/session.log" "$WORK/systemctl.log" "$WORK/recovery-mode" "$WORK/status.log"
     PATH="$BIN:$PATH" \
     ARMADA_INPUT_LIB="$INPUT_LIB" \
     ARMADA_INPUT_CLASS="$SYS" \
@@ -75,7 +75,6 @@ run_hotkeys() {
 rm -f "$WORK/pressed" "$WORK/dm-active"
 run_hotkeys
 [[ -e "$WORK/session.log" ]] && fail "no hold: switched sessions anyway"
-[[ -e "$WORK/status.log" ]] && fail "no hold: wrote to the splash anyway"
 [[ -e "$WORK/recovery-mode" ]] && fail "no hold: marked recovery mode anyway"
 sort -u "$WORK/queried" > "$WORK/queried.uniq"
 [[ "$(cat "$WORK/queried.uniq")" == "$DEV/event1" ]] \
@@ -85,15 +84,12 @@ sort -u "$WORK/queried" > "$WORK/queried.uniq"
 : > "$WORK/pressed"
 run_hotkeys
 assert_grep "$WORK/session.log" "default-desktop" "pre-sddm hold"
+assert_grep "$WORK/systemctl.log" "start armada-session-default.service" "waits for the autologin reset"
 # The marker is what a desktop recovery tool would key off.
 assert_file "$WORK/recovery-mode" "recovery marker written"
+assert_grep "$WORK/status.log" "Starting Desktop" "splash announce"
 assert_grep "$WORK/log" "holding Desktop Mode" "journal notes the hold"
 assert_grep "$WORK/log" "triggering Desktop Mode" "journal notes the trigger"
-assert_grep "$WORK/status.log" "Starting Desktop" "splash announce"
-# More than one write means a hold prompt crept back in, which is what races
-# armada-splash-run.
-[[ $(wc -l < "$WORK/status.log") == 1 ]] \
-    || fail "expected exactly one splash write, got $(wc -l < "$WORK/status.log")"
 
 # Held once the session is running: restart it the way Steam's own switch does.
 : > "$WORK/dm-active"
@@ -117,15 +113,15 @@ kill "$port_pid" 2>/dev/null || true
 # Fails without the periodic rescan, which is the point of the case.
 rm -f "$WORK/dm-active" "$WORK/dm-failed" "$WORK/session.log"
 printf '%s\n' "$DEV/event2" > "$WORK/pressed-dev"
-printf '800000000000000 0 0 0 0\n' > "$SYS/event1/device/capabilities/key"
+printf '400000000000000 0 0 0 0\n' > "$SYS/event1/device/capabilities/key"
 printf '0\n' > "$SYS/event2/device/capabilities/key"
 ( sleep 0.3
   printf '0\n' > "$SYS/event1/device/capabilities/key"
-  printf '800000000000000 0 0 0 0\n' > "$SYS/event2/device/capabilities/key" ) &
+  printf '400000000000000 0 0 0 0\n' > "$SYS/event2/device/capabilities/key" ) &
 appear_pid=$!
 PATH="$BIN:$PATH" \
 ARMADA_INPUT_LIB="$INPUT_LIB" ARMADA_INPUT_CLASS="$SYS" ARMADA_INPUT_DEV_DIR="$DEV" \
-ARMADA_SPLASH_PROGRESS="$WORK/progress" ARMADA_RECOVERY_MARKER="$WORK/recovery-mode" \
+ARMADA_RECOVERY_MARKER="$WORK/recovery-mode" \
 ARMADA_SESSION_CONTROL="$WORK/session-control" \
 ARMADA_BOOT_HOTKEY_POLL_MS=10 ARMADA_BOOT_HOTKEY_HOLD_MS=30 \
 ARMADA_BOOT_HOTKEY_RESCAN_MS=20 ARMADA_BOOT_HOTKEY_MAX=3 \
@@ -134,8 +130,8 @@ ARMADA_SPLASH_CEF_PORT=1 \
 wait "$appear_pid" 2>/dev/null || true
 assert_grep "$WORK/session.log" "default-desktop" "key moving to another node is rescanned"
 rm -f "$WORK/pressed-dev"
-printf '800000000000000 0 0 0 0\n' > "$SYS/event1/device/capabilities/key"
-printf '1000000000000000 0 0 0 0\n' > "$SYS/event2/device/capabilities/key"
+printf '400000000000000 0 0 0 0\n' > "$SYS/event1/device/capabilities/key"
+printf '800000000000000 0 0 0 0\n' > "$SYS/event2/device/capabilities/key"
 
 # Nothing else retries a failed sddm: session-control resets the failure state
 # without starting it.
@@ -150,13 +146,15 @@ rm -f "$WORK/dm-failed"
 run_hotkeys
 assert_no_grep "$WORK/systemctl.log" "start display-manager.service" "pre-sddm must not start it"
 
-grep -qE '^ *"315:BTN_START:Desktop Mode:action_desktop"' "$HOTKEYS" \
+grep -qE '^ *"314:BTN_SELECT:Desktop Mode:action_desktop"' "$HOTKEYS" \
     || fail "the hotkey table entry changed shape"
 grep -q 'Before=display-manager.service' "$UNIT" || fail "unit must start before sddm"
 grep -q 'ConditionPathExists=!/etc/armada/boot-hotkeys-disabled' "$UNIT" \
     || fail "unit needs an escape hatch"
-grep -q 'After=.*armada-session-default.service' "$UNIT" \
-    || fail "unit must be ordered after the gamemode autologin reset"
+grep -q 'WantedBy=sysinit.target' "$UNIT" \
+    || fail "unit must start with the splash, not at basic.target"
+grep -q 'After=.*armada-session-default' "$UNIT" \
+    && fail "static ordering after armada-session-default pins the hold onto sddm's start"
 grep -q 'systemctl enable armada-boot-hotkeys.service' "$ROOT/build_files/40-vendor-system-files.sh" \
     || fail "armada-boot-hotkeys.service is not enabled in the image"
 

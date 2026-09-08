@@ -18,13 +18,14 @@ INPUT_DEV_DIR="${ARMADA_INPUT_DEV_DIR:-/dev/input}"
 
 log() { logger -t armada-boot-hotkeys -- "$*" 2>/dev/null; return 0; }
 
-# One write at the switch; anything needing restore races armada-splash-run.
 announce() { [[ -x "$PROGRESS" ]] && ARMADA_SPLASH_STATUS="$STATUS" "$PROGRESS" "$@"; return 0; }
 
 action_desktop() {
     announce "Starting Desktop"
     # Runtime marker distinguishing a hotkey boot from a chosen one.
     : > "$RECOVERY_MARKER" 2>/dev/null
+    # The per-boot gamemode reset must land before this override does.
+    systemctl start armada-session-default.service 2>/dev/null
     if systemctl is-active --quiet display-manager.service 2>/dev/null; then
         "$SESSION_CONTROL" switch-desktop
         return
@@ -38,10 +39,10 @@ action_desktop() {
     return 0
 }
 
-# code:evdev name:label:action. Start because no capability map translates it,
-# so it reaches the raw node unchanged; not a volume key, which ABL owns.
+# code:evdev name:label:action. Select because no capability map translates it,
+# so it reaches the raw node unchanged.
 hotkeys=(
-    "315:BTN_START:Desktop Mode:action_desktop"
+    "314:BTN_SELECT:Desktop Mode:action_desktop"
 )
 
 (( POLL_MS > 0 )) || POLL_MS=500
