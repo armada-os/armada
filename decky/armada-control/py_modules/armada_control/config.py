@@ -1,5 +1,5 @@
 from .controller import CONTROLLER_TYPES, controller_type
-from .power import factory_power_defaults, parse_power
+from .power import available_hardware, factory_power_defaults, parse_power
 from .steam import installed_games
 from .system import (
     abl_auto_enabled,
@@ -25,6 +25,7 @@ def build_config(include_games=True):
     return {
         "power": parse_power(),
         "powerDefaults": factory_power_defaults(),
+        "hardware": available_hardware(),
         "tweaks": load_tweaks(),
         "installedGames": installed_games() if include_games else [],
         "fexProfiles": fex_profile_labels(fex_contract),
