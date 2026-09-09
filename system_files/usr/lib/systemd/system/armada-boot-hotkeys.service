@@ -1,0 +1,16 @@
+[Unit]
+Description=Boot-time hotkeys (hold Select for Desktop Mode)
+DefaultDependencies=no
+After=local-fs.target
+Before=display-manager.service
+Conflicts=shutdown.target
+ConditionPathExists=/usr/libexec/armada/armada-boot-hotkeys
+ConditionPathExists=!/etc/armada/boot-hotkeys-disabled
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/armada-boot-hotkeys
+TimeoutStopSec=5
+
+[Install]
+WantedBy=sysinit.target

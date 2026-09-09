@@ -66,6 +66,17 @@ jobs:
 
           echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
 
+      - name: Require main for Preview publication
+        if: github.event_name != 'pull_request'
+        env:
+          PUBLISH_TAG: ${{ steps.manual.outputs.branch || env.DEFAULT_TAG }}
+          BUILD_BRANCH: ${{ steps.manual.outputs.branch || github.ref_name }}
+        run: |
+          if [ "${PUBLISH_TAG}" = testing ] && [ "${BUILD_BRANCH}" != main ]; then
+            echo "::error::Preview must be built from main. Use an explicit branch tag for other builds."
+            exit 1
+          fi
+
       - name: Ensure container tools
         run: |
           set -euxo pipefail
