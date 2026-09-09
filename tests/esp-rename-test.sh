@@ -5,7 +5,6 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RENAME="$ROOT/system_files/usr/libexec/armada/armada-esp-rename"
 UNIT="$ROOT/system_files/usr/lib/systemd/system/armada-esp-rename.service"
 FSCK_DROPIN="$ROOT/system_files/usr/lib/systemd/system/systemd-fsck@.service.d/10-armada-esp-rename.conf"
-INSTALLER="$ROOT/system_files/usr/libexec/armada/armada-installer"
 VENDOR_BUILD="$ROOT/build_files/40-vendor-system-files.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -150,18 +149,5 @@ grep -q '^ExecStart=-/usr/libexec/armada/armada-esp-rename$' "$UNIT" || fail "un
 grep -q '^After=armada-esp-rename.service$' "$FSCK_DROPIN" || fail "fsck can race the rename"
 grep -q '^systemctl enable armada-esp-rename.service$' "$VENDOR_BUILD" || fail "unit is not enabled"
 [[ -x "$RENAME" ]] || fail "rename helper is not executable"
-
-grep -q 'ESP_PARTLABEL="ARMADA"' "$INSTALLER" || fail "new ESP label is not ARMADA"
-grep -q 'ROCKNIX|ARMADA|ARMADA_BOOT|ARMADA_ROOT' "$INSTALLER" || fail "legacy ESP is not removable"
-eval "$(sed -n '/^detect_mode()/,/^}/p' "$INSTALLER")"
-eval "$(sed -n '/^cmd_detect()/,/^}/p' "$INSTALLER")"
-partition_names() { echo ARMADA; }
-need_root() { :; }
-check_device() { :; }
-find_userdata() { UD_ORIG_GIB=8; }
-collect_our_tail() { LINUX_BYTES=536870912; }
-detected=$(cmd_detect)
-assert_eq "new ESP mode" "$(sed -n 's/^mode=//p' <<<"$detected")" occupied
-assert_eq "new ESP owner" "$(sed -n 's/^installed=//p' <<<"$detected")" armada
 
 echo "ESP rename tests passed"

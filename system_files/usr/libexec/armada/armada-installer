@@ -1,986 +1,840 @@
-#!/usr/bin/bash
-set -euo pipefail
-source /usr/lib/armada/bootimg-args
-source /usr/lib/armada/storage-lib
-source /usr/lib/armada/update-lib
+#!/usr/bin/python3
+"""Install the running Armada image alongside Android on internal storage."""
 
-DEVICE="${ARMADA_INTERNAL_DEVICE:-$(armada_internal_device || true)}"
-ESP_GUID="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
-ESP_PARTLABEL="ARMADA"
-ESP_MIB=512
-BOOT_MIB=1024
-# Floor, not target: enough for two bootc deployments plus OTA staging headroom.
-ROOT_MIN_MIB=$((32 * 1024))
-ANDROID_MIN_MIB=$((8 * 1024))
-destructive=0
-TARGET=""
-BTRFS_OPTS="noatime,compress=zstd:1,discard=async"
-ASSUME_YES=0
-UD_GIB=""
-OPERATION=install
-INHIBIT_PID=""
-SELF=/usr/libexec/armada/armada-installer
+import argparse
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, replace
+import fcntl
+import hashlib
+import html
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import select
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
 
-# Installed before any destructive step (repartition, mkfs, or reset), so a
-# failure after internal storage is modified surfaces the recovery instructions
-# rather than leaving the user with an unbootable device and no guidance.
-cleanup() {
-    local rc=$?
-    [[ -n "$INHIBIT_PID" ]] && kill "$INHIBIT_PID" 2>/dev/null || true
-    [[ -n "$TARGET" ]] && { umount -R "$TARGET" 2>/dev/null || true; rmdir "$TARGET" 2>/dev/null || true; }
-    # A half-done operation is recoverable from the SD card (re-run the installer);
-    # UNINSTALL CFW in ABL is the fallback. On a replace, Android was never touched,
-    # so it's safe to say so.
-    if (( rc != 0 && destructive == 1 )); then
-        case $OPERATION in
-            reset)
-                echo "ERROR: reset did not finish after internal storage was modified. To finish the removal, select UNINSTALL CFW in ABL." >&2
-                ;;
-            replace)
-                echo "ERROR: install did not finish after internal storage was modified, but Android is unchanged. Do NOT boot internal storage; re-run the installer from the SD card to finish, or select UNINSTALL CFW in ABL to abandon the installation." >&2
-                ;;
-            *)
-                echo "ERROR: install did not finish after internal storage was modified. Do NOT boot internal storage. Re-run the installer from the SD card to finish, or select UNINSTALL CFW in ABL to abandon the installation." >&2
-                ;;
-        esac
-    fi
-    exit $rc
-}
+MIB = 1024**2
+GIB = 1024**3
+ESP_SIZE, BOOT_SIZE, ROOT_MIN, ANDROID_MIN = 512 * MIB, GIB, 32 * GIB, 8 * GIB
+RESERVE = ESP_SIZE + BOOT_SIZE + ROOT_MIN + 64 * MIB
+ESP_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
+LINUX_TYPE = "0fc63daf-8483-4772-8e79-3d69d8477de4"
+BTRFS_OPTS = "noatime,compress=zstd:1,discard=async"
+SELF = "/usr/libexec/armada/armada-installer"
+BOOTIMG = "/usr/libexec/armada/armada-bootimg-update"
+RECOVERY = ("To retry from SD, select SD as the boot source in ABL and re-run the installer. "
+            "To abandon the internal installation, select UNINSTALL CFW in ABL.")
 
-# Hold a logind lock for the run so an idle timeout or the power button can't suspend
-# the device mid-write; a suspend during repartition or deploy could brick internal
-# storage. Released by cleanup.
-inhibit_sleep() {
-    command -v systemd-inhibit >/dev/null 2>&1 || return 0
-    systemd-inhibit --what=sleep:idle --who="Armada Installer" \
-        --why="writing internal storage" --mode=block sleep infinity &
-    INHIBIT_PID=$!
-}
 
-need_root() {
-    if [[ $EUID -ne 0 ]]; then
-        echo "ERROR: must run as root" >&2
-        exit 1
-    fi
-}
+class Error(Exception):
+    pass
 
-need_cmds() {
-    local missing=0
-    for cmd in blkid btrfs findmnt jq lsblk mkfs.btrfs mkfs.ext4 mkfs.vfat ostree parted partprobe realpath sfdisk sgdisk udevadm; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            echo "ERROR: missing required command: $cmd" >&2
-            missing=1
-        fi
-    done
-    (( missing == 0 )) || exit 1
-}
 
-check_device() {
-    if [[ -z $DEVICE ]]; then
-        echo "ERROR: could not determine internal storage; set ARMADA_INTERNAL_DEVICE=/dev/sdX" >&2
-        exit 1
-    fi
-    if [[ ! -b $DEVICE ]]; then
-        echo "ERROR: internal storage device $DEVICE not found; set ARMADA_INTERNAL_DEVICE" >&2
-        exit 1
-    fi
-}
+class Cancelled(Exception):
+    pass
 
-refuse_self() {
-    local src
-    src=$(root_source)
-    if [[ -z $src ]]; then
-        echo "ERROR: cannot determine the boot device; refusing to modify $DEVICE" >&2
-        exit 1
-    fi
-    case "$src" in
-        "$DEVICE"*)
-            echo "ERROR: booted from $DEVICE; refusing to modify the disk you're running from" >&2
-            exit 1
-            ;;
-    esac
-}
 
-confirm() {
-    (( ASSUME_YES )) && return 0
-    local prompt="$1"
-    local answer
-    read -rp "$prompt [y/N]: " answer
-    [[ $answer =~ ^[Yy]$ ]]
-}
+class Interrupted(Error):
+    def __init__(self, signum):
+        self.signum = signum
+        super().__init__(f"operation interrupted by signal {signum}")
 
-root_source() {
-    local source
-    source=$(findmnt -no SOURCE /sysroot 2>/dev/null || findmnt -no SOURCE /)
-    # findmnt reports a btrfs root as /dev/sdaN[/subvol]; strip it so readlink
-    # resolves the node (else refuse_self fails open on an internal boot).
-    source=${source%%\[*}
-    readlink -f "$source"
-}
 
-resolve_partlabel() {
-    local label="$1"
-    local matches=()
-    # Restrict to $DEVICE: a duplicate label on another disk must not match.
-    mapfile -t matches < <(blkid -t "PARTLABEL=${label}" -o device 2>/dev/null \
-        | grep -E "^${DEVICE}p?[0-9]+$" || true)
-    if [[ ${#matches[@]} -ne 1 || ! -b ${matches[0]} ]]; then
-        echo "ERROR: expected exactly one partition with PARTLABEL=${label} on ${DEVICE}" >&2
-        exit 1
-    fi
-    printf '%s\n' "${matches[0]}"
-}
+def run(*args, capture=False, check=True, input=None, **kwargs):
+    args = [str(arg) for arg in args]
+    kwargs.setdefault("stdout", subprocess.PIPE if capture else None)
+    kwargs.setdefault("stderr", subprocess.PIPE if capture else None)
+    if input is not None:
+        kwargs["stdin"] = subprocess.PIPE
+    child = subprocess.Popen(args, text=True, **kwargs)
+    previous, interrupted = {}, []
 
-part_node() {
-    # /dev/sda + 5 → /dev/sda5, but /dev/mmcblk0 / /dev/nvme0n1 need a 'p': …0p5.
-    local dev="$1" num="$2"
-    [[ $dev =~ [0-9]$ ]] && echo "${dev}p${num}" || echo "${dev}${num}"
-}
+    def forward(signum, _frame):
+        interrupted.append(signum)
+        child.send_signal(signum)
 
-# One TSV row per partition: NUM <tab> START_BYTE <tab> END_BYTE(inclusive) <tab> NAME.
-# END is the inclusive last byte (start+size-1). Parsed by key from sfdisk --json
-# rather than splitting columns: a ':' in a partition name or a stray warning line
-# would otherwise shift a field or drop a row, and a row missed after userdata is
-# silent data loss.
-list_partitions() {
-    sfdisk --json "$DEVICE" 2>/dev/null | jq -r '
-        .partitiontable as $t
-        | ($t.sectorsize // 512) as $ss
-        | ($t.partitions // [])[]
-        | [ (.node | match("[0-9]+$").string),
-            (.start * $ss),
-            ((.start + .size) * $ss - 1),
-            (.name // "") ]
-        | @tsv'
-}
+    try:
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            previous[signum] = signal.signal(signum, forward)
+        out, err = child.communicate(input)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    if interrupted:
+        raise Interrupted(interrupted[0])
+    if check and child.returncode:
+        raise Error(f"{shlex.join(args)} failed ({child.returncode})" + (f": {err.strip()}" if err else ""))
+    return subprocess.CompletedProcess(args, child.returncode, out, err)
 
-partition_names() {
-    list_partitions | cut -f4
-}
 
-detect_mode() {
-    local name
-    has_rocknix=0
-    has_armada=0
-    has_armada_boot=0
-    has_armada_root=0
-    has_storage=0
+def output(*args):
+    return run(*args, capture=True).stdout.strip()
 
-    while IFS= read -r name; do
-        case "$name" in
-            ROCKNIX) has_rocknix=1 ;;
-            ARMADA) has_armada=1 ;;
-            ARMADA_BOOT) has_armada_boot=1 ;;
-            ARMADA_ROOT) has_armada_root=1 ;;
-            STORAGE) has_storage=1 ;;
-        esac
-    done < <(partition_names)
 
-    if (( has_rocknix || has_armada || has_armada_boot || has_armada_root || has_storage )); then
-        mode=occupied
-    else
-        mode=fresh
-    fi
-}
+def ostree_api():
+    import gi
+    gi.require_version("OSTree", "1.0")
+    from gi.repository import Gio, OSTree
+    return Gio, OSTree
 
-find_userdata() {
-    mapfile -t ud_line < <(list_partitions | awk -F'\t' '$4=="userdata"')
-    if [[ ${#ud_line[@]} -ne 1 ]]; then
-        echo "ERROR: could not uniquely find userdata partition on $DEVICE" >&2
-        parted -s "$DEVICE" print >&2
-        exit 1
-    fi
 
-    IFS=$'\t' read -r UD_NUM UD_START UD_END _ <<< "${ud_line[0]}"
-    UD_PART=$(part_node "$DEVICE" "$UD_NUM")
-    UD_START_MIB=$(( (UD_START + 1048575) / 1048576 ))
-    UD_END_MIB=$(( UD_END / 1048576 ))
-    UD_ORIG_GIB=$(( (UD_END_MIB - UD_START_MIB) / 1024 ))
-}
+def repo_path(repo):
+    # Libostree may return a /proc/self/fd path that child processes cannot use.
+    return str(Path(repo.get_path().get_path()).resolve(strict=True))
 
-require_userdata_last() {
-    # The fresh layout claims the freed window and partition numbers UD_NUM+1..+3,
-    # both of which assume userdata is the LAST partition. Refuse if anything lies
-    # after it (e.g. trailing Android partitions on some Odin 3 layouts) rather than
-    # mislabel or overwrite it.
-    local num start_b end_b name
-    while IFS=$'\t' read -r num start_b end_b name; do
-        (( num == UD_NUM )) && continue
-        if (( end_b > UD_END )); then
-            echo "ERROR: partition #${num} lies after userdata on ${DEVICE}; refusing" >&2
-            echo "       (a fresh install assumes userdata is the last partition)." >&2
-            parted -s "$DEVICE" print >&2
-            exit 1
-        fi
-    done < <(list_partitions)
-}
 
-collect_our_tail() {
-    local num start_b end_b name
-    OUR_NUMS=()
-    OUR_LABELS=()
-    OUR_MAX_END=$UD_END
-    LINUX_BYTES=0
-    OUR_FOREIGN_AFTER=0
-    while IFS=$'\t' read -r num start_b end_b name; do
-        (( num == UD_NUM )) && continue
-        case "$name" in
-            ROCKNIX|ARMADA|ARMADA_BOOT|ARMADA_ROOT|STORAGE)
-                OUR_NUMS+=("$num")
-                OUR_LABELS+=("$name")
-                LINUX_BYTES=$((LINUX_BYTES + end_b - start_b))
-                (( end_b > OUR_MAX_END )) && OUR_MAX_END=$end_b
-                ;;
-            *)
-                (( end_b > UD_END )) && OUR_FOREIGN_AFTER=1
-                ;;
-        esac
-    done < <(list_partitions)
-}
+def part_node(device, number):
+    return f"{device}{'p' if device[-1].isdigit() else ''}{number}"
 
-compute_ud_bounds() {
-    RESERVE_MIB=$((ESP_MIB + BOOT_MIB + ROOT_MIN_MIB + 64))
-    MAX_NEW_UD_MIB=$((UD_END_MIB - UD_START_MIB - RESERVE_MIB))
-    MIN_NEW_UD_MIB=$ANDROID_MIN_MIB
-    (( MAX_NEW_UD_MIB >= MIN_NEW_UD_MIB ))
-}
 
-choose_userdata_size() {
-    local max_gib min_gib
-    if ! compute_ud_bounds; then
-        echo "ERROR: not enough free space; armada needs about $((RESERVE_MIB / 1024)) GiB" >&2
-        exit 1
-    fi
-    min_gib=$((MIN_NEW_UD_MIB / 1024))
-    max_gib=$((MAX_NEW_UD_MIB / 1024))
+@dataclass(frozen=True)
+class Partition:
+    number: int
+    start: int
+    end: int
+    name: str
+    type: str
+    uuid: str = ""
+    attrs: str = ""
 
-    if [[ -n $UD_GIB ]]; then
-        [[ $UD_GIB =~ ^[0-9]+$ ]] || { echo "ERROR: --userdata-gib must be an integer" >&2; exit 2; }
-        ud_gib=$UD_GIB
-        ud_mib=$((ud_gib * 1024))
-        if (( ud_mib < MIN_NEW_UD_MIB || ud_mib > MAX_NEW_UD_MIB )); then
-            echo "ERROR: --userdata-gib ${ud_gib} out of range (${min_gib} .. ${max_gib} GiB)" >&2
-            exit 2
-        fi
+
+@dataclass(frozen=True)
+class Table:
+    device: str
+    sector_size: int
+    first: int
+    last: int
+    disk_id: str
+    parts: tuple
+    entry_count: int = 128
+    unused: tuple = ()
+
+    @classmethod
+    def parse(cls, device, data):
+        try:
+            t = data["partitiontable"]
+            sector = t["sectorsize"]
+            if (t["label"] != "gpt" or t["unit"] != "sectors" or t["device"] != device
+                    or type(sector) is not int or sector not in (512, 4096)):
+                raise ValueError("expected a GPT disk with 512 or 4096 byte sectors")
+            first, last = t["firstlba"], t["lastlba"]
+            if type(first) is not int or type(last) is not int or not 0 < first < last:
+                raise ValueError("invalid usable disk bounds")
+            count = t.get("table-length", 128)
+            if not re.fullmatch(r"[1-9][0-9]*", str(count)) or int(count) > 2**32 - 1:
+                raise ValueError("invalid GPT entry count")
+            count = int(count)
+            parts, unused = [], []
+            for p in t["partitions"]:
+                node = p["node"]
+                match = re.fullmatch(re.escape(device) + ("p" if device[-1].isdigit() else "") + r"([1-9][0-9]*)", node)
+                if not match or int(match[1]) > count:
+                    raise ValueError("invalid partition number")
+                if p["type"] == "00000000-0000-0000-0000-000000000000":
+                    unused.append(int(match[1]))
+                    continue
+                if type(p["start"]) is not int or type(p["size"]) is not int or p["size"] <= 0:
+                    raise ValueError("invalid partition extent or device node")
+                if not isinstance(p.get("name", ""), str):
+                    raise ValueError("invalid partition name")
+                parts.append(Partition(int(match[1]), p["start"], p["start"] + p["size"],
+                                       p.get("name", ""), p["type"].lower(), p["uuid"].lower(), p.get("attrs", "")))
+            ordered = sorted(parts, key=lambda p: p.start)
+            if (len({p.number for p in parts} | set(unused)) != len(parts) + len(unused)
+                    or any(p.start < first or p.end > last + 1 for p in parts)
+                    or any(a.end > b.start for a, b in zip(ordered, ordered[1:]))):
+                raise ValueError("overlapping or out-of-bounds partitions")
+            return cls(device, sector, first, last, t["id"].lower(), tuple(sorted(parts, key=lambda p: p.number)), count, tuple(sorted(unused)))
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
+            raise Error(f"Could not validate the partition table: {error}") from error
+
+    def layout(self):
+        userdata = [p for p in self.parts if p.name == "userdata"]
+        if len(userdata) != 1:
+            raise Error("Expected exactly one Android userdata partition")
+        userdata = userdata[0]
+        tail = tuple(sorted((p for p in self.parts if p.start >= userdata.end), key=lambda p: p.start))
+        return userdata, tail
+
+    def info(self):
+        userdata, tail = self.layout()
+        android_gib = (userdata.end - userdata.start) * self.sector_size // GIB
+        if tail:
+            return dict(mode="occupied", partition_names=", ".join(
+                            f"{part_node(self.device, p.number)} ({p.name or 'unnamed'})" for p in tail),
+                        android_gib=android_gib, linux_gib=sum(p.end - p.start for p in tail) * self.sector_size // GIB)
+        maximum = ((userdata.end * self.sector_size // MIB * MIB)
+                   - align_up(userdata.start * self.sector_size) - RESERVE) // GIB
+        if maximum < ANDROID_MIN // GIB:
+            return dict(mode="toosmall", needed_gib=RESERVE // GIB, android_current_gib=android_gib)
+        return dict(mode="fresh", android_min_gib=ANDROID_MIN // GIB, android_max_gib=maximum,
+                    android_current_gib=android_gib)
+
+
+def align_up(value):
+    return (value + MIB - 1) // MIB * MIB
+
+
+def read_table(device):
+    try:
+        return Table.parse(device, json.loads(output("sfdisk", "--json", device)))
+    except ValueError as error:
+        raise Error(f"Invalid partition table output: {error}") from error
+
+
+def table_fingerprint(table):
+    ident = os.stat(table.device).st_rdev
+    diskseq = (Path("/sys/dev/block") / f"{os.major(ident)}:{os.minor(ident)}" / "diskseq").read_text().strip()
+    data = dict(table=asdict(table), device_id=ident, disk_sequence=diskseq)
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class Plan:
+    table: Table
+    operation: str
+    userdata: Partition
+    userdata_end: int
+    remove: tuple
+    create: tuple
+
+    @classmethod
+    def make(cls, table, userdata_gib=None):
+        userdata, tail = table.layout()
+        sector = table.sector_size
+        end = max(p.end for p in (userdata, *tail))
+        if tail:
+            if userdata_gib is not None:
+                raise Error("--userdata-gib only applies to a fresh install")
+            operation, ud_end = "replace", userdata.end
+            start = align_up(ud_end * sector) // sector
+        else:
+            info = table.info()
+            if info["mode"] == "toosmall":
+                raise Error("Not enough space for Android and Armada")
+            if type(userdata_gib) is not int or not info["android_min_gib"] <= userdata_gib <= info["android_max_gib"]:
+                raise Error(f"Android size must be {info['android_min_gib']}..{info['android_max_gib']} GiB")
+            operation = "fresh"
+            ud_end = (align_up(userdata.start * sector) + userdata_gib * GIB) // sector
+            start = ud_end
+        end = end * sector // MIB * MIB // sector
+        if (end - start) * sector < ESP_SIZE + BOOT_SIZE + ROOT_MIN:
+            raise Error("Space after userdata is too small; use UNINSTALL CFW in ABL, then install with a smaller Android size")
+        used = {p.number for p in table.parts if p not in tail}
+        preferred = [userdata.number + offset for offset in (1, 2, 3)]
+        free = [number for number in range(1, table.entry_count + 1) if number not in used]
+        numbers = preferred if all(number in free for number in preferred) else free[:3]
+        if len(numbers) != 3:
+            raise Error("Not enough free GPT partition slots")
+        esp_end, boot_end = start + ESP_SIZE // sector, start + (ESP_SIZE + BOOT_SIZE) // sector
+        create = (Partition(numbers[0], start, esp_end, "ARMADA", ESP_TYPE),
+                  Partition(numbers[1], esp_end, boot_end, "ARMADA_BOOT", LINUX_TYPE),
+                  Partition(numbers[2], boot_end, end, "ARMADA_ROOT", LINUX_TYPE))
+        return cls(table, operation, userdata, ud_end, tail, create)
+
+    def describe(self):
+        if self.operation == "replace":
+            names = ", ".join(f"{part_node(self.table.device, p.number)} ({p.name or 'unnamed'})" for p in self.remove)
+            return f"Erase ALL partitions after Android userdata on {self.table.device} ({names}) and install the running Armada image? All data in these partitions will be lost. Userdata and earlier partitions stay unchanged."
+        size = (self.userdata_end - self.userdata.start) * self.table.sector_size // GIB
+        return f"Install the running Armada image and resize Android to {size} GiB? All Android user data will be erased."
+
+    def script(self):
+        table = self.table
+        lines = ["label: gpt", f"label-id: {table.disk_id}", "unit: sectors",
+                 f"first-lba: {table.first}", f"last-lba: {table.last}",
+                 f"sector-size: {table.sector_size}", f"table-length: {table.entry_count}"]
+        parts = [replace(p, end=self.userdata_end) if p == self.userdata else p
+                 for p in table.parts if p not in self.remove] + list(self.create)
+        for p in sorted(parts, key=lambda p: p.number):
+            name = re.sub(r'["\\\x00-\x1f]', lambda m: f"\\x{ord(m[0]):02x}", p.name)
+            fields = [f"start={p.start}", f"size={p.end - p.start}", f"type={p.type}",
+                      f'name="{name}"']
+            if p.uuid:
+                fields.append("uuid=" + p.uuid)
+            if p.attrs:
+                fields.append("attrs=" + json.dumps(p.attrs))
+            lines.append(part_node(table.device, p.number) + ": " + ", ".join(fields))
+        return "\n".join(lines) + "\n"
+
+    def write(self):
+        run("sfdisk", "--no-reread", "--no-tell-kernel", "--wipe=never", "--wipe-partitions=never",
+            self.table.device, input=self.script())
+
+    def verify(self, actual):
+        expected = {p.number: p for p in self.table.parts if p not in self.remove}
+        expected[self.userdata.number] = replace(self.userdata, end=self.userdata_end)
+        new = {p.number: p for p in self.create}
+        if ((actual.device, actual.sector_size, actual.first, actual.last, actual.disk_id, actual.entry_count)
+                != (self.table.device, self.table.sector_size, self.table.first, self.table.last, self.table.disk_id, self.table.entry_count)
+                or actual.unused or {p.number for p in actual.parts} != expected.keys() | new.keys()):
+            raise Error("Partition table does not match the installation plan")
+        for p in actual.parts:
+            wanted = new.get(p.number)
+            if (wanted and replace(p, uuid="", attrs="") != wanted) or (not wanted and p != expected[p.number]):
+                raise Error(f"Partition {p.number} does not match the installation plan")
+
+
+    def verify_kernel(self):
+        for p in (replace(self.userdata, end=self.userdata_end), *self.create):
+            node = part_node(self.table.device, p.number)
+            path = Path("/sys/class/block") / Path(self.table.device).name / Path(node).name
+            try:
+                ident = os.stat(node).st_rdev
+                device_id = (path / "dev").read_text().strip()
+                # Sysfs uses 512-byte sectors even on 4Kn disks.
+                start = int((path / "start").read_text()) * 512
+                size = int((path / "size").read_text()) * 512
+            except (OSError, ValueError) as error:
+                raise Error(f"Could not verify the kernel partition mapping for {node}: {error}") from error
+            if (device_id != f"{os.major(ident)}:{os.minor(ident)}"
+                    or start != p.start * self.table.sector_size
+                    or size != (p.end - p.start) * self.table.sector_size):
+                raise Error(f"Kernel partition mapping for {node} does not match the installation plan")
+
+
+def discover_device(override=None):
+    if override:
+        device = str(Path(override).resolve(strict=True))
+    else:
+        disks = json.loads(output("lsblk", "--json", "--paths", "--output", "NAME,TYPE,PARTLABEL"))["blockdevices"]
+        candidates = [d["name"] for d in disks if d["type"] == "disk"
+                      and any(p.get("partlabel") == "userdata" for p in d.get("children", []))]
+        if len(candidates) != 1:
+            raise Error("Could not uniquely identify internal storage; use --device or ARMADA_INTERNAL_DEVICE")
+        device = candidates[0]
+    if not Path(device).is_block_device() or output("lsblk", "-dnro", "TYPE", device) != "disk":
+        raise Error(f"{device} is not a whole block device")
+    return device
+
+
+def refuse_boot_disk(device):
+    mount = "/sysroot" if Path("/sysroot").is_mount() else "/"
+    source = output("findmnt", "--noheadings", "--output", "SOURCE", "--target", mount).split("[", 1)[0]
+    if not Path(source).is_block_device():
+        raise Error("Cannot determine the boot disk; refusing to modify internal storage")
+    ancestors = output("lsblk", "--inverse", "--noheadings", "--raw", "--output", "MAJ:MIN", source).splitlines()
+    ident = os.stat(device).st_rdev
+    if not ancestors or f"{os.major(ident)}:{os.minor(ident)}" in ancestors:
+        raise Error("Refusing to modify the disk the running system booted from")
+
+
+def require_idle(plan):
+    parts = list(plan.remove)
+    if plan.operation != "replace":
+        parts.append(plan.userdata)
+    mounted = {line.split()[2] for path in ("/proc/1/mountinfo", "/proc/self/mountinfo")
+               for line in Path(path).read_text().splitlines()}
+    swaps = {os.stat(line.split()[0]).st_rdev for line in Path("/proc/swaps").read_text().splitlines()[1:]}
+    for p in parts:
+        node = part_node(plan.table.device, p.number)
+        ident = os.stat(node).st_rdev
+        key = f"{os.major(ident)}:{os.minor(ident)}"
+        if key in mounted or ident in swaps or any((Path("/sys/dev/block") / key / "holders").iterdir()):
+            raise Error(f"{node} is in use; unmount it and disable its swap or device mappings before continuing")
+
+
+@dataclass
+class SourceImage:
+    repo: object
+    checksum: str
+    origin: object
+    refs: dict
+
+    @classmethod
+    def read(cls, repo, deployment):
+        _, OSTree = ostree_api()
+        from gi.repository import GLib
+        if deployment is None or deployment.get_unlocked() != OSTree.DeploymentUnlockedState.NONE:
+            raise Error("A locked, booted OSTree deployment is required")
+        origin = deployment.get_origin()
+        if origin is None or any(origin.has_group(g) for g in ("rpmostree", "packages", "overrides", "modules")):
+            raise Error("Missing update origin or unsupported local package modifications")
+        data, length = origin.to_data()
+        origin = type(origin).new()
+        origin.load_from_data(data, length, 0)
+        ref = origin.get_string("origin", "container-image-reference")
+        if not re.fullmatch(r"(?:ostree-image-signed:docker://|ostree-unverified-registry:|ostree-unverified-image:)[A-Za-z0-9_./:@+-]+", ref):
+            raise Error("Unsupported container update origin")
+        registry_ref = re.sub(r"^(?:ostree-image-signed:docker://|ostree-unverified-registry:(?:docker://)?|ostree-unverified-image:docker://)", "", ref)
+        if re.fullmatch(r"ghcr\.io/(?:armada-os|virtudude)/armada(?::[A-Za-z0-9_.-]+)?(?:@sha256:[0-9a-f]{64})?", registry_ref):
+            origin.set_string("origin", "container-image-reference", "ostree-image-signed:docker://" + registry_ref)
+        checksum = deployment.get_csum()
+        try:
+            metadata = cls.metadata(repo, checksum)
+            manifest = json.loads(metadata["ostree.manifest"])
+            config = json.loads(metadata["ostree.container.image-config"])
+            if (not isinstance(config, dict) or not re.fullmatch(r"sha256:[0-9a-f]{64}", metadata["ostree.manifest-digest"])
+                    or manifest["schemaVersion"] != 2 or not isinstance(manifest["layers"], list) or not manifest["layers"]):
+                raise ValueError("invalid image metadata")
+            refs = {checksum: checksum}
+            for layer in manifest["layers"]:
+                digest = layer["digest"]
+                if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                    raise ValueError("invalid layer digest")
+                layer_ref = "ostree/container/blob/" + digest.replace(":", "_3A_")
+                _, layer_commit = repo.resolve_rev(layer_ref, False)
+                cls.metadata(repo, layer_commit)
+                refs[layer_ref] = layer_commit
+        except (KeyError, TypeError, ValueError, GLib.Error) as error:
+            raise Error(f"The selected deployment has no supported complete container image: {error}") from error
+        return cls(repo, checksum, origin, refs)
+
+    @staticmethod
+    def metadata(repo, checksum):
+        _, commit, state = repo.load_commit(checksum)
+        if state:
+            raise Error(f"Incomplete source commit: {checksum}")
+        return commit.unpack()[0]
+
+    def copy(self, target):
+        repo = Path(target) / "ostree/repo"
+        run("ostree", "pull-local", "--untrusted", "--disable-verify-bindings", f"--repo={repo}",
+            repo_path(self.repo), *self.refs)
+        for ref, expected in self.refs.items():
+            if output("ostree", "rev-parse", f"--repo={repo}", ref) != expected:
+                raise Error(f"Copied image reference does not match the source: {ref}")
+        run("ostree", "fsck", f"--repo={repo}")
+
+
+@contextmanager
+def locked_source():
+    _, OSTree = ostree_api()
+    sysroot = OSTree.Sysroot.new_default()
+    sysroot.initialize_with_mount_namespace(None)
+    if not sysroot.is_booted():
+        raise Error("The installer must run from a booted OSTree system")
+    run("mount", "--make-rprivate", "/")
+    print("Waiting for the OSTree source lock...", flush=True)
+    sysroot.lock()
+    try:
+        sysroot.load(None)
+        _, repo = sysroot.get_repo(None)
+        path = repo_path(repo)
+        # fsck can mark damaged commits partial, even without repair options.
+        run("mount", "--bind", path, path)
+        try:
+            run("mount", "-o", "remount,bind,ro", path)
+            yield SourceImage.read(repo, sysroot.get_booted_deployment())
+        finally:
+            run("umount", path)
+    finally:
+        sysroot.unlock()
+
+
+def base_kargs(directory=Path("/usr/lib/bootc/kargs.d")):
+    args = []
+    for path in sorted(directory.glob("*.toml")):
+        with path.open("rb") as stream:
+            data = tomllib.load(stream)
+        if "match-architectures" in data and platform.machine() not in data["match-architectures"]:
+            continue
+        values = data.get("kargs", [])
+        if not isinstance(values, list) or any(not isinstance(v, str) or any(c.isspace() for c in v) for v in values):
+            raise Error(f"Invalid kernel arguments in {path}")
+        args.extend(v for v in values if not v.startswith(("root=", "boot=", "rootflags=", "ostree=")))
+    return args
+
+
+def configure_deployment(target, source, uuids, kargs):
+    Gio, OSTree = ostree_api()
+    sysroot = OSTree.Sysroot.new(Gio.File.new_for_path(str(target)))
+    sysroot.load(None)
+    deployments = sysroot.get_deployments()
+    if len(deployments) != 1 or deployments[0].get_csum() != source.checksum:
+        raise Error("Target does not contain exactly the selected deployment")
+    deployment = deployments[0]
+    if deployment.get_origin().get_string("origin", "container-image-reference") != source.origin.get_string("origin", "container-image-reference"):
+        raise Error("Target update origin does not match the selected image")
+    root = target / "ostree/deploy" / deployment.get_osname() / "deploy" / f"{source.checksum}.{deployment.get_deployserial()}"
+    (root / "etc/fstab").write_text(
+        f"UUID={uuids['boot']} /boot auto ro 0 0\n"
+        f"UUID={uuids['esp']} /boot/efi vfat umask=0077,shortname=winnt 0 2\n"
+        f"UUID={uuids['root']} /var btrfs {BTRFS_OPTS},subvol=var 0 0\n"
+        f"UUID={uuids['root']} /var/home btrfs {BTRFS_OPTS},subvol=home 0 0\n")
+    entries = list((target / "boot/loader/entries").glob("*.conf"))
+    if len(entries) != 1:
+        raise Error("Expected one boot entry for the new installation")
+    entry = entries[0]
+    fields = dict(line.split(None, 1) for line in entry.read_text().splitlines() if line.strip())
+    pointers = [arg for arg in fields.get("options", "").split() if arg.startswith("ostree=")]
+    if len(pointers) != 1 or not fields.get("linux") or not fields.get("initrd"):
+        raise Error("Incomplete boot entry")
+    if (target / pointers[0].split("=", 1)[1].lstrip("/")).resolve(strict=True) != root.resolve():
+        raise Error("Boot entry does not reference the selected deployment")
+    linux, initrd = (fields[key] if fields[key].startswith("/boot/") else "/boot" + fields[key] for key in ("linux", "initrd"))
+    options = [f"root=UUID={uuids['root']}", "rw", f"boot=UUID={uuids['boot']}", *kargs,
+               f"rootflags=subvol=root,{BTRFS_OPTS}", pointers[0]]
+    entry.write_text(f"title Armada\nversion {fields.get('version', '1')}\noptions {' '.join(options)}\n"
+                     f"linux {linux}\ninitrd {initrd}\nfdtdir {Path(linux).parent}/dtb\n")
+
+
+class Installation:
+    def __init__(self, plan):
+        self.plan = plan
+        self.changed = False
+        self.mounts = []
+        self.work = None
+
+    def mount(self, source, target, options=None):
+        target.mkdir(parents=True, exist_ok=True)
+        self.mounts.append(target)
+        try:
+            run("mount", *(["-o", options] if options else []), source, target)
+        except BaseException:
+            if not target.is_mount():
+                self.mounts.remove(target)
+            raise
+
+    def close(self):
+        failed = False
+        for target in reversed(self.mounts):
+            try:
+                run("umount", target)
+            except (Error, OSError) as error:
+                failed = True
+                print(f"ERROR: cleanup: {error}", file=sys.stderr)
+        if self.work and not failed:
+            shutil.rmtree(self.work)
+        if failed:
+            raise Error("Could not unmount the installation filesystems; do not remove storage")
+
+    def partition(self):
+        plan = self.plan
+        refuse_boot_disk(plan.table.device)
+        if read_table(plan.table.device) != plan.table:
+            raise Error("The partition table changed after inspection; start the installer again")
+        require_idle(plan)
+        self.changed = True
+        plan.write()
+        run("partprobe", plan.table.device)
+        run("udevadm", "settle")
+        plan.verify(read_table(plan.table.device))
+        plan.verify_kernel()
+        if plan.operation != "replace":
+            run("dd", "if=/dev/zero", f"of={part_node(plan.table.device, plan.userdata.number)}",
+                "bs=1M", "count=8", "conv=fsync", "status=none")
+
+    def deploy(self, source, kargs):
+        plan = self.plan
+        esp, boot, root = [part_node(plan.table.device, p.number) for p in plan.create]
+        self.work = Path(tempfile.mkdtemp(prefix="armada-install.", dir="/run"))
+        target, top = self.work / "target", self.work / "top"
+        print("Preparing the internal filesystems...", flush=True)
+        run("mkfs.btrfs", "-f", "-L", "root", root)
+        self.mount(root, top)
+        for name in ("root", "var", "home"):
+            run("btrfs", "subvolume", "create", top / name)
+        run("umount", top)
+        self.mounts.remove(top)
+        self.mount(root, target, BTRFS_OPTS + ",subvol=root")
+        self.mount(root, target / "var", BTRFS_OPTS + ",subvol=var")
+        self.mount(root, target / "var/home", BTRFS_OPTS + ",subvol=home")
+        run("ostree", "admin", "init-fs", "--modern", target)
+        run("mkfs.vfat", "-F", "16", "-S", plan.table.sector_size, "-s", 16384 // plan.table.sector_size, "-n", "ARMADA", esp)
+        run("mkfs.ext4", "-F", "-L", "boot", boot)
+        self.mount(boot, target / "boot")
+        self.mount(esp, target / "boot/efi")
+        uuids = {name: output("blkid", "-s", "UUID", "-o", "value", node)
+                 for name, node in (("root", root), ("boot", boot), ("esp", esp))}
+        if not all(re.fullmatch(r"[A-Za-z0-9-]+", value) for value in uuids.values()):
+            raise Error("Could not determine filesystem UUIDs")
+        repo = target / "ostree/repo"
+        run("ostree", "config", f"--repo={repo}", "set", "sysroot.bootloader", "none")
+        run("ostree", "config", f"--repo={repo}", "set", "sysroot.bootprefix", "true")
+        run("ostree", "config", f"--repo={repo}", "set", "sysroot.readonly", "true")
+        run("ostree", "admin", "os-init", f"--sysroot={target}", "default")
+        print("Copying and verifying the selected image...", flush=True)
+        source.copy(target)
+        origin = self.work / "origin"
+        origin.write_text(source.origin.to_data()[0])
+        run("ostree", "admin", "deploy", "--no-merge", f"--origin-file={origin}", f"--sysroot={target}", "--os=default", source.checksum)
+        seed = target / ".armada-var-seed"
+        run("ostree", "checkout", f"--repo={repo}", "--subpath=/var", source.checksum, seed)
+        run("cp", "-a", f"{seed}/.", f"{target}/var/")
+        shutil.rmtree(seed)
+        configure_deployment(target, source, uuids, kargs)
+        print("Writing the internal boot image...", flush=True)
+        with tempfile.TemporaryDirectory(prefix=".armada-bootimg.", dir=target) as scratch:
+            run(BOOTIMG, env=dict(os.environ, TMPDIR=scratch, ESP=str(target / "boot/efi"),
+                                 BOOTROOT=str(target / "boot"), SYSROOT=str(target)))
+        if not (target / "boot/efi/KERNEL").is_file() or not (target / "boot/efi/KERNEL").stat().st_size:
+            raise Error("The internal boot image was not created")
+
+    def recovery(self):
+        android = " Android userdata and earlier partitions are unchanged." if self.plan.operation == "replace" else ""
+        return "Internal storage was modified." + android + " Do not boot internal storage. " + RECOVERY
+
+
+@contextmanager
+def operation(plan):
+    job = Installation(plan)
+    failure = None
+    try:
+        yield job
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        try:
+            job.close()
+        except (Error, OSError) as error:
+            if failure is None:
+                failure = error
+                raise
+        finally:
+            if failure is not None and job.changed:
+                print("ERROR: " + job.recovery(), file=sys.stderr)
+
+
+@contextmanager
+def inhibit_sleep():
+    # Starting systemd-inhibit does not mean logind has granted the lock.
+    child = subprocess.Popen(["systemd-inhibit", "--what=sleep:idle:shutdown", "--who=Armada Installer",
+                              "--why=installer operation in progress", "--mode=block", sys.executable, "-c",
+                              "import time; print('ready', flush=True); time.sleep(2147483647)"],
+                             stdout=subprocess.PIPE, start_new_session=True)
+    try:
+        if not select.select([child.stdout], [], [], 10)[0] or child.stdout.readline() != b"ready\n":
+            raise Error("Could not inhibit sleep and shutdown; installation was not started")
+        yield
+    finally:
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGTERM)
+        child.wait()
+        child.stdout.close()
+
+
+def require_commands():
+    needed = ["sfdisk", "lsblk", "findmnt", "partprobe", "udevadm", "dd", "systemd-inhibit", "mount"]
+    needed += ["btrfs", "mkfs.btrfs", "mkfs.ext4", "mkfs.vfat", "umount", "ostree", "blkid", "cp", BOOTIMG]
+    missing = [name for name in needed if not shutil.which(name)]
+    if missing:
+        raise Error("Missing required tools: " + ", ".join(missing))
+
+
+def execute(args):
+    if os.geteuid() != 0:
+        raise Error("This command must run as root")
+    if args.command == "preflight":
+        started = time.monotonic()
+        with inhibit_sleep(), locked_source() as source:
+            print("Checking the complete source repository...", flush=True)
+            run("ostree", "fsck", f"--repo={repo_path(source.repo)}")
+            print(f"Validated source commit: {source.checksum}", flush=True)
+        print(f"Source preflight completed in {time.monotonic() - started:.1f} seconds; internal storage was not touched.", flush=True)
         return
-    fi
-
-    while :; do
-        read -rp "New Android userdata size in GiB [min ${min_gib}, max ${max_gib}]: " ud_gib
-        ud_gib=${ud_gib:-$min_gib}
-        if ! [[ $ud_gib =~ ^[0-9]+$ ]]; then echo "  enter an integer"; continue; fi
-        ud_mib=$((ud_gib * 1024))
-        if (( ud_mib < MIN_NEW_UD_MIB || ud_mib > MAX_NEW_UD_MIB )); then
-            echo "  out of range: ${min_gib} .. ${max_gib} GiB"; continue
-        fi
-        break
-    done
-}
-
-# Fills [esp_start_mib .. region_end_mib] with ARMADA/ARMADA_BOOT/ARMADA_ROOT and
-# resolves them by label. userdata is the last existing partition either way (fresh
-# recreates it, replace leaves it), so the three claim slots UD_NUM+1..+3.
-create_linux_partitions() {
-    local esp_start_mib="$1" region_end_mib="$2"
-    local esp_end_mib boot_start_mib boot_end_mib root_start_mib esp_num boot_num root_num part
-    esp_end_mib=$((esp_start_mib + ESP_MIB))
-    boot_start_mib=$esp_end_mib
-    boot_end_mib=$((boot_start_mib + BOOT_MIB))
-    root_start_mib=$boot_end_mib
-    esp_num=$((UD_NUM + 1))
-    boot_num=$((UD_NUM + 2))
-    root_num=$((UD_NUM + 3))
-
-    parted -a optimal -s "$DEVICE" mkpart primary fat32 "${esp_start_mib}MiB" "${esp_end_mib}MiB"
-    parted -s "$DEVICE" name "$esp_num" "$ESP_PARTLABEL"
-    parted -s "$DEVICE" set "$esp_num" boot on
-    sgdisk --typecode="${esp_num}:${ESP_GUID}" "$DEVICE" >/dev/null
-
-    parted -a optimal -s "$DEVICE" mkpart primary ext4 "${boot_start_mib}MiB" "${boot_end_mib}MiB"
-    parted -s "$DEVICE" name "$boot_num" ARMADA_BOOT
-
-    # End the btrfs at region_end_mib, never 100%: that bound stays inside the window
-    # actually owned (the freed userdata window on fresh, the freed Linux window on
-    # replace) and never spans a trailing partition.
-    parted -a optimal -s "$DEVICE" mkpart primary btrfs "${root_start_mib}MiB" "${region_end_mib}MiB"
-    parted -s "$DEVICE" name "$root_num" ARMADA_ROOT
-
-    partprobe "$DEVICE" || true
-    udevadm settle
-
-    # Resolve by the labels just set, not by assumed device-node numbers.
-    ESP_PART=$(resolve_partlabel "$ESP_PARTLABEL")
-    BOOT_PART=$(resolve_partlabel ARMADA_BOOT)
-    ROOT_PART=$(resolve_partlabel ARMADA_ROOT)
-    for part in "$ESP_PART" "$BOOT_PART" "$ROOT_PART"; do
-        [[ -b $part ]] || { echo "ERROR: $part did not appear after partitioning" >&2; exit 1; }
-    done
-}
-
-# Fresh device: shrink Android userdata to the chosen size, then fill the freed
-# space with Armada. Android is reset (superblock zeroed).
-install_fresh() {
-    local new_ud_end_mib=$((UD_START_MIB + ud_mib))
-
-    cat <<EOF
-
-Plan:
-  Android userdata: ${UD_START_MIB} .. ${new_ud_end_mib} MiB (${ud_gib} GiB, will be reset)
-  Armada:           ${new_ud_end_mib} .. ${UD_END_MIB} MiB
-
-EOF
-    confirm "Proceed with destructive partition changes?" || { echo "Aborted."; exit 0; }
-
-    if findmnt -n "$UD_PART" >/dev/null 2>&1; then
-        umount "$UD_PART"
-    fi
-
-    # Past this point the original Android userdata partition is gone; a failure
-    # leaves no bootable internal layout, so arm the recovery message.
-    destructive=1
-    parted -s "$DEVICE" rm "$UD_NUM"
-    parted -a optimal -s "$DEVICE" mkpart primary ext4 "${UD_START_MIB}MiB" "${new_ud_end_mib}MiB"
-    parted -s "$DEVICE" name "$UD_NUM" userdata
-
-    create_linux_partitions "$new_ud_end_mib" "$UD_END_MIB"
-    [[ -b $UD_PART ]] || { echo "ERROR: $UD_PART did not appear after partitioning" >&2; exit 1; }
-    dd if=/dev/zero of="$UD_PART" bs=1M count=8 status=none
-}
-
-# Existing install: delete only its Linux partitions and put Armada in that freed
-# space. Android userdata is left exactly as-is: no resize, no wipe.
-install_replace() {
-    local esp_start_mib region_end_mib win_mib installed n p
-    OPERATION=replace
-    # First MiB boundary after the untouched userdata, out to the end of the freed
-    # Linux region (OUR_MAX_END, the original userdata extent).
-    esp_start_mib=$(( (UD_END + 1048576) / 1048576 ))
-    region_end_mib=$(( OUR_MAX_END / 1048576 ))
-    win_mib=$(( region_end_mib - esp_start_mib ))
-    if (( win_mib < ESP_MIB + BOOT_MIB + ROOT_MIN_MIB )); then
-        echo "ERROR: the freed Linux space (~$((win_mib / 1024)) GiB) is too small for Armada (needs ~$(( (ESP_MIB + BOOT_MIB + ROOT_MIN_MIB) / 1024 )) GiB)." >&2
-        echo "       Use 'armada-installer reset' to return the disk to Android, then install fresh." >&2
-        exit 1
-    fi
-    if (( has_armada || has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
-
-    cat <<EOF
-
-Replace ${installed} with Armada, keeping Android?
-
-  Deleting: ${OUR_LABELS[*]}
-  Android userdata (~${UD_ORIG_GIB} GiB): left untouched.
-  Armada fills the ~$((win_mib / 1024)) GiB freed by ${installed}.
-
-EOF
-    confirm "Replace ${installed} with Armada?" || { echo "Aborted."; exit 0; }
-
-    for n in "${OUR_NUMS[@]}"; do
-        p=$(part_node "$DEVICE" "$n")
-        if findmnt -n "$p" >/dev/null 2>&1; then
-            umount "$p" || { echo "ERROR: $p is mounted and could not be unmounted; aborting before any change." >&2; exit 1; }
-        fi
-    done
-
-    # Past this point the old Linux install is being torn down; a failure leaves no
-    # bootable internal layout, so arm the recovery message. Android is untouched.
-    destructive=1
-    for n in $(printf '%s\n' "${OUR_NUMS[@]}" | sort -rn); do
-        parted -s "$DEVICE" rm "$n"
-    done
-    create_linux_partitions "$esp_start_mib" "$region_end_mib"
-}
-
-base_kargs() {
-    local file
-    for file in /usr/lib/bootc/kargs.d/*.toml; do
-        [[ -f $file ]] || continue
-        sed -n '/^kargs = \[/,/^\]/{s/^[[:space:]]*"\([^"]*\)",\?/\1/p}' "$file"
-    done
-}
-
-set_origin() {
-    # A raw `ostree admin deploy` leaves no container origin (bootc upgrade no-ops);
-    # copy the booted origin so the internal install tracks the same ghcr ref.
-    local src dst ref registry bare
-    # || true: an empty glob makes ls exit nonzero, which set -e would treat as fatal.
-    src=$(ls /ostree/deploy/*/deploy/"${commit}".*.origin 2>/dev/null | head -n1) || true
-    dst=$(ls "$TARGET"/ostree/deploy/*/deploy/"${commit}".*.origin 2>/dev/null | head -n1) || true
-    if [[ -z $src || -z $dst ]]; then
-        echo "WARNING: could not set bootc origin; internal install will NOT receive OTA updates" >&2
+    device = discover_device(args.device)
+    table = read_table(device)
+    if args.command == "detect":
+        info = table.info()
+        info.update(device=device, table_fingerprint=table_fingerprint(table))
+        print(json.dumps(info) if args.json else "\n".join(f"{k}={v}" for k, v in info.items()))
         return
-    fi
-    cp -f "$src" "$dst"
-    ref=$(sed -n 's/^container-image-reference=//p' "$dst" | head -1)
-    # Preserve unknown origins; signed Armada rewrites would make bootc reject them.
-    registry=$(armada_registry_from_ref "$ref")
-    if [[ -z $registry ]]; then
-        echo "WARNING: bootc origin is '${ref:-<none>}', not a signed Armada repository; OTA updates will NOT work on this install (expected for a locally-built image)." >&2
-        return
-    fi
-    # Anchor at the repository so transport-prefixed and digest refs normalize safely.
-    bare="${registry}${ref##*${registry}}"
-    sed -i "s|^container-image-reference=.*|container-image-reference=ostree-image-signed:docker://${bare}|" "$dst"
-}
-
-copy_bootc_ref() {
-    local ref="$1"
-    ostree pull-local --repo="$TARGET/ostree/repo" /sysroot/ostree/repo "$ref"
-}
-
-copy_current_bootc_deployment() {
-    local parent ref target_commit manifest blob_refs image_refs
-    local image_ref_count=0
-    local -a required_refs=("$commit")
-
-    copy_bootc_ref "$commit" || {
-        echo "ERROR: could not copy booted deployment commit $commit" >&2
-        return 1
-    }
-
-    parent=$(ostree show --repo=/sysroot/ostree/repo "$commit" |
-        sed -n 's/^Parent:[[:space:]]*//p' | head -n1)
-    if [[ -n $parent ]]; then
-        copy_bootc_ref "$parent" || {
-            echo "ERROR: could not copy container-image parent commit $parent" >&2
-            return 1
-        }
-        required_refs+=("$parent")
-    fi
-
-    # Generic OCI layers are cached as independent commits. The final image commit
-    # does not reference them through OSTree history, but bootc still requires each
-    # manifest layer's blob ref to read deployment metadata and reuse cached layers.
-    if ! manifest=$(ostree show --repo=/sysroot/ostree/repo \
-        --print-metadata-key=ostree.manifest "$commit" 2>/dev/null); then
-        [[ -n $parent ]] || {
-            echo "ERROR: booted commit has no container manifest" >&2
-            return 1
-        }
-        manifest=$(ostree show --repo=/sysroot/ostree/repo \
-            --print-metadata-key=ostree.manifest "$parent") || {
-            echo "ERROR: container-image parent has no manifest" >&2
-            return 1
-        }
-    fi
-    # ostree prints string metadata in GVariant form, including outer quotes.
-    manifest=${manifest#\'}
-    manifest=${manifest%\'}
-    blob_refs=$(jq -er '
-        .layers as $layers
-        | if ($layers | type) != "array" or ($layers | length) == 0 then
-              error("container manifest has no layers")
-          else
-              $layers
-              | map(
-                  .digest
-                  | if type == "string" and test("^sha256:[0-9a-f]{64}$") then
-                        "ostree/container/blob/" + sub(":"; "_3A_")
-                    else
-                        error("invalid container layer digest")
-                    end
-                )
-              | unique[]
-          end
-    ' <<<"$manifest") || {
-        echo "ERROR: could not read container layer refs from booted commit" >&2
-        return 1
-    }
-    while IFS= read -r ref; do
-        copy_bootc_ref "$ref" || {
-            echo "ERROR: could not copy bootc layer ref $ref" >&2
-            return 1
-        }
-        required_refs+=("$ref")
-    done <<<"$blob_refs"
-
-    # A source with a staged update may have image refs for multiple commits. Copy
-    # only refs for the deployment being installed (or its container-image parent).
-    image_refs=$(ostree refs --repo=/sysroot/ostree/repo |
-        sed -n 's#^\(ostree/container/image/.*\)#\1#p') || {
-        echo "ERROR: could not list container image refs" >&2
-        return 1
-    }
-    while IFS= read -r ref; do
-        [[ -n $ref ]] || continue
-        target_commit=$(ostree rev-parse --repo=/sysroot/ostree/repo "$ref" 2>/dev/null || true)
-        if [[ $target_commit == "$commit" || ( -n $parent && $target_commit == "$parent" ) ]]; then
-            copy_bootc_ref "$ref" || {
-                echo "ERROR: could not copy bootc image ref $ref" >&2
-                return 1
-            }
-            required_refs+=("$ref")
-            image_ref_count=$((image_ref_count + 1))
-        fi
-    done <<<"$image_refs"
-
-    if (( image_ref_count == 0 )); then
-        echo "ERROR: no container image ref matches the booted deployment" >&2
-        return 1
-    fi
-
-    # Do not create a boot entry for a partial copy. In particular, a deployment
-    # can boot without these layer refs while `bootc status` and upgrades are broken.
-    for ref in "${required_refs[@]}"; do
-        ostree rev-parse --repo="$TARGET/ostree/repo" "$ref" >/dev/null 2>&1 || {
-            echo "ERROR: copied bootc ref is missing from target repository: $ref" >&2
-            return 1
-        }
-    done
-}
-
-seed_kernel() {
-    # SYSROOT must be the target: the ostree= karg comes from the target's BLS
-    # entry and only resolves against the filesystem that generated it.
-    ESP="$TARGET/boot/efi" BOOTROOT="$TARGET/boot" SYSROOT="$TARGET" \
-        /usr/libexec/armada/armada-bootimg-update ||
-        { echo "ERROR: no /KERNEL written; the internal install is complete but not bootable" >&2; exit 1; }
-}
-
-write_fstab() {
-    local deploy_dir
-    deploy_dir=$(find "$TARGET/ostree/deploy/default/deploy" -mindepth 1 -maxdepth 1 -type d -name "${commit}.*" | sort | tail -n1)
-    [[ -n $deploy_dir ]] || { echo "ERROR: could not find ostree deploy dir" >&2; exit 1; }
-    mkdir -p "$deploy_dir/etc"
-    printf 'UUID=%s /boot auto ro 0 0\n' "$BOOT_UUID" > "$deploy_dir/etc/fstab"
-    # Mount the ESP so /KERNEL regen lands on the FAT the ABL reads, not a /boot dir.
-    printf 'UUID=%s /boot/efi vfat umask=0077,shortname=winnt 0 2\n' "$ESP_UUID" >> "$deploy_dir/etc/fstab"
-    printf 'UUID=%s /var btrfs %s,subvol=var 0 0\n' "$ROOT_UUID" "$BTRFS_OPTS" >> "$deploy_dir/etc/fstab"
-    printf 'UUID=%s /var/home btrfs %s,subvol=home 0 0\n' "$ROOT_UUID" "$BTRFS_OPTS" >> "$deploy_dir/etc/fstab"
-}
-
-rewrite_bls() {
-    local entry version linux initrd ostree_arg options karg bootdir
-    # Just-deployed = default = highest BLS version (same helper armada-bootimg-update uses).
-    entry=$(armada_default_bls_entry "$TARGET/boot")
-    [[ -n $entry ]] || { echo "ERROR: no BLS entry created" >&2; exit 1; }
-
-    version=$(sed -n 's/^version //p' "$entry" | head -1)
-    linux=$(sed -n 's/^linux //p' "$entry" | head -1)
-    initrd=$(sed -n 's/^initrd //p' "$entry" | head -1)
-    ostree_arg=$(grep -o 'ostree=[^ ]*' "$entry" | head -n1 || true)
-    [[ -n $linux && -n $initrd && -n $ostree_arg ]] || { echo "ERROR: BLS entry incomplete" >&2; exit 1; }
-    [[ $linux == /boot/* ]] || linux="/boot${linux}"
-    [[ $initrd == /boot/* ]] || initrd="/boot${initrd}"
-
-    options="root=UUID=${ROOT_UUID} rw boot=UUID=${BOOT_UUID}"
-    while IFS= read -r karg; do
-        # Armada always uses the btrfs subvol layout, so these rootflags replace kargs.d's.
-        [[ $karg == rootflags=* ]] && continue
-        options="${options} ${karg}"
-    done < <(base_kargs)
-    options="${options} rootflags=subvol=root,${BTRFS_OPTS}"
-    options="${options} ${ostree_arg}"
-
-    # fdtdir (not a single devicetree): armada-bootimg-update reads this to find
-    # the DTBs it appends to /KERNEL, so the ABL model picker can pick among them.
-    bootdir=$(dirname "$linux")
-    cat > "$entry" <<EOF
-title Armada
-version ${version:-1}
-options ${options}
-linux ${linux}
-initrd ${initrd}
-fdtdir ${bootdir}/dtb
-EOF
-}
-
-format_root() {
-    local tmp
-    mkfs.btrfs -f -L root "$ROOT_PART" >/dev/null
-    tmp=$(mktemp -d -t armada-root.XXXXXX)
-    mount "$ROOT_PART" "$tmp"
-    btrfs subvolume create "$tmp/root" >/dev/null
-    btrfs subvolume create "$tmp/var" >/dev/null
-    btrfs subvolume create "$tmp/home" >/dev/null
-    umount "$tmp"
-    rmdir "$tmp"
-}
-
-mount_root() {
-    mount -o "${BTRFS_OPTS},subvol=root" "$ROOT_PART" "$TARGET"
-    mkdir -p "$TARGET/var"
-    mount -o "${BTRFS_OPTS},subvol=var" "$ROOT_PART" "$TARGET/var"
-    mkdir -p "$TARGET/var/home"
-    mount -o "${BTRFS_OPTS},subvol=home" "$ROOT_PART" "$TARGET/var/home"
-}
-
-deploy_to_internal() {
-    local commit
-
-    for part in "$ESP_PART" "$BOOT_PART" "$ROOT_PART"; do
-        if findmnt -n "$part" >/dev/null 2>&1; then
-            umount "$part"
-        fi
-    done
-
-    format_root
-
-    TARGET=$(mktemp -d -t armada-install.XXXXXX)
-
-    mount_root
-    ostree admin init-fs --modern "$TARGET"
-
-    # ARMADA_ROOT is good; only now reformat the (re)bootable ESP + BOOT. Past this
-    # point a failure leaves no bootable boot.img; the trap surfaces the recovery.
-    destructive=1
-    # The working SD ESP (BIB-made) is FAT16, and the ABL reads FAT16, not FAT32.
-    # -S 4096 = device 4 KiB sectors; -s 4 keeps the 512 MiB ESP in FAT16 cluster range.
-    mkfs.vfat -F 16 -S 4096 -s 4 -n "$ESP_PARTLABEL" "$ESP_PART" >/dev/null
-    mkfs.ext4 -F -L boot "$BOOT_PART" >/dev/null
-    ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART")
-    BOOT_UUID=$(blkid -s UUID -o value "$BOOT_PART")
-    ESP_UUID=$(blkid -s UUID -o value "$ESP_PART")
-
-    mkdir -p "$TARGET/boot"
-    mount "$BOOT_PART" "$TARGET/boot"
-    mkdir -p "$TARGET/boot/efi"
-    mount "$ESP_PART" "$TARGET/boot/efi"
-
-    ostree admin os-init --sysroot="$TARGET" default
-    commit=$(ostree admin status --json | jq -r '.deployments[] | select(.booted) | .checksum' | head -n1)
-    [[ -n $commit && $commit != null ]] || { echo "ERROR: could not determine booted ostree commit" >&2; exit 1; }
-
-    copy_current_bootc_deployment
-    # --no-merge: a fresh install takes the image's clean /etc, not the booted
-    # system's /etc edits (the default upgrade-style merge would carry them over).
-    ostree admin deploy --no-merge --sysroot="$TARGET" --os=default "$commit"
-
-    # Seed /var from the image commit (it carries armada-owned /var/home/armada);
-    # ostree admin deploy doesn't populate /var, so the home would land root-owned.
-    local varseed
-    varseed=$(mktemp -d -t armada-var.XXXXXX)
-    ostree checkout --repo="$TARGET/ostree/repo" --subpath=/var "$commit" "$varseed/v"
-    cp -a "$varseed/v/." "$TARGET/var/"
-    rm -rf "$varseed"
-
-    write_fstab
-    set_origin
-    rewrite_bls
-    seed_kernel
-    sync
-}
-
-cmd_detect() {
-    need_root
-    check_device
-    detect_mode
-    if [[ $mode == occupied ]]; then
-        find_userdata
-        collect_our_tail
-        local installed
-        if (( has_armada || has_armada_boot || has_armada_root )); then
-            installed=armada
-        elif (( has_rocknix || has_storage )); then
-            installed=rocknix
-        else
-            installed=unknown
-        fi
-        echo "mode=occupied"
-        echo "installed=${installed}"
-        echo "android_gib=${UD_ORIG_GIB}"
-        echo "linux_gib=$(( LINUX_BYTES / 1073741824 ))"
-    else
-        find_userdata
-        if compute_ud_bounds; then
-            echo "mode=fresh"
-            echo "android_min_gib=$((MIN_NEW_UD_MIB / 1024))"
-            echo "android_max_gib=$((MAX_NEW_UD_MIB / 1024))"
-            echo "android_current_gib=${UD_ORIG_GIB}"
-        else
-            echo "mode=toosmall"
-            echo "needed_gib=$((RESERVE_MIB / 1024))"
-            echo "android_current_gib=${UD_ORIG_GIB}"
-        fi
-    fi
-}
-
-cmd_install() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -y|--assume-yes) ASSUME_YES=1 ;;
-            --userdata-gib) UD_GIB="${2:-}"; shift ;;
-            --userdata-gib=*) UD_GIB="${1#*=}" ;;
-            *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
-        esac
-        shift
-    done
-
-    need_root
-    need_cmds
-    check_device
-    refuse_self
-    trap cleanup EXIT
-    inhibit_sleep
-
-    detect_mode
-    case "$mode" in
-        occupied)
-            # An existing ROCKNIX/Armada install: replace its Linux partitions in
-            # place, keeping Android. (Reclaiming the space for Android is `reset`.)
-            find_userdata
-            collect_our_tail
-            (( ${#OUR_NUMS[@]} >= 1 )) || { echo "ERROR: found no removable ROCKNIX/Armada partitions on $DEVICE" >&2; exit 1; }
-            if (( OUR_FOREIGN_AFTER )); then
-                echo "ERROR: an unrecognized partition lies after userdata on $DEVICE; refusing." >&2
-                parted -s "$DEVICE" print >&2
-                exit 1
-            fi
-            install_replace
-            ;;
-        fresh)
-            find_userdata
-            require_userdata_last
-            cat <<EOF
-
-No internal Armada install was found.
-
-Current Android userdata: ${UD_ORIG_GIB} GiB (${UD_START_MIB}MiB .. ${UD_END_MIB}MiB)
-
-Fresh install will shrink Android userdata, wipe Android user data, create
-ARMADA/ARMADA_BOOT/ARMADA_ROOT, and install the running Armada image.
-
-After install, internal storage boots before SD. To remove it later and give
-the space back to Android, run: armada-installer reset
-
-EOF
-            confirm "Resize Android userdata and install Armada?" || { echo "Aborted."; exit 0; }
-            choose_userdata_size
-            install_fresh
-            ;;
-    esac
-
-    deploy_to_internal
-
-    cat <<EOF
-
-Install complete.
-Power off, remove the SD card, then power on.
-
-EOF
-}
-
-cmd_reset() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -y|--assume-yes) ASSUME_YES=1 ;;
-            *) echo "ERROR: unknown argument: $1" >&2; exit 2 ;;
-        esac
-        shift
-    done
-
-    OPERATION=reset
-    need_root
-    need_cmds
-    check_device
-    refuse_self
-    trap cleanup EXIT
-    inhibit_sleep
-
-    detect_mode
-    [[ $mode == occupied ]] || { echo "Nothing to remove: no ROCKNIX or Armada install found on $DEVICE." >&2; exit 1; }
-
-    find_userdata
-    collect_our_tail
-    (( ${#OUR_NUMS[@]} >= 1 )) || { echo "ERROR: found no removable ROCKNIX/Armada partitions on $DEVICE" >&2; exit 1; }
-    if (( OUR_FOREIGN_AFTER )); then
-        echo "ERROR: an unrecognized partition lies after userdata on $DEVICE; refusing to remove." >&2
-        parted -s "$DEVICE" print >&2
-        exit 1
-    fi
-
-    local new_ud_end_mib new_ud_gib installed n p
-    new_ud_end_mib=$(( OUR_MAX_END / 1048576 ))
-    new_ud_gib=$(( (new_ud_end_mib - UD_START_MIB) / 1024 ))
-    if (( has_armada || has_armada_boot || has_armada_root )); then installed="Armada"; else installed="ROCKNIX"; fi
-
-    cat <<EOF
-
-Remove ${installed} from internal storage?
-
-  Deleting: ${OUR_LABELS[*]}
-  Android userdata grows back to ~${new_ud_gib} GiB (full internal storage).
-  Android factory-resets (its userdata re-initializes) on next Android boot.
-
-EOF
-    confirm "Remove ${installed} and restore Android to full disk?" || { echo "Aborted."; exit 0; }
-
-    # Unmount every target BEFORE any destructive change. If one won't unmount,
-    # abort here (destructive still 0) rather than delete partitions and have
-    # parted refuse the resize later, mid-teardown.
-    for n in "${OUR_NUMS[@]}"; do
-        p=$(part_node "$DEVICE" "$n")
-        if findmnt -n "$p" >/dev/null 2>&1; then
-            umount "$p" || { echo "ERROR: $p is mounted and could not be unmounted; aborting before any change." >&2; exit 1; }
-        fi
-    done
-    if findmnt -n "$UD_PART" >/dev/null 2>&1; then
-        umount "$UD_PART" || { echo "ERROR: $UD_PART is mounted and could not be unmounted; aborting before any change." >&2; exit 1; }
-    fi
-
-    # Past this point the layout is being torn down; a failure leaves internal
-    # storage half-modified, so arm the recovery message.
-    destructive=1
-    # Highest number first: deleting a lower number would renumber the rest.
-    for n in $(printf '%s\n' "${OUR_NUMS[@]}" | sort -rn); do
-        parted -s "$DEVICE" rm "$n"
-    done
-    # resizepart preserves userdata's GPT type GUID + name (so Android still finds
-    # it); only the end LBA moves out to reclaim the freed window.
-    parted -a optimal -s "$DEVICE" resizepart "$UD_NUM" "${new_ud_end_mib}MiB"
-
-    partprobe "$DEVICE" || true
-    udevadm settle
-    [[ -b $UD_PART ]] || { echo "ERROR: $UD_PART missing after resize" >&2; exit 1; }
-    dd if=/dev/zero of="$UD_PART" bs=1M count=8 status=none
-    sync
-
-    cat <<EOF
-
-${installed} removed. Android userdata restored to full internal storage.
-Remove the SD card and reboot to use Android, or relaunch the installer to
-install Armada again.
-
-EOF
-}
-
-# Escape Pango markup specials so an interpolated value (e.g. the "&" in a label)
-# can't break a --text dialog. Button labels aren't markup, so don't escape those.
-esc() {
-    local s="$1"
-    s="${s//&/&amp;}"; s="${s//</&lt;}"; s="${s//>/&gt;}"
-    printf '%s' "$s"
-}
-
-gui_die() {
-    zenity --error --title="$GUI_TITLE" --width=460 --text="$1" >/dev/null 2>&1
-    exit 1
-}
-
-# Heartbeat drives the dialog (the install's output is too sparse to); wait gives the true code.
-gui_run() {
-    local text="$1" pid; shift
-    sudo "$SELF" "$@" >"$GUI_LOG" 2>&1 &
-    pid=$!
-    ( while kill -0 "$pid" 2>/dev/null; do printf '\n'; sleep 1; done ) \
-        | zenity --progress --pulsate --auto-close --no-cancel \
-            --title="$GUI_TITLE" --width=480 --text="$text" >/dev/null 2>&1
-    wait "$pid"
-}
-
-gui_offer_poweroff() {
-    zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=460 --no-wrap \
-        --ok-label="Power off" --cancel-label="Close" --text="$1" \
-        && sudo systemctl poweroff || true
-}
-
-gui_install_flow() {
-    local info="$1" amin amax acur default_android ud
-    amin=$(sed -n 's/^android_min_gib=//p' <<<"$info")
-    amax=$(sed -n 's/^android_max_gib=//p' <<<"$info")
-    acur=$(sed -n 's/^android_current_gib=//p' <<<"$info")
-
-    zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=480 --no-wrap \
-        --ok-label="Continue" --cancel-label="Cancel" \
-        --text="<b>Install Armada alongside Android?</b>\n\nThis <b>factory-resets Android</b>: you lose installed Android apps and data\n(the Android system itself is kept). Your SD card is not touched." \
-        || exit 0
-
-    # Default Android to a usable size when there's room, else the floor
-    # (Armada-first).
-    default_android=$amin
-    (( amax >= 32 )) && default_android=32
-    ud=$(zenity --scale --title="$GUI_TITLE" --icon="$GUI_ICON" \
-        --text="<b>Choose Android's size</b>\n\nThe slider sets Android's storage in GB.\nArmada gets the rest.\n\nCurrent Android: <b>${acur} GB</b>." \
-        --min-value="$amin" --max-value="$amax" --value="$default_android" --step=4) \
-        || exit 0
-
-    zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=480 --no-wrap \
-        --ok-label="Install" --cancel-label="Cancel" \
-        --text="<b>Ready to install</b>\n\nAndroid:  <b>${ud} GB</b>\nArmada:  <b>$((acur - ud)) GB</b>\n\nResizing Android <b>factory-resets it</b>: you lose installed apps and data (the Android system is kept)." \
-        || exit 0
-
-    gui_run "Installing Armada, do not power off…" install --assume-yes --userdata-gib "$ud" \
-        || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, select UNINSTALL CFW in ABL to abandon the installation."
-    gui_offer_poweroff "<b>Install complete.</b>\n\nPower off, remove the SD card, then power on."
-}
-
-gui_manage_flow() {
-    local info="$1" installed android linux name primary remove out rc
-    installed=$(sed -n 's/^installed=//p' <<<"$info")
-    android=$(sed -n 's/^android_gib=//p' <<<"$info")
-    linux=$(sed -n 's/^linux_gib=//p' <<<"$info")
-    case "$installed" in
-        armada) name="Armada";  primary="Reinstall Armada" ;;
-        rocknix) name="ROCKNIX"; primary="Switch to Armada" ;;
-        *) gui_die "Internal storage has an unrecognized Linux layout.\n\nThis tool only manages installs it created. To remove it, select UNINSTALL CFW in ABL." ;;
-    esac
-    remove="Remove & Restore Android"
-    local name_e remove_e primary_e
-    name_e=$(esc "$name"); remove_e=$(esc "$remove"); primary_e=$(esc "$primary")
-
-    # Three choices: primary (keep Android) = OK; remove (wipe Android) = extra
-    # button (echoed on stdout, exit 1); Cancel/close = exit 1, no stdout.
-    out=$(zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=540 --no-wrap \
-        --ok-label="$primary" --extra-button="$remove" --cancel-label="Cancel" \
-        --text="<b>${name_e} is installed on internal storage.</b>\n\nAndroid:  <b>${android} GB</b>\n${name_e}:  <b>${linux} GB</b>\n\n<b>${remove_e}</b> erases everything and gives the disk back to Android.\n<b>${primary_e}</b> keeps your Android.") && rc=0 || rc=$?
-
-    if (( rc == 0 )); then
-        gui_run "Installing Armada, do not power off…" install --assume-yes \
-            || gui_die "Install failed (details in ${GUI_LOG}).\n\nIf internal storage was modified, select UNINSTALL CFW in ABL to abandon the installation."
-        gui_offer_poweroff "<b>Armada installed.</b> Your Android is unchanged.\n\nPower off, remove the SD card, then power on."
-    elif [[ "$out" == "$remove" ]]; then
-        zenity --question --title="$GUI_TITLE" --icon="$GUI_ICON" --width=500 --no-wrap \
-            --ok-label="Remove" --cancel-label="Cancel" \
-            --text="<b>Remove ${name_e} and give all storage back to Android?</b>\n\nThis ERASES ${name_e} and factory-resets Android. <b>It can't be undone.</b>" \
-            || exit 0
-        gui_run "Removing ${name}, do not power off…" reset --assume-yes \
-            || gui_die "Remove failed (details in ${GUI_LOG}).\n\nTo finish removing ${name_e}, select UNINSTALL CFW in ABL."
-        gui_offer_poweroff "<b>${name_e} removed.</b> Android has the full internal disk again.\n\nPower off and remove the SD card to boot Android, or relaunch to install Armada."
-    fi
-}
-
-cmd_gui() {
-    GUI_TITLE="Armada Installer"
-    GUI_ICON="drive-harddisk"
-    GUI_LOG=/tmp/armada-installer.log
-    command -v zenity >/dev/null 2>&1 || { echo "zenity not installed" >&2; exit 1; }
-
-    local info gmode
-    info=$(sudo "$SELF" detect 2>/dev/null) || gui_die "Couldn't inspect internal storage."
-    gmode=$(sed -n 's/^mode=//p' <<<"$info")
-    case "$gmode" in
-        fresh) gui_install_flow "$info" ;;
-        occupied) gui_manage_flow "$info" ;;
-        toosmall)
-            local need
-            need=$(sed -n 's/^needed_gib=//p' <<<"$info")
-            gui_die "Internal storage is too small to install Armada.\n\nArmada needs about ${need} GB free on internal storage." ;;
-        *) gui_die "Unexpected internal-storage state: ${gmode:-unknown}." ;;
-    esac
-}
-
-usage() {
-    cat >&2 <<EOF
-Usage: armada-installer <command>
-
-  gui              desktop (zenity) front-end to install or manage the install
-  detect           read-only probe: print mode + sizes (k=v)
-  install [opts]   fresh install of the running image to internal storage
-                     -y, --assume-yes        skip prompts
-                     --userdata-gib N         new Android userdata size
-  reset [opts]     remove ROCKNIX/Armada and grow Android back to full disk
-                     -y, --assume-yes        skip prompts
-EOF
-    exit 2
-}
-
-cmd="${1:-}"
-[[ $# -gt 0 ]] && shift
-case "$cmd" in
-    gui) cmd_gui "$@" ;;
-    detect) cmd_detect "$@" ;;
-    install) cmd_install "$@" ;;
-    reset) cmd_reset "$@" ;;
-    -h|--help|help|"") usage ;;
-    *) echo "ERROR: unknown command: $cmd" >&2; usage ;;
-esac
+    if args.expect_table is not None and args.expect_table != table_fingerprint(table):
+        raise Error("The target device or partition table changed after confirmation; start the installer again")
+    require_commands()
+    refuse_boot_disk(device)
+    with open("/run/armada-installer.lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise Error("Another installation is already running") from error
+        size = getattr(args, "userdata_gib", None)
+        if args.command == "install" and table.info()["mode"] == "fresh" and size is None:
+            if args.assume_yes:
+                raise Error("Specify --userdata-gib for an unattended fresh install")
+            info = table.info()
+            try:
+                size = int(input(f"New Android size in GiB ({info['android_min_gib']}..{info['android_max_gib']}): "))
+            except ValueError as error:
+                raise Error("Android size must be an integer") from error
+        plan = Plan.make(table, size)
+        print(plan.describe(), flush=True)
+        if not args.assume_yes and input("Proceed? [y/N]: ").strip().lower() not in ("y", "yes"):
+            raise Cancelled()
+        require_idle(plan)
+        with inhibit_sleep():
+            kargs = base_kargs()
+            with locked_source() as source:
+                with operation(plan) as job:
+                    job.partition()
+                    job.deploy(source, kargs)
+                    os.sync()
+        print("Install complete. Power off, remove the SD card, then power on.", flush=True)
+
+
+
+def choose_android_size(minimum, maximum, total):
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Adw, Gio, Gtk
+
+    selected = []
+    app = Adw.Application(application_id="org.armada.Installer.Size", flags=Gio.ApplicationFlags.NON_UNIQUE)
+
+    def activate(application):
+        window = Adw.MessageDialog(application=application, title="Armada Installer", heading="Armada Installer")
+        window.set_default_size(480, -1)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.append(Gtk.Label(label="Choose how to split internal storage", wrap=True))
+        sizes = Gtk.Label()
+        box.append(sizes)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        minus, plus = Gtk.Button(), Gtk.Button()
+        slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, minimum, max(maximum, minimum+1), 1)
+        slider.set_draw_value(False)
+        slider.set_digits(0)
+        slider.set_round_digits(0)
+        slider.set_hexpand(True)
+        slider.set_value(min(maximum, 32))
+        slider.set_sensitive(maximum > minimum)
+        for button, icon, tooltip in ((minus, "list-remove-symbolic", "Decrease Android storage by 1 GiB"),
+                                      (plus, "list-add-symbolic", "Increase Android storage by 1 GiB")):
+            button.set_child(Gtk.Image(icon_name=icon, pixel_size=16))
+            button.set_size_request(56, 56)
+            button.set_tooltip_text(tooltip)
+            button.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
+        for widget in (minus, slider, plus):
+            row.append(widget)
+        box.append(row)
+
+        def changed(*_):
+            value = max(minimum, min(maximum, round(slider.get_value())))
+            sizes.set_text(f"Android: {value} GiB     Armada: {total-value} GiB")
+            minus.set_sensitive(value > minimum)
+            plus.set_sensitive(value < maximum)
+
+        slider.connect("value-changed", changed)
+        minus.connect("clicked", lambda _: slider.set_value(max(minimum, round(slider.get_value())-1)))
+        plus.connect("clicked", lambda _: slider.set_value(min(maximum, round(slider.get_value())+1)))
+        changed()
+        window.set_extra_child(box)
+        window.add_response("cancel", "Cancel")
+        window.add_response("continue", "Continue")
+        window.set_default_response("continue")
+        window.set_close_response("cancel")
+
+        def respond(dialog, response):
+            if response == "continue":
+                selected.append(max(minimum, min(maximum, round(slider.get_value()))))
+            dialog.destroy()
+
+        window.connect("response", respond)
+        window.present()
+
+    app.connect("activate", activate)
+    app.run([])
+    if not selected:
+        raise Cancelled()
+    return selected[0]
+
+
+class Gui:
+    def __init__(self, device):
+        self.command = ["sudo", SELF, *(["--device", device] if device else [])]
+
+    def dialog(self, kind, text, *options):
+        return run("zenity", "--" + kind, "--title=Armada Installer", "--width=480", "--text=" + html.escape(text),
+                   *options, capture=True, check=False)
+
+    def confirm(self, text, label):
+        if self.dialog("question", text, "--ok-label=" + label, "--cancel-label=Cancel").returncode:
+            raise Cancelled()
+
+    def progress(self, command):
+        fd, name = tempfile.mkstemp(prefix="armada-installer.", suffix=".log",
+                                    dir="/run" if os.geteuid() == 0 else f"/run/user/{os.getuid()}")
+        with os.fdopen(fd, "w") as stream:
+            progress = subprocess.Popen(["zenity", "--progress", "--pulsate", "--auto-close", "--no-cancel",
+                                         "--title=Armada Installer", "--text=Working, do not power off…"], stdin=subprocess.PIPE, text=True)
+            try:
+                progress.stdin.write("0\n")
+                progress.stdin.flush()
+                result = run(*self.command, *command, "--assume-yes", stdout=stream, stderr=subprocess.STDOUT, check=False)
+            finally:
+                try:
+                    progress.stdin.close()
+                except BrokenPipeError:
+                    pass
+                progress.wait()
+        if result.returncode:
+            with open(name, "rb") as log:
+                log.seek(max(0, os.fstat(log.fileno()).st_size - 4096))
+                recent = "\n".join(log.read().decode(errors="replace").splitlines()[-12:])
+            raise Error(f"Operation failed.\n\n{recent}\n\nFull log (available until reboot): {name}\n\n"
+                        "If internal storage was modified: " + RECOVERY)
+
+    def start(self):
+        info = json.loads(output(*self.command, "detect", "--json"))
+        self.command = ["sudo", SELF, "--device", info["device"]]
+        mode = info["mode"]
+        if mode == "toosmall":
+            raise Error(f"Internal storage is too small. Armada needs about {info['needed_gib']} GiB alongside Android.")
+        if mode == "fresh":
+            self.confirm("Install Armada alongside Android?\n\nInstalling Armada will factory-reset Android and erase all Android user data.", "Continue")
+            minimum, maximum = info["android_min_gib"], info["android_max_gib"]
+            gib = choose_android_size(minimum, maximum, info["android_current_gib"])
+            self.confirm(f"Resize Android to {gib} GiB and install Armada? All Android user data will be erased.", "Install")
+            command = ["install", "--userdata-gib", str(gib)]
+        elif mode == "occupied":
+            self.confirm("Replace the existing installation?\n\n"
+                         "Internal storage already has space in use alongside Android. Installing Armada will replace everything in that space.\n\n"
+                         "All data in that space will be erased. Android and its user data will be kept.\n\n"
+                         f"Partitions to erase: {info['partition_names']}",
+                         "Replace with Armada")
+            command = ["install"]
+        else:
+            raise Error("Unknown internal storage layout")
+        self.progress([*command, "--expect-table", info["table_fingerprint"]])
+        if self.dialog("question", "Operation complete. Power off and remove the SD card before booting internal storage.",
+                       "--ok-label=Power off", "--cancel-label=Close").returncode == 0:
+            run("sudo", "systemctl", "poweroff")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, epilog="To uninstall, select UNINSTALL CFW in ABL.")
+    parser.add_argument("--device", default=os.environ.get("ARMADA_INTERNAL_DEVICE"))
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("gui", help="desktop installer")
+    commands.add_parser("detect", help="inspect internal storage without changing it").add_argument("--json", action="store_true")
+    commands.add_parser("preflight", help="validate the running source without touching internal storage")
+    install = commands.add_parser("install", help="install the running image")
+    install.add_argument("--userdata-gib", type=int)
+    install.add_argument("--expect-table", help="require the target fingerprint returned by detect")
+    install.add_argument("-y", "--assume-yes", action="store_true")
+    args = parser.parse_args(argv)
+
+    def interrupt(signum, _frame):
+        raise Interrupted(signum)
+
+    for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, interrupt)
+    try:
+        if args.command == "gui":
+            Gui(args.device).start()
+        else:
+            execute(args)
+        return 0
+    except Cancelled:
+        print("Aborted.")
+        return 0
+    except Exception as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        if args.command == "gui":
+            Gui(args.device).dialog("error", str(error))
+        return 128 + error.signum if isinstance(error, Interrupted) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
