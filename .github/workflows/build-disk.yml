@@ -207,6 +207,7 @@ jobs:
           }
           require_current_preview
 
+          commit_title=$(git show -s --format=%s "${BUILD_COMMIT}")
           # The high-level S3 command handles multipart uploads for large images.
           aws configure set default.s3.multipart_chunksize 64MB
           for file in "${image}" "${image}.sha256"; do
@@ -232,6 +233,7 @@ jobs:
             --arg version "${version}" \
             --arg published_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg build_commit "${BUILD_COMMIT}" \
+            --arg build_commit_title "${commit_title}" \
             --arg container "${IMAGE_REGISTRY}/${IMAGE_NAME}:${CONTAINER_TAG}" \
             --arg digest "${CONTAINER_DIGEST}" \
             --arg filename "${filename}" \
@@ -239,16 +241,14 @@ jobs:
             --arg public_url "${R2_PUBLIC_URL%/}" \
             --arg sha256 "${image_sha256}" \
             --argjson size "$(stat -c %s "${image}")" \
-            '{schema_version: 1, channel: "preview", version: $version,
-              published_at: $published_at, build_commit: $build_commit,
+            '{version: $version,
+              published_at: $published_at, build_commit: $build_commit, build_commit_title: $build_commit_title,
               container: {reference: $container, digest: $digest},
               image: {filename: $filename, key: $key, url: ($public_url + "/" + $key),
                 size: $size, sha256: $sha256},
               checksum: {key: ($key + ".sha256"), url: ($public_url + "/" + $key + ".sha256")}}' \
-            > output/latest.json
-          aws s3 cp output/latest.json "s3://${R2_BUCKET}/${prefix}/latest.json" \
-            --endpoint-url "${R2_ENDPOINT_URL}" --content-type application/json \
-            --cache-control no-store --only-show-errors
+            > output/current-build.json
+          python3 .github/scripts/publish-preview-index.py
 
           # Only advertise the download after both objects have been uploaded.
           echo "image_key=${prefix}/${filename}" >> "${GITHUB_OUTPUT}"
@@ -262,16 +262,6 @@ jobs:
               printf '[Download image](%s/%s/%s) · [SHA-256](%s/%s/%s.sha256)\n' \
                 "${R2_PUBLIC_URL%/}" "${prefix}" "${filename}" \
                 "${R2_PUBLIC_URL%/}" "${prefix}" "${filename}"
-              printf '\n[Latest image metadata](%s/%s/latest.json)\n' "${R2_PUBLIC_URL%/}" "${prefix}"
+              printf '\n[Preview builds](%s/%s/builds.json)\n' "${R2_PUBLIC_URL%/}" "${prefix}"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Prune old Preview disk images
-        if: inputs.publish_r2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_EC2_METADATA_DISABLED: "true"
-          CURRENT_IMAGE_KEY: ${{ steps.publish.outputs.image_key }}
-        run: python3 .github/scripts/prune-preview-images.py
