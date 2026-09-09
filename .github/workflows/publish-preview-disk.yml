@@ -29,8 +29,6 @@ jobs:
         id: source
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
           image="ghcr.io/${GITHUB_REPOSITORY,,}:testing"
           inspection=$(skopeo inspect --override-arch arm64 "docker://${image}")
           digest=$(jq -er '.Digest' <<< "${inspection}")
@@ -43,6 +41,7 @@ jobs:
           echo "source_ref=${revision}" >> "${GITHUB_OUTPUT}"
 
   publish:
+    name: Build and publish Preview image
     needs: resolve
     uses: ./.github/workflows/build-disk.yml
     with:
