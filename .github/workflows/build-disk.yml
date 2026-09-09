@@ -86,13 +86,7 @@ jobs:
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "${GITHUB_ENV}"
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "${GITHUB_ENV}"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            containernetworking-plugins \
-            curl \
-            jq \
-            pigz \
-            python3 \
-            skopeo
+          sudo apt-get install -y --no-install-recommends containernetworking-plugins
 
       - name: Check build recipes
         uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3
@@ -181,10 +175,6 @@ jobs:
           retention-days: 1
           compression-level: 0
           overwrite: true
-
-      - name: Install R2 upload dependencies
-        if: inputs.publish_r2
-        run: sudo apt-get install -y --no-install-recommends awscli
 
       - name: Publish disk image to R2
         id: publish
