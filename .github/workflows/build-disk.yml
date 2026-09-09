@@ -127,7 +127,7 @@ jobs:
           # Build the disk FROM the published container so the disk and the ghcr
           # image are identical content and the installed system's bootc origin
           # points at ghcr (so OTA works). The Justfile pulls the ref for BIB.
-          sudo env ARMADA_IMAGE_DIGEST="${ARMADA_IMAGE_DIGEST}" \
+          sudo env PATH="${PATH}" ARMADA_IMAGE_DIGEST="${ARMADA_IMAGE_DIGEST}" \
             "${JUST_BIN}" build-armada-image "${IMAGE_REGISTRY}/${IMAGE_NAME}" "${{ steps.tag.outputs.tag }}"
           sudo chown -R "$(id -u):$(id -g)" output
 
