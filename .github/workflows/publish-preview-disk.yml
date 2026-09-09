@@ -41,7 +41,7 @@ jobs:
           echo "source_ref=${revision}" >> "${GITHUB_OUTPUT}"
 
   publish:
-    name: Build and publish Preview image
+    name: Publish preview image
     needs: resolve
     uses: ./.github/workflows/build-disk.yml
     with:

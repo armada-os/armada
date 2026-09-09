@@ -47,7 +47,7 @@ raise SystemExit('Unexpected AWS call: ' + repr(args))
 registry_mock = '''#!/usr/bin/env python3
 import os, sys
 from pathlib import Path
-assert sys.argv[1:] == ['inspect', '--override-arch', 'arm64', '--format', '{{.Digest}}',
+assert sys.argv[1:] == ['inspect', '--no-creds', '--override-arch', 'arm64', '--format', '{{.Digest}}',
                         'docker://ghcr.io/armada-os/armada:testing']
 case = os.environ['TEST_CASE']
 if case == 'registry-failure':
