@@ -113,6 +113,7 @@ dnf5 -y install --setopt=install_weak_deps=False \
     plasma-workspace \
     plasma-desktop \
     plasma-mobile \
+    plasma-settings \
     plasma-pa \
     plasma-nm \
     bluedevil \
@@ -126,6 +127,7 @@ dnf5 -y install --setopt=install_weak_deps=False \
     waydroid \
     kscreen \
     konsole \
+    qmlkonsole \
     dolphin \
     ark \
     gwenview \
@@ -139,6 +141,11 @@ dnf5 -y install --setopt=install_weak_deps=False \
     /packages/kwin/kwin-[0-9]*.rpm \
     /packages/kwin/kwin-common-[0-9]*.rpm \
     /packages/kwin/kwin-libs-[0-9]*.rpm
+
+# Carry Plasma Mobile's input-region crash fix until Fedora backports it.
+dnf5 -y install --setopt=install_weak_deps=False \
+    /packages/plasma-mobile/plasma-mobile-[0-9]*.rpm \
+    /packages/plasma-mobile/plasma-lookandfeel-fedora-mobile-[0-9]*.rpm
 
 # PowerDevil's KWin backend treats 0 as safe; reserve 5% for internal panels.
 dnf5 -y install --setopt=install_weak_deps=False /packages/powerdevil/powerdevil-*.fc44.armada.*.rpm

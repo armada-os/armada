@@ -490,25 +490,109 @@ set_origin() {
 }
 
 copy_bootc_ref() {
-    local ref="$1" target_commit="$2"
-    ostree refs --repo="$TARGET/ostree/repo" --force --create="$ref" "$target_commit"
+    local ref="$1"
+    ostree pull-local --repo="$TARGET/ostree/repo" /sysroot/ostree/repo "$ref"
 }
 
 copy_current_bootc_deployment() {
-    local parent ref target_commit
+    local parent ref target_commit manifest blob_refs image_refs
+    local image_ref_count=0
+    local -a required_refs=("$commit")
 
-    ostree pull-local --repo="$TARGET/ostree/repo" /sysroot/ostree/repo "$commit"
+    copy_bootc_ref "$commit" || {
+        echo "ERROR: could not copy booted deployment commit $commit" >&2
+        return 1
+    }
 
     parent=$(ostree show --repo=/sysroot/ostree/repo "$commit" |
         sed -n 's/^Parent:[[:space:]]*//p' | head -n1)
-    [[ -n $parent ]] && ostree pull-local --repo="$TARGET/ostree/repo" /sysroot/ostree/repo "$parent"
+    if [[ -n $parent ]]; then
+        copy_bootc_ref "$parent" || {
+            echo "ERROR: could not copy container-image parent commit $parent" >&2
+            return 1
+        }
+        required_refs+=("$parent")
+    fi
 
+    # Generic OCI layers are cached as independent commits. The final image commit
+    # does not reference them through OSTree history, but bootc still requires each
+    # manifest layer's blob ref to read deployment metadata and reuse cached layers.
+    if ! manifest=$(ostree show --repo=/sysroot/ostree/repo \
+        --print-metadata-key=ostree.manifest "$commit" 2>/dev/null); then
+        [[ -n $parent ]] || {
+            echo "ERROR: booted commit has no container manifest" >&2
+            return 1
+        }
+        manifest=$(ostree show --repo=/sysroot/ostree/repo \
+            --print-metadata-key=ostree.manifest "$parent") || {
+            echo "ERROR: container-image parent has no manifest" >&2
+            return 1
+        }
+    fi
+    # ostree prints string metadata in GVariant form, including outer quotes.
+    manifest=${manifest#\'}
+    manifest=${manifest%\'}
+    blob_refs=$(jq -er '
+        .layers as $layers
+        | if ($layers | type) != "array" or ($layers | length) == 0 then
+              error("container manifest has no layers")
+          else
+              $layers
+              | map(
+                  .digest
+                  | if type == "string" and test("^sha256:[0-9a-f]{64}$") then
+                        "ostree/container/blob/" + sub(":"; "_3A_")
+                    else
+                        error("invalid container layer digest")
+                    end
+                )
+              | unique[]
+          end
+    ' <<<"$manifest") || {
+        echo "ERROR: could not read container layer refs from booted commit" >&2
+        return 1
+    }
     while IFS= read -r ref; do
+        copy_bootc_ref "$ref" || {
+            echo "ERROR: could not copy bootc layer ref $ref" >&2
+            return 1
+        }
+        required_refs+=("$ref")
+    done <<<"$blob_refs"
+
+    # A source with a staged update may have image refs for multiple commits. Copy
+    # only refs for the deployment being installed (or its container-image parent).
+    image_refs=$(ostree refs --repo=/sysroot/ostree/repo |
+        sed -n 's#^\(ostree/container/image/.*\)#\1#p') || {
+        echo "ERROR: could not list container image refs" >&2
+        return 1
+    }
+    while IFS= read -r ref; do
+        [[ -n $ref ]] || continue
         target_commit=$(ostree rev-parse --repo=/sysroot/ostree/repo "$ref" 2>/dev/null || true)
         if [[ $target_commit == "$commit" || ( -n $parent && $target_commit == "$parent" ) ]]; then
-            copy_bootc_ref "$ref" "$target_commit"
+            copy_bootc_ref "$ref" || {
+                echo "ERROR: could not copy bootc image ref $ref" >&2
+                return 1
+            }
+            required_refs+=("$ref")
+            image_ref_count=$((image_ref_count + 1))
         fi
-    done < <(ostree refs --repo=/sysroot/ostree/repo | sed -n 's#^\(ostree/container/\(image\|blob\)/.*\)#\1#p')
+    done <<<"$image_refs"
+
+    if (( image_ref_count == 0 )); then
+        echo "ERROR: no container image ref matches the booted deployment" >&2
+        return 1
+    fi
+
+    # Do not create a boot entry for a partial copy. In particular, a deployment
+    # can boot without these layer refs while `bootc status` and upgrades are broken.
+    for ref in "${required_refs[@]}"; do
+        ostree rev-parse --repo="$TARGET/ostree/repo" "$ref" >/dev/null 2>&1 || {
+            echo "ERROR: copied bootc ref is missing from target repository: $ref" >&2
+            return 1
+        }
+    done
 }
 
 seed_kernel() {

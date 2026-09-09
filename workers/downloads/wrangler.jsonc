@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "armada-downloads",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-09",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "downloads.armadaos.dev/", "zone_name": "armadaos.dev" },
+    { "pattern": "downloads.armadaos.dev/preview", "zone_name": "armadaos.dev" },
+    { "pattern": "downloads.armadaos.dev/preview/", "zone_name": "armadaos.dev" },
+    { "pattern": "downloads.armadaos.dev/preview/latest*", "zone_name": "armadaos.dev" }
+  ],
+  "r2_buckets": [
+    { "binding": "DOWNLOADS", "bucket_name": "armada" }
+  ]
+}

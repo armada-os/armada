@@ -14,6 +14,7 @@ export interface CatalogApp {
   note: string;
   installType: "flatpak" | "appimage" | "deckyplugin" | "system" | "";
   desktopOnly: boolean;
+  hasConfig: boolean;
   launch: LaunchSpec | null;
 }
 

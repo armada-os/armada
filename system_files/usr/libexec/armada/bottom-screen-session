@@ -1,0 +1,46 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ -z "${DISPLAY:-}" ]]; then
+    echo "bottom-screen-session: nested Gamescope did not provide an X11 display" >&2
+    exit 1
+fi
+
+# Use the same saved configs as session-control before Mobile can write settings.
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
+plasma_config="${config_dir}/plasmashellrc"
+install -d -m 0700 "${config_dir}"
+if [[ -e "${plasma_config}" && ! -L "${plasma_config}" ]]; then
+    if [[ -e "${plasma_config}.desktop" || -L "${plasma_config}.desktop" ]]; then
+        echo "refusing to overwrite existing Desktop Plasma configuration" >&2
+        exit 1
+    fi
+    mv "${plasma_config}" "${plasma_config}.desktop"
+fi
+if [[ ! -e "${plasma_config}.mobile" ]]; then
+    install -m 0600 /dev/null "${plasma_config}.mobile"
+fi
+if [[ ! -L "${plasma_config}" || "$(readlink "${plasma_config}")" != plasmashellrc.mobile ]]; then
+    ln -sfn plasmashellrc.mobile "${plasma_config}.new"
+    mv -Tf "${plasma_config}.new" "${plasma_config}"
+fi
+
+dbus_run_session=${ARMADA_DBUS_RUN_SESSION:-/usr/bin/dbus-run-session}
+kwin_wayland=${ARMADA_KWIN_WAYLAND:-/usr/bin/kwin_wayland}
+
+export XDG_CURRENT_DESKTOP=KDE
+export XDG_CONFIG_DIRS="$HOME/.config/plasma-mobile:/etc/xdg${XDG_CONFIG_DIRS:+:$XDG_CONFIG_DIRS}"
+export QT_QPA_PLATFORMTHEME=KDE
+export QT_QUICK_CONTROLS_STYLE=org.kde.breeze
+export QT_QUICK_CONTROLS_MOBILE=true
+export PLASMA_INTEGRATION_USE_PORTAL=1
+export PLASMA_PLATFORM=phone:handset
+export DISABLE_GAMESCOPE_WSI=1
+unset GAMESCOPE_WAYLAND_DISPLAY GAMESCOPE_LIMITER_FILE
+
+exec "$dbus_run_session" \
+    "$kwin_wayland" \
+    --x11-display "$DISPLAY" \
+    --fullscreen \
+    --no-lockscreen \
+    --exit-with-session '/usr/bin/plasmashell -p org.kde.plasma.mobileshell'

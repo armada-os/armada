@@ -7,6 +7,8 @@ RAW_IMAGE="${1:-output/raw/disk.raw}"
 source "$(dirname "${BASH_SOURCE[0]}")/../abl/release.env"
 OUT="${OUT:-output/armada-$(TZ='America/New_York' date +%Y%m%d).img.gz}"
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ABL_RELEASES="${REPO_ROOT}/abl/releases.tsv"
+ABL_CATALOG_TOOL="${REPO_ROOT}/system_files/usr/lib/armada/abl-version"
 
 if [[ ! -f "${RAW_IMAGE}" ]]; then
     echo "ERROR: raw image not found at ${RAW_IMAGE}"
@@ -19,7 +21,6 @@ trap "sudo umount '${WORK}/mnt' 2>/dev/null || true; sudo losetup -d \"\$(cat ${
 
 curl --connect-timeout 30 --retry 12 --retry-delay 10 -fsSL -o "${WORK}/abl.tar.gz" \
     "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
-printf '%s  %s\n' "${ARMADA_ABL_ARCHIVE_SHA256}" "${WORK}/abl.tar.gz" | sha256sum -c -
 mkdir -p "${WORK}/abl-extracted"
 tar -xzf "${WORK}/abl.tar.gz" -C "${WORK}/abl-extracted"
 
@@ -43,9 +44,26 @@ sudo mkdir -p "${WORK}/mnt/rocknix_abl"
 ABL_SRC=$(ls -d "${WORK}/abl-extracted"/rocknix-abl-*)
 sudo cp "${REPO_ROOT}/abl/README" "${WORK}/mnt/rocknix_abl/README"
 for soc in SM8250 SM8550 SM8650 SM8750; do
+    approved=$(ARMADA_ABL_RELEASES="${ABL_RELEASES}" \
+        python3 "${ABL_CATALOG_TOOL}" --lookup "${ARMADA_ABL_VERSION}" "${soc}") || {
+        echo "ERROR: missing approved ${ARMADA_ABL_VERSION} ${soc} payload" >&2
+        exit 1
+    }
+    read -r approved_size approved_hash <<<"${approved}"
+    payload="${ABL_SRC}/abl_signed-${soc}.elf"
+    [[ $(stat -c %s "${payload}") == "${approved_size}" ]] || {
+        echo "ERROR: ${soc} payload size does not match the approved release" >&2
+        exit 1
+    }
+    [[ $(sha256sum "${payload}" | cut -d ' ' -f 1) == "${approved_hash}" ]] || {
+        echo "ERROR: ${soc} payload hash does not match the approved release" >&2
+        exit 1
+    }
     d="${WORK}/mnt/rocknix_abl/${soc}"
     sudo mkdir -p "$d"
-    sudo cp "${ABL_SRC}/abl_signed-${soc}.elf" "${ABL_SRC}/abl_signed-${soc}.elf.sha256" "$d/"
+    sudo cp "${payload}" "$d/"
+    printf '%s  abl_signed-%s.elf\n' "${approved_hash}" "${soc}" \
+        | sudo tee "$d/abl_signed-${soc}.elf.sha256" >/dev/null
     for s in flash_abl backup_abl restore_backup_abl; do
         sed "s/%DEVICE%/${soc}/g" "${REPO_ROOT}/abl/${s}.sh.template" \
             | sudo tee "$d/${s}.sh" >/dev/null

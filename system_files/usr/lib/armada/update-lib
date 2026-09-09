@@ -40,7 +40,11 @@ armada_tag_from_ref() {
 
 # Exact repository matches prevent lookalike names from being trusted.
 armada_registry_from_ref() {
-    local r="${1##*://}"
+    local r="$1"
+    case "$r" in
+        ostree-unverified-registry:*) r="${r#ostree-unverified-registry:}" ;;
+    esac
+    r="${r##*://}"
     r="${r%%@*}"
     [[ "${r##*/}" == *:* ]] && r="${r%:*}"
     case "$r" in
@@ -52,9 +56,11 @@ armada_registry_from_ref() {
 armada_repository_from_ref() {
     local r
     case "$1" in
+        ostree-unverified-registry:*) r="${1#ostree-unverified-registry:}" ;;
         *docker://*) r="${1##*docker://}" ;;
         *) return 1 ;;
     esac
+    r="${r##*docker://}"
     r="${r%%@*}"
     [[ "${r##*/}" == *:* ]] && r="${r%:*}"
     [[ -n "$r" && "$r" == */* && "$r" != *[[:space:]]* ]] || return 1

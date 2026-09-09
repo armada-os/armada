@@ -11,19 +11,18 @@ if [[ "$mode" == "fake" ]]; then
     exec "$fake_suspend" sleep
 fi
 
-if [[ "$mode" == "s2idle" || "$mode" == "deep" ]]; then
-    mem_sleep=${ARMADA_MEM_SLEEP_PATH:-/sys/power/mem_sleep}
-    if [[ ! -w "$mem_sleep" ]] ||
-        ! grep -qw "$mode" "$mem_sleep"; then
-        echo "suspend-dispatch: unsupported sleep mode $mode; using fake suspend" >&2
-        exec "$fake_suspend" sleep
-    fi
-    if ! echo "$mode" >"$mem_sleep"; then
-        echo "suspend-dispatch: failed to select sleep mode $mode; using fake suspend" >&2
-        exec "$fake_suspend" sleep
-    fi
-elif [[ "$mode" != "mem" ]]; then
+if [[ "$mode" != "s2idle" ]]; then
     echo "suspend-dispatch: invalid sleep mode $mode; using fake suspend" >&2
+    exec "$fake_suspend" sleep
+fi
+
+mem_sleep=${ARMADA_MEM_SLEEP_PATH:-/sys/power/mem_sleep}
+if [[ ! -w "$mem_sleep" ]] || ! grep -qw "$mode" "$mem_sleep"; then
+    echo "suspend-dispatch: unsupported sleep mode $mode; using fake suspend" >&2
+    exec "$fake_suspend" sleep
+fi
+if ! echo "$mode" >"$mem_sleep"; then
+    echo "suspend-dispatch: failed to select sleep mode $mode; using fake suspend" >&2
     exec "$fake_suspend" sleep
 fi
 

@@ -13,14 +13,37 @@ on:
         description: "Optional custom container tag. Overrides the dropdown when set."
         type: string
         default: ""
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        default: testing
+      publish_r2:
+        type: boolean
+        default: false
+      image_digest:
+        type: string
+        default: ""
+      source_ref:
+        type: string
+        default: ""
+    secrets:
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
 
 env:
   IMAGE_NAME: ${{ github.event.repository.name }}
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
   BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
+  R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+  R2_BUCKET: ${{ vars.R2_BUCKET }}
+  R2_PREFIX: preview
+  R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  group: ${{ inputs.publish_r2 && 'preview-disk' || format('build-disk-{0}', github.ref || github.run_id) }}
   cancel-in-progress: false
 
 jobs:
@@ -33,6 +56,20 @@ jobs:
       packages: read
 
     steps:
+      - name: Check R2 configuration
+        if: inputs.publish_r2
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          for setting in R2_ENDPOINT_URL R2_BUCKET R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+            if [ -z "${!setting}" ]; then
+              echo "::error::${setting} is not configured. Set it in repository Settings > Secrets and variables > Actions."
+              exit 1
+            fi
+          done
+
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
         with:
@@ -40,6 +77,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Install dependencies
         run: |
@@ -47,12 +86,7 @@ jobs:
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "${GITHUB_ENV}"
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "${GITHUB_ENV}"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            containernetworking-plugins \
-            curl \
-            jq \
-            pigz \
-            python3
+          sudo apt-get install -y --no-install-recommends containernetworking-plugins
 
       - name: Check build recipes
         uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3
@@ -78,6 +112,8 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
 
       - name: Build Armada image
+        env:
+          ARMADA_IMAGE_DIGEST: ${{ inputs.image_digest }}
         run: |
           set -euxo pipefail
           JUST_BIN=$(command -v just)
@@ -85,13 +121,50 @@ jobs:
           # Build the disk FROM the published container so the disk and the ghcr
           # image are identical content and the installed system's bootc origin
           # points at ghcr (so OTA works). The Justfile pulls the ref for BIB.
-          sudo "${JUST_BIN}" build-armada-image "${IMAGE_REGISTRY}/${IMAGE_NAME}" "${{ steps.tag.outputs.tag }}"
+          sudo env PATH="${PATH}" ARMADA_IMAGE_DIGEST="${ARMADA_IMAGE_DIGEST}" \
+            "${JUST_BIN}" build-armada-image "${IMAGE_REGISTRY}/${IMAGE_NAME}" "${{ steps.tag.outputs.tag }}"
           sudo chown -R "$(id -u):$(id -g)" output
-          IMG=$(find output -maxdepth 1 -name 'armada-*.img.gz' -type f -print -quit)
-          sha256sum "${IMG}" > "${IMG}.sha256"
-          ls -lh "${IMG}" "${IMG}.sha256"
+
+      - name: Inspect disk source image
+        id: built_image
+        env:
+          EXPECTED_DIGEST: ${{ inputs.image_digest }}
+          CONTAINER_TAG: ${{ steps.tag.outputs.tag }}
+          PUBLISH_R2: ${{ inputs.publish_r2 }}
+        run: |
+          set -euo pipefail
+          inspection=$(sudo podman image inspect "${IMAGE_REGISTRY}/${IMAGE_NAME}:${CONTAINER_TAG}")
+          digest=$(jq -er '.[0].Digest' <<< "${inspection}")
+          if [ -n "${EXPECTED_DIGEST}" ] && [ "${digest}" != "${EXPECTED_DIGEST}" ]; then
+            echo "::error::Built image digest ${digest} does not match requested digest ${EXPECTED_DIGEST}."
+            exit 1
+          fi
+          revision=$(jq -r '.[0].Config.Labels["org.opencontainers.image.revision"] // empty' <<< "${inspection}")
+          if [ "${PUBLISH_R2}" = true ] && ! [[ "${revision}" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::Preview container has no valid source revision label."
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare disk image upload
+        id: disk
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          images=(output/armada-*.img.gz)
+          if [ "${#images[@]}" -ne 1 ] || [ ! -s "${images[0]}" ]; then
+            echo "::error::Expected exactly one nonempty disk image in output/."
+            exit 1
+          fi
+          image="${images[0]}"
+          filename="${image##*/}"
+          # Use the basename so sha256sum -c works beside the downloaded image.
+          (cd output && sha256sum "${filename}" > "${filename}.sha256")
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload disk image
+        if: ${{ !inputs.publish_r2 }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: armada-disk-image
@@ -102,3 +175,93 @@ jobs:
           retention-days: 1
           compression-level: 0
           overwrite: true
+
+      - name: Publish disk image to R2
+        id: publish
+        if: inputs.publish_r2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: "true"
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+          CONTAINER_TAG: ${{ steps.tag.outputs.tag }}
+          CONTAINER_DIGEST: ${{ steps.built_image.outputs.digest }}
+          BUILD_COMMIT: ${{ steps.built_image.outputs.revision }}
+          DISK_IMAGE: ${{ steps.disk.outputs.image }}
+        run: |
+          set -euo pipefail
+          image="${DISK_IMAGE}"
+          filename="${image##*/}"
+          prefix="${R2_PREFIX#/}"
+          prefix="${prefix%/}"
+
+          require_current_preview() {
+            current=$(skopeo inspect --no-creds --override-arch arm64 --format '{{.Digest}}' \
+              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:testing")
+            if [ "${current}" != "${CONTAINER_DIGEST}" ]; then
+              echo "::error::Preview has advanced to ${current}; refusing to publish stale disk ${CONTAINER_DIGEST}."
+              exit 1
+            fi
+          }
+          require_current_preview
+
+          commit_title=$(git show -s --format=%s "${BUILD_COMMIT}")
+          # The high-level S3 command handles multipart uploads for large images.
+          aws configure set default.s3.multipart_chunksize 64MB
+          for file in "${image}" "${image}.sha256"; do
+            key="${prefix}/${file##*/}"
+            aws s3 cp "${file}" "s3://${R2_BUCKET}/${key}" \
+              --endpoint-url "${R2_ENDPOINT_URL}" \
+              --metadata armada-preview=true --cache-control no-store --only-show-errors
+            uploaded_size=$(aws s3api head-object \
+              --endpoint-url "${R2_ENDPOINT_URL}" \
+              --bucket "${R2_BUCKET}" --key "${key}" \
+              --query ContentLength --output text)
+            if [ "${uploaded_size}" != "$(stat -c %s "${file}")" ]; then
+              echo "::error::Uploaded size does not match ${file##*/}."
+              exit 1
+            fi
+          done
+
+          require_current_preview
+          version="${filename#armada-}"
+          version="${version%.img.gz}"
+          read -r image_sha256 checksum_filename < "${image}.sha256"
+          jq -n \
+            --arg version "${version}" \
+            --arg published_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg build_commit "${BUILD_COMMIT}" \
+            --arg build_commit_title "${commit_title}" \
+            --arg container "${IMAGE_REGISTRY}/${IMAGE_NAME}:${CONTAINER_TAG}" \
+            --arg digest "${CONTAINER_DIGEST}" \
+            --arg filename "${filename}" \
+            --arg key "${prefix}/${filename}" \
+            --arg public_url "${R2_PUBLIC_URL%/}" \
+            --arg sha256 "${image_sha256}" \
+            --argjson size "$(stat -c %s "${image}")" \
+            '{version: $version,
+              published_at: $published_at, build_commit: $build_commit, build_commit_title: $build_commit_title,
+              container: {reference: $container, digest: $digest},
+              image: {filename: $filename, key: $key, url: ($public_url + "/" + $key),
+                size: $size, sha256: $sha256},
+              checksum: {key: ($key + ".sha256"), url: ($public_url + "/" + $key + ".sha256")}}' \
+            > output/current-build.json
+          python3 .github/scripts/publish-preview-index.py
+
+          # Only advertise the download after both objects have been uploaded.
+          echo "image_key=${prefix}/${filename}" >> "${GITHUB_OUTPUT}"
+          echo "checksum_key=${prefix}/${filename}.sha256" >> "${GITHUB_OUTPUT}"
+          {
+            printf '### Disk image uploaded to R2\n\n'
+            printf 'Container: `%s/%s:%s`\n\n' "${IMAGE_REGISTRY}" "${IMAGE_NAME}" "${CONTAINER_TAG}"
+            printf 'Image: `s3://%s/%s/%s`\n\n' "${R2_BUCKET}" "${prefix}" "${filename}"
+            printf 'Checksum: `s3://%s/%s/%s.sha256`\n\n' "${R2_BUCKET}" "${prefix}" "${filename}"
+            if [ -n "${R2_PUBLIC_URL}" ]; then
+              printf '[Download image](%s/%s/%s) · [SHA-256](%s/%s/%s.sha256)\n' \
+                "${R2_PUBLIC_URL%/}" "${prefix}" "${filename}" \
+                "${R2_PUBLIC_URL%/}" "${prefix}" "${filename}"
+              printf '\n[Preview builds](%s/%s/builds.json)\n' "${R2_PUBLIC_URL%/}" "${prefix}"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

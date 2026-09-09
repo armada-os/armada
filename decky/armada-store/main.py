@@ -1,6 +1,6 @@
 import asyncio
 
-from armada_store import catalog, jobs, session, store, updates
+from armada_store import catalog, jobs, postinstall, session, store, updates
 
 
 class Plugin:
@@ -45,6 +45,9 @@ class Plugin:
 
     async def clear_shortcut(self, app_id, keep_pending=False, expected=None):
         return await asyncio.to_thread(store.clear_shortcut, app_id, bool(keep_pending), expected)
+
+    async def reset_config(self, app_id):
+        return await asyncio.to_thread(postinstall.reset_config, app_id)
 
     async def switch_to_desktop(self):
         return await asyncio.to_thread(session.switch_to_desktop)

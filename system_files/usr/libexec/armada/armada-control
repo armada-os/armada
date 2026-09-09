@@ -2,6 +2,7 @@
 import grp
 import json
 import os
+import pwd
 import selectors
 import shlex
 import socket
@@ -13,6 +14,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, "/usr/lib/armada")
+import armada_game_tweaks
 import armada_perf
 
 SOCKET = Path("/run/armada/control.sock")
@@ -27,7 +29,7 @@ ABL_PARTITIONS = (
 )
 MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
-CONTROLLER_TYPES = {"deck-uhid", "xb360", "ds5"}
+CONTROLLER_TYPES = {"deck-uhid", "xbox-series", "xb360", "ds5"}
 INTERCEPT_MODES = {"overlay", "reset"}
 SLEEP_CONFIG = Path("/etc/armada/sleep.conf")
 SUSPEND_MODE_KEY = "suspend_mode"
@@ -35,6 +37,12 @@ NM_IGNORE_SLEEP = Path("/etc/NetworkManager/ignore-sleep")
 MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
 DESKTOP_SESSION_PATH = Path("/etc/armada/desktop-session")
 DESKTOP_MODES = {"desktop", "mobile"}
+BOTTOM_SCREEN_SERVICE = "armada-bottom-screen.service"
+GAME_MODE_SERVICE = "gamescope-session-plus@steam.service"
+BOTTOM_SCREEN_BRIGHTNESS_PATH = Path("/etc/armada/bottom-screen-brightness")
+BOTTOM_SCREEN_BRIGHTNESS_RESTORE_INTERVAL = 2
+BACKLIGHT_ROOT = Path("/sys/class/backlight")
+DEVICE_ENV = os.environ.get("ARMADA_DEVICE_ENV", "/usr/libexec/armada/device-env")
 CONFIG_PATHS = {
     "power": Path("/etc/armada/power-profiles.conf"),
     "tweaks": Path("/etc/armada/game-tweaks.json"),
@@ -161,7 +169,7 @@ def set_desktop_mode(mode: str):
     atomic_write(DESKTOP_SESSION_PATH, f"{mode}\n")
 
 def select_mem_sleep(mode):
-    if mode in {"s2idle", "deep"}:
+    if mode == "s2idle":
         MEM_SLEEP_PATH.write_text(f"{mode}\n", encoding="utf-8")
 
 
@@ -183,7 +191,7 @@ def abl_auto_enabled():
 
 
 def device_env():
-    result = subprocess.check_output(["/usr/libexec/armada/device-env"], text=True, timeout=5)
+    result = subprocess.check_output([DEVICE_ENV], text=True, timeout=5)
     env = {}
     for line in result.splitlines():
         if "=" not in line:
@@ -194,6 +202,107 @@ def device_env():
         except ValueError:
             env[key] = value
     return env
+
+
+def bottom_screen_supported():
+    env = device_env()
+    return bool(
+        env.get("ARMADA_SECONDARY_CONNECTOR")
+        and env.get("ARMADA_SECONDARY_TOUCHSCREEN")
+    )
+
+
+def session_systemctl(*args, check=True, timeout=30):
+    user = os.environ.get("ARMADA_SESSION_USER", "armada")
+    account = pwd.getpwnam(user)
+    result = subprocess.run(
+        [
+            "/usr/bin/runuser", "-u", user, "--", "env",
+            f"HOME={account.pw_dir}",
+            f"XDG_RUNTIME_DIR=/run/user/{account.pw_uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{account.pw_uid}/bus",
+            "/usr/bin/systemctl", "--user", *args,
+        ],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=timeout,
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError("could not update bottom-screen service")
+    return result
+
+
+def bottom_screen_enabled():
+    return session_systemctl(
+        "is-enabled", "--quiet", BOTTOM_SCREEN_SERVICE, check=False, timeout=5,
+    ).returncode == 0
+
+
+def secondary_backlight():
+    name = device_env().get("ARMADA_SECONDARY_BACKLIGHT", "")
+    if not name or name in {".", ".."} or "/" in name:
+        return None
+    path = BACKLIGHT_ROOT / name
+    if not path.is_dir():
+        return None
+    return path
+
+
+def read_backlight_brightness(path):
+    if path is None:
+        return None
+    try:
+        brightness = int((path / "brightness").read_text().strip())
+        maximum = int((path / "max_brightness").read_text().strip())
+    except (OSError, ValueError):
+        return None
+    if maximum <= 0:
+        return None
+    return max(0, min(100, round(brightness * 100 / maximum)))
+
+
+def bottom_screen_brightness():
+    return read_backlight_brightness(secondary_backlight())
+
+
+def saved_bottom_screen_brightness():
+    try:
+        brightness = int(BOTTOM_SCREEN_BRIGHTNESS_PATH.read_text().strip())
+    except (OSError, ValueError):
+        return None
+    return brightness if 0 <= brightness <= 100 else None
+
+
+def apply_bottom_screen_brightness(brightness, path=None):
+    path = path or secondary_backlight()
+    if path is None:
+        raise RuntimeError("bottom-screen brightness is not supported on this device")
+    try:
+        maximum = int((path / "max_brightness").read_text().strip())
+        if maximum <= 0:
+            raise ValueError
+        value = round(brightness * maximum / 100)
+        (path / "brightness").write_text(f"{value}\n")
+    except (OSError, ValueError) as error:
+        raise RuntimeError("could not update bottom-screen brightness") from error
+
+    applied = read_backlight_brightness(path)
+    if applied is None:
+        raise RuntimeError("could not read bottom-screen brightness")
+    return applied
+
+
+def restore_bottom_screen_brightness(path=None):
+    brightness = saved_bottom_screen_brightness()
+    path = path or secondary_backlight()
+    if brightness is None or read_backlight_brightness(path) == brightness:
+        return
+    try:
+        apply_bottom_screen_brightness(brightness, path)
+    except RuntimeError:
+        # The backlight may disappear temporarily while display sessions switch.
+        pass
 
 
 def abl_version():
@@ -269,7 +378,7 @@ def available_sleep_modes():
         }
     except OSError:
         advertised = set()
-    return {"fake"} | ({"s2idle", "deep"} & advertised)
+    return {"fake"} | ({"s2idle"} & advertised)
 
 def action_get_desktop_mode(request):
     return {"value": get_desktop_mode()}
@@ -302,6 +411,45 @@ def action_get_abl_auto_enabled(request):
 
 def action_get_device_env(request):
     return {"env": device_env()}
+
+
+def action_get_bottom_screen_enabled(request):
+    return {"enabled": bottom_screen_enabled()}
+
+
+def action_get_bottom_screen_brightness(request):
+    brightness = bottom_screen_brightness()
+    return {"supported": brightness is not None, "brightness": brightness or 0}
+
+
+def action_set_bottom_screen_brightness(request):
+    brightness = request.get("brightness")
+    if not isinstance(brightness, int) or isinstance(brightness, bool) or not 0 <= brightness <= 100:
+        raise ValueError("invalid bottom-screen brightness")
+
+    applied = apply_bottom_screen_brightness(brightness)
+    atomic_write(BOTTOM_SCREEN_BRIGHTNESS_PATH, f"{applied}\n")
+    return {"brightness": applied}
+
+
+def action_set_bottom_screen_enabled(request):
+    enabled = request.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("invalid bottom-screen enabled state")
+    if enabled and not bottom_screen_supported():
+        raise RuntimeError("bottom screen is not supported on this device")
+
+    if enabled:
+        session_systemctl("enable", BOTTOM_SCREEN_SERVICE)
+        game_mode = session_systemctl(
+            "is-active", "--quiet", GAME_MODE_SERVICE, check=False, timeout=5,
+        )
+        if game_mode.returncode == 0:
+            session_systemctl("start", BOTTOM_SCREEN_SERVICE)
+    else:
+        session_systemctl("disable", "--now", BOTTOM_SCREEN_SERVICE)
+
+    return {"enabled": bottom_screen_enabled()}
 
 
 def action_get_abl_version(request):
@@ -422,12 +570,12 @@ class PerfManager:
 
     def refresh(self, keep_override=False):
         # recomputed from game-tweaks.json; powerd applies on its next tick
-        tweaks = armada_perf.load_tweaks()
+        tweaks = armada_game_tweaks.load()
         state = {"global": self.gamescope_layer(tweaks.get("global") or {})}
         if keep_override:
             old = armada_perf.read_state().get("override")
             if isinstance(old, dict) and self.pid_alive(old.get("pid")):
-                merged = armada_perf.merged_settings(tweaks, old.get("appid"))
+                merged = armada_game_tweaks.merged_settings(tweaks, old.get("appid"))
                 override = self.gamescope_layer(merged)
                 override.update({"appid": old.get("appid"), "pid": old["pid"]})
                 state["override"] = override
@@ -494,8 +642,8 @@ class PerfManager:
         return match if match is not None else pid
 
     def game_launched(self, appid, pid):
-        tweaks = armada_perf.load_tweaks()
-        merged = armada_perf.merged_settings(tweaks, appid)
+        tweaks = armada_game_tweaks.load()
+        merged = armada_game_tweaks.merged_settings(tweaks, appid)
         clean = armada_perf.sanitize_perf(merged, self.env)
         nice = clean.get("nice", 0)
         if nice < 0:
@@ -521,9 +669,9 @@ class PerfManager:
         override = state.get("override")
         if not isinstance(override, dict) or not self.pid_alive(override.get("pid")):
             raise RuntimeError("no running game to re-apply")
-        tweaks = armada_perf.load_tweaks()
+        tweaks = armada_game_tweaks.load()
         clean = armada_perf.sanitize_perf(
-            armada_perf.merged_settings(tweaks, override.get("appid")), self.env)
+            armada_game_tweaks.merged_settings(tweaks, override.get("appid")), self.env)
         cores = clean.get("cores")
         if clean.get("scheduler") == "cosmos":
             cores = None  # composition: cosmos gets the domain, no hard mask
@@ -556,6 +704,8 @@ ACTIONS = {
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
+    "get_bottom_screen_enabled": action_get_bottom_screen_enabled,
+    "get_bottom_screen_brightness": action_get_bottom_screen_brightness,
     "get_abl_version": action_get_abl_version,
     "get_rgb": action_get_rgb,
     "set_rgb": action_set_rgb,
@@ -565,6 +715,8 @@ ACTIONS = {
     "inputplumber_intercept": action_inputplumber_intercept,
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
+    "set_bottom_screen_enabled": action_set_bottom_screen_enabled,
+    "set_bottom_screen_brightness": action_set_bottom_screen_brightness,
     "set_abl_auto_enabled": action_set_abl_auto_enabled,
     "get_desktop_mode": action_get_desktop_mode,
     "set_desktop_mode": action_set_desktop_mode,
@@ -644,6 +796,8 @@ def main():
     SOCKET.parent.mkdir(parents=True, exist_ok=True)
     selector = selectors.DefaultSelector()
     PERF = PerfManager(selector)
+    bottom_screen_backlight = secondary_backlight()
+    restore_bottom_screen_brightness(bottom_screen_backlight)
     # Root-only socket; config rendering still belongs to the plugin client.
     control = bind_socket(SOCKET, 0o600)
     session = bind_socket(SESSION_SOCKET, 0o660, group="armada")
@@ -659,8 +813,9 @@ def main():
     selector.register(control, selectors.EVENT_READ, accept_control)
     selector.register(session, selectors.EVENT_READ, accept_session)
     while True:
-        for key, _events in selector.select():
+        for key, _events in selector.select(BOTTOM_SCREEN_BRIGHTNESS_RESTORE_INTERVAL):
             key.data()
+        restore_bottom_screen_brightness(bottom_screen_backlight)
 
 
 def handle(request):

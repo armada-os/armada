@@ -190,6 +190,7 @@ def catalog_payload():
             "note": app.get("note") or "",
             "installType": install.get("type") or "",
             "desktopOnly": bool(app.get("desktopOnly")),
+            "hasConfig": bool(app.get("config")),
             "launch": launch_spec(app),
         })
     return {"apps": apps, "home": str(user_home())}

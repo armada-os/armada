@@ -32,6 +32,14 @@ export STEAM_USE_MANGOAPP=1
 
 export STEAM_USE_DYNAMIC_VRS=1
 
+# Gamescope selects Vulkan queue priority before the runtime policy is published.
+_armada_game_tweaks="${ARMADA_GAME_TWEAKS_HELPER:-/usr/libexec/armada/armada-game-tweaks}"
+_armada_vulkan_realtime="$("$_armada_game_tweaks" get global.gamescopeVulkanRealtime 2>/dev/null)"
+if [[ "$_armada_vulkan_realtime" == true ]]; then
+    export GAMESCOPE_FORCE_VULKAN_REALTIME=1
+fi
+unset _armada_game_tweaks _armada_vulkan_realtime
+
 # Set up first time bootstrap status
 export STEAM_BOOTSTRAP_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/gamescope/bootstrap.cfg"
 

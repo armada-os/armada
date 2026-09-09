@@ -4,6 +4,7 @@ set -euo pipefail
 device_env=${ARMADA_DEVICE_ENV:-/usr/libexec/armada/device-env}
 mem_sleep=${ARMADA_MEM_SLEEP_PATH:-/sys/power/mem_sleep}
 nm_ignore_sleep=${ARMADA_NM_IGNORE_SLEEP:-/etc/NetworkManager/ignore-sleep}
+sleep_config=${ARMADA_SLEEP_CONFIG:-/etc/armada/sleep.conf}
 
 eval "$("$device_env")"
 
@@ -26,20 +27,46 @@ ayaneo_xbox_mode() {
     echo "device-quirks: AYANEO MCU switched to Xbox 360 mode"
 }
 
+ayaneo_default_mode() {
+    local serial_device=/dev/ttyHS0
+
+    if [[ ! -e "$serial_device" ]]; then
+        echo "device-quirks: $serial_device not present, skipping AYANEO default mode"
+        return 0
+    fi
+
+    stty -F "$serial_device" 115200 -clocal -opost -isig -icanon -echo
+    printf '\xe7\x55\x05\x00\x00\x00\x00\x00\x00\x5a\xed' >"$serial_device"
+    sleep 0.1
+    printf '\x35\x35\x30\x35\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30\x30' >"$serial_device"
+    sleep 0.1
+
+    echo "device-quirks: AYANEO MCU switched back to default mode"
+}
+
 case "${ARMADA_GAMEPAD_QUIRK:-none}" in
     ayaneo-xbox)
         ayaneo_xbox_mode
+        ;;
+    ayaneo-default)
+        ayaneo_default_mode
         ;;
     none)
         ;;
 esac
 
+# Older images could save suspend_mode=deep, which is no longer a valid value.
+if [[ -w "$sleep_config" ]] && grep -qx 'suspend_mode=deep' "$sleep_config"; then
+    if ! sed -i 's/^suspend_mode=deep$/suspend_mode=s2idle/' "$sleep_config"; then
+        echo "device-quirks: failed to retire suspend_mode=deep in $sleep_config" >&2
+    fi
+fi
+
 # Keep the kernel selection aligned with the saved preference after reboot.
-if [[ "${ARMADA_SUSPEND_MODE:-fake}" == "s2idle" ||
-    "${ARMADA_SUSPEND_MODE:-fake}" == "deep" ]]; then
-    if [[ -w "$mem_sleep" ]] && grep -qw "$ARMADA_SUSPEND_MODE" "$mem_sleep"; then
-        if ! echo "$ARMADA_SUSPEND_MODE" >"$mem_sleep"; then
-            echo "device-quirks: failed to select $ARMADA_SUSPEND_MODE in $mem_sleep" >&2
+if [[ "${ARMADA_SUSPEND_MODE:-fake}" == "s2idle" ]]; then
+    if [[ -w "$mem_sleep" ]] && grep -qw s2idle "$mem_sleep"; then
+        if ! echo s2idle >"$mem_sleep"; then
+            echo "device-quirks: failed to select s2idle in $mem_sleep" >&2
         fi
     fi
 fi
@@ -70,12 +97,6 @@ if [[ "${ARMADA_SYNC_SUSPEND:-0}" == "1" ]]; then
 fi
 
 if [[ "${ARMADA_SOC_CLASS:-}" == "SM8550" ]]; then
-    # A740 wedges the GMU when CPU0 enters its deep power-collapse state.
-    cpu0_deep_idle=/sys/devices/system/cpu/cpu0/cpuidle/state1/disable
-    if [[ -w "$cpu0_deep_idle" ]]; then
-        echo 1 >"$cpu0_deep_idle"
-    fi
-
     # SM8550 UFS needs up to 3 seconds for UIC completion across suspend.
     uic_timeout=/sys/module/ufshcd_core/parameters/uic_cmd_timeout
     if [[ -w "$uic_timeout" ]]; then
