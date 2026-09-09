@@ -198,7 +198,7 @@ jobs:
           prefix="${prefix%/}"
 
           require_current_preview() {
-            current=$(skopeo inspect --override-arch arm64 --format '{{.Digest}}' \
+            current=$(skopeo inspect --no-creds --override-arch arm64 --format '{{.Digest}}' \
               "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:testing")
             if [ "${current}" != "${CONTAINER_DIGEST}" ]; then
               echo "::error::Preview has advanced to ${current}; refusing to publish stale disk ${CONTAINER_DIGEST}."
