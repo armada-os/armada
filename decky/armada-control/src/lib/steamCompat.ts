@@ -2,6 +2,8 @@ import {
   defaultWindowsCompatTool,
   type CompatTool,
 } from "./protonPolicy";
+import { readCompatTools } from "./compatTools";
+import { getCompatManagerTools } from "./compatManager";
 export {
   defaultWindowsCompatTool,
 } from "./protonPolicy";
@@ -24,7 +26,6 @@ function isManagedType(type: number | null): boolean {
 }
 
 const apps = () => window.SteamClient?.Apps;
-const settings = () => window.SteamClient?.Settings;
 
 export const USE_DEFAULT_COMPAT = "__armada_default__";
 export const FOLLOW_STEAM_COMPAT = "__steam_default__";
@@ -90,23 +91,13 @@ export function markCompatHandled(appid: string): boolean {
   return handledAppids.size !== size;
 }
 
-function mapCompatTools(raw: any): CompatTool[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((tool: any) => ({
-      id: String(tool?.strToolName ?? tool?.strName ?? tool?.name ?? ""),
-      label: String(tool?.strDisplayName ?? tool?.strToolName ?? tool?.strName ?? ""),
-    }))
-    .filter((tool: CompatTool) => tool.id);
-}
-
 export async function getProtonTools(refresh = false): Promise<CompatTool[]> {
   if (!refresh && protonToolsCache.length && Date.now() - protonToolsCachedAt < 5000) return protonToolsCache;
   if (protonToolsRequest) return protonToolsRequest;
   protonToolsRequest = (async () => {
     try {
       // Steam exposes Proton globally; per-app Linux runtimes only appear in available tools.
-      const tools = mapCompatTools(await settings()?.GetGlobalCompatTools?.());
+      const tools = await readCompatTools(window.SteamClient, getCompatManagerTools);
       if (tools.length) {
         protonToolsCache = tools;
         protonToolsCachedAt = Date.now();
@@ -124,7 +115,7 @@ export async function getProtonTools(refresh = false): Promise<CompatTool[]> {
 // A game's supported tools per Steam's OS filtering (Proton, plus SLR for a Linux depot); for the per-game picker.
 export async function getAppCompatTools(appid: string): Promise<CompatTool[]> {
   try {
-    return mapCompatTools(await apps()?.GetAvailableCompatTools?.(Number(appid)));
+    return await readCompatTools(window.SteamClient, getCompatManagerTools, Number(appid));
   } catch (error) {
     return [];
   }
