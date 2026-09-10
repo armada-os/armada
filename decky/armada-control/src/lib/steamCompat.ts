@@ -43,6 +43,7 @@ export function setWindowsCompatTool(toolName: string | undefined): void {
 
 // A saved default can name a tool a later release stopped shipping.
 async function effectiveWindowsCompatTool(): Promise<string> {
+  if (windowsCompatTool === FOLLOW_STEAM_COMPAT) return FOLLOW_STEAM_COMPAT;
   const tools = await getProtonTools();
   if (!tools.length) return "";
   if (windowsCompatTool && tools.some((tool) => tool.id === windowsCompatTool)) return windowsCompatTool;
@@ -146,7 +147,7 @@ export function compatSelection(state: CompatState | null, defaultTool?: string)
 export async function specifyCompatTool(appid: string, toolName: string): Promise<void> {
   const store = apps();
   if (!store?.SpecifyCompatTool) throw new Error("Steam compatibility settings are unavailable");
-  await store.SpecifyCompatTool(Number(appid), toolName);
+  await store.SpecifyCompatTool(Number(appid), toolName === FOLLOW_STEAM_COMPAT ? "" : toolName);
 }
 
 const delay = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
@@ -297,6 +298,7 @@ async function clearCompatToolAndResolveRoute(appid: string): Promise<CompatRout
 }
 
 async function applyCompatDefaultForRoute(appid: string, route: CompatRoute | null): Promise<boolean> {
+  if (windowsCompatTool === FOLLOW_STEAM_COMPAT) return repinToTool(appid, "");
   if (route === null) return false;
   if (route === "linux") {
     markCompatHandled(appid);
@@ -368,7 +370,7 @@ async function applyWindowsCompatDefault(appid: string): Promise<boolean> {
   if (handledAppids.has(appid)) return true;
   const details = await resolveSettledCompatDetails(appid);
   if (!details) return false;
-  if (!autoApplyCompat || Number(details.nCompatToolPriority || 0) >= 250) {
+  if (!autoApplyCompat || windowsCompatTool === FOLLOW_STEAM_COMPAT || Number(details.nCompatToolPriority || 0) >= 250) {
     markCompatHandled(appid);
     return true;
   }
@@ -402,8 +404,10 @@ export async function migrateWindowsCompatTool(
   pinnedAppids?: string[] | null,
 ): Promise<void> {
   if (!oldTool || oldTool === newTool) return;
-  const protonTools = await getProtonTools();
-  if (!protonTools.some((tool) => tool.id === newTool)) return;
+  if (newTool !== FOLLOW_STEAM_COMPAT) {
+    const protonTools = await getProtonTools();
+    if (!protonTools.some((tool) => tool.id === newTool)) return;
+  }
   setWindowsCompatTool(newTool);
   const pinned = pinnedAppids ? new Set(pinnedAppids.map(String)) : null;
   let next = 0;
@@ -422,7 +426,12 @@ export async function migrateWindowsCompatTool(
         await repinToTool(appid, newTool);
         continue;
       }
-      if (priority < 250 || String(details.strCompatToolName || "") !== oldTool) continue;
+      const currentTool = String(details.strCompatToolName || "");
+      if (oldTool === FOLLOW_STEAM_COMPAT) {
+        if (priority >= 250 || await resolveCompatRoute(currentTool) !== "windows") continue;
+      } else if (priority < 250 || currentTool !== oldTool) {
+        continue;
+      }
       for (let attempt = 0; attempt < 3; attempt++) {
         if (await applyCompatDefaultForRoute(appid, "windows")) break;
       }
@@ -439,6 +448,11 @@ export async function resetCompatToolToDefault(appid: string, pinnedAppids?: str
   }
   if (!isManagedType(type)) return "";
   const tool = await effectiveWindowsCompatTool();
+  if (tool === FOLLOW_STEAM_COMPAT) {
+    await specifyCompatTool(appid, "");
+    markCompatHandled(appid);
+    return "";
+  }
   // Clearing first needs a default to put back and a known pin state; null is unknown.
   if (!tool || pinnedAppids === null) {
     const state = await resolveCompatState(appid);
@@ -470,7 +484,9 @@ export async function resetAllGamePolicies(appids: string[], pinnedAppids?: stri
         continue;
       }
       if (!isManagedType(type)) continue;
-      if (canResetCompat && pinned?.has(appid)) {
+      if (tool === FOLLOW_STEAM_COMPAT) {
+        await repinToTool(appid, "");
+      } else if (canResetCompat && pinned?.has(appid)) {
         await repinToTool(appid, tool);
       } else if (canResetCompat) {
         await applyCompatDefaultForRoute(appid, await clearCompatToolAndResolveRoute(appid));
