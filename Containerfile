@@ -1,3 +1,4 @@
+ARG STEAM_BOOTSTRAP_PKG=ghcr.io/armada-os/armada-packages/steam-bootstrap@sha256:58609299e384dfea2ef1ed3a000c323145dd74c2c9c15051007d7b5522bf1d43
 ARG FEX_PKG=ghcr.io/armada-os/armada-packages/fex@sha256:277a25328499761e570bfb1f7fdce44b29dee074d76462402b0d8c361dacdffc
 ARG MESA_PKG=ghcr.io/armada-os/armada-packages/mesa@sha256:559c976d78bcc771f574c18d8fed5debcc3b8856a0ff448e968940480bca1165
 ARG MESA_ANDROID_PKG=ghcr.io/armada-os/armada-packages/mesa-android@sha256:1e7d5f5e692c38b7545e0c0774bbee45ab1b634309d9240f0e08b407b3fcc526
@@ -20,6 +21,7 @@ ARG UMTP_RESPONDER_PKG=ghcr.io/armada-os/armada-packages/umtp-responder@sha256:0
 ARG CHUNKAH_IMAGE=quay.io/coreos/chunkah@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708
 ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:44
 
+FROM ${STEAM_BOOTSTRAP_PKG} AS steam-bootstrap
 FROM ${FEX_PKG} AS fex
 FROM ${MESA_PKG} AS mesa
 FROM ${MANGOHUD_PKG} AS mangohud
@@ -63,6 +65,7 @@ ARG ARMADA_VERSION=unknown
 LABEL org.opencontainers.image.version="${ARMADA_VERSION}"
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=steam-bootstrap,source=/steam-bootstrap,target=/packages/steam-bootstrap \
     --mount=type=bind,from=fex,source=/rpms,target=/packages/fex \
     --mount=type=bind,from=mesa,source=/rpms,target=/packages/mesa \
     --mount=type=bind,from=mangohud,source=/rpms,target=/packages/mangohud \
