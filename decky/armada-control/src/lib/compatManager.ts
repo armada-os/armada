@@ -82,6 +82,8 @@ function compatTransport(): any {
 }
 
 export async function getCompatManagerTools(appid?: number): Promise<CompatToolsResponse> {
+  // Steam can dereference a missing Proton alias before its post-login services initialize.
+  await (window as any).App.WaitForServicesInitialized();
   const transport = compatTransport();
   const request = messageClass.Init(CompatToolsRequest);
   request.Body().appid = appid;
