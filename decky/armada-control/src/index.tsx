@@ -23,6 +23,7 @@ export default definePlugin(() => {
     .catch(() => ({ state: { appids: [] as string[], protonDefault: "" }, loaded: false }));
   Promise.all([getConfig(), getInstalledGames(), handledRequest])
     .then(async ([config, games, handled]) => {
+      await (window as any).App.WaitForServicesInitialized();
       if (cancelled) return;
       const explicitTool = config.tweaks?.global?.windowsCompatTool;
       configureCompatPolicy(
