@@ -233,7 +233,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     compatTools, config.protonDefaults,
   );
   // The setting is kept rather than rewritten: reinstalling the tool restores the choice.
-  const globalToolMissing = !!globalTool && compatTools.length > 0
+  const globalToolMissing = !!globalTool && globalTool !== FOLLOW_STEAM_COMPAT && compatTools.length > 0
     && !compatTools.some((tool) => tool.id === globalTool);
   const activeGlobalTool = !globalTool || globalToolMissing ? resolvedDefaultTool : globalTool;
   const runtimeGame = config.game;
@@ -483,7 +483,10 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     setConfig((current) => (current ? { ...current, selectedGame: saved || null } : current));
   };
 
-  const toolOptions = compatTools.map((tool) => ({ data: tool.id, label: tool.label }));
+  const toolOptions = [
+    { data: FOLLOW_STEAM_COMPAT, label: "Follow Steam" },
+    ...compatTools.map((tool) => ({ data: tool.id, label: tool.label })),
+  ];
   const onSelectGlobalDefault = async (choice: any) => {
     if (switchingDefault) return;
     const name = String(choice);
@@ -805,14 +808,18 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
                 {globalTool} is no longer installed. Choose a new default for your games.
               </div>
             ) : null}
-            <ToggleField
-              label="Apply to New Games"
-              checked={tweaks.global.autoApplyCompat !== false}
-              onChange={(enabled) => {
-                setAutoApplyCompat(enabled);
-                patchSettings({ autoApplyCompat: enabled });
-              }}
-            />
+            {activeGlobalTool === FOLLOW_STEAM_COMPAT ? (
+              <div className="armada-compat-note">Steam chooses the compatibility tool for each game.</div>
+            ) : (
+              <ToggleField
+                label="Apply to New Games"
+                checked={tweaks.global.autoApplyCompat !== false}
+                onChange={(enabled) => {
+                  setAutoApplyCompat(enabled);
+                  patchSettings({ autoApplyCompat: enabled });
+                }}
+              />
+            )}
             <SelectEdit label="Game Resolution" value={defaultResolution} options={resolutionOptions} onChange={setSteamDefaultResolution} />
           </>
         ) : (
