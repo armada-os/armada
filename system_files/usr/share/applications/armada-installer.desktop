@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Armada Installer
-Comment=Install Armada alongside Android on the device's internal storage, or remove an existing install
+Comment=Install Armada alongside Android on the device's internal storage
 Exec=/usr/libexec/armada/armada-installer gui
 TryExec=/run/armada/installable
 Icon=drive-harddisk
