@@ -1,25 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # AudioReach topology source for the KONKR Pocket FIT Elite (SM8750).
-#
-# Build with the macro library from
-# https://git.codelinaro.org/linaro/qcomlt/audioreach-topology:
-#
-#   m4 -I <audioreach-topology> SM8750-KONKR.m4 > SM8750-KONKR.conf
-#   alsatplg -c SM8750-KONKR.conf -o SM8750-KONKR-tplg.bin
-#
-# Streams: MultiMedia1 = speakers, MultiMedia2 = headphones,
-# MultiMedia3 = headset mic, MultiMedia4 = DisplayPort. PCM device numbers follow
-# the stream index, so DisplayPort is hw:0,3 and that is what the UCM HDMI device
-# opens.
-#
-# DisplayPort gets a stream of its own so the three outputs are three sinks in
-# one card profile. Sharing the speaker PCM instead makes pipewire model them as
-# alternative card profiles, and switching profiles tears down and rebuilds the
-# sinks on signals that do not move in step with the cable, which strands the
-# card on an unusable profile. Needs the DP driver to tolerate a prepare while
-# the display is off (patch 0618).
-#
-# The Odin3 topology is the same with the I2S data line on SD0.
+# MultiMedia1-4 provide speakers, headphones, headset capture, and DisplayPort.
+# DisplayPort uses a dedicated PCM so all outputs remain in one card profile.
 include(`audioreach/audioreach.m4')
 include(`audioreach/stream-subgraph.m4')
 include(`audioreach/device-subgraph.m4')
