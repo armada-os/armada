@@ -3,6 +3,7 @@ Description=Watch for Waydroid Android session startup
 
 [Path]
 PathChanged=/run/waydroid-lxc/network_up
+PathChanged=/run/user/1000/armada-bottom-screen-active
 Unit=armada-waydroid-input.service
 
 [Install]

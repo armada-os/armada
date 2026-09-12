@@ -15,8 +15,7 @@ dnf5 -y install --setopt=install_weak_deps=False \
     gamemode \
     gtk2 \
     openal-soft \
-    xorg-x11-server-Xwayland \
-    xorg-x11-server-Xvfb
+    xorg-x11-server-Xwayland
 
 # Patched InputPlumber: dpad signed-axis fix
 dnf5 -y install --setopt=install_weak_deps=False /packages/inputplumber/inputplumber-*.rpm
@@ -95,7 +94,12 @@ EOF
 STEAM_BOOTSTRAP_HOME=/var/home/armada
 STEAM_HOME="${STEAM_BOOTSTRAP_HOME}/.local/share/Steam"
 
-STEAM_BOOTSTRAP_HOME="${STEAM_BOOTSTRAP_HOME}" bash /ctx/build_files/generate-steam-bootstrap.sh
+(cd /packages/steam-bootstrap && sha256sum -c steam-bootstrap.tar.zst.sha256)
+rm -rf "${STEAM_BOOTSTRAP_HOME}"
+mkdir -p "${STEAM_BOOTSTRAP_HOME}"
+tar --zstd -xf /packages/steam-bootstrap/steam-bootstrap.tar.zst -C "${STEAM_BOOTSTRAP_HOME}"
+python3 /ctx/build_files/verify-steam-bootstrap.py \
+    "${STEAM_HOME}/package/steam_client_steamdeck_publicbeta_linuxarm64.installed" "${STEAM_HOME}"
 rm -f /etc/steamos-oobe-image
 
 PROTON_VER="11.0-20260703-slr"
@@ -129,10 +133,9 @@ python3 /ctx/build_files/patch-proton-cachyos-dxvk-probe.py \
 python3 /ctx/build_files/set-steam-default-compat.py "${STEAM_HOME}" "${PROTON_TOOL_NAME}" "${PROTON_DIR}"
 rm -f "/tmp/${PROTON_TAR}" "/tmp/${PROTON_ARCHIVE_NAME}.sha512sum"
 
-# Pin Steam, Proton, and the FEX rootfs to their own rechunk layers (build-chunked-oci reads the
-# user.component xattr) so a system_files change doesn't re-pull them every OTA.
+# Identify large independently updated components for content-aware layer packing.
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"steam")' "${STEAM_HOME}"
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"proton")' "${PROTON_DIR}/${PROTON_TOOL_NAME}"
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-rootfs")' /usr/share/fex-emu/RootFS
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-rootfs")' /usr/share/fex-emu/RootFS/ArchLinux.sqsh
 
 echo "Pre-staged: ARM64 Steam bootstrap + CachyOS Proton 11 ${PROTON_VER}"

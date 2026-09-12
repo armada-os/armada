@@ -22,8 +22,7 @@ dracut \
 
 # dracut drops modules silently: fail the build rather than ship without.
 # Exact match: a substring test lets armada-splash-launcher pass for the binary.
-contents="$(lsinitrd "${IMG}")"
-for required in \
+required=(
     usr/lib/systemd/system/armada-splash-initrd.service \
     usr/lib/systemd/system/dracut-pre-mount.service.d/armada-splash.conf \
     usr/libexec/armada/armada-splash \
@@ -32,12 +31,31 @@ for required in \
     usr/share/armada/splash/splash.asp \
     usr/libexec/armada/armada-ostree-fallback \
     usr/lib/systemd/system/ostree-prepare-root.service.d/armada-fallback.conf \
-    usr/lib/ostree/ostree-prepare-root; do
-    if ! awk -v p="${required}" '$NF == p { found=1 } END { exit !found }' <<<"${contents}"; then
-        echo "ERROR: ${required} missing from initramfs"
-        dracut --list-modules --kver "${KVER}" | grep -i armada || true
-        exit 1
-    fi
-done
+    usr/lib/ostree/ostree-prepare-root
+)
+
+if ! lsinitrd "${IMG}" | awk '
+    BEGIN {
+        count = ARGC - 1
+        for (i = 1; i <= count; i++) {
+            paths[i] = ARGV[i]
+            required[ARGV[i]] = 1
+        }
+        ARGC = 1
+    }
+    $NF in required { found[$NF] = 1 }
+    END {
+        for (i = 1; i <= count; i++) {
+            if (!(paths[i] in found)) {
+                print "ERROR: " paths[i] " missing from initramfs" > "/dev/stderr"
+                missing = 1
+            }
+        }
+        exit missing
+    }
+' "${required[@]}"; then
+    dracut --list-modules --kver "${KVER}" | grep -i armada || true
+    exit 1
+fi
 
 echo "initramfs generated for ${KVER} with armada-splash"

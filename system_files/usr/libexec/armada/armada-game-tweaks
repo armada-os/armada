@@ -1,0 +1,44 @@
+#!/usr/bin/python3
+
+import argparse
+import json
+import os
+import pathlib
+import sys
+
+sys.path.insert(0, os.environ.get("ARMADA_GAME_TWEAKS_LIB", "/usr/lib/armada"))
+import armada_game_tweaks
+
+
+def config_path(variable):
+    value = os.environ.get(variable)
+    return pathlib.Path(value) if value else None
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command", choices=("dump", "get"))
+    parser.add_argument("key", nargs="?")
+    args = parser.parse_args()
+
+    data = armada_game_tweaks.load(
+        config_path("ARMADA_TWEAKS_DEFAULTS_CONFIG"),
+        config_path("ARMADA_TWEAKS_CONFIG"),
+    )
+    if args.command == "dump":
+        if args.key is not None:
+            parser.error("dump does not accept a key")
+        print(json.dumps(data, indent=2, sort_keys=True))
+        return
+    if args.key is None:
+        parser.error("get requires a dotted key")
+    value = data
+    for component in args.key.split("."):
+        if not isinstance(value, dict) or component not in value:
+            return
+        value = value[component]
+    print(json.dumps(value, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()

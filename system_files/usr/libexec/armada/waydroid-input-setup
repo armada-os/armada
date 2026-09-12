@@ -16,8 +16,6 @@ if [[ "$boot_completed" != "1" ]]; then
     exit 1
 fi
 
-waydroid shell -- setprop persist.waydroid.uevent true
-
 keylayout_source=/usr/share/armada/waydroid/keylayout
 keylayout_target=/var/home/armada/.local/share/waydroid/data/system/devices/keylayout
 if [[ -d "$keylayout_source" ]]; then
@@ -28,17 +26,31 @@ if [[ -d "$keylayout_source" ]]; then
     done
 fi
 
-found=0
+events=()
 for event in /sys/class/input/event*; do
     if ! udevadm info --query=property --path="$event" 2>/dev/null | grep -qx 'ARMADA_WAYDROID_GAMEPAD=1'; then
         continue
     fi
-    echo add > "$event/uevent"
-    echo "Exposed $(basename "$event") to Waydroid"
-    found=1
+    events+=("$event")
 done
 
-if (( ! found )); then
+if (( ! ${#events[@]} )); then
     echo "No Waydroid passthrough gamepad found"
     exit 0
 fi
+
+if [[ -e /run/user/1000/armada-bottom-screen-active ]]; then
+    waydroid shell -- setprop persist.waydroid.uevent false
+    for event in "${events[@]}"; do
+        name=$(basename "$event")
+        waydroid shell -- rm -f "/dev/input/$name"
+        echo "Hid $name from Waydroid while the bottom screen is active"
+    done
+    exit 0
+fi
+
+waydroid shell -- setprop persist.waydroid.uevent true
+for event in "${events[@]}"; do
+    echo add > "$event/uevent"
+    echo "Exposed $(basename "$event") to Waydroid"
+done

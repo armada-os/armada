@@ -1,0 +1,125 @@
+#!/usr/bin/bash
+# Hold a key during the boot splash to change what the device boots into.
+# EVIOCGKEY state, not an event stream: reads through InputPlumber's grab.
+set -uo pipefail
+
+source "${ARMADA_INPUT_LIB:-/usr/lib/armada/input-lib}"
+
+HOLD_MS="${ARMADA_BOOT_HOTKEY_HOLD_MS:-3000}"
+POLL_MS="${ARMADA_BOOT_HOTKEY_POLL_MS:-500}"
+MAX_SECS="${ARMADA_BOOT_HOTKEY_MAX:-600}"
+RESCAN_MS="${ARMADA_BOOT_HOTKEY_RESCAN_MS:-5000}"
+CEF_PORT="${ARMADA_SPLASH_CEF_PORT:-8080}"
+SESSION_CONTROL="${ARMADA_SESSION_CONTROL:-/usr/libexec/armada/session-control}"
+STATUS="${ARMADA_SPLASH_STATUS:-/run/armada/splash/status}"
+PROGRESS="${ARMADA_SPLASH_PROGRESS:-/usr/libexec/armada/armada-splash-progress}"
+RECOVERY_MARKER="${ARMADA_RECOVERY_MARKER:-/run/armada/recovery-mode}"
+INPUT_DEV_DIR="${ARMADA_INPUT_DEV_DIR:-/dev/input}"
+
+log() { logger -t armada-boot-hotkeys -- "$*" 2>/dev/null; return 0; }
+
+announce() { [[ -x "$PROGRESS" ]] && ARMADA_SPLASH_STATUS="$STATUS" "$PROGRESS" "$@"; return 0; }
+
+action_desktop() {
+    announce "Starting Desktop"
+    # Runtime marker distinguishing a hotkey boot from a chosen one.
+    : > "$RECOVERY_MARKER" 2>/dev/null
+    # The per-boot gamemode reset must land before this override does.
+    systemctl start armada-session-default.service 2>/dev/null
+    if systemctl is-active --quiet display-manager.service 2>/dev/null; then
+        "$SESSION_CONTROL" switch-desktop
+        return
+    fi
+    # session-control clears the failure state, so a failed sddm has to be
+    # started here; checked before that reset, not after.
+    local was_failed=0
+    systemctl is-failed --quiet display-manager.service 2>/dev/null && was_failed=1
+    "$SESSION_CONTROL" default-desktop
+    (( was_failed )) && systemctl --no-block start display-manager.service
+    return 0
+}
+
+# code:evdev name:label:action. Select because no capability map translates it,
+# so it reaches the raw node unchanged.
+hotkeys=(
+    "314:BTN_SELECT:Desktop Mode:action_desktop"
+)
+
+(( POLL_MS > 0 )) || POLL_MS=500
+hold_polls=$(( HOLD_MS / POLL_MS ))
+(( hold_polls > 0 )) || hold_polls=1
+rescan_polls=$(( RESCAN_MS / POLL_MS ))
+(( rescan_polls > 0 )) || rescan_polls=1
+sleep_arg=$(printf '%d.%03d' $(( POLL_MS / 1000 )) $(( POLL_MS % 1000 )))
+
+declare -A hotkey_devices=()
+have_devices=0
+
+scan_devices() {
+    local entry code devs dev
+    have_devices=0
+    for entry in "${hotkeys[@]}"; do
+        IFS=: read -r code _ _ _ <<<"$entry"
+        devs=""
+        for dev in "$INPUT_DEV_DIR"/event*; do
+            [[ -e "$dev" ]] || continue
+            armada_dev_has_key "$dev" "$code" && devs+=" $dev"
+        done
+        hotkey_devices[$code]="${devs# }"
+        [[ -n "$devs" ]] && have_devices=1
+    done
+}
+
+held_hotkey() {
+    local entry code name dev rc
+    for entry in "${hotkeys[@]}"; do
+        IFS=: read -r code name _ _ <<<"$entry"
+        for dev in ${hotkey_devices[$code]}; do
+            evtest --query "$dev" EV_KEY "$name" >/dev/null 2>&1; rc=$?
+            (( rc == 10 )) && { printf '%s\n' "$entry"; return 0; }
+        done
+    done
+    return 1
+}
+
+# Steam owns this button once up; the gamescope unit goes active too early.
+steam_up() {
+    (exec 3<>"/dev/tcp/127.0.0.1/${CEF_PORT}") 2>/dev/null
+}
+
+current=""
+held=0
+waited=0
+polls=0
+max_ms=$(( MAX_SECS * 1000 ))
+
+while (( waited < max_ms )); do
+    steam_up && exit 0
+    if (( have_devices == 0 || polls % rescan_polls == 0 )); then
+        scan_devices
+    fi
+    polls=$(( polls + 1 ))
+
+    entry=$(held_hotkey) || entry=""
+    if [[ -n "$entry" ]]; then
+        IFS=: read -r _ _ label action <<<"$entry"
+        if [[ "$entry" != "$current" ]]; then
+            current="$entry"
+            held=0
+            log "holding ${label}"
+        fi
+        held=$(( held + 1 ))
+        if (( held > hold_polls )); then
+            log "triggering ${label}"
+            "$action"
+            exit 0
+        fi
+    elif [[ -n "$current" ]]; then
+        log "released before the hold completed"
+        current=""
+        held=0
+    fi
+
+    sleep "$sleep_arg"
+    waited=$(( waited + POLL_MS ))
+done

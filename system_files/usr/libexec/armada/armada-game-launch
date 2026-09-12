@@ -12,11 +12,11 @@ import sys
 import time
 
 sys.path.insert(0, "/usr/lib/armada")
+import armada_game_tweaks
 import armada_perf
 
 
 BASE_FEX_CONFIG = pathlib.Path("/usr/share/fex-emu/Config.json")
-TWEAKS_CONFIG = pathlib.Path("/etc/armada/game-tweaks.json")
 FEX_PROFILES_CONFIG = pathlib.Path("/usr/share/armada/fex-profiles.json")
 PROTON_INJECT_SRC = pathlib.Path("/usr/share/armada/proton-inject/x86_64-linux-gnu")
 SYSTEM_EXEC_PATHS = ("/usr/bin", "/usr/local/bin", "/bin")
@@ -66,28 +66,12 @@ def load_fex_contract():
     with FEX_PROFILES_CONFIG.open(encoding="utf-8") as f:
         contract = json.load(f)
     profiles = contract.get("profiles")
-    if not isinstance(contract.get("defaults"), dict) or not isinstance(profiles, dict) or "default" not in profiles:
+    if not isinstance(profiles, dict) or "default" not in profiles:
         raise ValueError("invalid FEX profile contract")
     for profile in profiles.values():
         if not isinstance(profile, dict) or not isinstance(profile.get("config"), dict):
             raise ValueError("invalid FEX profile contract")
     return contract
-
-
-def load_tweaks(defaults):
-    data = json.loads(json.dumps(defaults))
-    try:
-        with TWEAKS_CONFIG.open(encoding="utf-8") as f:
-            loaded = json.load(f)
-    except (OSError, ValueError):
-        return data
-    if not isinstance(loaded, dict):
-        return data
-    if isinstance(loaded.get("global"), dict):
-        data["global"].update(loaded["global"])
-    if isinstance(loaded.get("games"), dict):
-        data["games"] = loaded["games"]
-    return data
 
 
 def thunk_settings(settings, modules):
@@ -268,7 +252,8 @@ def main():
     settings = {}
     try:
         contract = load_fex_contract()
-        settings = armada_perf.merged_settings(load_tweaks(contract["defaults"]), game_id)
+        settings = armada_game_tweaks.merged_settings(
+            armada_game_tweaks.load(), game_id)
         apply_fex(settings, game_id, contract["profiles"], os.environ)
     except Exception as exc:
         print(f"armada-game-launch: failed to apply settings: {exc}", file=sys.stderr)

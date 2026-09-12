@@ -10,9 +10,10 @@ update-desktop-database -q /usr/share/applications
 
 cp -a /packages/mesa-android/waydroid/vendor /usr/share/armada/waydroid/
 
-# x86 Turnip payload for the guestos overlay; the rootfs's driver lacks armada's mesa patches
-mkdir -p /usr/share/armada/guestos-x86-mesa
-cp -a /packages/mesa-x86/guestos-x86-mesa/usr /usr/share/armada/guestos-x86-mesa/
+mesa_sqsh=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh
+install -Dm0644 /packages/mesa-x86/ArmadaMesa.sqsh "${mesa_sqsh}"
+# A separate rechunk component keeps Mesa-only updates from invalidating ArchLinux.sqsh.
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-mesa")' "${mesa_sqsh}"
 
 # Status text font for armada-splash (falls back to its embedded bitmap font
 # if this link dangles). Static face: stb_truetype renders a VF's default
@@ -30,29 +31,45 @@ sha256sum -c <<'EOF'
 EOF
 
 source /ctx/abl/release.env
+abl_releases=/ctx/abl/releases.tsv
 abl_archive=/tmp/rocknix-abl.tar.gz
 curl --connect-timeout 30 --retry 3 -fsSL -o "${abl_archive}" \
     "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
-printf '%s  %s\n' "${ARMADA_ABL_ARCHIVE_SHA256}" "${abl_archive}" | sha256sum -c -
 abl_src=/tmp/rocknix-abl
 mkdir -p "${abl_src}"
 tar -xzf "${abl_archive}" -C "${abl_src}" --strip-components=1
 manifest=/usr/lib/armada/abl/manifest
 install -Dpm 0644 /dev/null "${manifest}"
+install -Dpm 0644 "${abl_releases}" /usr/lib/armada/abl/releases.tsv
 printf 'ARMADA_ABL_VERSION=%s\nARMADA_ABL_AUTO=%s\n' \
     "${ARMADA_ABL_VERSION}" "${ARMADA_ABL_AUTO}" >> "${manifest}"
-abl_version=${ARMADA_ABL_VERSION}
 for soc in SM8250 SM8550 SM8650 SM8750; do
+    approved=$(ARMADA_ABL_RELEASES="${abl_releases}" \
+        python3 /usr/lib/armada/abl-version --lookup "${ARMADA_ABL_VERSION}" "${soc}") || {
+        echo "ERROR: missing approved ${ARMADA_ABL_VERSION} ${soc} payload" >&2
+        exit 1
+    }
+    read -r approved_size approved_hash <<<"${approved}"
     payload="/usr/lib/armada/abl/abl_signed-${soc}.elf"
     install -Dpm 0644 "${abl_src}/abl_signed-${soc}.elf" \
         "${payload}"
-    reported=$(python3 /usr/lib/armada/abl-version "${payload}")
-    [ "${reported}" = "${abl_version}" ] || {
-        echo "ERROR: ${soc} payload reports ${reported}, expected ${abl_version}" >&2
+    [[ $(stat -c %s "${payload}") == "${approved_size}" ]] || {
+        echo "ERROR: ${soc} payload size does not match the approved release" >&2
+        exit 1
+    }
+    actual_hash=$(sha256sum "${payload}" | cut -d ' ' -f 1)
+    [[ ${actual_hash} == "${approved_hash}" ]] || {
+        echo "ERROR: ${soc} payload hash does not match the approved release" >&2
+        exit 1
+    }
+    identity=$(ARMADA_ABL_RELEASES=/usr/lib/armada/abl/releases.tsv \
+        python3 /usr/lib/armada/abl-version --with-soc "${payload}")
+    [[ ${identity} == "${ARMADA_ABL_VERSION} ${soc}" ]] || {
+        echo "ERROR: ${soc} payload catalog identity is ${identity:-unknown}" >&2
         exit 1
     }
     printf 'ARMADA_ABL_SHA256_%s=%s\n' "${soc}" \
-        "$(sha256sum "${payload}" | cut -d ' ' -f 1)" \
+        "${actual_hash}" \
         >> "${manifest}"
 done
 rm -f "${abl_archive}"
@@ -87,6 +104,8 @@ systemctl enable armada-control.service
 systemctl enable armada-steamos-manager.service
 systemctl --global enable armada-steamos-manager.service
 systemctl enable armada-bootimg-sync.service
+systemctl enable armada-esp-rename.service
+systemctl enable armada-boot-hotkeys.service
 systemctl enable armada-flatpak-setup.service
 systemctl enable armada-waydroid-input.path
 systemctl enable armada-splash-stall.service

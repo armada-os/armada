@@ -1,56 +1,90 @@
 #!/usr/bin/python3
-# Ignore recognizable data outside the ELF's declared load segments.
-import lzma
+# Identify exact payloads from the approved ROCKNIX release catalog.
+import csv
+import hashlib
+import os
 import re
-import struct
 import sys
 
+FIELDS = ["version", "soc", "size", "sha256"]
 MAX_SIZE = 4 * 1024 * 1024
-with open(sys.argv[1], "rb", buffering=0) as firmware:
-    image = firmware.read(MAX_SIZE)
-if len(image) < 52 or image[:7] != b"\x7fELF\x01\x01\x01":
-    raise SystemExit(1)
-machine = struct.unpack_from("<H", image, 18)[0]
-phoff = struct.unpack_from("<I", image, 28)[0]
-ehsize, phentsize, phnum = struct.unpack_from("<HHH", image, 40)
-if machine != 40 or ehsize != 52 or phentsize != 32 or not 1 <= phnum <= 64:
-    raise SystemExit(1)
-if phoff + phentsize * phnum > len(image):
-    raise SystemExit(1)
-loads = []
-for index in range(phnum):
-    entry = phoff + index * phentsize
-    kind, offset = struct.unpack_from("<II", image, entry)
-    size = struct.unpack_from("<I", image, entry + 16)[0]
-    if offset + size > len(image):
-        raise SystemExit(1)
-    if kind == 1 and size:
-        loads.append((offset, offset + size))
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+SUPPORTED_SOCS = {"SM8250", "SM8550", "SM8650", "SM8750"}
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?")
 
-guid = bytes.fromhex("98584eee143959429d6edc7bd79403cf")
-fv = section = -1
-segment_end = 0
-for segment_start, segment_end in loads:
-    fv = image.find(b"_FVH", segment_start, segment_end)
-    if fv >= 0:
-        section = image.find(guid, fv, segment_end)
-        if section >= 0:
-            break
-if section < 4 or section + 18 > segment_end:
-    raise SystemExit(1)
-data_offset = int.from_bytes(image[section + 16:section + 18], "little")
-start = section - 4 + data_offset
-if data_offset < 20 or start >= segment_end:
-    raise SystemExit(1)
-try:
-    stream = lzma.LZMADecompressor(format=lzma.FORMAT_ALONE)
-    volume = stream.decompress(image[start:segment_end], max_length=MAX_SIZE)
-except lzma.LZMAError:
-    raise SystemExit(1)
-marker = volume.find(b"ROCKNIX-ABL\x00")
-if not stream.eof or marker < 0:
-    raise SystemExit(1)
-value = volume[marker + len(b"ROCKNIX-ABL\x00"):].split(b"\x00", 1)[0]
-if not re.fullmatch(rb"[0-9]+\.[0-9]+(?:\.[0-9]+)?", value):
-    raise SystemExit(1)
-print(value.decode("ascii"))
+
+def load_catalog(path):
+    entries = []
+    keys = set()
+    identities = set()
+    with open(path, encoding="ascii", newline="") as source:
+        lines = (
+            line for line in source
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        rows = csv.DictReader(lines, delimiter="\t", strict=True)
+        if rows.fieldnames != FIELDS:
+            raise ValueError("invalid catalog header")
+        for row in rows:
+            if None in row or None in row.values():
+                raise ValueError("invalid catalog row")
+            version = row["version"]
+            soc = row["soc"]
+            size = int(row["size"])
+            digest = row["sha256"]
+            key = (version, soc)
+            identity = (size, digest)
+            if (not VERSION_RE.fullmatch(version) or soc not in SUPPORTED_SOCS or
+                    not 0 < size <= MAX_SIZE or not SHA256_RE.fullmatch(digest) or
+                    key in keys or identity in identities):
+                raise ValueError("invalid catalog row")
+            keys.add(key)
+            identities.add(identity)
+            entries.append((version, soc, size, digest))
+    if not entries:
+        raise ValueError("empty catalog")
+    return entries
+
+
+def identify(entries, path):
+    with open(path, "rb", buffering=0) as firmware:
+        image = firmware.read(max(entry[2] for entry in entries))
+    hashes = {}
+    matches = set()
+    for version, soc, size, digest in entries:
+        if len(image) < size:
+            continue
+        if size not in hashes:
+            hashes[size] = hashlib.sha256(image[:size]).hexdigest()
+        if hashes[size] == digest:
+            matches.add((version, soc))
+    if len(matches) != 1:
+        raise ValueError("payload identity is not unique")
+    return matches.pop()
+
+
+def main(args):
+    catalog = os.environ.get(
+        "ARMADA_ABL_RELEASES", "/usr/lib/armada/abl/releases.tsv"
+    )
+    try:
+        entries = load_catalog(catalog)
+        if len(args) == 3 and args[0] == "--lookup":
+            version, soc = args[1:]
+            matches = [entry for entry in entries if entry[:2] == (version, soc)]
+            if len(matches) != 1:
+                return 1
+            _, _, size, digest = matches[0]
+            print(f"{size} {digest}")
+            return 0
+        with_soc = len(args) == 2 and args[0] == "--with-soc"
+        if len(args) != (2 if with_soc else 1):
+            return 2
+        version, soc = identify(entries, args[1] if with_soc else args[0])
+        print(f"{version} {soc}" if with_soc else version)
+        return 0
+    except (csv.Error, OSError, UnicodeError, ValueError):
+        return 1
+
+
+raise SystemExit(main(sys.argv[1:]))

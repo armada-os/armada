@@ -21,10 +21,10 @@ import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
 import { clone } from "../lib/util";
 import { availableGames, editTargetOptions } from "../lib/games";
 import {
-  DEFAULT_WINDOWS_COMPAT_TOOL,
   FOLLOW_STEAM_COMPAT,
   USE_DEFAULT_COMPAT,
   compatSelection,
+  defaultWindowsCompatTool,
   getAppCompatTools,
   getProtonTools,
   handledGameAppids,
@@ -41,6 +41,11 @@ import {
 } from "../lib/steamCompat";
 import type { CompatTool } from "../lib/steamCompat";
 import type { Config } from "../types";
+
+const PERF_KEYS = [
+  "cores", "wineTopology", "nice", "gamescopeCores",
+  "gamescopeNice", "gamescopeRr", "scheduler",
+];
 
 function cpulistError(text: string, cpuCount: number): string {
   const seen = new Set<number>();
@@ -223,11 +228,15 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
   const [perGameTools, setPerGameTools] = useState<CompatTool[]>([]);
   const [currentTool, setCurrentTool] = useState("");
   const [globalTool, setGlobalTool] = useState(
-    String(config.tweaks?.global?.windowsCompatTool || DEFAULT_WINDOWS_COMPAT_TOOL),
+    String(config.tweaks?.global?.windowsCompatTool || ""),
+  );
+  const resolvedDefaultTool = defaultWindowsCompatTool(
+    compatTools, config.protonDefaults,
   );
   // The setting is kept rather than rewritten: reinstalling the tool restores the choice.
-  const globalToolMissing = compatTools.length > 0 && !compatTools.some((tool) => tool.id === globalTool);
-  const activeGlobalTool = globalToolMissing ? DEFAULT_WINDOWS_COMPAT_TOOL : globalTool;
+  const globalToolMissing = !!globalTool && globalTool !== FOLLOW_STEAM_COMPAT && compatTools.length > 0
+    && !compatTools.some((tool) => tool.id === globalTool);
+  const activeGlobalTool = !globalTool || globalToolMissing ? resolvedDefaultTool : globalTool;
   const runtimeGame = config.game;
   const games = availableGames(config);
   const selectedGame = config.selectedGame || runtimeGame || null;
@@ -341,11 +350,18 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     setConfig((current) => {
       if (!current) return current;
       const next = clone(current);
+      let target: Record<string, any> | undefined;
       if (editingDefault) {
-        Object.assign(next.tweaks.global, patch);
+        target = next.tweaks.global;
       } else if (game?.appid) {
         const existing = next.tweaks.games[game.appid] || {};
-        next.tweaks.games[game.appid] = { ...existing, name: game.name || "", ...patch };
+        target = next.tweaks.games[game.appid] = { ...existing, name: game.name || "" };
+      }
+      if (target) {
+        for (const [key, value] of Object.entries(patch)) {
+          if (value === undefined) delete target[key];
+          else target[key] = value;
+        }
       }
       return next;
     });
@@ -468,11 +484,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     setConfig((current) => (current ? { ...current, selectedGame: saved || null } : current));
   };
 
-  const toolOptions = compatTools.map((tool) => ({ data: tool.id, label: tool.label }));
+  const toolOptions = [
+    { data: FOLLOW_STEAM_COMPAT, label: t("Follow Steam") },
+    ...compatTools.map((tool) => ({ data: tool.id, label: tool.label })),
+  ];
   const onSelectGlobalDefault = async (choice: any) => {
     if (switchingDefault) return;
     const name = String(choice);
-    const oldTool = String(tweaks.global.windowsCompatTool || DEFAULT_WINDOWS_COMPAT_TOOL);
+    const oldTool = activeGlobalTool;
     setSwitchingDefault(true);
     try {
       const pinned = await pinnedToMissingTool();
@@ -503,6 +522,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
   const onSelectPerGameTool = async (choice: any) => {
     if (!game?.appid) return;
     const selection = String(choice);
+    if (selection === USE_DEFAULT_COMPAT && !activeGlobalTool) return;
     const target = selection === USE_DEFAULT_COMPAT
       ? activeGlobalTool
       : selection === FOLLOW_STEAM_COMPAT
@@ -532,9 +552,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
   const onSelectFex = (id: any) => {
     if (id === "custom") {
       setCustomSelected(true);
-      // First Custom for this target seeds from the Default preset; afterwards the
-      // stored config is kept, including across visits to a preset.
-      patchSettings({ fexProfile: "custom", fexConfig: { ...(ownConfig || presets.default?.config || {}) } });
+      patchSettings({ fexProfile: "custom", fexConfig: { ...(ownConfig || fexConfig) } });
       return;
     }
     setCustomSelected(false);
@@ -581,6 +599,11 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     ...(perf?.corePresets || [{ data: "all", label: "All Cores" }]).map((option) => ({ ...option, label: translateLabel(option.label) })),
     { data: "custom", label: t("Custom") },
   ];
+  const hasGamePerfOverrides = !editingDefault
+    && PERF_KEYS.some((key) => Object.prototype.hasOwnProperty.call(gameSettings, key));
+  const resetGamePerformance = () => patchSettings(
+    Object.fromEntries(PERF_KEYS.map((key) => [key, undefined])),
+  );
   // env merges per-entry; unchecking a default var stores a null tombstone
   const ownEnv = ((editingDefault ? tweaks.global.env : gameSettings.env) || {}) as Record<string, string | null>;
   const globalEnv = ((!editingDefault && tweaks.global.env) || {}) as Record<string, string>;
@@ -635,8 +658,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     setConfig((current) => {
       if (!current) return current;
       const nextTweaks = clone(current.tweaks);
-      if (on) nextTweaks.global.gamescopeVulkanRealtime = true;
-      else delete nextTweaks.global.gamescopeVulkanRealtime;
+      nextTweaks.global.gamescopeVulkanRealtime = on;
       return { ...current, tweaks: nextTweaks };
     });
     showModal(
@@ -668,10 +690,10 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         <ToggleField
           label={t("Wine CPU Topology")}
           checked={values.wineTopology !== false}
-          onChange={(on) => patchSettings({ wineTopology: on ? (!editingDefault && tweaks.global.wineTopology === false ? true : undefined) : false })}
+          onChange={(on) => patchSettings({ wineTopology: on })}
         />
       ) : null}
-      <SliderEdit label={t("Nice")} value={values.nice ?? 0} min={-20} max={19} step={1} onChange={(v) => patchSettings({ nice: v !== 0 ? v : !editingDefault && tweaks.global.nice ? 0 : undefined })} />
+      <SliderEdit label={t("Nice")} value={values.nice ?? 0} min={-20} max={19} step={1} onChange={(v) => patchSettings({ nice: v })} />
       <div className="armada-subheader">{t("Gamescope")}</div>
       <SelectEdit
         label={t("CPU Cores")}
@@ -701,11 +723,11 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         </PanelSectionRow>
       ) : null}
       {gsCoresError && gsCoresText ? <div className="armada-field-note">{gsCoresError}</div> : null}
-      <SliderEdit label={t("Nice")} value={values.gamescopeNice ?? 0} min={-20} max={19} step={1} onChange={(v) => patchSettings({ gamescopeNice: v !== 0 ? v : !editingDefault && tweaks.global.gamescopeNice ? 0 : undefined })} />
+      <SliderEdit label={t("Nice")} value={values.gamescopeNice ?? 0} min={-20} max={19} step={1} onChange={(v) => patchSettings({ gamescopeNice: v })} />
       <ToggleField
         label={t("CPU Realtime Scheduling")}
         checked={!!values.gamescopeRr}
-        onChange={(on) => patchSettings({ gamescopeRr: on ? true : tweaks.global.gamescopeRr ? false : undefined })}
+        onChange={(on) => patchSettings({ gamescopeRr: on })}
       />
       {editingDefault ? (
         <ToggleField
@@ -721,6 +743,11 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         options={schedulerOptions}
         onChange={(v) => patchSettings({ scheduler: String(v) || undefined })}
       />
+      {hasGamePerfOverrides ? (
+        <ButtonItem layout="below" onClick={resetGamePerformance}>
+          {t("Reset Performance to Default")}
+        </ButtonItem>
+      ) : null}
       {runningSelectedGame ? (
         <ButtonItem layout="below" onClick={() => { void onReapply(); }}>
           {t("Re-apply to Running Game")}
@@ -765,13 +792,13 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         <SelectEdit value={game?.appid || ""} options={gameOptions} onChange={setSelectedGame} />
         <div className="armada-compat-note">{t("Compatibility changes apply on next launch")}</div>
       </PanelSection>
-      <PanelSection title={t("PROFILE SETTINGS")}>
+      <PanelSection title={t("GAME PROFILE SETTINGS")}>
         {editingDefault ? (
           <>
             <SelectEdit
               labelBelow
               label={t("Default Proton")}
-              value={globalTool}
+              value={globalTool || activeGlobalTool}
               options={toolOptions}
               onChange={onSelectGlobalDefault}
               disabled={switchingDefault}
@@ -782,14 +809,18 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
                 {t("{tool} is no longer installed. Choose a new default for your games.", { tool: globalTool })}
               </div>
             ) : null}
-            <ToggleField
-              label={t("Apply to New Games")}
-              checked={tweaks.global.autoApplyCompat !== false}
-              onChange={(enabled) => {
-                setAutoApplyCompat(enabled);
-                patchSettings({ autoApplyCompat: enabled });
-              }}
-            />
+            {activeGlobalTool === FOLLOW_STEAM_COMPAT ? (
+              <div className="armada-compat-note">{t("Steam chooses the compatibility tool for each game.")}</div>
+            ) : (
+              <ToggleField
+                label={t("Apply to New Games")}
+                checked={tweaks.global.autoApplyCompat !== false}
+                onChange={(enabled) => {
+                  setAutoApplyCompat(enabled);
+                  patchSettings({ autoApplyCompat: enabled });
+                }}
+              />
+            )}
             <SelectEdit label={t("Game Resolution")} value={defaultResolution} options={resolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamDefaultResolution} />
           </>
         ) : (

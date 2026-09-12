@@ -29,3 +29,19 @@ armada_lid_closed() {
     evtest --query "$dev" EV_SW SW_LID >/dev/null 2>&1; rc=$?
     [[ "$rc" -eq 10 ]]
 }
+
+# True if $1 (a /dev/input/eventN path) reports key code $2 in its EV_KEY
+# capability bitmap. The bitmap prints 64-bit groups, most significant first.
+armada_dev_has_key() {
+    local input_class="${ARMADA_INPUT_CLASS:-/sys/class/input}"
+    local cap line words idx
+
+    cap="${input_class}/$(basename "$1")/device/capabilities/key"
+    [[ -r "$cap" ]] || return 1
+    read -r line < "$cap" || return 1
+    read -r -a words <<<"$line"
+    idx=$(( ${#words[@]} - 1 - $2 / 64 ))
+    (( idx >= 0 )) || return 1
+    [[ "${words[idx]}" =~ ^[0-9a-fA-F]+$ ]] || return 1
+    (( 0x${words[idx]} >> ($2 % 64) & 1 ))
+}

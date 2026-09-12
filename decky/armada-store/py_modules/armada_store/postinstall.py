@@ -1,6 +1,6 @@
 import os
 
-from . import installers, userfs
+from . import catalog, installers, userfs
 from .paths import plugin_dir
 
 # Handlers for apps naming one in their catalog "postInstall" field. Updates
@@ -71,8 +71,9 @@ def retroarch():
         os.close(dir_fd)
 
 
-def _seed_templates(template_dir, dest_parts):
-    """Copy templates that are not already present, leaving edits alone."""
+def _seed_templates(template_dir, dest_parts, overwrite=False):
+    """Copy templates that are not already present, leaving edits alone.
+    With overwrite, existing files are kept as .bak and replaced."""
     source = plugin_dir() / "templates" / template_dir
     names = sorted(p.name for p in source.iterdir() if p.is_file())
     if not names:
@@ -80,16 +81,33 @@ def _seed_templates(template_dir, dest_parts):
     dir_fd = userfs.open_user_path(list(dest_parts), create=True)
     try:
         for name in names:
+            present = True
             try:
                 os.close(os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd))
-                continue  # already there, never clobber a customised file
             except FileNotFoundError:
-                pass
+                present = False
+            if present and not overwrite:
+                continue
             data = (source / name).read_bytes()
             staged = "." + name + ".armada-tmp"
             with userfs.create_file(dir_fd, staged) as fh:
                 fh.write(data)
-            userfs.rename(dir_fd, staged, dir_fd, name)
+            if not present:
+                userfs.rename(dir_fd, staged, dir_fd, name)
+                continue
+            # The live file is never absent: swap in the staged template and
+            # only then park the old contents as the backup.
+            try:
+                userfs.exchange(dir_fd, staged, dir_fd, name)
+            except NotImplementedError:
+                userfs.rename(dir_fd, name, dir_fd, name + ".bak")
+                try:
+                    userfs.rename(dir_fd, staged, dir_fd, name)
+                except OSError:
+                    userfs.rename(dir_fd, name + ".bak", dir_fd, name)
+                    raise
+                continue
+            userfs.rename(dir_fd, staged, dir_fd, name + ".bak")
     finally:
         os.close(dir_fd)
 
@@ -99,6 +117,25 @@ def es_de():
     _seed_templates("es-de", ("ES-DE", "custom_systems"))
 
 
+def seed_config(app, overwrite=False):
+    """Apply the app's catalog "config" templates under the user's home."""
+    config = (app or {}).get("config") or {}
+    templates = config.get("templates")
+    dest = config.get("dest")
+    if not templates or not dest:
+        return False
+    _seed_templates(templates, tuple(dest), overwrite)
+    return True
+
+
+def reset_config(app_id):
+    app = catalog.find_app(app_id)
+    if app is None:
+        raise RuntimeError("App is no longer in the catalog")
+    if not seed_config(app, overwrite=True):
+        raise RuntimeError("No configuration template for " + str(app_id))
+
+
 HANDLERS = {
     "retroarch-cores-url": retroarch,
     "es-de-custom-systems": es_de,
@@ -106,6 +143,7 @@ HANDLERS = {
 
 
 def run(app):
+    seed_config(app)
     name = (app or {}).get("postInstall")
     if not name:
         return

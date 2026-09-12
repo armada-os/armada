@@ -123,7 +123,13 @@ case "${1:-}" in
         ;;
     switch-gamemode) session=gamescope-session-steam.desktop ;;
     default-gamemode) session=gamescope-session-steam.desktop; default_only=1 ;;
-    *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode}" >&2; exit 1 ;;
+    default-desktop)
+        initialize_plasma_configs
+        activate_plasma_config "${desktop_mode}"
+        session=$desktop_session
+        default_only=1
+        ;;
+    *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode|default-desktop}" >&2; exit 1 ;;
 esac
 
 printf '[Autologin]\nSession=%s\n' "${session}" > /etc/sddm.conf.d/zz-steamos-autologin.conf

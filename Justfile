@@ -120,12 +120,24 @@ build $target_image=image_name $tag=default_tag:
         "${SECRET_ARGS[@]}" \
         --platform linux/arm64 \
         --pull="${PULL_POLICY}" \
+        --target armada-rootfs \
         --tag "${target_image}:${tag}" \
         .
 
 _rootful_load_image $target_image=image_name $tag=default_tag:
     #!/usr/bin/bash
     set -eoux pipefail
+
+    if [[ -n "${ARMADA_IMAGE_DIGEST:-}" ]]; then
+        if ! [[ "${ARMADA_IMAGE_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "Invalid ARMADA_IMAGE_DIGEST: expected sha256 followed by 64 lowercase hex digits" >&2
+            exit 1
+        fi
+        just sudoif podman pull "${target_image}@${ARMADA_IMAGE_DIGEST}"
+        # Pin build content while keeping the installed system on its channel.
+        just sudoif podman tag "${target_image}@${ARMADA_IMAGE_DIGEST}" "${target_image}:${tag}"
+        exit 0
+    fi
 
     if [[ -n "${SUDO_USER:-}" || "${UID}" -eq "0" ]]; then
         # Always re-pull a remote tag so the disk uses the freshly published

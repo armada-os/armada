@@ -9,9 +9,8 @@ from .privileged import call
 OS_VERSION_PATH = Path("/usr/lib/armada/version")
 MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
 SLEEP_MODE_LABELS = {
+    "s2idle": "Native",
     "fake": "Fake",
-    "s2idle": "s2idle",
-    "deep": "Deep",
 }
 DESKTOP_MODE_LABELS = {
     "mobile": "Plasma Mobile",
@@ -111,6 +110,32 @@ def set_mtp_enabled(enabled):
 def set_abl_auto_enabled(enabled):
     return bool(call("set_abl_auto_enabled", enabled=bool(enabled)).get("enabled"))
 
+
+def bottom_screen_enabled():
+    try:
+        return bool(call("get_bottom_screen_enabled").get("enabled"))
+    except Exception:
+        return False
+
+
+def set_bottom_screen_enabled(enabled):
+    return bool(call("set_bottom_screen_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def bottom_screen_brightness():
+    try:
+        result = call("get_bottom_screen_brightness")
+        if result.get("supported"):
+            return int(result.get("brightness", 0))
+    except Exception:
+        pass
+    return None
+
+
+def set_bottom_screen_brightness(brightness):
+    return int(call("set_bottom_screen_brightness", brightness=brightness).get("brightness", 0))
+
+
 def desktop_mode() -> str:
     try:
         value = str(call("get_desktop_mode").get("value", ""))
@@ -130,9 +155,8 @@ def desktop_modes():
     return [{"data": mode, "label": DESKTOP_MODE_LABELS[mode]} for mode in modes]
 
 def sleep_modes():
-    modes = ["fake"]
     advertised = {word.strip("[]") for word in read_text(MEM_SLEEP_PATH).split()}
-    modes.extend(mode for mode in ("s2idle", "deep") if mode in advertised)
+    modes = (["s2idle"] if "s2idle" in advertised else []) + ["fake"]
     return [{"data": mode, "label": SLEEP_MODE_LABELS[mode]} for mode in modes]
 
 

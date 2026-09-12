@@ -266,6 +266,17 @@ export function Content() {
           </MenuItem>,
         );
       }
+      if (installed && app.hasConfig) {
+        items.push(
+          <MenuItem
+            key="reset-config"
+            tone="destructive"
+            onSelected={() => run(backend.resetConfig(app.id), () => toast(app.name, "Configuration reset, previous kept as .bak"))}
+          >
+            Reset Configuration
+          </MenuItem>,
+        );
+      }
       if (installed && app.installType !== "system") {
         items.push(
           <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut))}>

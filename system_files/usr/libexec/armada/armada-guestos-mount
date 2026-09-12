@@ -3,27 +3,45 @@
 # path Steam's FEX compat tool hardcodes for the x86 Proton chain.
 set -u
 
-SQSH=/usr/share/fex-emu/RootFS/ArchLinux.sqsh
+ROOTFS_SQSH=/usr/share/fex-emu/RootFS/ArchLinux.sqsh
+MESA_SQSH=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh
+# /run keeps both lower mounts outside OSTree's overlay-backed /usr.
 RUN=/run/armada/guestos
 TARGET=/usr/share/guestos/fex-mesa
-# rootfs-shaped tree (contains usr/) shadowing the rootfs's driver
-PAYLOAD=/usr/share/armada/guestos-x86-mesa
+ROOTFS_MOUNT=${RUN}/rootfs
+MESA_MOUNT=${RUN}/mesa
+
+mount_ro() {
+  mountpoint -q "$2" || mount -t squashfs -o ro,loop "$1" "$2"
+}
+
+unmount_if_mounted() {
+  if mountpoint -q "$1"; then
+    umount "$1"
+  fi
+}
+
+rollback() {
+  unmount_if_mounted "${MESA_MOUNT}"
+  unmount_if_mounted "${ROOTFS_MOUNT}"
+  exit 1
+}
 
 case "${1:-start}" in
   start)
-    [ -f "${SQSH}" ] || exit 0
-    mkdir -p "${RUN}/lower"
-    mountpoint -q "${RUN}/lower" || mount -t squashfs -o ro,loop "${SQSH}" "${RUN}/lower" || exit 1
+    [ -f "${ROOTFS_SQSH}" ] || exit 0
+    [ -f "${MESA_SQSH}" ] || exit 0
+    mkdir -p "${ROOTFS_MOUNT}" "${MESA_MOUNT}"
+
+    mount_ro "${ROOTFS_SQSH}" "${ROOTFS_MOUNT}" || rollback
+    mount_ro "${MESA_SQSH}" "${MESA_MOUNT}" || rollback
     mountpoint -q "${TARGET}" || mount -t overlay overlay \
-      -o "lowerdir=${PAYLOAD}:${RUN}/lower" "${TARGET}" || exit 1
+      -o "lowerdir=${MESA_MOUNT}:${ROOTFS_MOUNT}" "${TARGET}" || rollback
     ;;
   stop)
-    if mountpoint -q "${TARGET}"; then
-      umount "${TARGET}" || exit 1
-    fi
-    if mountpoint -q "${RUN}/lower"; then
-      umount "${RUN}/lower" || exit 1
-    fi
+    unmount_if_mounted "${TARGET}" || exit 1
+    unmount_if_mounted "${MESA_MOUNT}" || exit 1
+    unmount_if_mounted "${ROOTFS_MOUNT}" || exit 1
     ;;
 esac
 exit 0

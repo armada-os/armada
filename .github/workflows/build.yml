@@ -19,6 +19,7 @@ on:
 env:
   ARMADA_CANONICAL_IMAGE: "ghcr.io/armada-os/armada"
   ARMADA_LEGACY_IMAGE: "ghcr.io/virtudude/armada"
+  BASE_IMAGE: "quay.io/fedora/fedora-bootc:44"
   IMAGE_DESC: "Armada: a gaming-focused, SteamOS-like Fedora bootc image for ARM64 handhelds"
   IMAGE_NAME: "${{ github.event.repository.name }}"
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
@@ -41,11 +42,6 @@ jobs:
       id-token: write
 
     steps:
-      - name: Maximize build space
-        uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
-        with:
-          remove-codeql: true
-
       - name: Prepare environment
         run: |
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
@@ -70,13 +66,24 @@ jobs:
 
           echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
 
+      - name: Require main for Preview publication
+        if: github.event_name != 'pull_request'
+        env:
+          PUBLISH_TAG: ${{ steps.manual.outputs.branch || env.DEFAULT_TAG }}
+          BUILD_BRANCH: ${{ steps.manual.outputs.branch || github.ref_name }}
+        run: |
+          if [ "${PUBLISH_TAG}" = testing ] && [ "${BUILD_BRANCH}" != main ]; then
+            echo "::error::Preview must be built from main. Use an explicit branch tag for other builds."
+            exit 1
+          fi
+
       - name: Ensure container tools
         run: |
           set -euxo pipefail
           # ubuntu-24.04 dropped these from the runner image; the build action,
-          # rechunk, and push all need them.
+          # validation, and push all need them.
           need=""
-          for t in buildah jq podman skopeo systemd-container; do
+          for t in buildah jq skopeo; do
             command -v "$t" >/dev/null || need="$need $t"
           done
           [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
@@ -125,6 +132,32 @@ jobs:
           sep-tags: " "
           sep-annotations: " "
 
+      - name: Prepare Chunkah config
+        id: chunkah_config
+        env:
+          METADATA_JSON: ${{ steps.metadata.outputs.json }}
+        run: |
+          set -euo pipefail
+          base_digest=$(skopeo inspect --override-arch arm64 --format '{{.Digest}}' \
+            "docker://${BASE_IMAGE}")
+          base_image="${BASE_IMAGE%:*}@${base_digest}"
+          config=$(skopeo inspect --override-arch arm64 --config \
+            "docker://${base_image}" |
+            jq -c --argjson metadata "${METADATA_JSON}" '
+              .config |
+              .Labels = ((.Labels // {}) + ($metadata.labels // {})) |
+              del(.Labels["ostree.commit"]) |
+              del(.Labels["ostree.final-diffid"])')
+          printf '%s\n' "${config}" > "${RUNNER_TEMP}/chunkah-config.json"
+          echo "base_image=${base_image}" >> "${GITHUB_OUTPUT}"
+          echo "config=${config}" >> "${GITHUB_OUTPUT}"
+
+      - name: Require native OverlayFS
+        run: |
+          set -euxo pipefail
+          buildah info --storage-opt=overlay.mount_program= |
+            jq -e '.store.GraphStatus["Native Overlay Diff"] == "true"'
+
       - name: Build Image
         id: build_image
         uses: redhat-actions/buildah-build@5d8479758cc72ed82df28daba521d27e20ff8c8a # v3.0.0
@@ -132,42 +165,81 @@ jobs:
           containerfiles: |
             ./Containerfile
           image: ${{ env.IMAGE_NAME }}
-          tags: raw
+          tags: build-output
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             ARMADA_VERSION=${{ steps.version.outputs.version }}
+            BASE_IMAGE=${{ steps.chunkah_config.outputs.base_image }}
+            CHUNKAH_CONFIG_STR=${{ steps.chunkah_config.outputs.config }}
+          # armada-rootfs is consumed through RUN --mount, so retain otherwise-unused stages.
+          extra-args: |
+            --skip-unused-stages=false
+            --target=chunkah
+            --volume=${{ runner.temp }}:/run/src
+            --security-opt=label=disable
+            --storage-opt=overlay.mount_program=
           oci: false
 
-      - name: Rechunk for small OTA deltas
-        id: rechunk
-        if: github.event_name != 'pull_request'
+      - name: Validate Chunkah output
+        id: chunkah_output
         run: |
           set -euxo pipefail
-          # build-chunked-oci runs rpm-ostree from inside the image against root
-          # containers-storage, so bridge the rootless-built image over first.
-          sudo podman image scp ${USER}@localhost::${IMAGE_NAME}:raw root@localhost::raw-img
-          sudo podman run --rm --privileged \
-            --volume /var/lib/containers:/var/lib/containers \
-            localhost/raw-img \
-            rpm-ostree compose build-chunked-oci --bootc --max-layers 127 \
-            --format-version 2 \
-            --from localhost/raw-img --output containers-storage:localhost/chunked-img
+          CHUNKAH_LOG_FILE="${RUNNER_TEMP}/chunkah.log"
+          CHUNKAH_MANIFEST_FILE="${RUNNER_TEMP}/chunkah-manifest.json"
+          CHUNKAH_IMAGE_CONFIG_FILE="${RUNNER_TEMP}/chunkah-image-config.json"
+          for component in steam proton fex-rootfs; do
+            if ! grep -Eq "creating tar layer .*\"xattr/${component}\"" "${CHUNKAH_LOG_FILE}"; then
+              echo "::error::Chunkah did not emit an xattr/${component} component layer"
+              exit 1
+            fi
+          done
+
+          CHUNKED_REF="oci:${RUNNER_TEMP}/chunked"
+          skopeo inspect --raw "${CHUNKED_REF}" > "${CHUNKAH_MANIFEST_FILE}"
+          jq -e '(.layers | length) > 1 and (.layers | length) <= 128' \
+            "${CHUNKAH_MANIFEST_FILE}" || {
+              echo "::error::Chunkah output has an invalid layer count"
+              exit 1
+            }
+          jq -e '((.annotations // {}) | has("ostree.commit") | not) and
+            ((.annotations // {}) | has("ostree.final-diffid") | not)' \
+            "${CHUNKAH_MANIFEST_FILE}" || {
+              echo "::error::Chunkah output retained OSTree manifest annotations"
+              exit 1
+            }
+          skopeo inspect --config "${CHUNKED_REF}" > "${CHUNKAH_IMAGE_CONFIG_FILE}"
+          jq -e --slurpfile expected "${RUNNER_TEMP}/chunkah-config.json" \
+            '.config == $expected[0]' "${CHUNKAH_IMAGE_CONFIG_FILE}" || {
+              echo "::error::Chunkah output did not preserve the prepared runtime config"
+              exit 1
+            }
+          jq -e '.architecture == "arm64" and .os == "linux" and
+              .config.Cmd == ["/sbin/init"] and
+              .config.Labels["containers.bootc"] == "1" and
+              .config.Labels["ostree.bootable"] == "true" and
+              (.config.Labels | has("ostree.commit") | not) and
+              (.config.Labels | has("ostree.final-diffid") | not)' \
+            "${CHUNKAH_IMAGE_CONFIG_FILE}"
+          python3 build_files/verify-steam-bootstrap.py --oci "${RUNNER_TEMP}/chunked"
+          echo "Steam bootstrap manifest verified in Chunkah output"
+          jq '{layers: (.layers | length), compressed_bytes: ([.layers[].size] | add)}' \
+            "${CHUNKAH_MANIFEST_FILE}"
+          echo "ref=${CHUNKED_REF}" >> "${GITHUB_OUTPUT}"
 
       - name: Push to GHCR
         id: push
         if: github.event_name != 'pull_request'
         run: |
           set -euxo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | sudo skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
           IMAGE_FULL="${IMAGE_REGISTRY}/${IMAGE_NAME}"
           BUILD_TAG="build-${{ steps.version.outputs.version }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           n=0
-          until sudo skopeo copy \
-                containers-storage:localhost/chunked-img "docker://${IMAGE_FULL}:${BUILD_TAG}"; do
+          until skopeo copy --all \
+                "${{ steps.chunkah_output.outputs.ref }}" "docker://${IMAGE_FULL}:${BUILD_TAG}"; do
             n=$((n + 1)); [ "${n}" -ge 3 ] && exit 1; sleep 15
           done
-          # skopeo --digestfile can't write under sudo's userns remap; read it back.
-          digest=$(sudo skopeo inspect --format '{{.Digest}}' "docker://${IMAGE_FULL}:${BUILD_TAG}")
+          digest=$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE_FULL}:${BUILD_TAG}")
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
 
       - name: Install Cosign
@@ -184,8 +256,7 @@ jobs:
           set -euo pipefail
           IMAGE_FULL="${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}"
           IMAGE_REF="${IMAGE_FULL}@${{ steps.push.outputs.digest }}"
-          # cosign runs rootless and has its own auth store — the push step's
-          # `sudo skopeo login` only authenticated root, so log cosign in too.
+          # Cosign and Skopeo use separate registry auth stores.
           echo "${{ secrets.GITHUB_TOKEN }}" | cosign login ghcr.io -u "${{ github.actor }}" --password-stdin
           # Sign the digest, not a tag (a concurrent run could re-point the tag).
           # --new-bundle-format=false: bootc's verifier expects the legacy .sig; the
@@ -224,9 +295,14 @@ jobs:
           SRC="docker://${IMAGE_FULL}@${{ steps.push.outputs.digest }}"
           for tag in ${{ steps.metadata.outputs.tags }}; do
             n=0
-            until sudo skopeo copy --all "${SRC}" "docker://${IMAGE_FULL}:${tag}"; do
+            until skopeo copy --all "${SRC}" "docker://${IMAGE_FULL}:${tag}"; do
               n=$((n + 1)); [ "${n}" -ge 3 ] && exit 1; sleep 15
             done
+            tag_digest=$(skopeo inspect --format '{{.Digest}}' "docker://${IMAGE_FULL}:${tag}")
+            if [ "${tag_digest}" != "${{ steps.push.outputs.digest }}" ]; then
+              echo "::error::${tag} resolved to ${tag_digest}, not the signed digest ${{ steps.push.outputs.digest }}"
+              exit 1
+            fi
           done
         env:
           HAVE_SIGNING_SECRET: ${{ secrets.SIGNING_SECRET != '' }}
