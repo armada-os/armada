@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+verb=${1:-}
+[[ -n "$verb" ]] || exit 2
+shift
+
+case "$verb" in
+    run|waitforexitandrun)
+        exec "$@"
+        ;;
+    destroyprefix)
+        exit 0
+        ;;
+    *)
+        echo "Unsupported Armada Native verb: $verb" >&2
+        exit 2
+        ;;
+esac
