@@ -1,0 +1,47 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+# Gaming Mode already owns its Steam process while Nested Desktop is running.
+[[ ${ARMADA_NESTED_DESKTOP:-0} != 1 ]] || exit 0
+
+# Plasma's systemd autostart generator can run applications before plasmashell
+# and Xwayland have attached to the display. Steam's ARM client crashes if it
+# reaches its legacy UI initialization during that window.
+shell_pid=""
+for _ in {1..60}; do
+    shell_pid=$(pgrep -n -u "$(id -u)" -x plasmashell 2>/dev/null || true)
+    [[ -n "${shell_pid}" ]] && break
+    sleep 0.25
+done
+
+# Use the exact display credentials from Plasma rather than the user manager's
+# possibly incomplete early-login environment.
+if [[ -n "${shell_pid}" && -r "/proc/${shell_pid}/environ" ]]; then
+    while IFS= read -r -d '' entry; do
+        [[ ${entry} == BASH_FUNC_* ]] && continue
+        export "${entry}"
+    done < "/proc/${shell_pid}/environ"
+fi
+
+if command -v xprop >/dev/null 2>&1; then
+    for _ in {1..240}; do
+        xprop -root >/dev/null 2>&1 && break
+        sleep 0.25
+    done
+else
+    sleep 10
+fi
+sleep 2
+
+# Avoid opening a second client if Steam was started manually during login.
+# Confirm it survives startup before yielding; a competing early autostart may
+# briefly create the process and then crash.
+if pgrep -u "$(id -u)" -x steam >/dev/null 2>&1; then
+    sleep 5
+    pgrep -u "$(id -u)" -x steam >/dev/null 2>&1 && exit 0
+fi
+
+state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/armada"
+install -d -m 0700 "${state_dir}"
+exec /usr/libexec/armada/launch-steam --desktop \
+    >>"${state_dir}/desktop-steam.log" 2>&1
