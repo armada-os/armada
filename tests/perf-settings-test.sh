@@ -151,7 +151,9 @@ check("factory game policy loaded",
 check("factory gamescope policy loaded",
       factory_global["gamescopeNice"] == -20 and factory_global["gamescopeRr"] is False and
       factory_global["gamescopeVulkanRealtime"] is True)
-check("factory scheduler loaded", factory_global["scheduler"] == "eevdf")
+# The shipped default deliberately forces no scheduler (05ccd27,
+# "restore default scheduler behavior"): null means "leave it alone".
+check("factory ships no scheduler override", factory_global["scheduler"] is None)
 check("factory thunk defaults loaded",
       set(factory_global["thunks"]) == {"Vulkan", "GL", "drm", "WaylandClient", "asound"} and
       all(factory_global["thunks"].values()))
@@ -182,7 +184,7 @@ check("user values override factory defaults",
       overlaid_global["gamescopeNice"] == 0 and
       overlaid_global["gamescopeVulkanRealtime"] is False)
 check("absent user values inherit factory defaults",
-      overlaid_global["scheduler"] == "eevdf" and
+      overlaid_global["scheduler"] is None and
       overlaid_global["gamescopeRr"] is False and
       overlaid_global["wineTopology"] is True)
 gt.OVERRIDES_CONFIG.unlink()
