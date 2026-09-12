@@ -14,6 +14,7 @@ assert_contains() {
 
 assert_contains "$ROOT/system_files/usr/lib/armada/devices/defaults.conf" 'ARMADA_VIRTUAL_KEYBOARD_CONNECTOR='
 assert_contains "$ROOT/system_files/usr/lib/armada/devices/ayn-thor.conf" 'ARMADA_VIRTUAL_KEYBOARD_CONNECTOR=DSI-1'
+assert_contains "$ROOT/system_files/usr/lib/armada/devices/ayn-thor-lite.conf" 'ARMADA_VIRTUAL_KEYBOARD_CONNECTOR=DSI-2'
 assert_contains "$ROOT/system_files/usr/libexec/armada/device-env" 'ARMADA_VIRTUAL_KEYBOARD_CONNECTOR'
 assert_contains "$ROOT/system_files/usr/libexec/armada/start-plasma" '/usr/libexec/armada/device-env'
 assert_contains "$ROOT/system_files/usr/libexec/armada/start-plasma" 'set -a'
