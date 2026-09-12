@@ -2,6 +2,7 @@ import { DialogBody, DialogButton, DialogFooter, Field, ModalRoot, PanelSectionR
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { PseudoDropdown } from "./fanWidgets";
+import { t, translateLabel } from "../i18n";
 import { slugifyCurveName } from "../lib/fanCurve";
 import { clone, titleCase } from "../lib/util";
 import { styles } from "../styles";
@@ -48,12 +49,12 @@ export function CreateCurveModal({
     <ModalRoot onCancel={() => closeModal?.()}>
       <style>{styles}</style>
       <DialogBody className="afc-scope">
-        <h2 className="afc-modal-title">Create Curve</h2>
+        <h2 className="afc-modal-title">{t("Create Curve")}</h2>
         <PanelSectionRow>
           <div className="afc-control-inset">
             <Field
-              label="Curve Name"
-              description="Letters, numbers, spaces, hyphens, and underscores are supported."
+              label={t("Curve Name")}
+              description={t("Letters, numbers, spaces, hyphens, and underscores are supported.")}
               childrenLayout="below"
               childrenContainerWidth="max"
             >
@@ -62,26 +63,25 @@ export function CreateCurveModal({
           </div>
         </PanelSectionRow>
         {duplicateName ? (
-          <div className="afc-modal-error">A curve named “{name}” already exists.</div>
+          <div className="afc-modal-error">{t("A curve named “{name}” already exists.", { name })}</div>
         ) : null}
         <PseudoDropdown
-          label="Base Curve"
+          label={t("Base Curve")}
           value={baseCurve}
           options={names.map((curveName) => ({
             data: curveName,
-            label: initial.fanCurves[curveName]?.label || titleCase(curveName),
+            label: translateLabel(initial.fanCurves[curveName]?.label || titleCase(curveName)),
           }))}
           onChange={setBaseCurve}
         />
         <div className="afc-note">
-          The new curve starts as a copy of the selected base curve. Changes remain unsaved until Save Changes is
-          pressed.
+          {t("The new curve starts as a copy of the selected base curve. Changes remain unsaved until Save Changes is pressed.")}
         </div>
       </DialogBody>
       <DialogFooter>
-        <DialogButton onClick={() => closeModal?.()}>Cancel</DialogButton>
+        <DialogButton onClick={() => closeModal?.()}>{t("Cancel")}</DialogButton>
         <DialogButton onClick={createCurve} disabled={!canCreate}>
-          Create Curve
+          {t("Create Curve")}
         </DialogButton>
       </DialogFooter>
     </ModalRoot>

@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { getConfig, getInstalledGames, savePowerConfig, saveTweaks } from "./backend";
 import { RgbLighting } from "./components/RgbLighting";
 import { useDebouncedSave } from "./hooks/useDebouncedSave";
+import { useLocale } from "./hooks/useLocale";
+import { t } from "./i18n";
 import { tabIcons } from "./icons";
 import { currentGame } from "./lib/games";
 import { styles } from "./styles";
@@ -14,6 +16,7 @@ import { Settings } from "./tabs/Settings";
 import type { Config } from "./types";
 
 export function Content() {
+  useLocale();
   const [tab, setTab] = useState("Compatibility");
   const [config, setConfig] = useState<Config | null>(null);
   const [message, setMessage] = useState("Loading");
@@ -77,7 +80,7 @@ export function Content() {
   }, [!!config]);
   useDebouncedSave({ config, field: "power", snapshot: savedPowerSnapshot, save: savePowerConfig, setConfig, onError: load });
   useDebouncedSave({ config, field: "tweaks", snapshot: savedTweaksSnapshot, save: saveTweaks, setConfig, onError: load });
-  if (!config) return <PanelSection title="Armada Control"><Field label={message} /></PanelSection>;
+  if (!config) return <PanelSection title="Armada Control"><Field label={message === "Loading" ? t("Loading") : message} /></PanelSection>;
   const tabContent = (content: ReactNode) => (
     <div className="armada-control-tab-content">{content}</div>
   );

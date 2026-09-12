@@ -2,6 +2,7 @@ import { ButtonItem, PanelSection } from "@decky/ui";
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { SelectEdit, SliderEdit } from "../components/widgets";
+import { t, translateLabel } from "../i18n";
 import { clone, titleCase, update } from "../lib/util";
 import type { Config, PowerProfile } from "../types";
 
@@ -17,11 +18,11 @@ export function Power({ config, setConfig }: { config: Config; setConfig: Dispat
   const p = config.power.profiles[profile] || ({} as PowerProfile);
   const profiles = Object.entries(config.power.profiles || {}).map(([name, profile]) => ({
     data: name,
-    label: profile.label || titleCase(name),
+    label: translateLabel(profile.label || titleCase(name)),
   }));
   const fanCurves = Object.entries(config.power.fan_curves || {}).map(([name, curve]) => ({
     data: name,
-    label: curve.label || titleCase(name),
+    label: translateLabel(curve.label || titleCase(name)),
   }));
   const setProfileValue = (name: string, value: any) => {
     setConfig((current) => (current ? update(current, ["power", "profiles", profile, name], value) : current));
@@ -50,28 +51,28 @@ export function Power({ config, setConfig }: { config: Config; setConfig: Dispat
   const supportsUnderclockPresets = !!config.power.underclocks?.[config.cpuDeviceClass];
   return (
     <>
-      <PanelSection title="EDIT POWER PROFILE">
+      <PanelSection title={t("EDIT POWER PROFILE")}>
         <SelectEdit value={profile} options={profiles} onChange={setProfile} />
       </PanelSection>
-      <PanelSection title="PROFILE SETTINGS">
-        <SelectEdit label="Fan Curve" value={p.fan_curve} options={fanCurves} onChange={(v) => setProfileValue("fan_curve", v)} />
+      <PanelSection title={t("PROFILE SETTINGS")}>
+        <SelectEdit label={t("Fan Curve")} value={p.fan_curve} options={fanCurves} onChange={(v) => setProfileValue("fan_curve", v)} />
         {(config.perf?.governors?.length ?? 0) > 0 ? (
           <SelectEdit
-            label="CPU Governor"
+            label={t("CPU Governor")}
             value={p.cpu_governor}
-            options={config.perf!.governors.map((g) => ({ data: g, label: titleCase(g) }))}
+            options={config.perf!.governors.map((g) => ({ data: g, label: translateLabel(titleCase(g)) }))}
             onChange={(v) => setProfileValue("cpu_governor", v)}
           />
         ) : null}
         {supportsUnderclockPresets ? (
-          <SelectEdit label="CPU Underclock" value={underclockLevel} options={underclocks} onChange={(v) => setProfileValue("cpu_underclock", v)} />
+          <SelectEdit label={t("CPU Underclock")} value={underclockLevel} options={underclocks.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={(v) => setProfileValue("cpu_underclock", v)} />
         ) : (
-          <SliderEdit label="CPU Max (%)" value={Math.round(Number(p.cpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setProfileValue("cpu_max", (v / 100).toFixed(2))} />
+          <SliderEdit label={t("CPU Max (%)")} value={Math.round(Number(p.cpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setProfileValue("cpu_max", (v / 100).toFixed(2))} />
         )}
-        <SliderEdit label="GPU Min (%)" value={Math.round(Number(p.gpu_min || 0) * 100)} min={0} max={100} step={1} onChange={(v) => setGpuValue("gpu_min", (v / 100).toFixed(2))} />
-        <SliderEdit label="GPU Max (%)" value={Math.round(Number(p.gpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setGpuValue("gpu_max", (v / 100).toFixed(2))} />
+        <SliderEdit label={t("GPU Min (%)")} value={Math.round(Number(p.gpu_min || 0) * 100)} min={0} max={100} step={1} onChange={(v) => setGpuValue("gpu_min", (v / 100).toFixed(2))} />
+        <SliderEdit label={t("GPU Max (%)")} value={Math.round(Number(p.gpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setGpuValue("gpu_max", (v / 100).toFixed(2))} />
         <div className="armada-reset-row">
-          <ButtonItem layout="below" onClick={resetProfile}>Reset to Default</ButtonItem>
+          <ButtonItem layout="below" onClick={resetProfile}>{t("Reset to Default")}</ButtonItem>
         </div>
       </PanelSection>
     </>
