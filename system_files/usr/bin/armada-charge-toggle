@@ -1,0 +1,104 @@
+#!/usr/bin/bash
+# armada-charge-toggle: enable / disable / inspect the experimental Pocket EVO
+# HL7139 direct-charge policy (30 W dual-pump charging).
+#
+# Direct charging feeds the battery through the two HL7139 charge pumps instead
+# of the Qualcomm buck. It is experimental: enable it only while you can watch
+# the first sessions, and disable it before unattended charging.
+#
+# Usage:
+#   armada-charge-toggle status     show whether it is available/enabled/active
+#   armada-charge-toggle enable     opt in (creates the flag, enables the unit)
+#   armada-charge-toggle disable    opt out (disables the unit, removes the flag)
+#
+# Enable requires root. The service only ever arms a session when the charger
+# is PD-PPS, both pumps are healthy, and the platform charge policy allows it.
+set -uo pipefail
+
+FLAG_DIR=/etc/armada/experimental
+FLAG=$FLAG_DIR/pocketevo-direct-charge
+UNIT=armada-pocketevo-charge-policy
+MASTER=/sys/class/power_supply/hl7139-master
+SLAVE=/sys/class/power_supply/hl7139-slave
+
+usage() {
+    cat <<'EOF'
+armada-charge-toggle — experimental 30 W direct charging (AYANEO Pocket EVO)
+
+Usage:
+  armada-charge-toggle status    show availability, opt-in state and service state
+  armada-charge-toggle enable    opt in to experimental direct charging (root)
+  armada-charge-toggle disable   opt out and restore normal Qualcomm charging
+
+Direct charging bypasses the Qualcomm buck and drives the two HL7139 charge
+pumps for up to ~28 W. It is experimental: keep an eye on the first sessions
+(journalctl -u armada-pocketevo-charge-policy -f) and disable it before leaving
+the device charging unattended. A cable unplug clears any latched fault.
+EOF
+}
+
+require_root() {
+    if ((EUID != 0)); then
+        echo "armada-charge-toggle $1 requires root (sudo armada-charge-toggle $1)." >&2
+        exit 1
+    fi
+}
+
+pumps_present() {
+    [[ -d $MASTER && -d $SLAVE ]]
+}
+
+service_enabled() {
+    [[ $(systemctl is-enabled "$UNIT" 2>/dev/null) == enabled ]]
+}
+
+service_active() {
+    [[ $(systemctl is-active "$UNIT" 2>/dev/null) == active ]]
+}
+
+cmd_status() {
+    if pumps_present; then
+        echo "pump hardware:   present"
+        echo "pump health:     $(cat "$MASTER/health" 2>/dev/null || echo '?') / $(cat "$SLAVE/health" 2>/dev/null || echo '?')"
+        echo "battery:         $(cat /sys/class/power_supply/battery/status 2>/dev/null || echo '?') $(cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo '?')%"
+    else
+        echo "pump hardware:   not detected (not a Pocket EVO, or driver not loaded)"
+    fi
+    echo "opt-in flag:     $([[ -e $FLAG ]] && echo present || echo absent)"
+    echo "service enabled: $(service_enabled && echo yes || echo no)"
+    echo "service active:  $(service_active && echo yes || echo no)"
+    local fault=/run/armada-pocketevo-charge-policy/fault
+    if [[ -s $fault ]]; then
+        echo "latched fault:   $(cat "$fault")"
+        echo "                 (unplug the charger to clear, then re-run 'enable')"
+    fi
+}
+
+cmd_enable() {
+    if ! pumps_present; then
+        echo "HL7139 pumps not detected; direct charging only applies to the Pocket EVO." >&2
+        exit 1
+    fi
+    mkdir -p "$FLAG_DIR"
+    touch "$FLAG"
+    systemctl enable --now "$UNIT"
+    echo "Direct charging enabled (experimental)."
+    echo "  status:  armada-charge-toggle status"
+    echo "  live:    journalctl -u $UNIT -f"
+    echo "  disable: armada-charge-toggle disable"
+}
+
+cmd_disable() {
+    systemctl disable --now "$UNIT" 2>/dev/null || true
+    rm -f "$FLAG"
+    systemctl reset-failed "$UNIT" 2>/dev/null || true
+    echo "Direct charging disabled. Normal Qualcomm charging is in effect."
+}
+
+case "${1:-}" in
+    status)  cmd_status ;;
+    enable)  require_root "$1"; cmd_enable ;;
+    disable) require_root "$1"; cmd_disable ;;
+    -h|--help|help|'') usage ;;
+    *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
+esac
