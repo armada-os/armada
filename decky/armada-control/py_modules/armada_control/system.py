@@ -136,6 +136,28 @@ def set_bottom_screen_brightness(brightness):
     return int(call("set_bottom_screen_brightness", brightness=brightness).get("brightness", 0))
 
 
+def software_dim_enabled():
+    try:
+        return bool(call("get_software_dim_enabled").get("enabled"))
+    except Exception:
+        return False
+
+
+def set_software_dim_enabled(enabled):
+    return bool(call("set_software_dim_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def software_dim_percent():
+    try:
+        return int(call("get_software_dim_percent").get("percent", 8))
+    except Exception:
+        return 8
+
+
+def set_software_dim_percent(percent):
+    return int(call("set_software_dim_percent", percent=int(percent)).get("percent"))
+
+
 def desktop_mode() -> str:
     try:
         value = str(call("get_desktop_mode").get("value", ""))

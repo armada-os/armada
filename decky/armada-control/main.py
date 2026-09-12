@@ -21,6 +21,8 @@ from armada_control.system import (
     set_mtp_enabled,
     set_desktop_mode,
     set_sleep_mode,
+    set_software_dim_enabled,
+    set_software_dim_percent,
     set_ssh_enabled,
 )
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
@@ -61,6 +63,12 @@ class Plugin:
 
     async def set_abl_auto_enabled(self, enabled):
         return await asyncio.to_thread(set_abl_auto_enabled, enabled)
+
+    async def set_software_dim_enabled(self, enabled):
+        return await asyncio.to_thread(set_software_dim_enabled, enabled)
+
+    async def set_software_dim_percent(self, percent):
+        return await asyncio.to_thread(set_software_dim_percent, percent)
 
     async def set_bottom_screen_enabled(self, enabled):
         return await asyncio.to_thread(set_bottom_screen_enabled, enabled)

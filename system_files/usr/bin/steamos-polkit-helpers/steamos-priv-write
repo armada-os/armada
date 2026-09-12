@@ -4,6 +4,15 @@ set -euo pipefail
 WRITE_PATH="${1:-}"
 WRITE_VALUE="${2:-}"
 
+# Some panels show a visible tint or other artifact at very low PWM-driven
+# brightness. software_dim_enabled lets a user avoid that; see
+# /usr/libexec/armada/armada-software-dim for what it actually does
+# (rescales the panel's hardware brightness onto a safe minimum, and
+# covers the range below it with software dimming so the displayed
+# brightness still matches what was requested). Off by default, and the
+# minimum percent is device-specific.
+DISPLAY_CONFIG=/etc/armada/display.conf
+
 if [[ -z "$WRITE_PATH" ]]; then
     echo "Usage: $0 <path> [value]" >&2
     exit 2
@@ -94,6 +103,18 @@ if [[ "$WRITE_PATH" =~ ^/sys/class/backlight/([[:alnum:]_:-][[:alnum:]_.:-]*)/br
             val=$(( val * tgt_max / src_max ))
         fi
     fi
+    if [[ -r "$DISPLAY_CONFIG" ]] && grep -q '^software_dim_enabled=1$' "$DISPLAY_CONFIG" 2>/dev/null; then
+        # Rescales onto [hardware minimum, max] and covers the range below
+        # it with software dimming (via gamescope) rather than
+        # hard-clamping, so the requester's full 0-100% range stays usable
+        # with no dead zone at the bottom and no visible jump versus
+        # software dimming being off.
+        /usr/libexec/armada/armada-software-dim apply "$tgt_dir" "$val"
+        log "backlight: $WRITE_VALUE -> software dim ($tgt_dir, requested $val)"
+        exit 0
+    fi
+    # Off: make sure no software dim from while it was on lingers.
+    /usr/libexec/armada/armada-software-dim reset || true
     echo "$val" > "$tgt_dir/brightness"
     log "backlight: $WRITE_VALUE -> $tgt_dir/brightness ($val)"
     exit 0
