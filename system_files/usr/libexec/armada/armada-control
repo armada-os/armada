@@ -456,6 +456,20 @@ def action_get_abl_version(request):
     return {"version": abl_version()}
 
 
+def rgb_supported():
+    try:
+        result = subprocess.run(
+            [RGB_TOOL, "supported"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def run_rgb(command):
     output = subprocess.check_output([RGB_TOOL, *command], text=True, timeout=5)
     config = json.loads(output)
@@ -465,13 +479,13 @@ def run_rgb(command):
 
 
 def action_get_rgb(request):
-    if not device_env().get("ARMADA_RGB_BACKEND"):
+    if not rgb_supported():
         return None
     return run_rgb(["get"])
 
 
 def action_set_rgb(request):
-    if not device_env().get("ARMADA_RGB_BACKEND"):
+    if not rgb_supported():
         raise RuntimeError("RGB lighting is not supported on this device")
 
     enabled = request.get("enabled")

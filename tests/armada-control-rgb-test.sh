@@ -20,6 +20,7 @@ control = importlib.util.module_from_spec(spec)
 loader.exec_module(control)
 
 commands = []
+supported = False
 
 
 def check_output(command, **kwargs):
@@ -29,12 +30,17 @@ def check_output(command, **kwargs):
     return '{"version":1,"enabled":true,"brightness":40,"color":"A1B2C3"}'
 
 
+def run(command, **kwargs):
+    assert command == [control.RGB_TOOL, "supported"]
+    return control.subprocess.CompletedProcess(command, 0 if supported else 1)
+
+
 control.subprocess.check_output = check_output
-control.device_env = lambda: {}
+control.subprocess.run = run
 assert control.action_get_rgb({}) is None
 assert commands == []
 
-control.device_env = lambda: {"ARMADA_RGB_BACKEND": "multicolor"}
+supported = True
 state = control.action_get_rgb({})
 assert state["color"] == "FFFFFF"
 assert commands.pop() == [control.RGB_TOOL, "get"]
@@ -67,8 +73,13 @@ for request in (
 sys.path.insert(0, str(root / "decky/armada-control/py_modules"))
 from armada_control import rgb
 
+rgb.call = lambda action, **payload: None
+assert not rgb.rgb_supported()
+
 calls = []
 rgb.call = lambda action, **payload: calls.append((action, payload)) or {}
+assert rgb.rgb_supported()
+assert calls.pop() == ("get_rgb", {})
 assert rgb.get_rgb() == {}
 assert calls.pop() == ("get_rgb", {})
 rgb.set_rgb(True, "112233", 50)
@@ -78,6 +89,8 @@ assert calls.pop() == (
 )
 PYEOF
 
+! rg -q 'ARMADA_RGB_' "$ROOT/system_files/usr/lib/armada/devices"
+! rg -q 'ARMADA_RGB_' "$ROOT/system_files/usr/libexec/armada/device-env"
 grep -Fq 'ConditionPathExists=/etc/armada/rgb.json' "$ROOT/system_files/usr/lib/systemd/system/armada-rgb.service"
 grep -Fq 'ExecStart=/usr/bin/armada-rgb apply' "$ROOT/system_files/usr/lib/systemd/system/armada-rgb.service"
 grep -Fq 'systemctl enable armada-rgb.service' "$ROOT/build_files/40-vendor-system-files.sh"

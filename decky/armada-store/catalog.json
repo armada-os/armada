@@ -200,6 +200,50 @@
       }
     },
     {
+      "id": "bigpemu",
+      "name": "BigPEmu",
+      "summary": "Atari Jaguar",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/media/com/richwhitehouse/BigPEmu/451d43de33ac9e5fdc84e96beea46c14/icons/128x128/com.richwhitehouse.BigPEmu.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "com.richwhitehouse.BigPEmu"
+      }
+    },
+    {
+      "id": "mame",
+      "name": "MAME",
+      "summary": "Multiple Arcade Machine Emulator",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/media/org/mamedev/MAME/2f148eb3399537f36adeb744dddcb778/icons/128x128/org.mamedev.MAME.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.mamedev.MAME"
+      }
+    },
+    {
+      "id": "primehack",
+      "name": "PrimeHack",
+      "summary": "Dolphin fork for the Metroid Prime trilogy",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/media/io/github/shiiion.primehack/228ebb798795e052dab61f4e1db8c469/icons/128x128/io.github.shiiion.primehack.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.shiiion.primehack"
+      }
+    },
+    {
+      "id": "ymir",
+      "name": "Ymir",
+      "summary": "Sega Saturn",
+      "category": "emulators",
+      "icon": "https://dl.flathub.org/media/io/github/strikerx3.ymir/436dc7a579f0d1fa0060245e6770bd81/icons/128x128/io.github.strikerx3.ymir.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.strikerx3.ymir"
+      }
+    },
+    {
       "id": "moonlight",
       "name": "Moonlight",
       "summary": "PC game streaming",

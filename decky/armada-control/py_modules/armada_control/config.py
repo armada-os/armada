@@ -1,5 +1,6 @@
 from .controller import CONTROLLER_TYPES, controller_type, inputplumber_targets
 from .power import factory_power_defaults, parse_power
+from .rgb import rgb_supported
 from .steam import installed_games
 from .system import (
     abl_auto_enabled,
@@ -30,7 +31,7 @@ def build_config(include_games=True):
         "fexProfiles": fex_profile_labels(fex_contract),
         "perf": perf_info(),
         "cpuDeviceClass": env.get("ARMADA_SOC_CLASS", ""),
-        "rgbSupported": bool(env.get("ARMADA_RGB_BACKEND")),
+        "rgbSupported": rgb_supported(),
         "protonDefaults": [
             default.strip()
             for default in env.get("ARMADA_PROTON_DEFAULTS", "").split(":")

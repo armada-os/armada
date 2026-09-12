@@ -1,7 +1,8 @@
+ARG STEAM_BOOTSTRAP_PKG=ghcr.io/armada-os/armada-packages/steam-bootstrap@sha256:58609299e384dfea2ef1ed3a000c323145dd74c2c9c15051007d7b5522bf1d43
 ARG FEX_PKG=ghcr.io/armada-os/armada-packages/fex@sha256:277a25328499761e570bfb1f7fdce44b29dee074d76462402b0d8c361dacdffc
-ARG MESA_PKG=ghcr.io/armada-os/armada-packages/mesa@sha256:559c976d78bcc771f574c18d8fed5debcc3b8856a0ff448e968940480bca1165
-ARG MESA_ANDROID_PKG=ghcr.io/armada-os/armada-packages/mesa-android@sha256:1e7d5f5e692c38b7545e0c0774bbee45ab1b634309d9240f0e08b407b3fcc526
-ARG MESA_X86_PKG=ghcr.io/armada-os/armada-packages/mesa-x86@sha256:f891d7fc16daf816d68c602655336e5cae1aae8b0aa3e1ef47a6215e4c4b11e5
+ARG MESA_PKG=ghcr.io/armada-os/armada-packages/mesa@sha256:c86f49047950fa64167f1fe48431559ad90f9f69d2c275feffdcaf1ae15e5ee3
+ARG MESA_ANDROID_PKG=ghcr.io/armada-os/armada-packages/mesa-android@sha256:32f59a5a2d65ee6b65a968c1e579012c2262cc436b1d94cd6491bf2d7bdb5de3
+ARG MESA_X86_PKG=ghcr.io/armada-os/armada-packages/mesa-x86@sha256:e73a26770a56d8ca8249640f50358f6f0d23fa4a8c6562ac2c2eb5bc091e1a5f
 ARG MANGOHUD_PKG=ghcr.io/armada-os/armada-packages/mangohud@sha256:c68472ba185d91c25ef0d0cb7046058cedf5a86203ab5e073c6f21ec43694c7b
 ARG GAMESCOPE_PKG=ghcr.io/armada-os/armada-packages/gamescope@sha256:9550a0d0ed0034303c1dff1f6ca4e11bf88f7b3449acd2ed9a05cfd5fc87e9fd
 ARG GAMESCOPE_SESSION_PKG=ghcr.io/armada-os/armada-packages/gamescope-session@sha256:2d789621b7fdf625fdb56c38b6705827503b7e6eb176aa065db466fd12399623
@@ -9,17 +10,18 @@ ARG GAMESCOPE_SESSION_STEAM_PKG=ghcr.io/armada-os/armada-packages/gamescope-sess
 ARG KWIN_PKG=ghcr.io/armada-os/armada-packages/kwin@sha256:515e14f78f19d2abd3f3b73915e260f4b26cf9a0f84dbe55a06bbcb5f9e8ddce
 ARG PLASMA_MOBILE_PKG=ghcr.io/armada-os/armada-packages/plasma-mobile@sha256:81c08a4ac34f1ffabdd59b89934cc858e47cf6dfe1f0390c0650e397b0919a30
 ARG POWERDEVIL_PKG=ghcr.io/armada-os/armada-packages/powerdevil@sha256:86ad5666a0af470793f480895fb2cef49dc1184800e8445a64d475d0f0d9fe4a
-ARG KERNEL_PKG=ghcr.io/armada-os/armada-packages/kernel@sha256:200928fccefcf355ddf39f72d74691d2989628ce909dd57f0b287f05f9a735ea
+ARG KERNEL_PKG=ghcr.io/armada-os/armada-packages/kernel@sha256:efffc749f609b8b039f8b69c69527e6eeb65e3ae848d6b4df8cdebddb38230d4
 ARG INPUTPLUMBER_PKG=ghcr.io/armada-os/armada-packages/inputplumber@sha256:5d0234db7b69c6acf5319675876fa5f22b4ae7adc2516735631f37ec397baa49
 ARG EXTEST_PKG=ghcr.io/armada-os/armada-packages/extest@sha256:13aee022b77eb9212be1debb74cd1d5a5c6ed94aa42bdac7e6b3a6e72e38101b
 ARG NETWORKMANAGER_PKG=ghcr.io/armada-os/armada-packages/networkmanager@sha256:cea22dd25c2d033ec14bc9154a87153ef8331ba725bde036dd7a05ad1430747d
 ARG JUPITER_HW_SUPPORT_PKG=ghcr.io/armada-os/armada-packages/jupiter-hw-support@sha256:efc0739700ede36ed08c894445973ce2b594c70a0ee487fd5cf209bc07c955ee
 ARG ARMADA_SPLASH_PKG=ghcr.io/armada-os/armada-packages/armada-splash@sha256:6b018ab61218ad5b760fc93b27f7f6af4af4fb6301cb1ed4711cd33ded8c0ea0
-ARG ARMADA_RGB_PKG=ghcr.io/armada-os/armada-packages/armada-rgb@sha256:a7b66324d7bf8030e260d5f2fc9074ad9ced7c47852187783f5e3e082d0ebc25
+ARG ARMADA_RGB_PKG=ghcr.io/armada-os/armada-packages/armada-rgb@sha256:269a0b19aee60cf6c0b31b2cee60e996115e912cd605f5e6204813eccfd57fe7
 ARG UMTP_RESPONDER_PKG=ghcr.io/armada-os/armada-packages/umtp-responder@sha256:0e7f962145b72de85c2a3563d947c6357fc3a1a34797b7106cbff1c8832078ea
 ARG CHUNKAH_IMAGE=quay.io/coreos/chunkah@sha256:ff8b8b466a942ec6000445d4001fc661e2fc5a952ad9ee29b4de9ab09d1d1708
 ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:44
 
+FROM ${STEAM_BOOTSTRAP_PKG} AS steam-bootstrap
 FROM ${FEX_PKG} AS fex
 FROM ${MESA_PKG} AS mesa
 FROM ${MANGOHUD_PKG} AS mangohud
@@ -63,6 +65,7 @@ ARG ARMADA_VERSION=unknown
 LABEL org.opencontainers.image.version="${ARMADA_VERSION}"
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=steam-bootstrap,source=/steam-bootstrap,target=/packages/steam-bootstrap \
     --mount=type=bind,from=fex,source=/rpms,target=/packages/fex \
     --mount=type=bind,from=mesa,source=/rpms,target=/packages/mesa \
     --mount=type=bind,from=mangohud,source=/rpms,target=/packages/mangohud \
