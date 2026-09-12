@@ -65,7 +65,7 @@ store = pathlib.Path(sys.argv[1])
 rules = ET.parse(store / "templates/es-de/es_find_rules.xml").getroot()
 names = {e.get("name") for e in rules.findall("emulator")}
 # The emulators the store installs that ES-DE's linuxarm rules cannot find.
-assert names == {"ARMSX2", "CEMU", "PICO-8_64", "VITA3K", "XENIAEDGE"}, names
+assert names == {"ARMSX2", "BIGPEMU", "CEMU", "PICO-8_64", "VITA3K", "XENIAEDGE"}, names
 # Every entry here REPLACES the bundled one and takes its extensions and
 # alternative launch commands with it, so it must carry ES-DE's whole entry.
 systems = ET.parse(store / "templates/es-de/es_systems.xml").getroot()
