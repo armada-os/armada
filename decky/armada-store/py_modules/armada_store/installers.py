@@ -210,7 +210,7 @@ def install_flatpak(ref, cancel, on_percent):
 
 # Emulator manifests rarely grant removable media, and DuckStation's grants no
 # filesystem access at all. Armada mounts cards under /run/media.
-BASE_OVERRIDES = ("--filesystem=/run/media", "--filesystem=/media")
+BASE_OVERRIDES = ("--filesystem=/var/home/armada", "--filesystem=/home/armada", "--filesystem=/run/media", "--filesystem=/media")
 
 
 # Persistent rather than a `flatpak run` argument: ES-DE launches the flatpak

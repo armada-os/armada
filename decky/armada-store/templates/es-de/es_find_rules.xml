@@ -13,6 +13,20 @@
             <entry>~/bin/ARMSX2*.AppImage</entry>
         </rule>
     </emulator>
+    <emulator name="BIGPEMU">
+        <rule type="systempath">
+            <entry>bigpemu</entry>
+            <entry>com.richwhitehouse.BigPEmu</entry>
+        </rule>
+        <rule type="staticpath">
+            <entry>~/Applications/bigpemu/bigpemu</entry>
+            <entry>~/.local/share/applications/bigpemu/bigpemu</entry>
+            <entry>~/.local/bin/bigpemu/bigpemu</entry>
+            <entry>~/bin/bigpemu/bigpemu</entry>
+            <entry>/var/lib/flatpak/exports/bin/com.richwhitehouse.BigPEmu</entry>
+            <entry>~/.local/share/flatpak/exports/bin/com.richwhitehouse.BigPEmu</entry>
+        </rule>
+    </emulator>
     <emulator name="CEMU">
         <rule type="systempath">
             <entry>cemu</entry>
