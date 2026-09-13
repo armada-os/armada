@@ -85,7 +85,8 @@ dnf5 -y install --setopt=install_weak_deps=False \
 
 # Gyro packages
 dnf5 -y install --setopt=install_weak_deps=False \
-    make-dynpart-mappings
+    make-dynpart-mappings \
+    msm-firmware-loader
 
 # Install the remaining plugins from Fedora; Negativo17's full -bad package
 # pulls a large soundfont payload that Armada does not need.
