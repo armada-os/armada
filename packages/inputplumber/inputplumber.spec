@@ -20,6 +20,7 @@ Patch2:         0002-fix-force-feedback-reset-effects-when-replacing-targets.pat
 Patch3:         0003-feat-Hardware-Support-Add-AYN-Thor-Lite.patch
 Patch4:         0004-feat-Hardware-Support-Qualcomm-SSC-sensors.patch
 Patch5:         0005-fix-ssc-scale-accelerometer-to-UHID-units-keep-SSC-libraries-loaded.patch
+Patch6:         0006-add-fastrpc-config-to-devices.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust

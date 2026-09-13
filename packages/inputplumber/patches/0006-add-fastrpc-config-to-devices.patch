@@ -1,0 +1,307 @@
+From 35db480a7fa955514129c8f2063386e3bb6dd059 Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Sun, 13 Sep 2026 21:36:48 +0200
+Subject: [PATCH] add fastrpc config to devices
+
+---
+ .../share/inputplumber/devices/50-ayaneo_pocket_ds.yaml  | 9 +++++++++
+ .../share/inputplumber/devices/50-ayaneo_pocket_s2.yaml  | 9 +++++++++
+ rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml  | 10 ++++++++++
+ .../share/inputplumber/devices/50-ayn_odin2_mini.yaml    | 9 +++++++++
+ rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml  | 10 ++++++++++
+ rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml   | 10 ++++++++++
+ .../usr/share/inputplumber/devices/50-ayn_thor_lite.yaml | 9 +++++++++
+ .../share/inputplumber/devices/50-konkr_pocket_fit.yaml  | 9 +++++++++
+ .../inputplumber/devices/50-konkr_pocket_fit_elite.yaml  | 9 +++++++++
+ .../share/inputplumber/devices/50-retroid_pocket5.yaml   | 10 ++++++++++
+ .../share/inputplumber/devices/50-retroid_pocket6.yaml   | 10 ++++++++++
+ .../inputplumber/devices/50-retroid_pocket_flip2.yaml    | 9 +++++++++
+ .../inputplumber/devices/50-retroid_pocket_mini.yaml     | 9 +++++++++
+ .../inputplumber/devices/50-retroid_pocket_nova.yaml     | 10 ++++++++++
+ 14 files changed, 132 insertions(+)
+
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_ds.yaml b/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_ds.yaml
+index 0a1bdc2..79a66be 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_ds.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_ds.yaml
+@@ -42,6 +42,15 @@ source_devices:
+           vendor_id: 1c4f
+           product_id: 0002
+           handler: event*
++    - group: imu
++      fastrpc:
++        name: fastrpc-adsp
++      config:
++          imu:
++              mount_matrix:
++                  x: [0, -1, 0]
++                  y: [1, 0, 0]
++                  z: [0, 0, 1]
+ 
+ target_devices:
+     - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_s2.yaml b/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_s2.yaml
+index e0bc844..aafc6b2 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_s2.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayaneo_pocket_s2.yaml
+@@ -36,6 +36,15 @@ source_devices:
+           vendor_id: 1c4f
+           product_id: 0002
+           handler: event*
++    - group: imu
++      fastrpc:
++        name: fastrpc-adsp
++      config:
++          imu:
++              mount_matrix:
++                  x: [1, 0, 0]
++                  y: [0, 1, 0]
++                  z: [0, 0, 1]
+ 
+ target_devices:
+     - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
+index a9beeb5..b321a90 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
+@@ -34,5 +34,15 @@ source_devices:
+       name: gpio-keys-paddles
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
++
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2_mini.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2_mini.yaml
+index 2316ca6..77c93ca 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2_mini.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2_mini.yaml
+@@ -22,6 +22,15 @@ source_devices:
+       vendor_id: "2020"
+       product_id: "3001"
+       handler: event*
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
+ 
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
+index 885ad4f..eed66ad 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
+@@ -35,5 +35,15 @@ source_devices:
+       phys_path: gpio-keys/input0
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [1, 0, 0]
++          z: [0, 0, 1]
++
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml
+index 1844aee..2116728 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml
+@@ -30,5 +30,15 @@ source_devices:
+       phys_path: gpio-keys/input0
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
++
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_thor_lite.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_thor_lite.yaml
+index 93f45c9..0412a99 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_thor_lite.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_thor_lite.yaml
+@@ -22,6 +22,15 @@ source_devices:
+       vendor_id: "2020"
+       product_id: "3001"
+       handler: event*
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
+ 
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
+index 8d0c5ba..d93388c 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
+@@ -44,6 +44,15 @@ source_devices:
+           vendor_id: 1c4f
+           product_id: 0002
+           handler: event*
++    - group: imu
++      fastrpc:
++        name: fastrpc-adsp
++      config:
++          imu:
++              mount_matrix:
++                  x: [1, 0, 0]
++                  y: [0, 1, 0]
++                  z: [0, 0, 1]
+ 
+ target_devices:
+     - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml
+index 8833024..d814d85 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml
+@@ -24,6 +24,15 @@ source_devices:
+       evdev:
+           name: KONKR System Buttons
+           handler: event*
++    - group: imu
++      fastrpc:
++        name: fastrpc-adsp
++      config:
++          imu:
++              mount_matrix:
++                  x: [1, 0, 0]
++                  y: [0, 1, 0]
++                  z: [0, 0, 1]
+ 
+ target_devices:
+     - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml
+index f6a53b5..88a6740 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml
+@@ -23,5 +23,15 @@ source_devices:
+       product_id: "3001"
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
++
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket6.yaml b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket6.yaml
+index 4e427c4..98e148d 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket6.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket6.yaml
+@@ -30,6 +30,16 @@ source_devices:
+       handler: event*
+     capability_map_id: rsinput1
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [1, 0, 0]
++          z: [0, 0, 1]
++
+ target_devices:
+   - xbox-elite
+   # gpio-keys node is shared between gamepad and volume up key,
+diff --git a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_flip2.yaml b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_flip2.yaml
+index 580549f..81e5655 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_flip2.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_flip2.yaml
+@@ -22,6 +22,15 @@ source_devices:
+       vendor_id: "2020"
+       product_id: "3001"
+       handler: event*
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
+ 
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_mini.yaml b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_mini.yaml
+index 48fe2f6..12fef73 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_mini.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_mini.yaml
+@@ -27,6 +27,15 @@ source_devices:
+       vendor_id: "2020"
+       product_id: "3001"
+       handler: event*
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
+ 
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_nova.yaml b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_nova.yaml
+index 3648820..9896248 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_nova.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket_nova.yaml
+@@ -30,6 +30,16 @@ source_devices:
+       phys_path: gpio-keys/input0
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        mount_matrix:
++          x: [1, 0, 0]
++          y: [0, 1, 0]
++          z: [0, 0, 1]
++
+ target_devices:
+   - xbox-elite
+   # gpio-keys node is shared between gamepad and volume up key,
+-- 
+2.55.0
+
