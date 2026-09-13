@@ -11,3 +11,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0003-feat-Hardware-Support-Add-AYN-Thor-Lite.patch`
   source: armada
   notes: Matches the Thor Lite device-tree compatible and its Retroid-protocol MCU gamepad, reusing the existing Retroid Type 1 capability map.
+- `patches/0004-feat-Hardware-Support-Qualcomm-SSC-sensors.patch`
+  source: https://github.com/ShadowBlip/InputPlumber/pull/590
+  notes: Rebased on latest InputPlumber; adds the FastRPCDevice.Id polkit action the upstream policy test requires.

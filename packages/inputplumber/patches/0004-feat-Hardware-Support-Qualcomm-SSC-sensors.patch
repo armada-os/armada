@@ -1,0 +1,2775 @@
+From 4b8dcc912fa8323bab9fd5806b8fb9b0fe5069d2 Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Thu, 21 May 2026 10:46:13 +0800
+Subject: [PATCH 01/11] refactor(config): add Default for MountMatrix
+
+Adds a default value for MountMatrix (just an identity matrix)
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ src/config/mod.rs | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+index 714d121..533a2e2 100644
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -444,6 +444,16 @@ pub struct MountMatrix {
+     pub z: [f64; 3],
+ }
+ 
++impl Default for MountMatrix {
++    fn default() -> Self {
++        MountMatrix {
++            x: [1.0, 0.0, 0.0],
++            y: [0.0, 1.0, 0.0],
++            z: [0.0, 0.0, 1.0],
++        }
++    }
++}
++
+ #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+ #[serde(rename_all = "snake_case")]
+ pub struct EventsConfig {
+
+From 4cc382dd115cbaeb61504d63bcd304e85070340d Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Thu, 21 May 2026 10:57:08 +0800
+Subject: [PATCH 02/11] build(Cargo.toml): add libloading dependency
+
+libloading will help us load dylibs, which we need for the libssc / FastRPC implementation
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ Cargo.toml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 10d55c3..459d562 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -119,6 +119,7 @@ hidapi = "2.6.4"
+ industrial-io = "0.6.1"
+ #evdev = { version = "0.12.1", features = ["tokio"] }
+ inotify = "0.11.0"
++libloading = "0.9.0"
+ # Omit trace logging for release builds
+ log = { version = "0.4.29", features = [
+   "max_level_trace",
+
+From fa87fd8ae5edf5ec3eef6315b553bd9198b0a329 Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Thu, 21 May 2026 11:06:48 +0800
+Subject: [PATCH 03/11] feat(Hardware Support): Qualcomm SSC sensors through
+ FastRPC
+
+This implements support for the Qualcomm Sensor Core (SSC), which provides accel and gyro to some Snapdragon based handhelds made in the past 8 years or so
+
+This requires libssc as a runtime dependency, and requires libloading as a build time & runtime dependency
+
+As FastRPC devices don't actually show up in a "fastrpc" subsystem, and instead use the "misc" subsystem, some logic has been added to udev/device.rs to check for fastrpc devices and fake the subsystem
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ .../org.shadowblip.InputPlumber.policy        |  10 +
+ src/config/mod.rs                             |  47 ++++
+ src/dbus/interface/source/fastrpc.rs          |  33 +++
+ src/dbus/interface/source/mod.rs              |   1 +
+ src/drivers/mod.rs                            |   1 +
+ src/drivers/ssc/bindings.rs                   | 216 ++++++++++++++++++
+ src/drivers/ssc/driver.rs                     | 139 +++++++++++
+ src/drivers/ssc/event.rs                      |  18 ++
+ src/drivers/ssc/mod.rs                        |   4 +
+ src/drivers/ssc/runtime.rs                    | 118 ++++++++++
+ src/input/composite_device/mod.rs             |  20 +-
+ src/input/manager.rs                          |  52 ++++-
+ src/input/source/fastrpc.rs                   | 112 +++++++++
+ src/input/source/fastrpc/ssc_imu.rs           | 108 +++++++++
+ src/input/source/mod.rs                       |  14 +-
+ src/udev/device.rs                            |  48 ++--
+ 16 files changed, 900 insertions(+), 41 deletions(-)
+ create mode 100644 src/dbus/interface/source/fastrpc.rs
+ create mode 100644 src/drivers/ssc/bindings.rs
+ create mode 100644 src/drivers/ssc/driver.rs
+ create mode 100644 src/drivers/ssc/event.rs
+ create mode 100644 src/drivers/ssc/mod.rs
+ create mode 100644 src/drivers/ssc/runtime.rs
+ create mode 100644 src/input/source/fastrpc.rs
+ create mode 100644 src/input/source/fastrpc/ssc_imu.rs
+
+diff --git a/rootfs/usr/share/polkit-1/actions/org.shadowblip.InputPlumber.policy b/rootfs/usr/share/polkit-1/actions/org.shadowblip.InputPlumber.policy
+index b7c4bcf..b926bcc 100644
+--- a/rootfs/usr/share/polkit-1/actions/org.shadowblip.InputPlumber.policy
++++ b/rootfs/usr/share/polkit-1/actions/org.shadowblip.InputPlumber.policy
+@@ -584,6 +584,16 @@
+     </defaults>
+   </action>
+ 
++  <action id="org.shadowblip.Input.Source.FastRPCDevice.Id">
++    <description>Get the device ID</description>
++    <message>Authentication is required to get FastRPC device ID</message>
++    <defaults>
++      <allow_any>yes</allow_any>
++      <allow_inactive>yes</allow_inactive>
++      <allow_active>yes</allow_active>
++    </defaults>
++  </action>
++
+   <action id="org.shadowblip.Input.Source.HIDRawDevice.Name">
+     <description>Read the name of the HID raw device</description>
+     <message>Authorization required to read the HID raw device name.</message>
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+index 533a2e2..39428c8 100644
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -235,6 +235,9 @@ pub struct SourceDevice {
+     /// Devices that match the given evdev properties will be captured by InputPlumber
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub evdev: Option<Evdev>,
++    /// Devices that match the given fastrpc properties will be captured by InputPlumber
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub fastrpc: Option<FastRpc>,
+     /// Devices that match the given hidraw properties will be captured by InputPlumber
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub hidraw: Option<Hidraw>,
+@@ -407,6 +410,15 @@ pub struct IIO {
+     pub mount_matrix: Option<MountMatrix>,
+ }
+ 
++#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub struct FastRpc {
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub id: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub name: Option<String>,
++}
++
+ #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+ #[serde(rename_all = "snake_case")]
+ #[allow(clippy::upper_case_acronyms)]
+@@ -593,6 +605,12 @@ impl CompositeDeviceConfig {
+                     return Some(config.clone());
+                 }
+             }
++            "fastrpc" => {
++                let fastrpc_config = config.fastrpc.as_ref()?;
++                if self.has_matching_fastrpc(udevice, fastrpc_config) {
++                    return Some(config.clone());
++                }
++            }
+             _ => (),
+         }
+ 
+@@ -855,6 +873,35 @@ impl CompositeDeviceConfig {
+         true
+     }
+ 
++    /// Returns true if a given FastRPC device is within a list of fastrpc configs.
++    pub fn has_matching_fastrpc(&self, device: &UdevDevice, fastrpc_config: &FastRpc) -> bool {
++        log::trace!(
++            "Checking FastRPC config: {:?} against {:?}",
++            fastrpc_config,
++            device
++        );
++
++        if let Some(id) = fastrpc_config.id.as_ref() {
++            let dsyspath = device.syspath();
++            log::trace!("Checking id: {id} against {dsyspath}");
++            if !glob_match(id.as_str(), dsyspath.as_str()) {
++                return false;
++            }
++        }
++
++        if let Some(name) = fastrpc_config.name.as_ref() {
++            // FastRPC devices don't seem to have a name (or it's empty)
++            // The sysname works fine
++            let dname = device.sysname();
++            log::trace!("Checking sysname: {name} against {dname}");
++            if !glob_match(name.as_str(), dname.as_str()) {
++                return false;
++            }
++        }
++
++        true
++    }
++
+     /// Returns true if a given evdev device is within a list of evdev configs.
+     pub fn has_matching_evdev(&self, device: &UdevDevice, evdev_config: &Evdev) -> bool {
+         //TODO: Check if the evdev has no proterties defined, that would always match.
+diff --git a/src/dbus/interface/source/fastrpc.rs b/src/dbus/interface/source/fastrpc.rs
+new file mode 100644
+index 0000000..de1df5f
+--- /dev/null
++++ b/src/dbus/interface/source/fastrpc.rs
+@@ -0,0 +1,33 @@
++use crate::{
++    dbus::{interface::Unregisterable, polkit::check_polkit},
++    udev::device::UdevDevice,
++};
++use zbus::{fdo, message::Header, Connection};
++use zbus_macros::interface;
++
++/// DBusInterface exposing information about a FastRPC device
++pub struct SourceFastRpcInterface {
++    device: UdevDevice,
++}
++
++impl SourceFastRpcInterface {
++    pub fn new(device: UdevDevice) -> SourceFastRpcInterface {
++        SourceFastRpcInterface { device }
++    }
++}
++
++#[interface(name = "org.shadowblip.Input.Source.FastRPCDevice")]
++impl SourceFastRpcInterface {
++    /// Returns the human readable name of the device (e.g. XBox 360 Pad)
++    #[zbus(property)]
++    async fn id(
++        &self,
++        #[zbus(connection)] conn: &Connection,
++        #[zbus(header)] hdr: Option<Header<'_>>,
++    ) -> fdo::Result<String> {
++        check_polkit(conn, hdr, "org.shadowblip.Input.Source.FastRPCDevice.Id").await?;
++        Ok(self.device.sysname())
++    }
++}
++
++impl Unregisterable for SourceFastRpcInterface {}
+diff --git a/src/dbus/interface/source/mod.rs b/src/dbus/interface/source/mod.rs
+index e384dbd..952cb61 100644
+--- a/src/dbus/interface/source/mod.rs
++++ b/src/dbus/interface/source/mod.rs
+@@ -1,4 +1,5 @@
+ pub mod evdev;
++pub mod fastrpc;
+ pub mod hidraw;
+ pub mod iio_imu;
+ pub mod led;
+diff --git a/src/drivers/mod.rs b/src/drivers/mod.rs
+index 5689c75..efec1b7 100644
+--- a/src/drivers/mod.rs
++++ b/src/drivers/mod.rs
+@@ -11,6 +11,7 @@ pub mod opineo;
+ pub mod oxp_hid;
+ pub mod oxp_tty;
+ pub mod rog_ally;
++pub mod ssc;
+ pub mod steam_deck;
+ pub mod ultimate_2;
+ pub mod unified_gamepad;
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+new file mode 100644
+index 0000000..057a5d9
+--- /dev/null
++++ b/src/drivers/ssc/bindings.rs
+@@ -0,0 +1,216 @@
++pub mod glib {
++    use libloading::Library;
++    use std::error::Error;
++
++    /* Main / basic types */
++    pub type GCancellable = std::ffi::c_void;
++    pub type GObject = std::ffi::c_void;
++    pub type GMainContext = std::ffi::c_void;
++    pub type GQuark = std::ffi::c_uint;
++    pub type GConnectFlags = std::ffi::c_uint;
++
++    #[allow(non_camel_case_types)]
++    pub type gboolean = std::ffi::c_int;
++    pub const GFALSE: std::ffi::c_int = 0;
++    // pub const GTRUE: std::ffi::c_int = 1;
++
++    #[allow(non_camel_case_types)]
++    pub type gpointer = *mut std::ffi::c_void;
++
++    #[repr(C)]
++    pub struct GError {
++        pub domain: GQuark,
++        pub code: i32,
++        pub message: *mut std::ffi::c_char,
++    }
++
++    /* Closure stuff */
++    #[repr(C)]
++    pub struct GClosure {
++        pub ref_count: u32,
++        _truncated_record_marker: std::ffi::c_void,
++    }
++    pub type GClosureNotify = Option<unsafe extern "C" fn(gpointer, *mut GClosure)>;
++    pub type GCallback = Option<unsafe extern "C" fn()>;
++
++    /* Function ptrs */
++    /// g_main_context_iteration
++    pub type FnGMainContextIteration =
++        unsafe extern "C" fn(context: *mut GMainContext, may_block: gboolean) -> gboolean;
++
++    /* Helpers */
++    /// Converts a GLib error ptr to a basic string (or None if the error is null)
++    pub fn glib_error(error: *mut GError) -> Option<String> {
++        if error.is_null() {
++            None
++        } else {
++            unsafe {
++                Some(format!(
++                    "GLib error: domain = {}, code = {}",
++                    (*error).domain,
++                    (*error).code
++                ))
++            }
++        }
++    }
++
++    pub struct GlibDylib {
++        _library: Library,
++        pub g_main_context_iteration: FnGMainContextIteration,
++    }
++
++    impl GlibDylib {
++        /// Load libglib-2.0.so and methods
++        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
++            let library = unsafe {
++                Library::new("libglib-2.0.so.0")
++                    .map_err(|e| format!("libglib-2.0 not found {e}"))?
++            };
++
++            Ok(Self {
++                g_main_context_iteration: unsafe {
++                    *library.get(b"g_main_context_iteration\0").map_err(|e| {
++                        format!("libglib-2.0:g_main_context_iteration not found {e}")
++                    })?
++                },
++                _library: library,
++            })
++        }
++    }
++}
++
++pub mod gobject {
++    use libloading::Library;
++    use std::error::Error;
++
++    use super::glib::{gpointer, GCallback, GClosureNotify, GConnectFlags, GObject};
++
++    /* Function ptrs */
++    /// g_object_unref
++    pub type FnGObjectUnref = unsafe extern "C" fn(object: *mut GObject);
++
++    /// g_signal_connect_data
++    pub type FnGSignalConnectData = unsafe extern "C" fn(
++        instance: *mut GObject,
++        detailed_signal: *const std::ffi::c_char,
++        c_handler: GCallback,
++        data: gpointer,
++        destroy_data: GClosureNotify,
++        connect_flags: GConnectFlags,
++    );
++
++    pub struct GObjectDylib {
++        _library: Library,
++        pub g_object_unref: FnGObjectUnref,
++        pub g_signal_connect_data: FnGSignalConnectData,
++    }
++
++    impl GObjectDylib {
++        /// Load libgobject-2.0.so and methods
++        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
++            let library = unsafe {
++                Library::new("libgobject-2.0.so.0")
++                    .map_err(|e| format!("libgobject-2.0 not found {e}"))?
++            };
++
++            Ok(Self {
++                g_object_unref: unsafe {
++                    *library
++                        .get(b"g_object_unref\0")
++                        .map_err(|e| format!("libgobject-2.0:g_object_unref not found {e}"))?
++                },
++                g_signal_connect_data: unsafe {
++                    *library.get(b"g_signal_connect_data\0").map_err(|e| {
++                        format!("libgobject-2.0:g_signal_connect_data not found {e}")
++                    })?
++                },
++                _library: library,
++            })
++        }
++    }
++}
++
++pub mod ssc {
++    use super::glib::{gpointer, GCancellable, GClosure, GError, GObject};
++    use libloading::Library;
++    use std::error::Error;
++
++    /* Function ptrs */
++    /// ssc_sensor_*_new_sync
++    pub type FnSscSensorNewSync = unsafe extern "C" fn(
++        cancellable: *mut GCancellable,
++        error: *mut *mut GError,
++    ) -> *mut std::ffi::c_void;
++
++    /// ssc_sensor_*_open_sync
++    pub type FnSscSensorOpenSync = unsafe extern "C" fn(
++        sensor: *mut GObject,
++        cancellable: *mut GCancellable,
++        error: *mut *mut GError,
++    ) -> u32;
++
++    pub struct SscDylib {
++        _library: Library,
++        pub ssc_sensor_gyroscope_new_sync: FnSscSensorNewSync,
++        pub ssc_sensor_gyroscope_open_sync: FnSscSensorOpenSync,
++        pub ssc_sensor_accelerometer_new_sync: FnSscSensorNewSync,
++        pub ssc_sensor_accelerometer_open_sync: FnSscSensorOpenSync,
++    }
++
++    impl SscDylib {
++        /// Load libssc.so and methods
++        /// This should be used through SscRuntime
++        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
++            let library =
++                unsafe { Library::new("libssc.so").map_err(|e| format!("libssc not found {e}"))? };
++
++            Ok(Self {
++                ssc_sensor_gyroscope_new_sync: unsafe {
++                    *library
++                        .get(b"ssc_sensor_gyroscope_new_sync\0")
++                        .map_err(|e| {
++                            format!("libssc:ssc_sensor_gyroscope_new_sync not found {e}")
++                        })?
++                },
++                ssc_sensor_gyroscope_open_sync: unsafe {
++                    *library
++                        .get(b"ssc_sensor_gyroscope_open_sync\0")
++                        .map_err(|e| {
++                            format!("libssc:ssc_sensor_gyroscope_open_sync not found {e}")
++                        })?
++                },
++                ssc_sensor_accelerometer_new_sync: unsafe {
++                    *library
++                        .get(b"ssc_sensor_accelerometer_new_sync\0")
++                        .map_err(|e| {
++                            format!("libssc:ssc_sensor_accelerometer_new_sync not found {e}")
++                        })?
++                },
++                ssc_sensor_accelerometer_open_sync: unsafe {
++                    *library
++                        .get(b"ssc_sensor_accelerometer_open_sync\0")
++                        .map_err(|e| {
++                            format!("libssc:ssc_sensor_accelerometer_open_sync not found {e}")
++                        })?
++                },
++                _library: library,
++            })
++        }
++    }
++
++    pub unsafe extern "C" fn measurement_handler(
++        _obj: *mut GObject,
++        x: f32,
++        y: f32,
++        z: f32,
++        data: gpointer,
++    ) {
++        let cb: &mut Box<dyn FnMut(f32, f32, f32) + 'static> =
++            unsafe { &mut *(data as *mut Box<dyn FnMut(f32, f32, f32)>) };
++        cb(x, y, z);
++    }
++
++    pub unsafe extern "C" fn closure_destroy_handler(data: gpointer, _: *mut GClosure) {
++        drop(unsafe { Box::from_raw(data as *mut Box<dyn FnMut(f32, f32, f32)>) });
++    }
++}
+diff --git a/src/drivers/ssc/driver.rs b/src/drivers/ssc/driver.rs
+new file mode 100644
+index 0000000..3ff0cd4
+--- /dev/null
++++ b/src/drivers/ssc/driver.rs
+@@ -0,0 +1,139 @@
++use std::collections::HashSet;
++use std::error::Error;
++use tokio::{sync::mpsc, sync::mpsc::error::TryRecvError};
++
++use crate::config::MountMatrix;
++use crate::input::capability::{Capability, Source};
++
++use super::bindings::glib::GFALSE;
++use super::event::{AxisData, Event};
++use super::runtime::{SscObject, SscRuntime};
++
++pub struct Driver {
++    runtime: SscRuntime,
++    _gyroscope: SscObject,
++    _accelerometer: SscObject,
++
++    // Event handling / polling
++    rx: mpsc::Receiver<Event>,
++    filtered_events: HashSet<Capability>,
++
++    mount_matrix: MountMatrix,
++}
++
++impl Driver {
++    pub fn new(mount_matrix: Option<MountMatrix>) -> Result<Self, Box<dyn Error + Send + Sync>> {
++        let runtime = SscRuntime::load()?;
++        let (tx, rx) = mpsc::channel::<Event>(1024);
++
++        let gyroscope = runtime.create_gyroscope()?;
++        let gyroscope_tx = tx.clone();
++        gyroscope.set_measurement_handler(&runtime, move |x, y, z| {
++            _ = gyroscope_tx.try_send(Event::Gyro(AxisData {
++                roll: x as f64,
++                pitch: y as f64,
++                yaw: z as f64,
++            }));
++        });
++
++        let accelerometer = runtime.create_accelerometer()?;
++        let accelerometer_tx = tx.clone();
++        accelerometer.set_measurement_handler(&runtime, move |x, y, z| {
++            _ = accelerometer_tx.try_send(Event::Accelerometer(AxisData {
++                roll: x as f64,
++                pitch: y as f64,
++                yaw: z as f64,
++            }));
++        });
++
++        Ok(Self {
++            runtime,
++            _gyroscope: gyroscope,
++            _accelerometer: accelerometer,
++            rx,
++            filtered_events: Default::default(),
++            mount_matrix: mount_matrix.unwrap_or_default(),
++        })
++    }
++
++    pub fn update_filtered_events(&mut self, events: HashSet<Capability>) {
++        self.filtered_events = events;
++    }
++
++    pub fn get_default_event_filter(
++        &self,
++    ) -> Result<HashSet<Capability>, Box<dyn Error + Send + Sync>> {
++        Ok(HashSet::new())
++    }
++
++    /// Poll the device for data
++    pub fn poll(&mut self) -> Result<Vec<Event>, Box<dyn Error + Send + Sync>> {
++        // libssc uses GLib and relies on the GLib main loop
++        // Instead of creating a main loop and main context then managing it alongside InputPlumber's loop etc,
++        // we can just perform an iteration of the GLib context every poll
++        // Not sure how this will work if other parts of InputPlumber start using the GLib main loop too for some reason
++        unsafe { (self.runtime.libglib.g_main_context_iteration)(std::ptr::null_mut(), GFALSE) };
++
++        let mut events: Vec<Event> = vec![];
++
++        loop {
++            match self.rx.try_recv() {
++                Ok(Event::Gyro(mut event)) => {
++                    if self
++                        .filtered_events
++                        .contains(&Capability::Gyroscope(Source::Center))
++                    {
++                        continue;
++                    }
++
++                    self.rotate_value(&mut event);
++
++                    events.push(Event::Gyro(event));
++                }
++
++                Ok(Event::Accelerometer(mut event)) => {
++                    if self
++                        .filtered_events
++                        .contains(&Capability::Accelerometer(Source::Center))
++                    {
++                        continue;
++                    }
++
++                    self.rotate_value(&mut event);
++
++                    events.push(Event::Accelerometer(event));
++                }
++
++                Err(TryRecvError::Empty) => break,
++                Err(error) => return Err(format!("Error when handling SSC events: {error}").into()),
++            }
++        }
++
++        Ok(events)
++    }
++
++    /// Rotate the given axis data according to the mount matrix. This is used
++    /// to calculate the final value according to the sensor oritentation.
++    /// This is taken from iio_imu/driver.rs
++    // Values are intended to be multiplied as:
++    //   x' = mxx * x + myx * y + mzx * z
++    //   y' = mxy * x + myy * y + mzy * z
++    //   z' = mxz * x + myz * y + mzz * z
++    fn rotate_value(&self, value: &mut AxisData) {
++        let x = value.roll;
++        let y = value.pitch;
++        let z = value.yaw;
++        let mxx = self.mount_matrix.x[0];
++        let myx = self.mount_matrix.x[1];
++        let mzx = self.mount_matrix.x[2];
++        let mxy = self.mount_matrix.y[0];
++        let myy = self.mount_matrix.y[1];
++        let mzy = self.mount_matrix.y[2];
++        let mxz = self.mount_matrix.z[0];
++        let myz = self.mount_matrix.z[1];
++        let mzz = self.mount_matrix.z[2];
++        value.roll = mxx * x + myx * y + mzx * z;
++        value.pitch = mxy * x + myy * y + mzy * z;
++        value.yaw = mxz * x + myz * y + mzz * z;
++    }
++}
+diff --git a/src/drivers/ssc/event.rs b/src/drivers/ssc/event.rs
+new file mode 100644
+index 0000000..52b1f3b
+--- /dev/null
++++ b/src/drivers/ssc/event.rs
+@@ -0,0 +1,18 @@
++/// Events that can be emitted by the SSC's "measurement" sensors
++#[derive(Clone, Debug)]
++pub enum Event {
++    /// Accelerometer events measure the acceleration in a particular direction
++    /// in units of meters per second. It is generally used to determine which
++    /// direction is "down" due to the accelerating force of gravity.
++    Accelerometer(AxisData),
++    /// Gyro events measure the angular velocity in rads per second.
++    Gyro(AxisData),
++}
++
++/// AxisData represents the state of the accelerometer or gyro (x, y, z) values
++#[derive(Clone, Debug, Default)]
++pub struct AxisData {
++    pub roll: f64,
++    pub pitch: f64,
++    pub yaw: f64,
++}
+diff --git a/src/drivers/ssc/mod.rs b/src/drivers/ssc/mod.rs
+new file mode 100644
+index 0000000..e173c8d
+--- /dev/null
++++ b/src/drivers/ssc/mod.rs
+@@ -0,0 +1,4 @@
++mod bindings;
++pub mod driver;
++pub mod event;
++mod runtime;
+diff --git a/src/drivers/ssc/runtime.rs b/src/drivers/ssc/runtime.rs
+new file mode 100644
+index 0000000..2bc9289
+--- /dev/null
++++ b/src/drivers/ssc/runtime.rs
+@@ -0,0 +1,118 @@
++use std::{error::Error, ptr::null_mut};
++
++use super::bindings::{
++    glib::{glib_error, gpointer, GError, GlibDylib},
++    gobject::{FnGObjectUnref, GObjectDylib},
++    ssc::{
++        closure_destroy_handler, measurement_handler, FnSscSensorNewSync, FnSscSensorOpenSync,
++        SscDylib,
++    },
++};
++
++/* Wrapper for libssc sensor objects (mostly just a wrapper for GObject) */
++pub struct SscObject {
++    pub ptr: *mut std::ffi::c_void,
++    g_object_unref: FnGObjectUnref,
++}
++
++impl Drop for SscObject {
++    fn drop(&mut self) {
++        if !self.ptr.is_null() {
++            unsafe {
++                (self.g_object_unref)(self.ptr as *mut _);
++            }
++        }
++    }
++}
++
++impl SscObject {
++    pub fn set_measurement_handler<FnMeasure: FnMut(f32, f32, f32) + 'static>(
++        &self,
++        runtime: &SscRuntime,
++        callback: FnMeasure,
++    ) {
++        let boxed: Box<Box<dyn FnMut(f32, f32, f32)>> = Box::new(Box::new(callback));
++        let user_data = Box::into_raw(boxed) as gpointer;
++
++        unsafe {
++            (runtime.libgobject.g_signal_connect_data)(
++                self.ptr as *mut _,
++                b"measurement\0".as_ptr() as *const _,
++                Some(std::mem::transmute(measurement_handler as *const ())),
++                user_data,
++                Some(closure_destroy_handler),
++                0,
++            );
++        }
++    }
++}
++
++/// This contains the dynamic libraries and all method pointers needed for libssc to work.
++/// This currently consists of: glib-2.0, gobject-2.0, libssc
++pub struct SscRuntime {
++    pub(crate) libssc: SscDylib,
++    pub(crate) libglib: GlibDylib,
++    pub(crate) libgobject: GObjectDylib,
++}
++
++impl SscRuntime {
++    pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
++        Ok(Self {
++            libssc: SscDylib::load()?,
++            libglib: GlibDylib::load()?,
++            libgobject: GObjectDylib::load()?,
++        })
++    }
++
++    /// The signatures for gyroscope_(open/new)_sync and accelerometer_(open/new)_sync are the same, so we can reuse some code
++    fn create_measurement_sensor(
++        &self,
++        new_fn: FnSscSensorNewSync,
++        open_fn: FnSscSensorOpenSync,
++    ) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
++        let mut err: *mut GError = null_mut();
++        let ptr = unsafe { (new_fn)(std::ptr::null_mut(), &mut err) };
++
++        // Instantiate the sensor and get our GObject ptr from it
++        if let Some(v) = glib_error(err) {
++            return Err(format!("Failed to instantiate SSC sensor: {v}").into());
++        }
++
++        if ptr.is_null() {
++            return Err("Failed to instantiate SSC sensor: (got a null pointer)".into());
++        }
++
++        // "Open" the sensor (make it start doing stuff)
++        // note: We set the data callback later using set_measurement_handler, so this is just new sensor -> open sensor
++        unsafe {
++            err = std::ptr::null_mut();
++            (open_fn)(ptr, std::ptr::null_mut(), &mut err)
++        };
++
++        if let Some(v) = glib_error(err) {
++            return Err(format!("Failed to open SSC sensor: {v}").into());
++        }
++
++        Ok(SscObject {
++            ptr,
++
++            // note: SscObject should keep the SscRuntime alive
++            // This should be dropped before the SscRuntime, so it's probably fine
++            g_object_unref: self.libgobject.g_object_unref,
++        })
++    }
++
++    pub fn create_gyroscope(&self) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
++        self.create_measurement_sensor(
++            self.libssc.ssc_sensor_gyroscope_new_sync,
++            self.libssc.ssc_sensor_gyroscope_open_sync,
++        )
++    }
++
++    pub fn create_accelerometer(&self) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
++        self.create_measurement_sensor(
++            self.libssc.ssc_sensor_accelerometer_new_sync,
++            self.libssc.ssc_sensor_accelerometer_open_sync,
++        )
++    }
++}
+diff --git a/src/input/composite_device/mod.rs b/src/input/composite_device/mod.rs
+index 78202e1..49f97cb 100644
+--- a/src/input/composite_device/mod.rs
++++ b/src/input/composite_device/mod.rs
+@@ -18,29 +18,24 @@ use zbus::{object_server::Interface, Connection};
+ 
+ use crate::{
+     config::{
+-        capability_map::CapabilityMapConfig, path::get_profiles_path, CompositeDeviceConfig,
+-        DeviceProfile, LoadError, ProfileMapping,
++        CompositeDeviceConfig, DeviceProfile, LoadError, ProfileMapping, capability_map::CapabilityMapConfig, path::get_profiles_path
+     },
+     dbus::interface::{
+-        composite_device::CompositeDeviceInterface, force_feedback::ForceFeedbackInterface,
+-        DBusInterfaceManager,
++        DBusInterfaceManager, composite_device::CompositeDeviceInterface, force_feedback::ForceFeedbackInterface
+     },
+     input::{
+         capability::{Capability, Gamepad, GamepadButton, Mouse},
+         event::{
+-            native::NativeEvent,
+-            value::{InputValue, TranslationError},
+-            Event,
++            Event, native::NativeEvent, value::{InputValue, TranslationError}
+         },
+         output_capability::OutputCapability,
+         output_event::UinputOutputEvent,
+         source::{
+-            evdev::EventDevice, hidraw::HidRawDevice, iio::IioDevice, led::LedDevice,
+-            tty::TtyDevice, SourceDevice,
++            SourceDevice, evdev::EventDevice, fastrpc::FastRpcDevice, hidraw::HidRawDevice, iio::IioDevice, led::LedDevice, tty::TtyDevice
+         },
+         target::TargetDeviceTypeId,
+     },
+-    udev::{hide_device, unhide_device, HideFlag},
++    udev::{HideFlag, hide_device, unhide_device},
+ };
+ 
+ use self::{client::CompositeDeviceClient, command::CompositeCommand};
+@@ -1803,6 +1798,11 @@ impl CompositeDevice {
+                         let device = TtyDevice::new(device, self.client(), source_config.clone())?;
+                         SourceDevice::Tty(device)
+                     }
++                    "fastrpc" => {
++                        log::debug!("Adding FastRPC source device: {:?}", device.sysname());
++                        let device = FastRpcDevice::new(device, self.client(), source_config.clone())?;
++                        SourceDevice::FastRpc(device)
++                    }
+                     _ => {
+                         return Err(format!(
+                             "Unspported subsystem: {subsystem}, unable to add source device {}",
+diff --git a/src/input/manager.rs b/src/input/manager.rs
+index 1696f67..dc751cb 100644
+--- a/src/input/manager.rs
++++ b/src/input/manager.rs
+@@ -27,15 +27,15 @@ use crate::config::{
+ };
+ use crate::dbus::interface::{
+     source::{
+-        evdev::SourceEventDeviceInterface, hidraw::SourceHIDRawInterface,
+-        iio_imu::SourceIioImuInterface, led::SourceLedInterface, tty::SourceTtyInterface,
+-        udev::SourceUdevDeviceInterface,
++        evdev::SourceEventDeviceInterface, fastrpc::SourceFastRpcInterface,
++        hidraw::SourceHIDRawInterface, iio_imu::SourceIioImuInterface, led::SourceLedInterface,
++        tty::SourceTtyInterface, udev::SourceUdevDeviceInterface,
+     },
+     DBusInterfaceManager,
+ };
+ use crate::dmi::{data::DMIData, get_cpu_info};
+ use crate::input::{
+-    source::{evdev, hidraw, iio, led, tty},
++    source::{evdev, fastrpc, hidraw, iio, led, tty},
+     target::{TargetDevice, TargetDeviceTypeId},
+ };
+ use crate::udev::{
+@@ -1201,6 +1201,7 @@ impl Manager {
+                 "iio" => iio::get_dbus_path(sys_name),
+                 "leds" => led::get_dbus_path(sys_name),
+                 "tty" => tty::get_dbus_path(sys_name),
++                "fastrpc" => fastrpc::get_dbus_path(sys_name),
+                 _ => return Err(format!("Device subsystem not supported: {subsystem:?}").into()),
+             };
+             let conn = self.dbus.connection().clone();
+@@ -1228,6 +1229,10 @@ impl Manager {
+                     let tty_iface = SourceTtyInterface::new(dev);
+                     dbus.register(tty_iface);
+                 }
++                "fastrpc" => {
++                    let fastrpc_iface = SourceFastRpcInterface::new(dev);
++                    dbus.register(fastrpc_iface);
++                }
+                 _ => (),
+             }
+ 
+@@ -1408,6 +1413,24 @@ impl Manager {
+                 }
+             }
+ 
++            "fastrpc" => {
++                log::debug!(
++                    "FastRPC device added: {} ({})",
++                    device.name(),
++                    device.sysname()
++                );
++
++                // Check to see if the device is virtual
++                if device.is_virtual() {
++                    // note: FastRPC devices seem to always be virtual, allow it
++                    log::trace!(
++                        "{dev_name} ({dev_sysname}) is virtual, using it anyways (fastrpc)"
++                    );
++                } else {
++                    log::trace!("Device {dev_name} ({dev_sysname}) is real - {dev_path}");
++                }
++            }
++
+             _ => {
+                 return Err(format!("Device subsystem not supported: {subsystem:?}").into());
+             }
+@@ -1535,13 +1558,11 @@ impl Manager {
+                 WatchEvent::Create { name, base_path } => {
+                     let subsystem = {
+                         match base_path.as_str() {
+-                            "/dev" => {
+-                                if !name.starts_with("hidraw") {
+-                                    None
+-                                } else {
+-                                    Some("hidraw")
+-                                }
+-                            }
++                            "/dev" => match &name {
++                                x if x.starts_with("hidraw") => Some("hidraw"),
++                                x if x.starts_with("fastrpc") => Some("fastrpc"),
++                                _ => None,
++                            },
+                             "/dev/input" => Some("input"),
+ 
+                             _ => None,
+@@ -1648,6 +1669,15 @@ impl Manager {
+         let tty_devices = tty_devices.into_iter().map(|dev| dev.into()).collect();
+         Manager::discover_devices(cmd_tx, tty_devices).await?;
+ 
++        // FastRPC devices are part of the "misc" subsystem (but always have the "fastrpc" prefix)
++        let fastrpc_devices = udev::discover_devices("misc")?;
++        let fastrpc_devices = fastrpc_devices
++            .into_iter()
++            .filter(|x| x.sysname().to_string_lossy().starts_with("fastrpc"))
++            .map(|dev| dev.into())
++            .collect();
++        Manager::discover_devices(cmd_tx, fastrpc_devices).await?;
++        
+         Ok(())
+     }
+ 
+diff --git a/src/input/source/fastrpc.rs b/src/input/source/fastrpc.rs
+new file mode 100644
+index 0000000..4a88e0b
+--- /dev/null
++++ b/src/input/source/fastrpc.rs
+@@ -0,0 +1,112 @@
++pub mod ssc_imu;
++
++use std::error::Error;
++
++use crate::{
++    config,
++    constants::BUS_SOURCES_PREFIX,
++    input::{
++        capability::Capability, composite_device::client::CompositeDeviceClient,
++        info::DeviceInfoRef, output_capability::OutputCapability, source::fastrpc::ssc_imu::SscImu,
++    },
++    udev::device::UdevDevice,
++};
++
++use super::{InputError, OutputError, SourceDeviceCompatible, SourceDriver};
++
++enum DriverType {
++    // Unknown,
++    SscImu,
++}
++
++/// [FastRpcDevice] represents a device (likely the Sensor Core) using the Qualcomm FastRPC subsystem.
++#[derive(Debug)]
++pub enum FastRpcDevice {
++    SscImu(SourceDriver<SscImu>),
++}
++
++impl SourceDeviceCompatible for FastRpcDevice {
++    fn get_device_ref(&self) -> DeviceInfoRef<'_> {
++        match self {
++            FastRpcDevice::SscImu(source_driver) => source_driver.info_ref(),
++        }
++    }
++
++    fn get_id(&self) -> String {
++        match self {
++            FastRpcDevice::SscImu(source_driver) => source_driver.get_id(),
++        }
++    }
++
++    fn client(&self) -> super::client::SourceDeviceClient {
++        match self {
++            FastRpcDevice::SscImu(source_driver) => source_driver.client(),
++        }
++    }
++
++    async fn run(self) -> Result<(), Box<dyn Error>> {
++        match self {
++            FastRpcDevice::SscImu(source_driver) => source_driver.run().await,
++        }
++    }
++
++    fn get_capabilities(&self) -> Result<Vec<Capability>, InputError> {
++        match self {
++            FastRpcDevice::SscImu(source_driver) => source_driver.get_capabilities(),
++        }
++    }
++
++    fn get_output_capabilities(&self) -> Result<Vec<OutputCapability>, OutputError> {
++        Ok(vec![])
++    }
++
++    fn get_device_path(&self) -> String {
++        match self {
++            FastRpcDevice::SscImu(source_driver) => source_driver.get_device_path(),
++        }
++    }
++}
++
++impl FastRpcDevice {
++    /// Create a new [FastRpcDevice] associated with the given device and
++    /// composite device. The appropriate driver will be selected based on
++    /// the provided device.
++    pub fn new(
++        device_info: UdevDevice,
++        composite_device: CompositeDeviceClient,
++        conf: Option<config::SourceDevice>,
++    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
++        let driver_type = FastRpcDevice::get_driver_type(&device_info);
++
++        let imu_config = conf
++            .as_ref()
++            .and_then(|c| c.config.clone())
++            .and_then(|c| c.imu);
++
++        match driver_type {
++            // DriverType::Unknown => Err("No driver for FastRPC interface found".into()),
++            DriverType::SscImu => {
++                let device = SscImu::new(device_info.clone(), imu_config)?;
++                let source_device =
++                    SourceDriver::new(composite_device, device, device_info.into(), conf);
++                Ok(Self::SscImu(source_device))
++            }
++        }
++    }
++
++    /// Return the driver type for the given device info
++    fn get_driver_type(device: &UdevDevice) -> DriverType {
++        let device_name = device.name();
++        let name = device_name.as_str();
++        log::debug!("Finding driver for FastRPC interface: {name}");
++
++        // TODO(gio)
++        DriverType::SscImu
++    }
++}
++
++/// Returns the DBus path for an [FastRpcDevice] from a device id (E.g. fastrpc:device0)
++pub fn get_dbus_path(id: String) -> String {
++    let name = id.replace([':', '-', '.'], "_");
++    format!("{}/{}", BUS_SOURCES_PREFIX, name)
++}
+diff --git a/src/input/source/fastrpc/ssc_imu.rs b/src/input/source/fastrpc/ssc_imu.rs
+new file mode 100644
+index 0000000..e43f845
+--- /dev/null
++++ b/src/input/source/fastrpc/ssc_imu.rs
+@@ -0,0 +1,108 @@
++use std::{collections::HashSet, error::Error, fmt::Debug};
++
++use crate::{
++    config::ImuConfig,
++    drivers::ssc::{self, driver::Driver},
++    input::{
++        capability::{Capability, Source},
++        event::{native::NativeEvent, value::InputValue},
++        source::{InputError, SourceInputDevice, SourceOutputDevice},
++    },
++    udev::device::UdevDevice,
++};
++
++pub struct SscImu {
++    driver: Driver,
++}
++
++impl SscImu {
++    pub fn new(
++        _device_info: UdevDevice,
++        imu_config: Option<ImuConfig>,
++    ) -> Result<Self, Box<dyn Error + Send + Sync>> {
++        let mount_matrix = imu_config.as_ref().and_then(|c| c.mount_matrix.clone());
++
++        let driver = Driver::new(mount_matrix)?;
++
++        Ok(Self { driver })
++    }
++}
++
++impl SourceInputDevice for SscImu {
++    /// Poll the given input device for input events
++    fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
++        let events = self.driver.poll()?;
++        let native_events = translate_events(events);
++        Ok(native_events)
++    }
++
++    /// Returns the possible input events this device is capable of emitting
++    fn get_capabilities(&self) -> Result<Vec<Capability>, InputError> {
++        Ok(CAPABILITIES.into())
++    }
++
++    fn update_event_filter(&mut self, events: HashSet<Capability>) -> Result<(), InputError> {
++        self.driver.update_filtered_events(events);
++        Ok(())
++    }
++
++    fn get_default_event_filter(&self) -> Result<HashSet<Capability>, InputError> {
++        let filtered_events = self.driver.get_default_event_filter();
++        let filtered_events = match filtered_events {
++            Ok(events) => events,
++            Err(e) => {
++                return Err(format!("Failed to get default event filter: {:?}", e).into());
++            }
++        };
++        Ok(filtered_events)
++    }
++}
++
++impl SourceOutputDevice for SscImu {}
++
++impl Debug for SscImu {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("SscImu").finish()
++    }
++}
++
++// NOTE: Mark this struct as thread-safe as it will only ever be called from
++// a single thread.
++unsafe impl Send for SscImu {}
++
++/// Translate the given driver events into native events
++fn translate_events(events: Vec<ssc::event::Event>) -> Vec<NativeEvent> {
++    events.into_iter().map(translate_event).collect()
++}
++
++/// Translate the given driver event into a native event
++fn translate_event(event: ssc::event::Event) -> NativeEvent {
++    match event {
++        ssc::event::Event::Accelerometer(data) => {
++            let cap = Capability::Accelerometer(Source::Center);
++            let value = InputValue::Vector3 {
++                x: Some(data.roll),
++                y: Some(data.pitch),
++                z: Some(data.yaw),
++            };
++            NativeEvent::new(cap, value)
++        }
++        ssc::event::Event::Gyro(data) => {
++            let cap = Capability::Gyroscope(Source::Center);
++            let value = InputValue::Vector3 {
++                // Similar to bmi_imu, these values needs to be scaled a bunch
++                // This seems close to correct, needs some more testing
++                x: Some(data.roll.to_degrees() * 14.0),
++                y: Some(data.pitch.to_degrees() * 14.0),
++                z: Some(data.yaw.to_degrees() * 14.0),
++            };
++            NativeEvent::new(cap, value)
++        }
++    }
++}
++
++/// List of all capabilities that the driver implements
++pub const CAPABILITIES: &[Capability] = &[
++    Capability::Accelerometer(Source::Center),
++    Capability::Gyroscope(Source::Center),
++];
+diff --git a/src/input/source/mod.rs b/src/input/source/mod.rs
+index 1fa397e..66a637c 100644
+--- a/src/input/source/mod.rs
++++ b/src/input/source/mod.rs
+@@ -16,8 +16,8 @@ use tokio::sync::mpsc::{self, error::TryRecvError};
+ use crate::config;
+ 
+ use self::{
+-    client::SourceDeviceClient, command::SourceCommand, evdev::EventDevice, hidraw::HidRawDevice,
+-    iio::IioDevice, tty::TtyDevice,
++    client::SourceDeviceClient, command::SourceCommand, evdev::EventDevice, fastrpc::FastRpcDevice,
++    hidraw::HidRawDevice, iio::IioDevice, tty::TtyDevice,
+ };
+ 
+ use super::{
+@@ -32,6 +32,7 @@ use super::{
+ pub mod client;
+ pub mod command;
+ pub mod evdev;
++pub mod fastrpc;
+ pub mod hidraw;
+ pub mod iio;
+ pub mod led;
+@@ -645,6 +646,7 @@ pub(crate) trait SourceDeviceCompatible {
+ #[derive(Debug)]
+ pub enum SourceDevice {
+     Event(EventDevice),
++    FastRpc(FastRpcDevice),
+     HidRaw(HidRawDevice),
+     Iio(IioDevice),
+     Led(LedDevice),
+@@ -656,6 +658,7 @@ impl SourceDevice {
+     pub fn get_device_ref(&self) -> DeviceInfoRef<'_> {
+         match self {
+             SourceDevice::Event(device) => device.get_device_ref(),
++            SourceDevice::FastRpc(device) => device.get_device_ref(),
+             SourceDevice::HidRaw(device) => device.get_device_ref(),
+             SourceDevice::Iio(device) => device.get_device_ref(),
+             SourceDevice::Led(device) => device.get_device_ref(),
+@@ -667,6 +670,7 @@ impl SourceDevice {
+     pub fn get_id(&self) -> String {
+         match self {
+             SourceDevice::Event(device) => device.get_id(),
++            SourceDevice::FastRpc(device) => device.get_id(),
+             SourceDevice::HidRaw(device) => device.get_id(),
+             SourceDevice::Iio(device) => device.get_id(),
+             SourceDevice::Led(device) => device.get_id(),
+@@ -678,6 +682,7 @@ impl SourceDevice {
+     pub fn get_persistent_id(&self) -> Option<String> {
+         match self {
+             SourceDevice::Event(device) => device.get_serial(),
++            SourceDevice::FastRpc(_) => None,
+             SourceDevice::HidRaw(device) => device.get_serial(),
+             SourceDevice::Iio(_) => None,
+             SourceDevice::Led(_) => None,
+@@ -689,6 +694,7 @@ impl SourceDevice {
+     pub fn client(&self) -> SourceDeviceClient {
+         match self {
+             SourceDevice::Event(device) => device.client(),
++            SourceDevice::FastRpc(device) => device.client(),
+             SourceDevice::HidRaw(device) => device.client(),
+             SourceDevice::Iio(device) => device.client(),
+             SourceDevice::Led(device) => device.client(),
+@@ -700,6 +706,7 @@ impl SourceDevice {
+     pub async fn run(self) -> Result<(), Box<dyn Error>> {
+         match self {
+             SourceDevice::Event(device) => device.run().await,
++            SourceDevice::FastRpc(device) => device.run().await,
+             SourceDevice::HidRaw(device) => device.run().await,
+             SourceDevice::Iio(device) => device.run().await,
+             SourceDevice::Led(device) => device.run().await,
+@@ -711,6 +718,7 @@ impl SourceDevice {
+     pub fn get_capabilities(&self) -> Result<Vec<Capability>, InputError> {
+         match self {
+             SourceDevice::Event(device) => device.get_capabilities(),
++            SourceDevice::FastRpc(device) => device.get_capabilities(),
+             SourceDevice::HidRaw(device) => device.get_capabilities(),
+             SourceDevice::Iio(device) => device.get_capabilities(),
+             SourceDevice::Led(device) => device.get_capabilities(),
+@@ -722,6 +730,7 @@ impl SourceDevice {
+     pub fn get_output_capabilities(&self) -> Result<Vec<OutputCapability>, OutputError> {
+         match self {
+             SourceDevice::Event(device) => device.get_output_capabilities(),
++            SourceDevice::FastRpc(device) => device.get_output_capabilities(),
+             SourceDevice::HidRaw(device) => device.get_output_capabilities(),
+             SourceDevice::Iio(device) => device.get_output_capabilities(),
+             SourceDevice::Led(device) => device.get_output_capabilities(),
+@@ -733,6 +742,7 @@ impl SourceDevice {
+     pub fn get_device_path(&self) -> String {
+         match self {
+             SourceDevice::Event(device) => device.get_device_path(),
++            SourceDevice::FastRpc(device) => device.get_device_path(),
+             SourceDevice::HidRaw(device) => device.get_device_path(),
+             SourceDevice::Iio(device) => device.get_device_path(),
+             SourceDevice::Led(device) => device.get_device_path(),
+diff --git a/src/udev/device.rs b/src/udev/device.rs
+index 667725b..abefa5e 100644
+--- a/src/udev/device.rs
++++ b/src/udev/device.rs
+@@ -369,15 +369,12 @@ impl UdevDevice {
+         let devnode = format!("{base_path}/{name}");
+         let subsystem = {
+             match base_path {
+-                "/dev" => {
+-                    if name.starts_with("hidraw") {
+-                        Some("hidraw")
+-                    } else if name.starts_with("iio:") {
+-                        Some("iio")
+-                    } else {
+-                        None
+-                    }
+-                }
++                "/dev" => match &name {
++                    x if x.starts_with("hidraw") => Some("hidraw"),
++                    x if x.starts_with("iio:") => Some("iio"),
++                    x if x.starts_with("fastrpc") => Some("fastrpc"),
++                    _ => None,
++                },
+                 "/dev/input" => Some("input"),
+ 
+                 _ => None,
+@@ -436,15 +433,21 @@ impl UdevDevice {
+             Err(_) => return Default::default(),
+         };
+ 
++        let subsystem = match device.subsystem().map(|s| s.to_string_lossy().to_string()) {
++            // FastRPC has special behaviour, check the comment in "From<::udev::Device> for UdevDevice"
++            Some(x) if x == "misc" && device.sysname().to_string_lossy().starts_with("fastrpc") => {
++                "fastrpc".to_string()
++            }
++            Some(x) => x,
++            None => String::default(),
++        };
++
+         Self {
+             devnode: device
+                 .devnode()
+                 .map(|p| p.to_string_lossy().to_string())
+                 .unwrap_or_default(),
+-            subsystem: device
+-                .subsystem()
+-                .map(|s| s.to_string_lossy().to_string())
+-                .unwrap_or_default(),
++            subsystem,
+             syspath: device.syspath().to_string_lossy().to_string(),
+             sysname: device.sysname().to_string_lossy().to_string(),
+             name: Some(device.name().to_string()),
+@@ -624,6 +627,9 @@ impl UdevDevice {
+             "leds" => {
+                 format!("leds://{}", self.sysname)
+             }
++            "fastrpc" => {
++                format!("fastrpc://{}", self.sysname)
++            }
+             _ => "".to_string(),
+         }
+     }
+@@ -695,11 +701,17 @@ impl From<::udev::Device> for UdevDevice {
+             .unwrap_or(Path::new(""))
+             .to_string_lossy()
+             .to_string();
+-        let subsystem = device
+-            .subsystem()
+-            .unwrap_or(OsStr::new(""))
+-            .to_string_lossy()
+-            .to_string();
++
++        let subsystem = match device.subsystem().map(|s| s.to_string_lossy().to_string()) {
++            // FastRPC devices are part of the "misc" subsystem
++            // Instead of handling that case everywhere, just check if the device is a fastrpc device and fake the subsystem
++            Some(x) if x == "misc" && device.sysname().to_string_lossy().starts_with("fastrpc") => {
++                "fastrpc".to_string()
++            }
++            Some(x) => x,
++            None => String::default(),
++        };
++
+         let sysname = device.sysname().to_string_lossy().to_string();
+         let syspath = device.syspath().to_string_lossy().to_string();
+         let properties = device.get_properties();
+
+From cce690dcbf80aee7c4e2fff7f9e944dc6c73e57e Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Thu, 21 May 2026 11:09:42 +0800
+Subject: [PATCH 04/11] docs(bindings): Add FastRPC dbus-xml bindings
+
+Based on IIOIMUDevice
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ ....shadowblip.Input.Source.FastRPCDevice.xml | 45 +++++++++++++++++++
+ 1 file changed, 45 insertions(+)
+ create mode 100644 bindings/dbus-xml/org.shadowblip.Input.Source.FastRPCDevice.xml
+
+diff --git a/bindings/dbus-xml/org.shadowblip.Input.Source.FastRPCDevice.xml b/bindings/dbus-xml/org.shadowblip.Input.Source.FastRPCDevice.xml
+new file mode 100644
+index 0000000..fb5546a
+--- /dev/null
++++ b/bindings/dbus-xml/org.shadowblip.Input.Source.FastRPCDevice.xml
+@@ -0,0 +1,45 @@
++
++<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
++ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
++<node>
++  <interface name="org.freedesktop.DBus.Properties">
++    <method name="Get">
++      <arg name="interface_name" type="s" direction="in"/>
++      <arg name="property_name" type="s" direction="in"/>
++      <arg type="v" direction="out"/>
++    </method>
++    <method name="Set">
++      <arg name="interface_name" type="s" direction="in"/>
++      <arg name="property_name" type="s" direction="in"/>
++      <arg name="value" type="v" direction="in"/>
++    </method>
++    <method name="GetAll">
++      <arg name="interface_name" type="s" direction="in"/>
++      <arg type="a{sv}" direction="out"/>
++    </method>
++    <signal name="PropertiesChanged">
++      <arg name="interface_name" type="s"/>
++      <arg name="changed_properties" type="a{sv}"/>
++      <arg name="invalidated_properties" type="as"/>
++    </signal>
++  </interface>
++  <interface name="org.freedesktop.DBus.Introspectable">
++    <method name="Introspect">
++      <arg type="s" direction="out"/>
++    </method>
++  </interface>
++  <interface name="org.freedesktop.DBus.Peer">
++    <method name="Ping">
++    </method>
++    <method name="GetMachineId">
++      <arg type="s" direction="out"/>
++    </method>
++  </interface>
++  <interface name="org.shadowblip.Input.Source.FastRPCDevice">
++    <!--
++     Returns the human readable name of the device (e.g. XBox 360 Pad)
++     -->
++    <property name="Id" type="s" access="read"/>
++  </interface>
++</node>
++
+
+From 9c41345410ad9edcdd43b403882bf0f76b076ddc Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Thu, 21 May 2026 11:12:57 +0800
+Subject: [PATCH 05/11] docs(schema): add FastRPC section in composite device
+ schema
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ .../schema/composite_device_v1.json             | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/rootfs/usr/share/inputplumber/schema/composite_device_v1.json b/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+index c62fc6d..8dd7e20 100644
+--- a/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
++++ b/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+@@ -199,6 +199,9 @@
+         "evdev": {
+           "$ref": "#/definitions/Evdev"
+         },
++        "fastrpc": {
++          "$ref": "#/definitions/FastRPC"
++        },
+         "hidraw": {
+           "$ref": "#/definitions/Hidraw"
+         },
+@@ -384,6 +387,20 @@
+       "required": [],
+       "title": "Evdev"
+     },
++    "FastRPC": {
++      "type": "object",
++      "additionalProperties": false,
++      "properties": {
++        "id": {
++          "description": "Name of the FastRPC device: /dev/fastrpc*",
++          "type": "string"
++        },
++        "name": {
++          "type": "string"
++        }
++      },
++      "title": "FastRPC"
++    },
+     "Hidraw": {
+       "type": "object",
+       "additionalProperties": false,
+
+From 79f11dc1fa46d5d02195c3031fa975995169f414 Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Sun, 24 May 2026 15:37:36 +0800
+Subject: [PATCH 06/11] fix(ssc): cancel sensor init after a few seconds
+
+Makes sure we don't get stuck trying to init the sensor if the subsystem isn't ready
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ src/drivers/ssc/bindings.rs | 47 ++++++++++++++++++++++++++++++++--
+ src/drivers/ssc/runtime.rs  | 50 ++++++++++++++++++++++++++++++++++---
+ 2 files changed, 91 insertions(+), 6 deletions(-)
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index 057a5d9..e903d17 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -3,7 +3,6 @@ pub mod glib {
+     use std::error::Error;
+ 
+     /* Main / basic types */
+-    pub type GCancellable = std::ffi::c_void;
+     pub type GObject = std::ffi::c_void;
+     pub type GMainContext = std::ffi::c_void;
+     pub type GQuark = std::ffi::c_uint;
+@@ -79,6 +78,49 @@ pub mod glib {
+     }
+ }
+ 
++pub mod gio {
++    use libloading::Library;
++    use std::error::Error;
++
++    pub type GCancellable = std::ffi::c_void;
++
++    /* Function ptrs */
++    /// g_cancellable_new
++    pub type FnGCancellableNew = unsafe extern "C" fn() -> *mut GCancellable;
++
++    /// g_cancellable_cancel
++    pub type FnGCancellableCancel = unsafe extern "C" fn(cancellable: *mut GCancellable);
++
++    pub struct GioDylib {
++        _library: Library,
++        pub g_cancellable_new: FnGCancellableNew,
++        pub g_cancellable_cancel: FnGCancellableCancel,
++    }
++
++    impl GioDylib {
++        /// Load libgio-2.0.so and methods
++        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
++            let library = unsafe {
++                Library::new("libgio-2.0.so.0").map_err(|e| format!("libgio-2.0 not found {e}"))?
++            };
++
++            Ok(Self {
++                g_cancellable_new: unsafe {
++                    *library
++                        .get(b"g_cancellable_new\0")
++                        .map_err(|e| format!("libgio-2.0:g_cancellable_new not found {e}"))?
++                },
++                g_cancellable_cancel: unsafe {
++                    *library
++                        .get(b"g_cancellable_cancel\0")
++                        .map_err(|e| format!("libgio-2.0:g_cancellable_cancel not found {e}"))?
++                },
++                _library: library,
++            })
++        }
++    }
++}
++
+ pub mod gobject {
+     use libloading::Library;
+     use std::error::Error;
+@@ -131,7 +173,8 @@ pub mod gobject {
+ }
+ 
+ pub mod ssc {
+-    use super::glib::{gpointer, GCancellable, GClosure, GError, GObject};
++    use super::gio::GCancellable;
++    use super::glib::{gpointer, GClosure, GError, GObject};
+     use libloading::Library;
+     use std::error::Error;
+ 
+diff --git a/src/drivers/ssc/runtime.rs b/src/drivers/ssc/runtime.rs
+index 2bc9289..e0ec919 100644
+--- a/src/drivers/ssc/runtime.rs
++++ b/src/drivers/ssc/runtime.rs
+@@ -1,6 +1,7 @@
+-use std::{error::Error, ptr::null_mut};
++use std::{error::Error, ptr::null_mut, time::Duration};
+ 
+ use super::bindings::{
++    gio::{GCancellable, GioDylib},
+     glib::{glib_error, gpointer, GError, GlibDylib},
+     gobject::{FnGObjectUnref, GObjectDylib},
+     ssc::{
+@@ -47,11 +48,45 @@ impl SscObject {
+     }
+ }
+ 
++/* Wrapper for GCancellable */
++struct Cancellable {
++    _ptr: *mut GCancellable,
++}
++
++impl Cancellable {
++    fn new(ptr: *mut GCancellable) -> Self {
++        Self { _ptr: ptr }
++    }
++
++    pub fn ptr(&self) -> *mut GCancellable {
++        self._ptr
++    }
++
++    pub fn cancel_after(libgobject: &GObjectDylib, libgio: &GioDylib, timeout: Duration) -> Self {
++        let this = Self::new(unsafe { (libgio.g_cancellable_new)() });
++        let this_ptr_u64 = this.ptr() as std::ffi::c_ulong;
++
++        let g_cancellable_cancel = libgio.g_cancellable_cancel;
++        let g_object_unref = libgobject.g_object_unref;
++
++        std::thread::spawn(move || {
++            std::thread::sleep(timeout);
++            unsafe {
++                (g_cancellable_cancel)(this_ptr_u64 as *mut GCancellable);
++                (g_object_unref)(this_ptr_u64 as *mut _);
++            }
++        });
++
++        this
++    }
++}
++
+ /// This contains the dynamic libraries and all method pointers needed for libssc to work.
+-/// This currently consists of: glib-2.0, gobject-2.0, libssc
++/// This currently consists of: glib-2.0, gobject-2.0, gio-2.0, libssc
+ pub struct SscRuntime {
+     pub(crate) libssc: SscDylib,
+     pub(crate) libglib: GlibDylib,
++    pub(crate) libgio: GioDylib,
+     pub(crate) libgobject: GObjectDylib,
+ }
+ 
+@@ -60,6 +95,7 @@ impl SscRuntime {
+         Ok(Self {
+             libssc: SscDylib::load()?,
+             libglib: GlibDylib::load()?,
++            libgio: GioDylib::load()?,
+             libgobject: GObjectDylib::load()?,
+         })
+     }
+@@ -71,7 +107,11 @@ impl SscRuntime {
+         open_fn: FnSscSensorOpenSync,
+     ) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
+         let mut err: *mut GError = null_mut();
+-        let ptr = unsafe { (new_fn)(std::ptr::null_mut(), &mut err) };
++        let ptr = unsafe {
++            let cancellable =
++                Cancellable::cancel_after(&self.libgobject, &self.libgio, Duration::from_secs(1));
++            (new_fn)(cancellable.ptr(), &mut err)
++        };
+ 
+         // Instantiate the sensor and get our GObject ptr from it
+         if let Some(v) = glib_error(err) {
+@@ -86,7 +126,9 @@ impl SscRuntime {
+         // note: We set the data callback later using set_measurement_handler, so this is just new sensor -> open sensor
+         unsafe {
+             err = std::ptr::null_mut();
+-            (open_fn)(ptr, std::ptr::null_mut(), &mut err)
++            let cancellable =
++                Cancellable::cancel_after(&self.libgobject, &self.libgio, Duration::from_secs(4));
++            (open_fn)(ptr, cancellable.ptr(), &mut err)
+         };
+ 
+         if let Some(v) = glib_error(err) {
+
+From 07a69601e2b67f4c36e03fec46fa4ce35e634261 Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Tue, 26 May 2026 14:48:49 +0800
+Subject: [PATCH 07/11] refactor(ssc): fix tests, add quark strings to errors
+
+Also ups the gyro scaling from 14.0 -> 16.0
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ src/drivers/ssc/bindings.rs         | 50 ++++++++++++++++++++---------
+ src/drivers/ssc/runtime.rs          | 18 +++++------
+ src/input/source/fastrpc/ssc_imu.rs |  6 ++--
+ src/udev/device.rs                  |  1 -
+ 4 files changed, 46 insertions(+), 29 deletions(-)
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index e903d17..41dbf72 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -37,25 +37,13 @@ pub mod glib {
+     pub type FnGMainContextIteration =
+         unsafe extern "C" fn(context: *mut GMainContext, may_block: gboolean) -> gboolean;
+ 
+-    /* Helpers */
+-    /// Converts a GLib error ptr to a basic string (or None if the error is null)
+-    pub fn glib_error(error: *mut GError) -> Option<String> {
+-        if error.is_null() {
+-            None
+-        } else {
+-            unsafe {
+-                Some(format!(
+-                    "GLib error: domain = {}, code = {}",
+-                    (*error).domain,
+-                    (*error).code
+-                ))
+-            }
+-        }
+-    }
++    /// g_quark_to_string
++    pub type FnGQuarkToString = unsafe extern "C" fn(quark: GQuark) -> *const std::ffi::c_char;
+ 
+     pub struct GlibDylib {
+         _library: Library,
+         pub g_main_context_iteration: FnGMainContextIteration,
++        pub g_quark_to_string: FnGQuarkToString,
+     }
+ 
+     impl GlibDylib {
+@@ -72,9 +60,37 @@ pub mod glib {
+                         format!("libglib-2.0:g_main_context_iteration not found {e}")
+                     })?
+                 },
++
++                g_quark_to_string: unsafe {
++                    *library
++                        .get(b"g_quark_to_string\0")
++                        .map_err(|e| format!("libglib-2.0:g_quark_to_string not found {e}"))?
++                },
++
+                 _library: library,
+             })
+         }
++
++        /// Converts a GLib error ptr to a basic string (or None if the error is null)
++        pub fn convert_error(&self, error: *mut GError) -> Option<String> {
++            if error.is_null() {
++                None
++            } else {
++                let domain_str = unsafe {
++                    let domain_cstr =
++                        std::ffi::CStr::from_ptr((self.g_quark_to_string)((*error).domain));
++                    domain_cstr.to_string_lossy().into_owned()
++                };
++
++                let domain = unsafe { (*error).domain };
++                let code = unsafe { (*error).code };
++
++                Some(format!(
++                    "GLib error: domain = {} / {}, code = {}",
++                    domain, domain_str, code
++                ))
++            }
++        }
+     }
+ }
+ 
+@@ -241,6 +257,8 @@ pub mod ssc {
+         }
+     }
+ 
++    pub type MeasurementHandlerCb = Box<dyn FnMut(f32, f32, f32)>;
++
+     pub unsafe extern "C" fn measurement_handler(
+         _obj: *mut GObject,
+         x: f32,
+@@ -249,7 +267,7 @@ pub mod ssc {
+         data: gpointer,
+     ) {
+         let cb: &mut Box<dyn FnMut(f32, f32, f32) + 'static> =
+-            unsafe { &mut *(data as *mut Box<dyn FnMut(f32, f32, f32)>) };
++            unsafe { &mut *(data as *mut MeasurementHandlerCb) };
+         cb(x, y, z);
+     }
+ 
+diff --git a/src/drivers/ssc/runtime.rs b/src/drivers/ssc/runtime.rs
+index e0ec919..4936d0c 100644
+--- a/src/drivers/ssc/runtime.rs
++++ b/src/drivers/ssc/runtime.rs
+@@ -2,11 +2,11 @@ use std::{error::Error, ptr::null_mut, time::Duration};
+ 
+ use super::bindings::{
+     gio::{GCancellable, GioDylib},
+-    glib::{glib_error, gpointer, GError, GlibDylib},
++    glib::{gpointer, GCallback, GError, GlibDylib},
+     gobject::{FnGObjectUnref, GObjectDylib},
+     ssc::{
+         closure_destroy_handler, measurement_handler, FnSscSensorNewSync, FnSscSensorOpenSync,
+-        SscDylib,
++        MeasurementHandlerCb, SscDylib,
+     },
+ };
+ 
+@@ -27,19 +27,19 @@ impl Drop for SscObject {
+ }
+ 
+ impl SscObject {
+-    pub fn set_measurement_handler<FnMeasure: FnMut(f32, f32, f32) + 'static>(
++    pub fn set_measurement_handler<MeasurementHandlerFn: FnMut(f32, f32, f32) + 'static>(
+         &self,
+         runtime: &SscRuntime,
+-        callback: FnMeasure,
++        callback: MeasurementHandlerFn,
+     ) {
+-        let boxed: Box<Box<dyn FnMut(f32, f32, f32)>> = Box::new(Box::new(callback));
++        let boxed: Box<MeasurementHandlerCb> = Box::new(Box::new(callback));
+         let user_data = Box::into_raw(boxed) as gpointer;
+ 
+         unsafe {
+             (runtime.libgobject.g_signal_connect_data)(
+                 self.ptr as *mut _,
+-                b"measurement\0".as_ptr() as *const _,
+-                Some(std::mem::transmute(measurement_handler as *const ())),
++                c"measurement".as_ptr(),
++                std::mem::transmute::<*const (), GCallback>(measurement_handler as *const ()),
+                 user_data,
+                 Some(closure_destroy_handler),
+                 0,
+@@ -114,7 +114,7 @@ impl SscRuntime {
+         };
+ 
+         // Instantiate the sensor and get our GObject ptr from it
+-        if let Some(v) = glib_error(err) {
++        if let Some(v) = self.libglib.convert_error(err) {
+             return Err(format!("Failed to instantiate SSC sensor: {v}").into());
+         }
+ 
+@@ -131,7 +131,7 @@ impl SscRuntime {
+             (open_fn)(ptr, cancellable.ptr(), &mut err)
+         };
+ 
+-        if let Some(v) = glib_error(err) {
++        if let Some(v) = self.libglib.convert_error(err) {
+             return Err(format!("Failed to open SSC sensor: {v}").into());
+         }
+ 
+diff --git a/src/input/source/fastrpc/ssc_imu.rs b/src/input/source/fastrpc/ssc_imu.rs
+index e43f845..837c60b 100644
+--- a/src/input/source/fastrpc/ssc_imu.rs
++++ b/src/input/source/fastrpc/ssc_imu.rs
+@@ -92,9 +92,9 @@ fn translate_event(event: ssc::event::Event) -> NativeEvent {
+             let value = InputValue::Vector3 {
+                 // Similar to bmi_imu, these values needs to be scaled a bunch
+                 // This seems close to correct, needs some more testing
+-                x: Some(data.roll.to_degrees() * 14.0),
+-                y: Some(data.pitch.to_degrees() * 14.0),
+-                z: Some(data.yaw.to_degrees() * 14.0),
++                x: Some(data.roll.to_degrees() * 16.0),
++                y: Some(data.pitch.to_degrees() * 16.0),
++                z: Some(data.yaw.to_degrees() * 16.0),
+             };
+             NativeEvent::new(cap, value)
+         }
+diff --git a/src/udev/device.rs b/src/udev/device.rs
+index abefa5e..b0b4d1a 100644
+--- a/src/udev/device.rs
++++ b/src/udev/device.rs
+@@ -1,7 +1,6 @@
+ use std::{
+     collections::HashMap,
+     error::Error,
+-    ffi::OsStr,
+     fs::{self, read_link},
+     path::{Path, PathBuf},
+ };
+
+From 8b88d78f3a65f02b473276a964fb14f4785aaf25 Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Sat, 30 May 2026 16:20:34 +0800
+Subject: [PATCH 08/11] refactor(imus): thread safety comment NOTE -> SAFETY
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ src/input/source/fastrpc/ssc_imu.rs   | 2 +-
+ src/input/source/iio/accel_gyro_3d.rs | 2 +-
+ src/input/source/iio/bmi_imu.rs       | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/input/source/fastrpc/ssc_imu.rs b/src/input/source/fastrpc/ssc_imu.rs
+index 837c60b..15c5f78 100644
+--- a/src/input/source/fastrpc/ssc_imu.rs
++++ b/src/input/source/fastrpc/ssc_imu.rs
+@@ -66,7 +66,7 @@ impl Debug for SscImu {
+     }
+ }
+ 
+-// NOTE: Mark this struct as thread-safe as it will only ever be called from
++// SAFETY: Mark this struct as thread-safe as it will only ever be called from
+ // a single thread.
+ unsafe impl Send for SscImu {}
+ 
+diff --git a/src/input/source/iio/accel_gyro_3d.rs b/src/input/source/iio/accel_gyro_3d.rs
+index 737daca..a03e49f 100644
+--- a/src/input/source/iio/accel_gyro_3d.rs
++++ b/src/input/source/iio/accel_gyro_3d.rs
+@@ -94,7 +94,7 @@ impl Debug for AccelGyro3dImu {
+     }
+ }
+ 
+-// NOTE: Mark this struct as thread-safe as it will only ever be called from
++// SAFETY: Mark this struct as thread-safe as it will only ever be called from
+ // a single thread.
+ unsafe impl Send for AccelGyro3dImu {}
+ 
+diff --git a/src/input/source/iio/bmi_imu.rs b/src/input/source/iio/bmi_imu.rs
+index 329c675..a1de387 100644
+--- a/src/input/source/iio/bmi_imu.rs
++++ b/src/input/source/iio/bmi_imu.rs
+@@ -87,7 +87,7 @@ impl Debug for BmiImu {
+     }
+ }
+ 
+-// NOTE: Mark this struct as thread-safe as it will only ever be called from
++// SAFETY: Mark this struct as thread-safe as it will only ever be called from
+ // a single thread.
+ unsafe impl Send for BmiImu {}
+ 
+
+From 45234d103e7aadb2f4e16e7860571646527ec27a Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Sat, 30 May 2026 16:33:39 +0800
+Subject: [PATCH 09/11] refactor(ssc): Add SAFETY comment to
+ g_main_context_iteration call
+
+Should this be docs(ssc) instead of refactor(ssc)?
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ src/drivers/ssc/driver.rs | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/drivers/ssc/driver.rs b/src/drivers/ssc/driver.rs
+index 3ff0cd4..eb97f88 100644
+--- a/src/drivers/ssc/driver.rs
++++ b/src/drivers/ssc/driver.rs
+@@ -71,7 +71,10 @@ impl Driver {
+         // libssc uses GLib and relies on the GLib main loop
+         // Instead of creating a main loop and main context then managing it alongside InputPlumber's loop etc,
+         // we can just perform an iteration of the GLib context every poll
+-        // Not sure how this will work if other parts of InputPlumber start using the GLib main loop too for some reason
++
++        // SAFETY: This function may have side effects if other parts of InputPlumber start using the main context.
++        // In terms of unsafe usage, this function handle is always non-null and we don't have to pass anything to it
++        // that isn't NULL / 0. We can safely ignore the return value as well.
+         unsafe { (self.runtime.libglib.g_main_context_iteration)(std::ptr::null_mut(), GFALSE) };
+ 
+         let mut events: Vec<Event> = vec![];
+
+From deb8afc5cfc861edfc526443bad27a8418c53325 Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Sat, 30 May 2026 19:37:05 +0800
+Subject: [PATCH 10/11] refactor(ssc): rewrite bindings, use Arc for
+ SscRuntime, safety comments
+
+This is a rework of the whole driver side of this PR
+
+Bunch more documentation / commenting, thread safety, code cleanup etc
+
+Rewrote bindings.rs, made it a single struct for all dylibs & added documentation for all the bindings
+Reworked SscRuntime to be wrapped in an Arc
+Stopped passing pointers around all over the place
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ src/drivers/ssc/bindings.rs | 448 +++++++++++++++---------------------
+ src/drivers/ssc/driver.rs   |  18 +-
+ src/drivers/ssc/runtime.rs  | 192 ++++++++++------
+ 3 files changed, 321 insertions(+), 337 deletions(-)
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index 41dbf72..ba1d5bf 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -1,277 +1,211 @@
+-pub mod glib {
+-    use libloading::Library;
+-    use std::error::Error;
+-
+-    /* Main / basic types */
+-    pub type GObject = std::ffi::c_void;
+-    pub type GMainContext = std::ffi::c_void;
+-    pub type GQuark = std::ffi::c_uint;
+-    pub type GConnectFlags = std::ffi::c_uint;
+-
+-    #[allow(non_camel_case_types)]
+-    pub type gboolean = std::ffi::c_int;
+-    pub const GFALSE: std::ffi::c_int = 0;
+-    // pub const GTRUE: std::ffi::c_int = 1;
+-
+-    #[allow(non_camel_case_types)]
+-    pub type gpointer = *mut std::ffi::c_void;
+-
+-    #[repr(C)]
+-    pub struct GError {
+-        pub domain: GQuark,
+-        pub code: i32,
+-        pub message: *mut std::ffi::c_char,
+-    }
++use libloading::Library;
++use std::error::Error;
+ 
+-    /* Closure stuff */
+-    #[repr(C)]
+-    pub struct GClosure {
+-        pub ref_count: u32,
+-        _truncated_record_marker: std::ffi::c_void,
+-    }
+-    pub type GClosureNotify = Option<unsafe extern "C" fn(gpointer, *mut GClosure)>;
+-    pub type GCallback = Option<unsafe extern "C" fn()>;
++#[allow(non_camel_case_types)]
++pub type gboolean = std::ffi::c_int;
++pub const GFALSE: std::ffi::c_int = 0;
+ 
+-    /* Function ptrs */
+-    /// g_main_context_iteration
+-    pub type FnGMainContextIteration =
+-        unsafe extern "C" fn(context: *mut GMainContext, may_block: gboolean) -> gboolean;
++#[allow(non_camel_case_types)]
++pub type gpointer = *mut std::ffi::c_void;
+ 
+-    /// g_quark_to_string
+-    pub type FnGQuarkToString = unsafe extern "C" fn(quark: GQuark) -> *const std::ffi::c_char;
++pub type GObject = std::ffi::c_void;
+ 
+-    pub struct GlibDylib {
+-        _library: Library,
+-        pub g_main_context_iteration: FnGMainContextIteration,
+-        pub g_quark_to_string: FnGQuarkToString,
+-    }
++/// Opaque data type representing a set of sources to be handled in a main loop.
++/// https://docs.gtk.org/glib/struct.MainContext.html
++pub type GMainContext = std::ffi::c_void;
+ 
+-    impl GlibDylib {
+-        /// Load libglib-2.0.so and methods
+-        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
+-            let library = unsafe {
+-                Library::new("libglib-2.0.so.0")
+-                    .map_err(|e| format!("libglib-2.0 not found {e}"))?
+-            };
++/// Connection flags used to specify the behaviour of a signal’s connection.
++/// https://docs.gtk.org/gobject/flags.ConnectFlags.html
++pub type GConnectFlags = std::ffi::c_uint;
+ 
+-            Ok(Self {
+-                g_main_context_iteration: unsafe {
+-                    *library.get(b"g_main_context_iteration\0").map_err(|e| {
+-                        format!("libglib-2.0:g_main_context_iteration not found {e}")
+-                    })?
+-                },
+-
+-                g_quark_to_string: unsafe {
+-                    *library
+-                        .get(b"g_quark_to_string\0")
+-                        .map_err(|e| format!("libglib-2.0:g_quark_to_string not found {e}"))?
+-                },
+-
+-                _library: library,
+-            })
+-        }
++/// Allows operations to be cancelled.
++/// https://docs.gtk.org/gio/class.Cancellable.html
++pub type GCancellable = std::ffi::c_void;
+ 
+-        /// Converts a GLib error ptr to a basic string (or None if the error is null)
+-        pub fn convert_error(&self, error: *mut GError) -> Option<String> {
+-            if error.is_null() {
+-                None
+-            } else {
+-                let domain_str = unsafe {
+-                    let domain_cstr =
+-                        std::ffi::CStr::from_ptr((self.g_quark_to_string)((*error).domain));
+-                    domain_cstr.to_string_lossy().into_owned()
+-                };
+-
+-                let domain = unsafe { (*error).domain };
+-                let code = unsafe { (*error).code };
+-
+-                Some(format!(
+-                    "GLib error: domain = {} / {}, code = {}",
+-                    domain, domain_str, code
+-                ))
+-            }
+-        }
+-    }
+-}
++/// Non-zero integer which uniquely identifies a particular string.
++/// https://docs.gtk.org/glib/alias.Quark.html
++pub type GQuark = std::ffi::c_uint;
+ 
+-pub mod gio {
+-    use libloading::Library;
+-    use std::error::Error;
+-
+-    pub type GCancellable = std::ffi::c_void;
+-
+-    /* Function ptrs */
+-    /// g_cancellable_new
+-    pub type FnGCancellableNew = unsafe extern "C" fn() -> *mut GCancellable;
+-
+-    /// g_cancellable_cancel
+-    pub type FnGCancellableCancel = unsafe extern "C" fn(cancellable: *mut GCancellable);
+-
+-    pub struct GioDylib {
+-        _library: Library,
+-        pub g_cancellable_new: FnGCancellableNew,
+-        pub g_cancellable_cancel: FnGCancellableCancel,
+-    }
+-
+-    impl GioDylib {
+-        /// Load libgio-2.0.so and methods
+-        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
+-            let library = unsafe {
+-                Library::new("libgio-2.0.so.0").map_err(|e| format!("libgio-2.0 not found {e}"))?
+-            };
+-
+-            Ok(Self {
+-                g_cancellable_new: unsafe {
+-                    *library
+-                        .get(b"g_cancellable_new\0")
+-                        .map_err(|e| format!("libgio-2.0:g_cancellable_new not found {e}"))?
+-                },
+-                g_cancellable_cancel: unsafe {
+-                    *library
+-                        .get(b"g_cancellable_cancel\0")
+-                        .map_err(|e| format!("libgio-2.0:g_cancellable_cancel not found {e}"))?
+-                },
+-                _library: library,
+-            })
+-        }
+-    }
++/// Contains information about an error that has occurred.
++/// https://docs.gtk.org/glib/struct.Error.html
++#[repr(C)]
++pub struct GError {
++    pub domain: GQuark,
++    pub code: i32,
++    pub message: *mut std::ffi::c_char,
+ }
+ 
+-pub mod gobject {
+-    use libloading::Library;
+-    use std::error::Error;
+-
+-    use super::glib::{gpointer, GCallback, GClosureNotify, GConnectFlags, GObject};
+-
+-    /* Function ptrs */
+-    /// g_object_unref
+-    pub type FnGObjectUnref = unsafe extern "C" fn(object: *mut GObject);
+-
+-    /// g_signal_connect_data
+-    pub type FnGSignalConnectData = unsafe extern "C" fn(
+-        instance: *mut GObject,
+-        detailed_signal: *const std::ffi::c_char,
+-        c_handler: GCallback,
+-        data: gpointer,
+-        destroy_data: GClosureNotify,
+-        connect_flags: GConnectFlags,
+-    );
+-
+-    pub struct GObjectDylib {
+-        _library: Library,
+-        pub g_object_unref: FnGObjectUnref,
+-        pub g_signal_connect_data: FnGSignalConnectData,
+-    }
+-
+-    impl GObjectDylib {
+-        /// Load libgobject-2.0.so and methods
+-        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
+-            let library = unsafe {
+-                Library::new("libgobject-2.0.so.0")
+-                    .map_err(|e| format!("libgobject-2.0 not found {e}"))?
+-            };
++/// Represents a callback supplied by the programmer.
++/// https://docs.gtk.org/gobject/struct.Closure.html
++#[repr(C)]
++pub struct GClosure {
++    pub ref_count: u32,
++    _truncated_record_marker: std::ffi::c_void,
++}
+ 
+-            Ok(Self {
+-                g_object_unref: unsafe {
+-                    *library
+-                        .get(b"g_object_unref\0")
+-                        .map_err(|e| format!("libgobject-2.0:g_object_unref not found {e}"))?
+-                },
+-                g_signal_connect_data: unsafe {
+-                    *library.get(b"g_signal_connect_data\0").map_err(|e| {
+-                        format!("libgobject-2.0:g_signal_connect_data not found {e}")
+-                    })?
+-                },
+-                _library: library,
+-            })
+-        }
+-    }
++/// The type used for the various notification callbacks which can be registered on closures.
++/// https://docs.gtk.org/gobject/callback.ClosureNotify.html
++pub type GClosureNotify = Option<unsafe extern "C" fn(gpointer, *mut GClosure)>;
++
++/// The type used for callback functions in structure definitions and function signatures.
++/// https://docs.gtk.org/gobject/callback.Callback.html
++pub type GCallback = Option<unsafe extern "C" fn()>;
++
++/* GLib functions */
++/// g_main_context_iteration:
++/// Runs a single iteration for the given main loop.
++/// https://docs.gtk.org/glib/method.MainContext.iteration.html
++pub type FnGMainContextIteration =
++    unsafe extern "C" fn(context: *mut GMainContext, may_block: gboolean) -> gboolean;
++
++/// g_quark_to_string:
++/// Gets the string associated with the given GQuark.
++/// https://docs.gtk.org/glib/func.quark_to_string.html
++pub type FnGQuarkToString = unsafe extern "C" fn(quark: GQuark) -> *const std::ffi::c_char;
++
++/* GObject functions */
++/// g_object_unref:
++/// Decreases the reference count of the provided object.
++/// https://docs.gtk.org/gobject/method.Object.unref.html
++pub type FnGObjectUnref = unsafe extern "C" fn(object: *mut GObject);
++
++/// g_signal_connect_data:
++/// Connects a GCallback function to a signal for a particular object.
++/// This function cannot fail. If the given signal name doesn’t exist, a critical warning is emitted.
++/// https://docs.gtk.org/gobject/func.signal_connect_data.html
++pub type FnGSignalConnectData = unsafe extern "C" fn(
++    instance: *mut GObject,
++    // A string of the form “signal-name::detail”
++    detailed_signal: *const std::ffi::c_char,
++    c_handler: GCallback,
++
++    // Data to pass to c_handler calls.
++    data: gpointer,
++    destroy_data: GClosureNotify,
++    connect_flags: GConnectFlags,
++);
++
++/* Gio functions */
++/// g_cancellable_new:
++/// Creates a new GCancellable object.
++/// Applications that want to start one or more operations that should be cancellable should create a GCancellable and pass it to the operations.
++/// https://docs.gtk.org/gio/ctor.Cancellable.new.html
++pub type FnGCancellableNew = unsafe extern "C" fn() -> *mut GCancellable;
++
++/// g_cancellable_cancel:
++/// Will set cancellable to cancelled, and will emit the GCancellable::cancelled signal. Thread safe.
++/// https://docs.gtk.org/gio/method.Cancellable.cancel.html
++pub type FnGCancellableCancel = unsafe extern "C" fn(cancellable: *mut GCancellable);
++
++/* SSC functions */
++/// ssc_sensor_*_new_sync:
++/// This constructs a sensor object and returns a pointer to it.
++/// As the signature is the same between ssc_sensor_gyroscope_new_sync & ssc_sensor_accelerometer_new_sync,
++/// we reuse this for both.
++pub type FnSscSensorNewSync = unsafe extern "C" fn(
++    cancellable: *mut GCancellable,
++    error: *mut *mut GError,
++) -> *mut std::ffi::c_void;
++
++/// ssc_sensor_*_open_sync:
++/// Takes a sensor object and opens / starts communications with it.
++/// This is a blocking operation.
++pub type FnSscSensorOpenSync = unsafe extern "C" fn(
++    sensor: *mut GObject,
++    cancellable: *mut GCancellable,
++    error: *mut *mut GError,
++) -> u32;
++
++/// Holds handles to the symbols in libssc and its dependencies.
++/// This should stay thin (just bindings), keep the helper stuff elsewhere (like runtime.rs)
++/// In the future this file could be replaced using bindgen's dylib support.
++pub struct SscDylibs {
++    _glib: Library,
++    _gio: Library,
++    _gobject: Library,
++    _ssc: Library,
++
++    /* GLib */
++    pub g_main_context_iteration: FnGMainContextIteration,
++    pub g_quark_to_string: FnGQuarkToString,
++
++    /* Gio */
++    pub g_cancellable_new: FnGCancellableNew,
++    pub g_cancellable_cancel: FnGCancellableCancel,
++
++    /* GObject */
++    pub g_object_unref: FnGObjectUnref,
++    pub g_signal_connect_data: FnGSignalConnectData,
++
++    /* SSC */
++    pub ssc_sensor_gyroscope_new_sync: FnSscSensorNewSync,
++    pub ssc_sensor_gyroscope_open_sync: FnSscSensorOpenSync,
++    pub ssc_sensor_accelerometer_new_sync: FnSscSensorNewSync,
++    pub ssc_sensor_accelerometer_open_sync: FnSscSensorOpenSync,
+ }
+ 
+-pub mod ssc {
+-    use super::gio::GCancellable;
+-    use super::glib::{gpointer, GClosure, GError, GObject};
+-    use libloading::Library;
+-    use std::error::Error;
+-
+-    /* Function ptrs */
+-    /// ssc_sensor_*_new_sync
+-    pub type FnSscSensorNewSync = unsafe extern "C" fn(
+-        cancellable: *mut GCancellable,
+-        error: *mut *mut GError,
+-    ) -> *mut std::ffi::c_void;
+-
+-    /// ssc_sensor_*_open_sync
+-    pub type FnSscSensorOpenSync = unsafe extern "C" fn(
+-        sensor: *mut GObject,
+-        cancellable: *mut GCancellable,
+-        error: *mut *mut GError,
+-    ) -> u32;
+-
+-    pub struct SscDylib {
+-        _library: Library,
+-        pub ssc_sensor_gyroscope_new_sync: FnSscSensorNewSync,
+-        pub ssc_sensor_gyroscope_open_sync: FnSscSensorOpenSync,
+-        pub ssc_sensor_accelerometer_new_sync: FnSscSensorNewSync,
+-        pub ssc_sensor_accelerometer_open_sync: FnSscSensorOpenSync,
+-    }
++/// Helper function for Library::new to return a nice error
++#[macro_export]
++macro_rules! load_library {
++    ( $library_name:expr ) => {
++        Library::new($library_name)
++            .map_err(|e| format!("Library {} not found: {}", $library_name, e))
++    };
++}
+ 
+-    impl SscDylib {
+-        /// Load libssc.so and methods
+-        /// This should be used through SscRuntime
+-        pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
+-            let library =
+-                unsafe { Library::new("libssc.so").map_err(|e| format!("libssc not found {e}"))? };
++/// Helper function for Library.get to return a nice error
++#[macro_export]
++macro_rules! load_symbol {
++    ( $library:expr, $symbol_name:expr ) => {
++        $library
++            .get($symbol_name)
++            .map_err(|e| format!("Symbol {} not found: {}", $symbol_name, e))
++    };
++}
+ 
++impl SscDylibs {
++    /// Load symbols dynamically from libssc and its dependencies
++    pub unsafe fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
++        // SAFETY: Library::new (from libloading) is "safe" to use as it returns an error, but dynamic library
++        // loading can be unsafe in general. We handle possible errors here but we can't do much else.
++        let glib = unsafe { load_library!("libglib-2.0.so.0")? };
++        let gio = unsafe { load_library!("libgio-2.0.so.0")? };
++        let gobject = unsafe { load_library!("libgobject-2.0.so.0")? };
++        let ssc = unsafe { load_library!("libssc.so")? };
++
++        // SAFETY: We handle possible errors when a symbol doesn't exist, so this is safe as long as our function &
++        // type definitions are correct. The symbols should always be valid as long as the library handle is alive,
++        // as we keep a reference to those too.
++        unsafe {
+             Ok(Self {
+-                ssc_sensor_gyroscope_new_sync: unsafe {
+-                    *library
+-                        .get(b"ssc_sensor_gyroscope_new_sync\0")
+-                        .map_err(|e| {
+-                            format!("libssc:ssc_sensor_gyroscope_new_sync not found {e}")
+-                        })?
+-                },
+-                ssc_sensor_gyroscope_open_sync: unsafe {
+-                    *library
+-                        .get(b"ssc_sensor_gyroscope_open_sync\0")
+-                        .map_err(|e| {
+-                            format!("libssc:ssc_sensor_gyroscope_open_sync not found {e}")
+-                        })?
+-                },
+-                ssc_sensor_accelerometer_new_sync: unsafe {
+-                    *library
+-                        .get(b"ssc_sensor_accelerometer_new_sync\0")
+-                        .map_err(|e| {
+-                            format!("libssc:ssc_sensor_accelerometer_new_sync not found {e}")
+-                        })?
+-                },
+-                ssc_sensor_accelerometer_open_sync: unsafe {
+-                    *library
+-                        .get(b"ssc_sensor_accelerometer_open_sync\0")
+-                        .map_err(|e| {
+-                            format!("libssc:ssc_sensor_accelerometer_open_sync not found {e}")
+-                        })?
+-                },
+-                _library: library,
++                g_main_context_iteration: *load_symbol!(glib, "g_main_context_iteration")?,
++                g_quark_to_string: *load_symbol!(glib, "g_quark_to_string")?,
++
++                g_cancellable_new: *load_symbol!(gio, "g_cancellable_new")?,
++                g_cancellable_cancel: *load_symbol!(gio, "g_cancellable_cancel")?,
++
++                g_object_unref: *load_symbol!(gobject, "g_object_unref")?,
++                g_signal_connect_data: *load_symbol!(gobject, "g_signal_connect_data")?,
++
++                ssc_sensor_gyroscope_new_sync: *load_symbol!(ssc, "ssc_sensor_gyroscope_new_sync")?,
++                ssc_sensor_gyroscope_open_sync: *load_symbol!(
++                    ssc,
++                    "ssc_sensor_gyroscope_open_sync"
++                )?,
++                ssc_sensor_accelerometer_new_sync: *load_symbol!(
++                    ssc,
++                    "ssc_sensor_accelerometer_new_sync"
++                )?,
++                ssc_sensor_accelerometer_open_sync: *load_symbol!(
++                    ssc,
++                    "ssc_sensor_accelerometer_open_sync"
++                )?,
++
++                _glib: glib,
++                _gio: gio,
++                _gobject: gobject,
++                _ssc: ssc,
+             })
+         }
+     }
+-
+-    pub type MeasurementHandlerCb = Box<dyn FnMut(f32, f32, f32)>;
+-
+-    pub unsafe extern "C" fn measurement_handler(
+-        _obj: *mut GObject,
+-        x: f32,
+-        y: f32,
+-        z: f32,
+-        data: gpointer,
+-    ) {
+-        let cb: &mut Box<dyn FnMut(f32, f32, f32) + 'static> =
+-            unsafe { &mut *(data as *mut MeasurementHandlerCb) };
+-        cb(x, y, z);
+-    }
+-
+-    pub unsafe extern "C" fn closure_destroy_handler(data: gpointer, _: *mut GClosure) {
+-        drop(unsafe { Box::from_raw(data as *mut Box<dyn FnMut(f32, f32, f32)>) });
+-    }
+ }
+diff --git a/src/drivers/ssc/driver.rs b/src/drivers/ssc/driver.rs
+index eb97f88..49bacad 100644
+--- a/src/drivers/ssc/driver.rs
++++ b/src/drivers/ssc/driver.rs
+@@ -1,16 +1,16 @@
+ use std::collections::HashSet;
+ use std::error::Error;
++use std::sync::Arc;
+ use tokio::{sync::mpsc, sync::mpsc::error::TryRecvError};
+ 
+ use crate::config::MountMatrix;
+ use crate::input::capability::{Capability, Source};
+ 
+-use super::bindings::glib::GFALSE;
+ use super::event::{AxisData, Event};
+ use super::runtime::{SscObject, SscRuntime};
+ 
+ pub struct Driver {
+-    runtime: SscRuntime,
++    runtime: Arc<SscRuntime>,
+     _gyroscope: SscObject,
+     _accelerometer: SscObject,
+ 
+@@ -26,9 +26,9 @@ impl Driver {
+         let runtime = SscRuntime::load()?;
+         let (tx, rx) = mpsc::channel::<Event>(1024);
+ 
+-        let gyroscope = runtime.create_gyroscope()?;
++        let gyroscope = runtime.clone().create_gyroscope()?;
+         let gyroscope_tx = tx.clone();
+-        gyroscope.set_measurement_handler(&runtime, move |x, y, z| {
++        gyroscope.set_measurement_handler(move |x, y, z| {
+             _ = gyroscope_tx.try_send(Event::Gyro(AxisData {
+                 roll: x as f64,
+                 pitch: y as f64,
+@@ -36,9 +36,9 @@ impl Driver {
+             }));
+         });
+ 
+-        let accelerometer = runtime.create_accelerometer()?;
++        let accelerometer = runtime.clone().create_accelerometer()?;
+         let accelerometer_tx = tx.clone();
+-        accelerometer.set_measurement_handler(&runtime, move |x, y, z| {
++        accelerometer.set_measurement_handler(move |x, y, z| {
+             _ = accelerometer_tx.try_send(Event::Accelerometer(AxisData {
+                 roll: x as f64,
+                 pitch: y as f64,
+@@ -71,11 +71,7 @@ impl Driver {
+         // libssc uses GLib and relies on the GLib main loop
+         // Instead of creating a main loop and main context then managing it alongside InputPlumber's loop etc,
+         // we can just perform an iteration of the GLib context every poll
+-
+-        // SAFETY: This function may have side effects if other parts of InputPlumber start using the main context.
+-        // In terms of unsafe usage, this function handle is always non-null and we don't have to pass anything to it
+-        // that isn't NULL / 0. We can safely ignore the return value as well.
+-        unsafe { (self.runtime.libglib.g_main_context_iteration)(std::ptr::null_mut(), GFALSE) };
++        self.runtime.iterate_glib_main_loop();
+ 
+         let mut events: Vec<Event> = vec![];
+ 
+diff --git a/src/drivers/ssc/runtime.rs b/src/drivers/ssc/runtime.rs
+index 4936d0c..5ccff21 100644
+--- a/src/drivers/ssc/runtime.rs
++++ b/src/drivers/ssc/runtime.rs
+@@ -1,43 +1,73 @@
+-use std::{error::Error, ptr::null_mut, time::Duration};
+-
+-use super::bindings::{
+-    gio::{GCancellable, GioDylib},
+-    glib::{gpointer, GCallback, GError, GlibDylib},
+-    gobject::{FnGObjectUnref, GObjectDylib},
+-    ssc::{
+-        closure_destroy_handler, measurement_handler, FnSscSensorNewSync, FnSscSensorOpenSync,
+-        MeasurementHandlerCb, SscDylib,
+-    },
++use std::{error::Error, ptr::null_mut, sync::Arc, time::Duration};
++
++use crate::drivers::ssc::bindings::{
++    gpointer, FnSscSensorNewSync, FnSscSensorOpenSync, GCallback, GCancellable, GClosure, GError,
++    GObject, SscDylibs, GFALSE,
+ };
+ 
+-/* Wrapper for libssc sensor objects (mostly just a wrapper for GObject) */
++pub type MeasurementHandlerCb = Box<dyn FnMut(f32, f32, f32)>;
++
++/// "Trampoline" for the sensor measurement callback. Bounces to the function stored in the data ptr.
++pub unsafe extern "C" fn measurement_handler(
++    _obj: *mut GObject,
++    x: f32,
++    y: f32,
++    z: f32,
++    data: gpointer,
++) {
++    let cb: &mut Box<dyn FnMut(f32, f32, f32) + 'static> =
++        unsafe { &mut *(data as *mut MeasurementHandlerCb) };
++    cb(x, y, z);
++}
++
++/// GClosureNotify that drops the boxed callback when the signal is destroyed.
++pub unsafe extern "C" fn closure_destroy_handler(data: gpointer, _: *mut GClosure) {
++    drop(unsafe { Box::from_raw(data as *mut Box<dyn FnMut(f32, f32, f32)>) });
++}
++
++/// Wrapper for libssc sensor objects (mostly just a wrapper for GObject)
+ pub struct SscObject {
+-    pub ptr: *mut std::ffi::c_void,
+-    g_object_unref: FnGObjectUnref,
++    _ptr: *mut std::ffi::c_void,
++    _runtime: Arc<SscRuntime>,
+ }
+ 
++// SAFETY: The GLib functions we're using this with are thread safe.
++unsafe impl Send for SscObject {}
++
+ impl Drop for SscObject {
+     fn drop(&mut self) {
+-        if !self.ptr.is_null() {
+-            unsafe {
+-                (self.g_object_unref)(self.ptr as *mut _);
+-            }
++        // SAFETY: _ptr is always non-null and the library handle is kept alive by the _runtime reference.
++        unsafe {
++            (self._runtime.dylibs.g_object_unref)(self.ptr() as *mut _);
+         }
+     }
+ }
+ 
+ impl SscObject {
+-    pub fn set_measurement_handler<MeasurementHandlerFn: FnMut(f32, f32, f32) + 'static>(
+-        &self,
+-        runtime: &SscRuntime,
+-        callback: MeasurementHandlerFn,
+-    ) {
++    /// Create a SscObject instance. The provided pointer is required to be non-null.
++    fn new(ptr: *mut std::ffi::c_void, runtime: Arc<SscRuntime>) -> Result<Self, ()> {
++        if ptr.is_null() {
++            Err(())
++        } else {
++            Ok(Self {
++                _ptr: ptr,
++                _runtime: runtime,
++            })
++        }
++    }
++
++    pub unsafe fn ptr(&self) -> *mut std::ffi::c_void {
++        self._ptr
++    }
++
++    pub fn set_measurement_handler<F: FnMut(f32, f32, f32) + 'static>(&self, callback: F) {
+         let boxed: Box<MeasurementHandlerCb> = Box::new(Box::new(callback));
+         let user_data = Box::into_raw(boxed) as gpointer;
+ 
++        // SAFETY: The GObject pointer is guaranteed non-null and g_signal_connect_data is kept valid by the _runtime reference.
+         unsafe {
+-            (runtime.libgobject.g_signal_connect_data)(
+-                self.ptr as *mut _,
++            (self._runtime.dylibs.g_signal_connect_data)(
++                self._ptr as *mut _,
+                 c"measurement".as_ptr(),
+                 std::mem::transmute::<*const (), GCallback>(measurement_handler as *const ()),
+                 user_data,
+@@ -48,7 +78,7 @@ impl SscObject {
+     }
+ }
+ 
+-/* Wrapper for GCancellable */
++/// Wrapper for GCancellable
+ struct Cancellable {
+     _ptr: *mut GCancellable,
+ }
+@@ -62,18 +92,17 @@ impl Cancellable {
+         self._ptr
+     }
+ 
+-    pub fn cancel_after(libgobject: &GObjectDylib, libgio: &GioDylib, timeout: Duration) -> Self {
+-        let this = Self::new(unsafe { (libgio.g_cancellable_new)() });
++    pub fn cancel_after(timeout: Duration, runtime: Arc<SscRuntime>) -> Self {
++        // SAFETY: g_cancellable_new is valid as long as runtime is valid.
++        let this = unsafe { Self::new((runtime.dylibs.g_cancellable_new)()) };
+         let this_ptr_u64 = this.ptr() as std::ffi::c_ulong;
+ 
+-        let g_cancellable_cancel = libgio.g_cancellable_cancel;
+-        let g_object_unref = libgobject.g_object_unref;
+-
+         std::thread::spawn(move || {
+             std::thread::sleep(timeout);
++            // SAFETY: These handles are valid, we keep the runtime instance alive for this thread's lifetime
+             unsafe {
+-                (g_cancellable_cancel)(this_ptr_u64 as *mut GCancellable);
+-                (g_object_unref)(this_ptr_u64 as *mut _);
++                (runtime.dylibs.g_cancellable_cancel)(this_ptr_u64 as *mut GCancellable);
++                (runtime.dylibs.g_object_unref)(this_ptr_u64 as *mut _);
+             }
+         });
+ 
+@@ -81,40 +110,66 @@ impl Cancellable {
+     }
+ }
+ 
+-/// This contains the dynamic libraries and all method pointers needed for libssc to work.
++/// Contains the dynamic libraries and all method pointers needed for libssc to work.
+ /// This currently consists of: glib-2.0, gobject-2.0, gio-2.0, libssc
+ pub struct SscRuntime {
+-    pub(crate) libssc: SscDylib,
+-    pub(crate) libglib: GlibDylib,
+-    pub(crate) libgio: GioDylib,
+-    pub(crate) libgobject: GObjectDylib,
++    pub(crate) dylibs: SscDylibs,
+ }
+ 
+ impl SscRuntime {
+-    pub fn load() -> Result<Self, Box<dyn Error + Send + Sync>> {
+-        Ok(Self {
+-            libssc: SscDylib::load()?,
+-            libglib: GlibDylib::load()?,
+-            libgio: GioDylib::load()?,
+-            libgobject: GObjectDylib::load()?,
+-        })
++    pub fn load() -> Result<Arc<Self>, Box<dyn Error + Send + Sync>> {
++        Ok(Arc::new(Self {
++            // SAFETY: Gives access to a bunch of function handles. This is safe as long as we use them as intended.
++            // The handles are valid as long as this SscRuntime is.
++            dylibs: unsafe { SscDylibs::load()? },
++        }))
++    }
++
++    /// Converts a GLib error ptr to a basic string (or None if the error is null)
++    pub fn convert_glib_error(&self, error: *mut GError) -> Option<String> {
++        if error.is_null() {
++            None
++        } else {
++            // SAFETY: The handle for g_quark_to_string is sure to be alive here
++            let domain_str = unsafe {
++                let domain_cstr =
++                    std::ffi::CStr::from_ptr((self.dylibs.g_quark_to_string)((*error).domain));
++                domain_cstr.to_string_lossy().into_owned()
++            };
++
++            let domain = unsafe { (*error).domain };
++            let code = unsafe { (*error).code };
++
++            Some(format!(
++                "GLib error: domain = {} / {}, code = {}",
++                domain, domain_str, code
++            ))
++        }
++    }
++
++    /// Safe wrapper for GLib's g_main_context_iteration
++    pub fn iterate_glib_main_loop(&self) {
++        // SAFETY: This function may have side effects if other parts of InputPlumber start using the main context.
++        // This function handle is always non-null and we don't have to pass anything to it that isn't NULL / 0.
++        unsafe {
++            (self.dylibs.g_main_context_iteration)(std::ptr::null_mut(), GFALSE);
++        }
+     }
+ 
+     /// The signatures for gyroscope_(open/new)_sync and accelerometer_(open/new)_sync are the same, so we can reuse some code
+-    fn create_measurement_sensor(
+-        &self,
++    unsafe fn create_measurement_sensor(
++        self: Arc<Self>,
+         new_fn: FnSscSensorNewSync,
+         open_fn: FnSscSensorOpenSync,
+     ) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
+         let mut err: *mut GError = null_mut();
+         let ptr = unsafe {
+-            let cancellable =
+-                Cancellable::cancel_after(&self.libgobject, &self.libgio, Duration::from_secs(1));
++            let cancellable = Cancellable::cancel_after(Duration::from_secs(1), self.clone());
+             (new_fn)(cancellable.ptr(), &mut err)
+         };
+ 
+         // Instantiate the sensor and get our GObject ptr from it
+-        if let Some(v) = self.libglib.convert_error(err) {
++        if let Some(v) = self.convert_glib_error(err) {
+             return Err(format!("Failed to instantiate SSC sensor: {v}").into());
+         }
+ 
+@@ -126,35 +181,34 @@ impl SscRuntime {
+         // note: We set the data callback later using set_measurement_handler, so this is just new sensor -> open sensor
+         unsafe {
+             err = std::ptr::null_mut();
+-            let cancellable =
+-                Cancellable::cancel_after(&self.libgobject, &self.libgio, Duration::from_secs(4));
++            let cancellable = Cancellable::cancel_after(Duration::from_secs(4), self.clone());
+             (open_fn)(ptr, cancellable.ptr(), &mut err)
+         };
+ 
+-        if let Some(v) = self.libglib.convert_error(err) {
++        if let Some(v) = self.convert_glib_error(err) {
+             return Err(format!("Failed to open SSC sensor: {v}").into());
+         }
+ 
+-        Ok(SscObject {
+-            ptr,
+-
+-            // note: SscObject should keep the SscRuntime alive
+-            // This should be dropped before the SscRuntime, so it's probably fine
+-            g_object_unref: self.libgobject.g_object_unref,
+-        })
++        SscObject::new(ptr, self).map_err(|_| "Failed to create SSC measurement sensor".into())
+     }
+ 
+-    pub fn create_gyroscope(&self) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
+-        self.create_measurement_sensor(
+-            self.libssc.ssc_sensor_gyroscope_new_sync,
+-            self.libssc.ssc_sensor_gyroscope_open_sync,
+-        )
++    pub fn create_gyroscope(self: Arc<Self>) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
++        // SAFETY: These handles will stay available as long as this SscRuntime does.
++        unsafe {
++            let new_fn = self.dylibs.ssc_sensor_gyroscope_new_sync;
++            let open_fn = self.dylibs.ssc_sensor_gyroscope_open_sync;
++            self.create_measurement_sensor(new_fn, open_fn)
++        }
+     }
+ 
+-    pub fn create_accelerometer(&self) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
+-        self.create_measurement_sensor(
+-            self.libssc.ssc_sensor_accelerometer_new_sync,
+-            self.libssc.ssc_sensor_accelerometer_open_sync,
+-        )
++    pub fn create_accelerometer(
++        self: Arc<Self>,
++    ) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
++        // SAFETY: These handles will stay available as long as this SscRuntime does.
++        unsafe {
++            let new_fn = self.dylibs.ssc_sensor_accelerometer_new_sync;
++            let open_fn = self.dylibs.ssc_sensor_accelerometer_open_sync;
++            self.create_measurement_sensor(new_fn, open_fn)
++        }
+     }
+ }
+
+From c8b09074ffd8163768ec2877abdc42b78425505c Mon Sep 17 00:00:00 2001
+From: Gianni Spadoni <me@gio.blue>
+Date: Sat, 30 May 2026 19:52:56 +0800
+Subject: [PATCH 11/11] refactor(ssc): fix up comment wording in bindings.rs
+
+Signed-off-by: Gianni Spadoni <me@gio.blue>
+---
+ src/drivers/ssc/bindings.rs | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index ba1d5bf..ff93513 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -173,9 +173,8 @@ impl SscDylibs {
+         let gobject = unsafe { load_library!("libgobject-2.0.so.0")? };
+         let ssc = unsafe { load_library!("libssc.so")? };
+ 
+-        // SAFETY: We handle possible errors when a symbol doesn't exist, so this is safe as long as our function &
+-        // type definitions are correct. The symbols should always be valid as long as the library handle is alive,
+-        // as we keep a reference to those too.
++        // SAFETY: Handles possible errors when a symbol doesn't exist, so this is safe as long as our function &
++        // type definitions are correct. The symbols should always be valid as we also keep references to the library handles.
+         unsafe {
+             Ok(Self {
+                 g_main_context_iteration: *load_symbol!(glib, "g_main_context_iteration")?,
