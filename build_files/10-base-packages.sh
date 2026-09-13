@@ -83,6 +83,10 @@ dnf5 -y install --setopt=install_weak_deps=False \
     gstreamer1-plugins-ugly \
     gstreamer1-plugin-libav
 
+# Gyro packages
+dnf5 -y install --setopt=install_weak_deps=False \
+    make-dynpart-mappings
+
 # Install the remaining plugins from Fedora; Negativo17's full -bad package
 # pulls a large soundfont payload that Armada does not need.
 rm -f /etc/yum.repos.d/negativo17-fedora-multimedia.repo
