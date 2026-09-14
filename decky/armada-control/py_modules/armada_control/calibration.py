@@ -23,9 +23,26 @@ ABS_CODES = {
     "right_x": 3,
     "right_y": 4,
 }
-TRIGGER_CODES = {
-    "default": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
-    "retroid": {"left_trigger": (20,), "right_trigger": (21,)},
+CALIBRATION_PROFILES = {
+    "rsinput": {
+        "trigger_codes": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
+        "trigger_max": 1552, "minimum_trigger_fraction": 0.8, "calibrate_axes": True,
+        "trigger_apply": True,
+        "axis_range": 1024, "axis_deadzone": 70,
+    },
+    "rp6": {
+        "compatible": "retroidpocket,rp6", "backend": "rsinput",
+        "trigger_codes": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
+        "trigger_max": 1552, "minimum_trigger_fraction": 0.8, "calibrate_axes": False,
+        "trigger_apply": False,
+        "axis_range": 1024, "axis_deadzone": 0,
+    },
+    "retroid": {
+        "trigger_codes": {"left_trigger": (20,), "right_trigger": (21,)},
+        "trigger_max": 1552, "minimum_trigger_fraction": 0.8, "calibrate_axes": True,
+        "trigger_apply": True,
+        "axis_range": 1408, "axis_deadzone": 0,
+    },
 }
 CALIBRATION_PARAMS = (
     "axis_leftx_min",
@@ -266,6 +283,14 @@ def calibration_backend(event=None):
     return None
 
 
+def calibration_profile(backend=None):
+    compatible = read_text(Path("/sys/firmware/devicetree/base/compatible")).split("\0")[0]
+    for profile in CALIBRATION_PROFILES.values():
+        if profile.get("compatible") == compatible and (backend is None or profile.get("backend") == backend):
+            return profile
+    return CALIBRATION_PROFILES.get(backend, CALIBRATION_PROFILES["rsinput"])
+
+
 def read_backend_controls(fd, backend=None):
     controls = {}
     for name, code in ABS_CODES.items():
@@ -273,7 +298,7 @@ def read_backend_controls(fd, backend=None):
             controls[name] = read_abs(fd, code)
         except OSError:
             pass
-    trigger_codes = TRIGGER_CODES.get(backend, TRIGGER_CODES["default"])
+    trigger_codes = calibration_profile(backend)["trigger_codes"]
     for name, codes in trigger_codes.items():
         for code in codes:
             try:
@@ -286,6 +311,7 @@ def read_backend_controls(fd, backend=None):
 
 def build_state(event, controls):
     backend = calibration_backend(event)
+    profile = calibration_profile(backend)
     return {
         "supported": bool(controls),
         "reason": "" if controls else "Controller has no readable analog controls",
@@ -293,6 +319,7 @@ def build_state(event, controls):
         "event": event,
         "canApply": bool(backend),
         "backend": backend or "tester",
+        "canCalibrateTriggers": bool(backend and profile["trigger_apply"]),
     }
 
 
@@ -374,8 +401,9 @@ def reset_calibration_params():
     if backend is None:
         raise RuntimeError("controller calibration is not supported on this device")
     params = {}
-    axis_range = 1408 if backend == "retroid" else 1024
-    axis_deadzone = 0 if backend == "retroid" else 70
+    profile = calibration_profile(backend)
+    axis_range = profile["axis_range"]
+    axis_deadzone = profile["axis_deadzone"]
     for axis in ("axis_leftx", "axis_lefty", "axis_rightx", "axis_righty"):
         params[f"{axis}_min"] = -axis_range
         params[f"{axis}_center"] = 0
@@ -383,7 +411,7 @@ def reset_calibration_params():
         params[f"{axis}_deadzone"] = axis_deadzone
         params[f"{axis}_antideadzone"] = 0
     for trigger in ("trigger_left", "trigger_right"):
-        params[f"{trigger}_max"] = 1552
+        params[f"{trigger}_max"] = profile["trigger_max"]
         params[f"{trigger}_deadzone"] = 0
         params[f"{trigger}_antideadzone"] = 0
     params["backend"] = backend
@@ -391,8 +419,9 @@ def reset_calibration_params():
     return calibration_status()
 
 
-def calibration_from_capture(capture, current=None):
+def calibration_from_capture(capture, current=None, backend=None):
     current = current or {}
+    profile = calibration_profile(backend)
 
     def axis_params(prefix, x_key, y_key):
         result = {}
@@ -412,13 +441,16 @@ def calibration_from_capture(capture, current=None):
             result[f"{prefix}{suffix}_antideadzone"] = 0
         return result
     params = {}
-    params.update(axis_params("axis_left", "left_x", "left_y"))
-    params.update(axis_params("axis_right", "right_x", "right_y"))
+    if profile["calibrate_axes"]:
+        params.update(axis_params("axis_left", "left_x", "left_y"))
+        params.update(axis_params("axis_right", "right_x", "right_y"))
     for name, key in (("trigger_left", "left_trigger"), ("trigger_right", "right_trigger")):
         values = capture.get(key) or {}
         minimum = int(values.get("min", 0))
         maximum = int(values.get("max", 0))
         span = max(maximum - minimum, 1)
+        if span < int(profile["trigger_max"] * profile["minimum_trigger_fraction"]):
+            raise RuntimeError(f"{key.replace('_', ' ')} was not fully pressed")
         params[f"{name}_max"] = span
         params[f"{name}_deadzone"] = max(int(span * 0.03), 4)
         params[f"{name}_antideadzone"] = 0
@@ -451,8 +483,10 @@ def save_calibration(capture):
     backend = state.get("backend") if state.get("canApply") else None
     if backend not in CALIBRATION_BACKENDS:
         raise RuntimeError("controller calibration is not supported on this device")
+    if not calibration_profile(backend)["trigger_apply"]:
+        raise RuntimeError("trigger calibration requires raw trigger support from the driver")
     capture = merge_capture_sample(capture, state)
-    params = calibration_from_capture(capture, read_calibration_params(backend))
+    params = calibration_from_capture(capture, read_calibration_params(backend), backend)
     params["backend"] = backend
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     return calibration_status()
@@ -472,3 +506,28 @@ def end_session(token=None):
     _calibration_session_token = None
     close_session_device()
     return end_calibration_intercept()
+
+
+def mcu_calibration_capability():
+    return call("rsinput_calibration_capability")
+
+
+def begin_mcu_calibration_preview(token, stick, phase):
+    return call(
+        "rsinput_calibration_begin",
+        token=str(token),
+        stick=str(stick),
+        phase=str(phase),
+    )
+
+
+def mcu_calibration_preview_status(token):
+    return call("rsinput_calibration_status", token=str(token))
+
+
+def end_mcu_calibration_preview(token):
+    return call("rsinput_calibration_end", token=str(token))
+
+
+def commit_mcu_calibration(token):
+    return call("rsinput_calibration_commit", token=str(token), confirmation="APPLY CALIBRATION")

@@ -66,9 +66,74 @@ export interface CalibrationState {
   controls: Record<string, AbsControl>;
   event: any;
   canApply?: boolean;
+  canCalibrateTriggers?: boolean;
   backend?: string;
   saved?: boolean;
   params?: Record<string, number>;
+}
+
+export interface McuCalibrationCapability {
+  available: boolean;
+  abiVersion: number;
+  writeEnabled: boolean;
+  phases: Array<"center" | "range">;
+  writeDelaySeconds?: number;
+}
+
+export interface McuCalibrationSample {
+  timestampNs: number;
+  generation: number;
+  sequence: number;
+  length: number;
+  dropped: number;
+  logicalX: number;
+  logicalY: number;
+  rawX?: number;
+  rawY?: number;
+  rawZ?: number;
+}
+
+export interface McuCalibrationPreview {
+  active: boolean;
+  stick: "left" | "right";
+  phase: "center" | "range";
+  sampleCount: number;
+  rawSampleCount: number;
+  generationGaps: number;
+  sequenceGaps: number;
+  captureGaps: number;
+  droppedBaseline: number | null;
+  dropped: number | null;
+  error: string;
+  latest: McuCalibrationSample | null;
+  complete: boolean;
+  progress: {
+    coveredDirections?: string[];
+    directionCount?: number;
+    directionGoal?: number;
+    pendingDirection?: string | null;
+    stableSamples?: number;
+    stableGoal?: number;
+    turns?: number;
+    turnGoal?: number;
+    coveredHeadings?: number;
+    headingGoal?: number;
+    samplesPerHeading?: number[];
+    coveredSectors?: number;
+    sectorGoal?: number;
+  };
+  result: {
+    centerWords?: number[];
+    centerHex?: string;
+    returnSpread?: number[];
+    derivedWords?: number[];
+    tableWords?: number[];
+    tableHex?: string;
+    traceSampleCount?: number;
+    traceSha256?: string;
+    capturePath?: string;
+    captureSha256?: string;
+  } | null;
 }
 
 export interface RgbConfig {
