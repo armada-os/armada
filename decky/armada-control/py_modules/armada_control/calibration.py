@@ -37,6 +37,13 @@ CALIBRATION_PROFILES = {
         "trigger_apply": False,
         "axis_range": 1024, "axis_deadzone": 0,
     },
+    "odin3": {
+        "compatible": "ayn,odin3", "backend": "rsinput",
+        "trigger_codes": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
+        "trigger_max": 1552, "minimum_trigger_fraction": 0.8, "calibrate_axes": False,
+        "trigger_apply": True,
+        "axis_range": 1024, "axis_deadzone": 70,
+    },
     "retroid": {
         "trigger_codes": {"left_trigger": (20,), "right_trigger": (21,)},
         "trigger_max": 1552, "minimum_trigger_fraction": 0.8, "calibrate_axes": True,
