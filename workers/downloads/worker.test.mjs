@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import worker from "./worker.mjs";
 
-function build(version = "20260909.249e21d") {
+function build(version = "20260909.249e21d", channel = "preview") {
   const filename = `armada-${version}.img.gz`;
-  const key = `preview/${filename}`;
+  const key = `${channel}/${filename}`;
   return {
     version,
     published_at: "2026-09-09T14:17:22Z",
@@ -15,13 +15,13 @@ function build(version = "20260909.249e21d") {
   };
 }
 
-function manifest(version = "20260909.249e21d") {
-  return { channel: "preview", latest: version, builds: [build(version)] };
+function manifest(version = "20260909.249e21d", channel = "preview") {
+  return { channel, latest: version, builds: [build(version, channel)] };
 }
 
-function bucket(index = manifest()) {
+function bucket(index = manifest(), channel = "preview") {
   return { DOWNLOADS: { async get(key) {
-    assert.equal(key, "preview/builds.json");
+    assert.equal(key, `${channel}/builds.json`);
     return index === null ? null : { json: async () => index };
   }, list() { throw new Error("The page must only read builds.json"); } } };
 }
@@ -135,6 +135,7 @@ test("missing, unreadable, or invalid manifests do not advertise a download", as
 
 test("existing R2 paths preserve range requests and origin responses", async t => {
   for (const path of ["/release/armada.img.gz", "/testing/other.zip", "/preview/builds.json",
+    "/staging/builds.json", "/staging/armada-20260909.249e21d.img.gz", "/staging/latest.sha256",
     "/preview/armada-20260909.249e21d.img.gz", "/armada-preview.img.gz",
     "/armada-preview.img.gz.sha256", "/preview/latest.sha256"]) {
     const origin = new Response("partial", { status: 206, headers: { "Content-Range": "bytes 0-6/100" } });
@@ -148,5 +149,66 @@ test("existing R2 paths preserve range requests and origin responses", async t =
     }), {});
     assert.equal(response, origin);
     fetchMock.mock.restore();
+  }
+});
+
+test("staging renders its own history and latest link", async () => {
+  const index = manifest("20260910.abcdef0", "staging");
+  index.builds.push(build("20260909.249e21d", "staging"));
+  for (const path of ["/staging", "/staging/"]) {
+    const response = await worker.fetch(request(path), bucket(index, "staging"));
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.ok(html.includes("<h1>Staging disk images</h1>"));
+    assert.ok(html.includes('href="/staging/latest"'));
+    assert.ok(!html.includes("/preview/"));
+    for (const item of index.builds) {
+      assert.ok(html.includes(item.image.key));
+      assert.ok(html.includes(item.checksum.key));
+    }
+  }
+});
+
+test("preview and staging latest links resolve independently", async () => {
+  const manifests = {
+    "preview/builds.json": manifest(),
+    "staging/builds.json": manifest("20260910.abcdef0", "staging"),
+  };
+  const env = { DOWNLOADS: { get: async key => ({ json: async () => manifests[key] }) } };
+  for (const channel of ["preview", "staging"]) {
+    const response = await worker.fetch(request(`/${channel}/latest?download=1`), env);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("Location"),
+      `https://downloads.armadaos.dev/${manifests[`${channel}/builds.json`].builds[0].image.key}`);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+  }
+  manifests["staging/builds.json"] = manifest("20260911.abcdef1", "staging");
+  const response = await worker.fetch(request("/staging/latest"), env);
+  assert.ok(response.headers.get("Location").endsWith("armada-20260911.abcdef1.img.gz"));
+  assert.ok((await (await worker.fetch(request("/"), env)).text()).includes("Preview disk images"));
+});
+
+test("staging handles HEAD, rejects writes, and reports an empty history", async () => {
+  const env = bucket(manifest(undefined, "staging"), "staging");
+  assert.match(await (await worker.fetch(request("/staging"), env)).text(), /No previous Staging builds/);
+  for (const path of ["/staging", "/staging/", "/staging/latest"]) {
+    const head = await worker.fetch(request(path, "HEAD"), env);
+    assert.equal(head.status, path.endsWith("latest") ? 302 : 200);
+    assert.equal(await head.text(), "");
+    assert.equal((await worker.fetch(request(path, "POST"), {})).status, 405);
+  }
+});
+
+test("a channel cannot advertise files from another channel", async t => {
+  t.mock.method(console, "error", () => {});
+  for (const channel of ["preview", "staging"]) {
+    const other = channel === "preview" ? "staging" : "preview";
+    const wrongFiles = manifest(undefined, channel);
+    wrongFiles.builds = [build(undefined, other)];
+    for (const index of [null, manifest(undefined, other), wrongFiles]) {
+      const response = await worker.fetch(request(`/${channel}/latest`), bucket(index, channel));
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("Location"), null);
+    }
   }
 });

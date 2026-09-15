@@ -8,19 +8,25 @@ import subprocess
 from pathlib import Path
 
 
-IMAGE_KEY = re.compile(r"preview/armada-\d{8}(?:\.[0-9a-f]{7,40})?\.img\.gz")
 KEEP_IMAGES = 5
 
 
-def expired_keys(objects, current_key):
-    if not IMAGE_KEY.fullmatch(current_key):
-        raise ValueError("Current image is not a Preview disk image under preview/")
+def image_pattern(channel):
+    if channel not in ("preview", "staging"):
+        raise ValueError("Disk publishing is restricted to preview/ and staging/")
+    return re.compile(rf"{channel}/armada-\d{{8}}(?:\.[0-9a-f]{{7,40}})?\.img\.gz")
+
+
+def expired_keys(objects, current_key, channel="preview"):
+    pattern = image_pattern(channel)
+    if not pattern.fullmatch(current_key):
+        raise ValueError("Current image is outside the selected disk channel")
 
     images = []
     keys = {obj["Key"] for obj in objects}
     nonempty_keys = {obj["Key"] for obj in objects if obj["Size"] > 0}
     for obj in objects:
-        if IMAGE_KEY.fullmatch(obj["Key"]):
+        if pattern.fullmatch(obj["Key"]):
             modified = datetime.datetime.fromisoformat(obj["LastModified"].replace("Z", "+00:00"))
             images.append((modified, obj["Key"]))
     if current_key not in nonempty_keys or current_key + ".sha256" not in nonempty_keys:
@@ -44,31 +50,32 @@ def expired_keys(objects, current_key):
 
 
 def main():
-    if os.environ.get("R2_PREFIX", "preview").strip("/") != "preview":
-        raise ValueError("Preview pruning is restricted to preview/")
+    channel = os.environ.get("R2_PREFIX", "preview").strip("/")
+    pattern = image_pattern(channel)
+    index_key = f"{channel}/builds.json"
     endpoint = os.environ["R2_ENDPOINT_URL"]
     bucket = os.environ["R2_BUCKET"]
     current = json.loads(Path("output/current-build.json").read_text())
     current_key = current["image"]["key"]
     aws = ["aws", "--endpoint-url", endpoint, "s3api"]
     listing = subprocess.check_output(
-        aws + ["list-objects-v2", "--bucket", bucket, "--prefix", "preview/", "--output", "json"],
+        aws + ["list-objects-v2", "--bucket", bucket, "--prefix", f"{channel}/", "--output", "json"],
         text=True,
     )
     objects = json.loads(listing).get("Contents", [])
     managed_keys = set()
     for obj in objects:
         key = obj["Key"]
-        if not IMAGE_KEY.fullmatch(key):
+        if not pattern.fullmatch(key):
             continue
         details = json.loads(subprocess.check_output(
             aws + ["head-object", "--bucket", bucket, "--key", key, "--output", "json"],
             text=True,
         ))
-        if details.get("Metadata", {}).get("armada-preview") == "true":
+        if details.get("Metadata", {}).get(f"armada-{channel}") == "true":
             managed_keys.update((key, key + ".sha256"))
     managed_objects = [obj for obj in objects if obj["Key"] in managed_keys]
-    expired = expired_keys(managed_objects, current_key)
+    expired = expired_keys(managed_objects, current_key, channel)
 
     def read_object(key):
         return subprocess.check_output(
@@ -78,8 +85,8 @@ def main():
 
     keys = {obj["Key"] for obj in objects}
     previous = []
-    if "preview/builds.json" in keys:
-        previous = json.loads(read_object("preview/builds.json"))["builds"]
+    if index_key in keys:
+        previous = json.loads(read_object(index_key))["builds"]
     known = {build["image"]["key"]: build for build in previous}
     builds = [current]
     for obj in sorted(managed_objects, key=lambda obj: obj["LastModified"], reverse=True):
@@ -95,14 +102,14 @@ def main():
         build["published_at"] = build["published_at"].replace("+00:00", "Z")
         build["image"] = {**build["image"], "size": obj["Size"], "sha256": sha256}
         builds.append(build)
-    index = {"channel": "preview", "latest": current["version"], "builds": builds}
+    index = {"channel": channel, "latest": current["version"], "builds": builds}
     Path("output/builds.json").write_text(json.dumps(index, indent=2) + "\n")
     for key in expired:
         subprocess.run(aws + ["delete-object", "--bucket", bucket, "--key", key], check=True)
         print(f"Deleted s3://{bucket}/{key}")
 
     subprocess.run(
-        ["aws", "s3", "cp", "output/builds.json", f"s3://{bucket}/preview/builds.json",
+        ["aws", "s3", "cp", "output/builds.json", f"s3://{bucket}/{index_key}",
          "--endpoint-url", endpoint, "--content-type", "application/json",
          "--cache-control", "no-store", "--only-show-errors"], check=True,
     )
@@ -110,7 +117,7 @@ def main():
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as output:
-            output.write(f"\nPreview retention: keep {KEEP_IMAGES} images; deleted {len(expired)} older objects.\n")
+            output.write(f"\n{channel.capitalize()} retention: keep {KEEP_IMAGES} images; deleted {len(expired)} older objects.\n")
 
 
 if __name__ == "__main__":

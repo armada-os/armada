@@ -7,7 +7,7 @@ on:
       tag:
         description: "Known container tag/channel to build the flashable disk image from"
         type: choice
-        options: [beta, stable, testing]
+        options: [beta, stable, testing, staging]
         default: beta
       custom_tag:
         description: "Optional custom container tag. Overrides the dropdown when set."
@@ -18,6 +18,9 @@ on:
       tag:
         type: string
         default: testing
+      channel:
+        type: string
+        default: preview
       publish_r2:
         type: boolean
         default: false
@@ -39,17 +42,17 @@ env:
   BIB_IMAGE: "quay.io/centos-bootc/bootc-image-builder:latest"
   R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
   R2_BUCKET: ${{ vars.R2_BUCKET }}
-  R2_PREFIX: preview
+  R2_PREFIX: ${{ inputs.channel || 'preview' }}
   R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
-
-concurrency:
-  group: ${{ inputs.publish_r2 && 'preview-disk' || format('build-disk-{0}', github.ref || github.run_id) }}
-  cancel-in-progress: false
 
 jobs:
   build:
     name: Build disk image
     runs-on: ubuntu-24.04-arm
+    concurrency:
+      group: ${{ inputs.publish_r2 && format('{0}-disk', inputs.channel) || format('build-disk-{0}', github.ref || github.run_id) }}
+      cancel-in-progress: false
+      queue: max
 
     permissions:
       contents: read
@@ -141,7 +144,7 @@ jobs:
           fi
           revision=$(jq -r '.[0].Config.Labels["org.opencontainers.image.revision"] // empty' <<< "${inspection}")
           if [ "${PUBLISH_R2}" = true ] && ! [[ "${revision}" =~ ^[a-f0-9]{40}$ ]]; then
-            echo "::error::Preview container has no valid source revision label."
+            echo "::error::Container has no valid source revision label."
             exit 1
           fi
           echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
@@ -197,15 +200,20 @@ jobs:
           prefix="${R2_PREFIX#/}"
           prefix="${prefix%/}"
 
-          require_current_preview() {
+          case "${prefix}:${CONTAINER_TAG}" in
+            preview:testing|staging:staging) ;;
+            *) echo "::error::Invalid disk publication channel/tag."; exit 1 ;;
+          esac
+
+          require_current_channel() {
             current=$(skopeo inspect --no-creds --override-arch arm64 --format '{{.Digest}}' \
-              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:testing")
+              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${CONTAINER_TAG}")
             if [ "${current}" != "${CONTAINER_DIGEST}" ]; then
-              echo "::error::Preview has advanced to ${current}; refusing to publish stale disk ${CONTAINER_DIGEST}."
+              echo "::error::${R2_PREFIX} has advanced to ${current}; refusing to publish stale disk ${CONTAINER_DIGEST}."
               exit 1
             fi
           }
-          require_current_preview
+          require_current_channel
 
           commit_title=$(git show -s --format=%s "${BUILD_COMMIT}")
           # The high-level S3 command handles multipart uploads for large images.
@@ -214,7 +222,7 @@ jobs:
             key="${prefix}/${file##*/}"
             aws s3 cp "${file}" "s3://${R2_BUCKET}/${key}" \
               --endpoint-url "${R2_ENDPOINT_URL}" \
-              --metadata armada-preview=true --cache-control no-store --only-show-errors
+              --metadata "armada-${prefix}=true" --cache-control no-store --only-show-errors
             uploaded_size=$(aws s3api head-object \
               --endpoint-url "${R2_ENDPOINT_URL}" \
               --bucket "${R2_BUCKET}" --key "${key}" \
@@ -225,7 +233,7 @@ jobs:
             fi
           done
 
-          require_current_preview
+          require_current_channel
           version="${filename#armada-}"
           version="${version%.img.gz}"
           read -r image_sha256 checksum_filename < "${image}.sha256"
@@ -248,7 +256,12 @@ jobs:
                 size: $size, sha256: $sha256},
               checksum: {key: ($key + ".sha256"), url: ($public_url + "/" + $key + ".sha256")}}' \
             > output/current-build.json
-          python3 .github/scripts/publish-preview-index.py
+          publisher=.github/scripts/publish-channel-index.py
+          # Historical Preview source commits use the original publisher filename.
+          if [ ! -f "${publisher}" ] && [ "${prefix}" = preview ]; then
+            publisher=.github/scripts/publish-preview-index.py
+          fi
+          python3 "${publisher}"
 
           # Only advertise the download after both objects have been uploaded.
           echo "image_key=${prefix}/${filename}" >> "${GITHUB_OUTPUT}"
@@ -262,6 +275,6 @@ jobs:
               printf '[Download image](%s/%s/%s) · [SHA-256](%s/%s/%s.sha256)\n' \
                 "${R2_PUBLIC_URL%/}" "${prefix}" "${filename}" \
                 "${R2_PUBLIC_URL%/}" "${prefix}" "${filename}"
-              printf '\n[Preview builds](%s/%s/builds.json)\n' "${R2_PUBLIC_URL%/}" "${prefix}"
+              printf '\n[Channel builds](%s/%s/builds.json)\n' "${R2_PUBLIC_URL%/}" "${prefix}"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"

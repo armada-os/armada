@@ -1,12 +1,14 @@
 ---
-name: Publish Preview disk image
+name: Republish channel disk image
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: [Build container image]
-    types: [completed]
-    branches: [main]
+    inputs:
+      channel:
+        description: "Disk channel to republish"
+        type: choice
+        options: [preview, staging]
+        default: preview
 
 permissions:
   contents: read
@@ -14,38 +16,44 @@ permissions:
 
 jobs:
   resolve:
-    name: Resolve Preview container
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_repository.full_name == github.repository &&
-       contains(fromJSON('["push", "workflow_dispatch"]'), github.event.workflow_run.event))
+    name: Resolve channel container
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04-arm
     outputs:
+      tag: ${{ steps.source.outputs.tag }}
       image_digest: ${{ steps.source.outputs.image_digest }}
       source_ref: ${{ steps.source.outputs.source_ref }}
     steps:
-      - name: Resolve Preview source
+      - name: Resolve channel source
         id: source
+        env:
+          CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
-          image="ghcr.io/${GITHUB_REPOSITORY,,}:testing"
+          case "${CHANNEL}" in
+            preview) tag=testing ;;
+            staging) tag=staging ;;
+            *) exit 1 ;;
+          esac
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:${tag}"
           inspection=$(skopeo inspect --override-arch arm64 "docker://${image}")
           digest=$(jq -er '.Digest' <<< "${inspection}")
           revision=$(jq -er '.Labels["org.opencontainers.image.revision"]' <<< "${inspection}")
           if ! [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ && "${revision}" =~ ^[a-f0-9]{40}$ ]]; then
-            echo "::error::Preview container has an invalid digest or source revision."
+            echo "::error::Container has an invalid digest or source revision."
             exit 1
           fi
           echo "image_digest=${digest}" >> "${GITHUB_OUTPUT}"
           echo "source_ref=${revision}" >> "${GITHUB_OUTPUT}"
 
   publish:
-    name: Publish preview image
+    name: Publish channel image
     needs: resolve
     uses: ./.github/workflows/build-disk.yml
     with:
-      tag: testing
+      tag: ${{ needs.resolve.outputs.tag }}
+      channel: ${{ inputs.channel }}
       publish_r2: true
       image_digest: ${{ needs.resolve.outputs.image_digest }}
       source_ref: ${{ needs.resolve.outputs.source_ref }}

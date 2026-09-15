@@ -10,7 +10,7 @@ on:
         options: [beta, stable]
         required: true
       source:
-        description: "Source tag to promote from (e.g. testing or testing.20260608)"
+        description: "Source tag to promote from (e.g. staging or testing)"
         type: string
         default: testing
       version:

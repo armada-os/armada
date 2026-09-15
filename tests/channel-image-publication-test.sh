@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-python3 - "$ROOT" <<'PY'
+for channel in preview staging; do
+ARMADA_TEST_CHANNEL="$channel" python3 - "$ROOT" <<'PY'
 import hashlib
 import json
 import os
@@ -12,6 +13,9 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+
+channel = os.environ["ARMADA_TEST_CHANNEL"]
+tag = "testing" if channel == "preview" else "staging"
 
 workflow = (Path(sys.argv[1]) / '.github/workflows/build-disk.yml').read_text()
 # Extraction depends on the step name and the following step boundary.
@@ -37,7 +41,7 @@ if args[:2] == ['s3', 'cp']:
         assert args[args.index('--content-type') + 1] == 'application/json'
         assert args[args.index('--cache-control') + 1] == 'no-store'
     else:
-        assert args[args.index('--metadata') + 1] == 'armada-preview=true'
+        assert args[args.index('--metadata') + 1] == f'armada-{os.environ["R2_PREFIX"].strip("/")}=true'
     target = Path('remote') / destination.removeprefix('s3://')
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
@@ -51,7 +55,7 @@ if 'head-object' in args:
     if '--query' in args:
         print(0 if os.environ.get('BAD_SIZE') else target.stat().st_size)
     else:
-        print(json.dumps({'Metadata': {'armada-preview': 'true'}}))
+        print(json.dumps({'Metadata': {f'armada-{os.environ["R2_PREFIX"].strip("/")}': 'true'}}))
     sys.exit(0)
 raise SystemExit('Unexpected AWS call: ' + repr(args))
 '''
@@ -60,7 +64,7 @@ registry_mock = '''#!/usr/bin/env python3
 import os, sys
 from pathlib import Path
 assert sys.argv[1:] == ['inspect', '--no-creds', '--override-arch', 'arm64', '--format', '{{.Digest}}',
-                        'docker://ghcr.io/armada-os/armada:testing']
+                        'docker://ghcr.io/armada-os/armada:' + os.environ['CONTAINER_TAG']]
 case = os.environ['TEST_CASE']
 if case == 'registry-failure':
     sys.exit(1)
@@ -70,7 +74,8 @@ print('sha256:' + ('c' if stale else 'a') * 64)
 '''
 
 for case in ['success', 'relative-urls', 'image-failure', 'checksum-failure', 'manifest-failure',
-             'size-mismatch', 'stale', 'advanced-during-upload', 'registry-failure']:
+             'size-mismatch', 'stale', 'advanced-during-upload', 'registry-failure', 'invalid-channel', 'invalid-tag',
+             'legacy-publisher', 'padded-prefix']:
     with tempfile.TemporaryDirectory(prefix='armada-preview-publish-') as tmp:
         root = Path(tmp)
         title = 'fix(ci): preserve "quotes", 100% & <markup> — café 🚀 $(false) `false`'
@@ -80,8 +85,9 @@ for case in ['success', 'relative-urls', 'image-failure', 'checksum-failure', 'm
                        cwd=root, check=True)
         commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
         (root/'.github/scripts').mkdir(parents=True)
-        shutil.copyfile(Path(sys.argv[1]) / '.github/scripts/publish-preview-index.py',
-                        root/'.github/scripts/publish-preview-index.py')
+        publisher = 'publish-preview-index.py' if case == 'legacy-publisher' else 'publish-channel-index.py'
+        shutil.copyfile(Path(sys.argv[1]) / '.github/scripts/publish-channel-index.py',
+                        root/'.github/scripts'/publisher)
         (root/'bin').mkdir()
         aws = root/'bin/aws'
         aws.write_text(mock)
@@ -96,47 +102,56 @@ for case in ['success', 'relative-urls', 'image-failure', 'checksum-failure', 'm
         digest = hashlib.sha256(content).hexdigest()
         (root/'output'/filename).write_bytes(content)
         (root/'output'/f'{filename}.sha256').write_text(f'{digest}  {filename}\n')
-        remote = root/'remote/fixture/preview'
+        remote = root/'remote/fixture'/channel
         remote.mkdir(parents=True)
-        previous = '{"channel": "preview", "latest": "old", "builds": []}\n'
+        previous = json.dumps({'channel': channel, 'latest': 'old', 'builds': []}) + '\n'
         (remote/'builds.json').write_text(previous)
         env = dict(os.environ, PATH=str(root/'bin')+':'+os.environ['PATH'], TEST_CASE=case,
-                   R2_PREFIX='preview', R2_BUCKET='fixture', R2_ENDPOINT_URL='https://fixture.example.com',
+                   R2_PREFIX=channel, R2_BUCKET='fixture', R2_ENDPOINT_URL='https://fixture.example.com',
                    R2_PUBLIC_URL='' if case == 'relative-urls' else 'https://downloads.armadaos.dev/',
-                   CONTAINER_TAG='testing', CONTAINER_DIGEST='sha256:'+'a'*64, BUILD_COMMIT=commit,
+                   CONTAINER_TAG=tag, CONTAINER_DIGEST='sha256:'+'a'*64, BUILD_COMMIT=commit,
                    TEST_COMMIT_TITLE=title,
                    DISK_IMAGE=f'output/{filename}', IMAGE_REGISTRY='ghcr.io/armada-os', IMAGE_NAME='armada',
                    GITHUB_OUTPUT=str(root/'outputs'), GITHUB_STEP_SUMMARY=str(root/'summary'))
+        if case == 'invalid-channel':
+            env['R2_PREFIX'] = 'release'
+        if case == 'padded-prefix':
+            env['R2_PREFIX'] = f'/{channel}/'
+        if case == 'invalid-tag':
+            env['CONTAINER_TAG'] = 'beta'
         if case.endswith('-failure'):
             env['FAIL_UPLOAD'] = case.removesuffix('-failure')
         if case == 'size-mismatch':
             env['BAD_SIZE'] = '1'
         result = subprocess.run(['bash', '-c', script], cwd=root, env=env, capture_output=True, text=True)
-        if case in ('success', 'relative-urls'):
+        if case in ('success', 'relative-urls', 'padded-prefix') or (case == 'legacy-publisher' and channel == 'preview'):
             assert result.returncode == 0, result.stderr
             index = json.loads((remote/'builds.json').read_text())
-            assert index['channel'] == 'preview'
+            assert index['channel'] == channel
             assert 'schema_version' not in index
             assert index['latest'] == version and len(index['builds']) == 1
             latest = index['builds'][0]
             assert 'schema_version' not in latest and 'channel' not in latest
             assert latest['version'] == version
-            assert latest['container'] == {'reference': 'ghcr.io/armada-os/armada:testing', 'digest': 'sha256:'+'a'*64}
+            assert latest['container'] == {'reference': f'ghcr.io/armada-os/armada:{tag}', 'digest': 'sha256:'+'a'*64}
             assert latest['build_commit'] == commit
             assert latest['build_commit_title'] == title
             assert latest['image']['filename'] == filename
-            assert latest['image']['key'] == f'preview/{filename}'
+            assert latest['image']['key'] == f'{channel}/{filename}'
             assert latest['checksum']['key'] == latest['image']['key'] + '.sha256'
             assert latest['image']['sha256'] == digest and latest['image']['size'] == len(content)
             public = '' if case == 'relative-urls' else 'https://downloads.armadaos.dev'
-            assert latest['image']['url'] == f'{public}/preview/{filename}'
-            assert latest['checksum']['url'] == f'{public}/preview/{filename}.sha256'
+            assert latest['image']['url'] == f'{public}/{channel}/{filename}'
+            assert latest['checksum']['url'] == f'{public}/{channel}/{filename}.sha256'
             subprocess.run(['sha256sum', '-c', filename+'.sha256'], cwd=remote, check=True, capture_output=True)
         else:
             assert result.returncode != 0, case
             assert (remote/'builds.json').read_text() == previous, case
             assert not (root/'summary').exists() and not (root/'outputs').exists(), case
-            if case in ('stale', 'registry-failure'):
+            if case in ('invalid-channel', 'invalid-tag'):
+                assert not (root/'registry-checked').exists(), case
+            if case in ('stale', 'registry-failure', 'invalid-channel', 'invalid-tag'):
                 assert list(remote.iterdir()) == [remote/'builds.json'], case
-        print(f'PASS: Preview publication {case}')
+        print(f'PASS: {channel} publication {case}')
 PY
+done

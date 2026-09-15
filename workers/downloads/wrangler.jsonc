@@ -9,7 +9,10 @@
     { "pattern": "downloads.armadaos.dev/", "zone_name": "armadaos.dev" },
     { "pattern": "downloads.armadaos.dev/preview", "zone_name": "armadaos.dev" },
     { "pattern": "downloads.armadaos.dev/preview/", "zone_name": "armadaos.dev" },
-    { "pattern": "downloads.armadaos.dev/preview/latest*", "zone_name": "armadaos.dev" }
+    { "pattern": "downloads.armadaos.dev/preview/latest*", "zone_name": "armadaos.dev" },
+    { "pattern": "downloads.armadaos.dev/staging", "zone_name": "armadaos.dev" },
+    { "pattern": "downloads.armadaos.dev/staging/", "zone_name": "armadaos.dev" },
+    { "pattern": "downloads.armadaos.dev/staging/latest*", "zone_name": "armadaos.dev" }
   ],
   "r2_buckets": [
     { "binding": "DOWNLOADS", "bucket_name": "armada" }

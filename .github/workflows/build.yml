@@ -4,17 +4,12 @@ on:
   pull_request:
     branches:
       - main
+      - staging
   push:
     branches:
       - main
-    paths-ignore:
-      - '**/README.md'
+      - staging
   workflow_dispatch:
-    inputs:
-      branch:
-        description: "Branch to build. Leave empty to use the workflow ref."
-        type: string
-        default: ""
 
 env:
   ARMADA_CANONICAL_IMAGE: "ghcr.io/armada-os/armada"
@@ -23,18 +18,21 @@ env:
   IMAGE_DESC: "Armada: a gaming-focused, SteamOS-like Fedora bootc image for ARM64 handhelds"
   IMAGE_NAME: "${{ github.event.repository.name }}"
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
-  # Every merge to main publishes the "testing" channel; beta/stable are made by
-  # promoting (retagging) a testing build via promote.yml — no rebuild.
-  DEFAULT_TAG: "testing"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.branch }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   build_push:
     name: Build and push image
     runs-on: ubuntu-24.04-arm
+    outputs:
+      channel: ${{ steps.channel.outputs.channel }}
+      tag: ${{ steps.channel.outputs.tag }}
+      digest: ${{ steps.push.outputs.digest }}
+      revision: ${{ steps.version.outputs.revision }}
 
     permissions:
       contents: read
@@ -47,35 +45,33 @@ jobs:
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
 
-      - name: Resolve manual build ref
-        id: manual
-        if: github.event_name == 'workflow_dispatch'
+      - name: Resolve publication channel
+        id: channel
         env:
-          INPUT_BRANCH: ${{ inputs.branch }}
+          BUILD_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          branch="${INPUT_BRANCH}"
-          if [ -z "${branch}" ]; then
-            exit 0
-          fi
-          branch="${branch#refs/heads/}"
-          if ! [[ "${branch}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-            echo "::error::Branch '${branch}' cannot be used as a matching container tag. Use letters, numbers, dots, underscores, or dashes."
+          [ "${EVENT_NAME}" != pull_request ] || exit 0
+          if [[ "${BUILD_REF}" != refs/heads/* ]]; then
+            echo "::error::Select a branch to build."
             exit 1
           fi
-
-          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
-
-      - name: Require main for Preview publication
-        if: github.event_name != 'pull_request'
-        env:
-          PUBLISH_TAG: ${{ steps.manual.outputs.branch || env.DEFAULT_TAG }}
-          BUILD_BRANCH: ${{ steps.manual.outputs.branch || github.ref_name }}
-        run: |
-          if [ "${PUBLISH_TAG}" = testing ] && [ "${BUILD_BRANCH}" != main ]; then
-            echo "::error::Preview must be built from main. Use an explicit branch tag for other builds."
+          branch="${BUILD_REF#refs/heads/}"
+          case "${branch}" in
+            main) tag=testing; channel=preview ;;
+            staging) tag=staging; channel=staging ;;
+            testing|preview|beta|stable|latest)
+              echo "::error::Reserved release channel. Build main/staging or use Promote channel."
+              exit 1 ;;
+            *) tag="${branch}"; channel="" ;;
+          esac
+          if ! [[ "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Branch cannot be used as a container tag."
             exit 1
           fi
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
 
       - name: Ensure container tools
         run: |
@@ -99,7 +95,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.manual.outputs.branch || github.ref }}
+          ref: ${{ github.sha }}
 
       - name: Check build recipes
         uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3
@@ -109,23 +105,25 @@ jobs:
         run: |
           echo "created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)" >> $GITHUB_OUTPUT
           echo "version=$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Image Metadata
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: metadata
         with:
           tags: |
-            type=raw,value=${{ steps.manual.outputs.branch || env.DEFAULT_TAG }}
+            type=raw,value=${{ steps.channel.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
             type=sha,enable=${{ github.event_name == 'pull_request' }}
             type=ref,event=pr
           labels: |
+            org.opencontainers.image.revision=${{ steps.version.outputs.revision }}
             org.opencontainers.image.created=${{ steps.version.outputs.created }}
             org.opencontainers.image.description=${{ env.IMAGE_DESC }}
-            org.opencontainers.image.documentation=https://raw.githubusercontent.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/${{ github.sha }}/README.md
+            org.opencontainers.image.documentation=https://raw.githubusercontent.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/${{ steps.version.outputs.revision }}/README.md
             org.opencontainers.image.licenses=GPL-2.0-or-later
-            org.opencontainers.image.source=https://github.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/blob/${{ github.sha }}/Containerfile
+            org.opencontainers.image.source=https://github.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/blob/${{ steps.version.outputs.revision }}/Containerfile
             org.opencontainers.image.title=${{ env.IMAGE_NAME }}
-            org.opencontainers.image.url=https://github.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/tree/${{ github.sha }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}/tree/${{ steps.version.outputs.revision }}
             org.opencontainers.image.vendor=${{ github.repository_owner }}
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             containers.bootc=1
@@ -304,5 +302,32 @@ jobs:
               exit 1
             fi
           done
+          {
+            printf '### Signed container published\n\n'
+            printf 'Digest: `%s@%s`\n\n' "${IMAGE_FULL}" "${{ steps.push.outputs.digest }}"
+            printf 'Promote this exact build with source: `build-%s-%s-%s`\n' \
+              "${{ steps.version.outputs.version }}" "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}"
+          } >> "${GITHUB_STEP_SUMMARY}"
         env:
           HAVE_SIGNING_SECRET: ${{ secrets.SIGNING_SECRET != '' }}
+
+  publish_disk:
+    name: Publish channel disk image
+    needs: build_push
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging') &&
+      needs.build_push.outputs.channel != ''
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/build-disk.yml
+    with:
+      tag: ${{ needs.build_push.outputs.tag }}
+      channel: ${{ needs.build_push.outputs.channel }}
+      publish_r2: true
+      image_digest: ${{ needs.build_push.outputs.digest }}
+      source_ref: ${{ needs.build_push.outputs.revision }}
+    secrets:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
