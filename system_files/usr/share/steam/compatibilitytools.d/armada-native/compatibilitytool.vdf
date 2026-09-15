@@ -1,0 +1,13 @@
+"compatibilitytools"
+{
+  "compat_tools"
+  {
+    "armada-native"
+    {
+      "install_path" "."
+      "display_name" "Armada Native"
+      "from_oslist" "windows"
+      "to_oslist" "linux"
+    }
+  }
+}
