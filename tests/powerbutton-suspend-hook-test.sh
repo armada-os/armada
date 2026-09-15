@@ -26,6 +26,9 @@ input_lib="$tmp/input-lib"
 printf '%s\n' \
     'armada_lid_closed() { [[ "${ARMADA_TEST_LID_CLOSED:-0}" == 1 ]]; }' \
     >"$input_lib"
+systemd_run="$tmp/systemd-run"
+printf '%s\n' '#!/bin/sh' 'printf "%s\\n" "$*" >>"$ARMADA_TEST_RUN_LOG"' >"$systemd_run"
+chmod +x "$systemd_run"
 
 run_hook() {
     local env_args=(
@@ -37,6 +40,9 @@ run_hook() {
         "ARMADA_SESSION_USER=$(id -un)"
         "ARMADA_NOW_MS=100000"
         "ARMADA_TEST_LID_CLOSED=${ARMADA_TEST_LID_CLOSED:-0}"
+        "ARMADA_RESUME_SUSPEND_GRACE_SEC=${ARMADA_RESUME_SUSPEND_GRACE_SEC:-5}"
+        "ARMADA_SYSTEMD_RUN=$systemd_run"
+        "ARMADA_TEST_RUN_LOG=$tmp/systemd-run.log"
     )
     if [[ "${ARMADA_TEST_DEFAULT_MARKER:-0}" != 1 ]]; then
         env_args+=("ARMADA_LID_CLOSE_MARKER=$marker")
@@ -78,6 +84,7 @@ ARMADA_TEST_LID_CLOSED=1 run_hook pre suspend
 [[ "$(<"$state_file")" == "$wakeup" && ! -e "$marker" ]]
 run_hook post suspend
 [[ "$(<"$wakeup")" == enabled && ! -e "$state_file" ]]
+grep -q -- '--what=sleep.*sleep 5' "$tmp/systemd-run.log"
 
 # Never disable an aggregate input node that also exposes SW_LID.
 printf 'Power Button\n' >"$pwrkey/input/input0/name"
