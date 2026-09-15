@@ -7,6 +7,7 @@ import { FanCurveEditor } from "../components/FanCurveEditor";
 import { FanCurveEditorModal } from "../components/FanCurveEditorModal";
 import { useCurrentTemp } from "../hooks/useCurrentTemp";
 import { useFanCurvesSave } from "../hooks/useFanCurvesSave";
+import { t } from "../i18n";
 import { clone } from "../lib/util";
 import type { Config, CurvesState } from "../types";
 
@@ -52,8 +53,8 @@ export function Fans({ setConfig }: {
 
   if (!draft) {
     return (
-      <PanelSection title="Armada Fans">
-        <Field label={message} />
+      <PanelSection title={t("Armada Fans")}>
+        <Field label={message === "Loading" ? t("Loading") : message} />
       </PanelSection>
     );
   }
@@ -94,22 +95,22 @@ export function Fans({ setConfig }: {
         onOpenCreateCurve={openCreateCurve}
         currentTemp={currentTemp}
       />
-      <PanelSection title="SAVE">
+      <PanelSection title={t("SAVE")}>
         <PanelSectionRow>
           <div className="afc-control-inset">
             <ButtonItem layout="below" onClick={handleSave} disabled={!dirty || saving}>
-              {saving ? "Saving..." : "Save Changes"}
+              {saving ? t("Saving...") : t("Save Changes")}
             </ButtonItem>
           </div>
         </PanelSectionRow>
         <PanelSectionRow>
           <div className="afc-control-inset">
             <ButtonItem layout="below" onClick={handleRevert} disabled={!dirty || saving}>
-              Revert Changes
+              {t("Revert Changes")}
             </ButtonItem>
           </div>
         </PanelSectionRow>
-        {dirty ? <div className="afc-note">You have unsaved changes.</div> : null}
+        {dirty ? <div className="afc-note">{t("You have unsaved changes.")}</div> : null}
       </PanelSection>
     </div>
   );

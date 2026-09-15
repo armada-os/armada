@@ -15,6 +15,7 @@ import {
   saveCalibration,
 } from "../backend";
 import { makeCapture, normalizedValue, triggerPercent, updateCapture } from "../lib/calibration";
+import { t } from "../i18n";
 import type { CalibrationState, Capture } from "../types";
 
 type Phase = "idle" | "recording";
@@ -157,19 +158,19 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
   };
 
   const instructions = !state
-    ? "Checking controller..."
+    ? t("Checking controller...")
     : !canApply
-      ? "This device can't save calibration, but you can check stick and trigger response here."
+      ? t("This device can't save calibration, but you can check stick and trigger response here.")
       : phase === "recording"
-        ? "Move both sticks in full circles and fully press both triggers, then Save."
-        : "Press Start, then move sticks and triggers through full range.";
+        ? t("Move both sticks in full circles and fully press both triggers, then Save.")
+        : t("Press Start, then move sticks and triggers through full range.");
 
   return (
     <ModalRoot onCancel={close}>
       <DialogBody>
         <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "22px" }}>
-          <StickPlot title="Left Stick" xName="left_x" yName="left_y" state={state} />
-          <StickPlot title="Right Stick" xName="right_x" yName="right_y" state={state} />
+          <StickPlot title={t("Left Stick")} xName="left_x" yName="left_y" state={state} />
+          <StickPlot title={t("Right Stick")} xName="right_x" yName="right_y" state={state} />
         </div>
         <div style={{ ...gridTwoCol, marginBottom: "16px" }}>
           <TriggerBar title="LT" name="left_trigger" state={state} />
@@ -181,18 +182,18 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
         <style>{focusStyles}</style>
         {!canApply ? (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={close}>Close</DialogButton>
+            <DialogButton onClick={close}>{t("Close")}</DialogButton>
           </div>
         ) : phase === "recording" ? (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={save} disabled={!capture}>Save Calibration</DialogButton>
-            <DialogButton onClick={close}>Close</DialogButton>
+            <DialogButton onClick={save} disabled={!capture}>{t("Save Calibration")}</DialogButton>
+            <DialogButton onClick={close}>{t("Close")}</DialogButton>
           </div>
         ) : (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={start}>Start Calibration</DialogButton>
-            <DialogButton onClick={reset}>Reset to Defaults</DialogButton>
-            <DialogButton onClick={close}>Close</DialogButton>
+            <DialogButton onClick={start}>{t("Start Calibration")}</DialogButton>
+            <DialogButton onClick={reset}>{t("Reset to Defaults")}</DialogButton>
+            <DialogButton onClick={close}>{t("Close")}</DialogButton>
           </div>
         )}
       </DialogFooter>

@@ -1,10 +1,11 @@
 import { Router } from "@decky/ui";
 import { isGameApp, isNonSteamApp } from "./steamCompat";
+import { t } from "../i18n";
 import type { Config, DropdownChoice, GameRef } from "../types";
 
 export function gameDisplayName(game: GameRef | null | undefined): string {
   if (!game?.appid) return "";
-  return game.name || `App ${game.appid}`;
+  return game.name || t("App {id}", { id: game.appid });
 }
 
 export function availableGames(config: Config): GameRef[] {
@@ -13,7 +14,7 @@ export function availableGames(config: Config): GameRef[] {
     if (game?.appid && (game.nonSteam || isGameApp(game.appid))) {
       games.set(String(game.appid), {
         appid: String(game.appid),
-        name: game.name || `App ${game.appid}`,
+        name: game.name || t("App {id}", { id: game.appid }),
         nonSteam: Boolean(game.nonSteam),
       });
     }
@@ -23,7 +24,7 @@ export function availableGames(config: Config): GameRef[] {
 
 export function editTargetOptions(config: Config): DropdownChoice[] {
   return [
-    { data: "", label: "Default" },
+    { data: "", label: t("Default") },
     ...availableGames(config).map((game) => ({ data: game.appid, label: gameDisplayName(game) })),
   ];
 }
@@ -39,5 +40,5 @@ export function currentGame(): GameRef | null {
     name = details?.strDisplayName || details?.strName || details?.name || name;
   } catch (error) {
   }
-  return { appid: id, name: name || `App ${id}`, nonSteam: isNonSteamApp(id) };
+  return { appid: id, name: name || t("App {id}", { id }), nonSteam: isNonSteamApp(id) };
 }
