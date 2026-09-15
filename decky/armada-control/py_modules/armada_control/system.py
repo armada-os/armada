@@ -136,6 +136,36 @@ def set_bottom_screen_brightness(brightness):
     return int(call("set_bottom_screen_brightness", brightness=brightness).get("brightness", 0))
 
 
+def trackpad_enabled():
+    try:
+        return bool(call("get_trackpad_enabled").get("enabled"))
+    except Exception:
+        return False
+
+
+def set_trackpad_enabled(enabled):
+    return bool(call("set_trackpad_enabled", enabled=bool(enabled)).get("enabled"))
+
+
+def trackpad_settings():
+    try:
+        result = call("get_trackpad_settings")
+        return {
+            "sensitivity": float(result.get("sensitivity", 1.0)),
+            "glide": bool(result.get("glide")),
+        }
+    except Exception:
+        return {"sensitivity": 1.0, "glide": False}
+
+
+def set_trackpad_settings(sensitivity, glide):
+    result = call("set_trackpad_settings", sensitivity=float(sensitivity), glide=bool(glide))
+    return {
+        "sensitivity": float(result.get("sensitivity", sensitivity)),
+        "glide": bool(result.get("glide", glide)),
+    }
+
+
 def desktop_mode() -> str:
     try:
         value = str(call("get_desktop_mode").get("value", ""))

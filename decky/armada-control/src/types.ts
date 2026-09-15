@@ -108,6 +108,10 @@ export interface Config {
   bottomScreenEnabled: boolean;
   bottomScreenBrightnessSupported: boolean;
   bottomScreenBrightness: number;
+  trackpadSupported: boolean;
+  trackpadEnabled: boolean;
+  trackpadSensitivity: number;
+  trackpadGlide: boolean;
   sshEnabled: boolean;
   mtpEnabled: boolean;
   desktopMode: string;

@@ -1,6 +1,8 @@
 [Unit]
 Description=Armada bottom-screen Plasma session
 PartOf=gamescope-session-plus@steam.service
+# The DRM-leased bottom screen can only be owned by one client at a time.
+Conflicts=armada-trackpad.service
 StartLimitIntervalSec=0
 
 [Service]

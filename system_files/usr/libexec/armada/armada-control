@@ -41,6 +41,11 @@ BOTTOM_SCREEN_SERVICE = "armada-bottom-screen.service"
 GAME_MODE_SERVICE = "gamescope-session-plus@steam.service"
 BOTTOM_SCREEN_BRIGHTNESS_PATH = Path("/etc/armada/bottom-screen-brightness")
 BOTTOM_SCREEN_BRIGHTNESS_RESTORE_INTERVAL = 2
+TRACKPAD_SERVICE = "armada-trackpad.service"
+TRACKPAD_CONFIG = Path("/etc/armada/trackpad.conf")
+TRACKPAD_SENSITIVITY_MIN = 0.1
+TRACKPAD_SENSITIVITY_MAX = 5.0
+TRACKPAD_SENSITIVITY_DEFAULT = 1.0
 BACKLIGHT_ROOT = Path("/sys/class/backlight")
 DEVICE_ENV = os.environ.get("ARMADA_DEVICE_ENV", "/usr/libexec/armada/device-env")
 CONFIG_PATHS = {
@@ -305,6 +310,35 @@ def restore_bottom_screen_brightness(path=None):
         pass
 
 
+def trackpad_supported():
+    # Same physical requirement as the Plasma Mobile bottom screen: they
+    # share the one DRM-leased connector.
+    return bottom_screen_supported()
+
+
+def trackpad_enabled():
+    return session_systemctl(
+        "is-enabled", "--quiet", TRACKPAD_SERVICE, check=False, timeout=5,
+    ).returncode == 0
+
+
+def trackpad_settings():
+    sensitivity, glide = TRACKPAD_SENSITIVITY_DEFAULT, False
+    try:
+        for line in TRACKPAD_CONFIG.read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key == "sensitivity":
+                try:
+                    sensitivity = max(TRACKPAD_SENSITIVITY_MIN, min(TRACKPAD_SENSITIVITY_MAX, float(value)))
+                except ValueError:
+                    pass
+            elif key == "glide":
+                glide = value == "1"
+    except OSError:
+        pass
+    return {"sensitivity": sensitivity, "glide": glide}
+
+
 def abl_version():
     versions = []
     for name, partition in ABL_PARTITIONS:
@@ -440,6 +474,8 @@ def action_set_bottom_screen_enabled(request):
         raise RuntimeError("bottom screen is not supported on this device")
 
     if enabled:
+        if trackpad_enabled():
+            session_systemctl("disable", "--now", TRACKPAD_SERVICE)
         session_systemctl("enable", BOTTOM_SCREEN_SERVICE)
         game_mode = session_systemctl(
             "is-active", "--quiet", GAME_MODE_SERVICE, check=False, timeout=5,
@@ -450,6 +486,49 @@ def action_set_bottom_screen_enabled(request):
         session_systemctl("disable", "--now", BOTTOM_SCREEN_SERVICE)
 
     return {"enabled": bottom_screen_enabled()}
+
+
+def action_get_trackpad_enabled(request):
+    return {"enabled": trackpad_enabled()}
+
+
+def action_set_trackpad_enabled(request):
+    enabled = request.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("invalid trackpad enabled state")
+    if enabled and not trackpad_supported():
+        raise RuntimeError("trackpad is not supported on this device")
+
+    if enabled:
+        if bottom_screen_enabled():
+            session_systemctl("disable", "--now", BOTTOM_SCREEN_SERVICE)
+        session_systemctl("enable", TRACKPAD_SERVICE)
+        game_mode = session_systemctl(
+            "is-active", "--quiet", GAME_MODE_SERVICE, check=False, timeout=5,
+        )
+        if game_mode.returncode == 0:
+            session_systemctl("start", TRACKPAD_SERVICE)
+    else:
+        session_systemctl("disable", "--now", TRACKPAD_SERVICE)
+
+    return {"enabled": trackpad_enabled()}
+
+
+def action_get_trackpad_settings(request):
+    return trackpad_settings()
+
+
+def action_set_trackpad_settings(request):
+    sensitivity = request.get("sensitivity")
+    glide = request.get("glide")
+    if not isinstance(sensitivity, (int, float)) or isinstance(sensitivity, bool):
+        raise ValueError("invalid trackpad sensitivity")
+    if not isinstance(glide, bool):
+        raise ValueError("invalid trackpad glide state")
+    sensitivity = max(TRACKPAD_SENSITIVITY_MIN, min(TRACKPAD_SENSITIVITY_MAX, float(sensitivity)))
+
+    atomic_write(TRACKPAD_CONFIG, f"sensitivity={sensitivity}\nglide={int(glide)}\n")
+    return trackpad_settings()
 
 
 def action_get_abl_version(request):
@@ -720,6 +799,8 @@ ACTIONS = {
     "get_device_env": action_get_device_env,
     "get_bottom_screen_enabled": action_get_bottom_screen_enabled,
     "get_bottom_screen_brightness": action_get_bottom_screen_brightness,
+    "get_trackpad_enabled": action_get_trackpad_enabled,
+    "get_trackpad_settings": action_get_trackpad_settings,
     "get_abl_version": action_get_abl_version,
     "get_rgb": action_get_rgb,
     "set_rgb": action_set_rgb,
@@ -731,6 +812,8 @@ ACTIONS = {
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_bottom_screen_enabled": action_set_bottom_screen_enabled,
     "set_bottom_screen_brightness": action_set_bottom_screen_brightness,
+    "set_trackpad_enabled": action_set_trackpad_enabled,
+    "set_trackpad_settings": action_set_trackpad_settings,
     "set_abl_auto_enabled": action_set_abl_auto_enabled,
     "get_desktop_mode": action_get_desktop_mode,
     "set_desktop_mode": action_set_desktop_mode,

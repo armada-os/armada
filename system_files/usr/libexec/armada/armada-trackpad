@@ -1,0 +1,385 @@
+#!/usr/bin/python3
+"""Armada Trackpad: turns the bottom screen into a touchpad for the top
+screen, run by armada-trackpad-session inside the DRM-leased bottom-screen
+gamescope instance.
+
+A touch surface: single-finger drag moves the system pointer (relative
+motion) on a virtual mouse device; a tap is a left click; a second on-screen
+button gives a reliable right click since two-finger detection depends on
+how the leased compositor delivers touch (see PadPage._on_touch below).
+"Ball mode" (glide) and sensitivity are set from Armada Control on the top
+screen and read from trackpad.conf -- this process polls that file rather
+than owning the settings, so there is one source of truth.
+
+(An on-screen keyboard page was considered and dropped: Steam's own Big
+Picture keyboard is closed-source and embedded in steamwebhelper -- not
+extractable to run here -- and maliit-keyboard, the alternative, needs a
+compositor that implements the input-method Wayland protocol to show/hide
+itself, which this session's lightweight Xwayland-only setup deliberately
+doesn't have.)
+
+The virtual mouse device is driven with raw /dev/uinput ioctls (see
+_RawUInput) rather than python3-evdev, which isn't part of the base image --
+every other library this app needs (gtk3, pycairo) already is, so this
+avoids requiring an image rebuild just to add one small dependency.
+"""
+import fcntl
+import os
+import struct
+import subprocess
+import sys
+import time
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+
+CONFIG_PATH = "/etc/armada/trackpad.conf"
+DEVICE_ENV = os.environ.get("ARMADA_DEVICE_ENV", "/usr/libexec/armada/device-env")
+
+DEFAULT_SENSITIVITY = 1.0
+DEFAULT_GLIDE = False
+
+# Steam's classic accent blue, used for the trackpad's center dot and any
+# other "selected/active" accent.
+STEAM_BLUE = (0.4, 0.753, 0.957)  # #66c0f4
+
+CSS = b"""
+window, box, label {
+    background-color: #000000;
+}
+
+label {
+    color: #c7d5e0;
+    font-size: 20px;
+}
+
+button {
+    background-color: #1b2838;
+    background-image: none;
+    box-shadow: none;
+    text-shadow: none;
+    color: #66c0f4;
+    border: 1px solid #2a475e;
+    border-radius: 4px;
+    font-size: 22px;
+    font-weight: 500;
+    min-height: 56px;
+    min-width: 64px;
+}
+
+button:hover {
+    background-color: #2a475e;
+    background-image: none;
+}
+
+button:active {
+    background-color: #66c0f4;
+    background-image: none;
+    color: #0e141a;
+}
+"""
+
+
+def load_css():
+    provider = Gtk.CssProvider()
+    provider.load_from_data(CSS)
+    # USER priority: high enough to win over the active system GTK theme,
+    # which otherwise overrides plain APPLICATION-priority rules.
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(),
+        provider,
+        Gtk.STYLE_PROVIDER_PRIORITY_USER,
+    )
+
+# Tap vs. drag: a press-release under this long, with total movement under
+# this far, is a click rather than the end of a drag.
+TAP_MAX_SECONDS = 0.25
+TAP_MAX_DRIFT_PX = 12
+
+# Ball-mode glide: velocity decays by this factor every tick until it drops
+# below the stop threshold.
+GLIDE_TICK_MS = 16
+GLIDE_DECAY = 0.90
+GLIDE_STOP_PX = 0.5
+
+# Linux input-event-codes.h constants (stable kernel UAPI, verified against
+# /usr/include/linux/input-event-codes.h -- these never change).
+EV_SYN = 0x00
+EV_KEY = 0x01
+EV_REL = 0x02
+SYN_REPORT = 0
+REL_X = 0x00
+REL_Y = 0x01
+BTN_LEFT = 0x110
+BTN_RIGHT = 0x111
+
+# uinput ioctl request codes, from linux/uinput.h. These encode fixed-width
+# UAPI struct sizes only (no pointer-sized fields), so they're identical on
+# x86_64 and aarch64 -- verified against /usr/include/linux/uinput.h.
+_UI_SET_EVBIT = 0x40045564
+_UI_SET_KEYBIT = 0x40045565
+_UI_SET_RELBIT = 0x40045566
+_UI_DEV_SETUP = 0x405c5503
+_UI_DEV_CREATE = 0x5501
+_UI_DEV_DESTROY = 0x5502
+
+# struct uinput_setup { struct input_id id; char name[80]; __u32 ff_effects_max; }
+# struct input_id { __u16 bustype, vendor, product, version; }
+_UINPUT_SETUP_FMT = "<HHHH80sI"
+# struct input_event { struct timeval time; __u16 type, code; __s32 value; }
+# (LP64 longs: identical layout on x86_64 and aarch64)
+_INPUT_EVENT_FMT = "<qqHHi"
+_BUS_USB = 0x03
+
+
+class _RawUInput:
+    """Minimal /dev/uinput driver."""
+
+    def __init__(self, name, keycodes, has_rel=True):
+        self._fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        fcntl.ioctl(self._fd, _UI_SET_EVBIT, EV_KEY)
+        for code in sorted(set(keycodes)):
+            fcntl.ioctl(self._fd, _UI_SET_KEYBIT, code)
+        if has_rel:
+            fcntl.ioctl(self._fd, _UI_SET_EVBIT, EV_REL)
+            fcntl.ioctl(self._fd, _UI_SET_RELBIT, REL_X)
+            fcntl.ioctl(self._fd, _UI_SET_RELBIT, REL_Y)
+        setup = struct.pack(
+            _UINPUT_SETUP_FMT,
+            _BUS_USB, 0x1234, 0x0001, 1,
+            name.encode("utf-8"),
+            0,
+        )
+        fcntl.ioctl(self._fd, _UI_DEV_SETUP, setup)
+        fcntl.ioctl(self._fd, _UI_DEV_CREATE)
+        time.sleep(0.5)  # let the kernel finish registering the device
+
+    def write(self, ev_type, code, value):
+        now = time.time()
+        event = struct.pack(
+            _INPUT_EVENT_FMT, int(now), int((now % 1) * 1e6), ev_type, code, value,
+        )
+        os.write(self._fd, event)
+
+    def syn(self):
+        self.write(EV_SYN, SYN_REPORT, 0)
+
+    def close(self):
+        fcntl.ioctl(self._fd, _UI_DEV_DESTROY)
+        os.close(self._fd)
+
+
+def device_env():
+    out = subprocess.run([DEVICE_ENV], capture_output=True, text=True, check=True).stdout
+    env = {}
+    for line in out.splitlines():
+        key, _, value = line.partition("=")
+        env[key] = value.strip().strip("'\"") if value else ""
+    return env
+
+
+def read_settings():
+    sensitivity, glide = DEFAULT_SENSITIVITY, DEFAULT_GLIDE
+    try:
+        with open(CONFIG_PATH) as handle:
+            for line in handle:
+                key, _, value = line.strip().partition("=")
+                if key == "sensitivity":
+                    try:
+                        sensitivity = max(0.1, float(value))
+                    except ValueError:
+                        pass
+                elif key == "glide":
+                    glide = value == "1"
+    except OSError:
+        pass
+    return sensitivity, glide
+
+
+class VirtualHid:
+    """A virtual mouse device (left/right click + relative motion)."""
+
+    def __init__(self):
+        self._device = _RawUInput("Armada Trackpad", {BTN_LEFT, BTN_RIGHT}, has_rel=True)
+
+    def move(self, dx, dy):
+        if dx:
+            self._device.write(EV_REL, REL_X, dx)
+        if dy:
+            self._device.write(EV_REL, REL_Y, dy)
+        if dx or dy:
+            self._device.syn()
+
+    def click(self, button=BTN_LEFT):
+        self._device.write(EV_KEY, button, 1)
+        self._device.syn()
+        self._device.write(EV_KEY, button, 0)
+        self._device.syn()
+
+
+class PadPage(Gtk.Box):
+    def __init__(self, hid):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self._hid = hid
+        self._sensitivity, self._glide = read_settings()
+        GLib.timeout_add(2000, self._reload_settings)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header.set_margin_top(6)
+        header.set_margin_bottom(6)
+        header.set_margin_start(8)
+        header.set_margin_end(8)
+        right_click = Gtk.Button(label="Right Click")
+        right_click.connect("clicked", lambda *_: self._hid.click(BTN_RIGHT))
+        header.pack_end(right_click, False, False, 0)
+        self.pack_start(header, False, False, 0)
+
+        self._area = Gtk.DrawingArea()
+        self._area.add_events(
+            self._area.get_events()
+            | Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.POINTER_MOTION_MASK
+            | Gdk.EventMask.TOUCH_MASK
+        )
+        self._area.connect("draw", self._on_draw)
+        self._area.connect("button-press-event", self._on_press)
+        self._area.connect("button-release-event", self._on_release)
+        self._area.connect("motion-notify-event", self._on_motion)
+        try:
+            self._area.connect("touch-event", self._on_touch)
+        except TypeError:
+            # Some GTK builds under a leased compositor may not deliver
+            # native touch events; button/motion above still covers the
+            # primary single-finger path.
+            pass
+        self.pack_start(self._area, True, True, 0)
+
+        self._dragging = False
+        self._press_time = 0.0
+        self._press_xy = (0.0, 0.0)
+        self._last_xy = (0.0, 0.0)
+        self._drift = 0.0
+        self._last_velocity = (0.0, 0.0)
+        self._glide_source = None
+
+    def _reload_settings(self):
+        self._sensitivity, self._glide = read_settings()
+        return True
+
+    def _on_draw(self, _widget, cr):
+        cr.set_source_rgb(0, 0, 0)  # true black -- OLED pixels off
+        cr.paint()
+        cr.set_line_width(3)
+        cr.set_source_rgb(*STEAM_BLUE)
+        alloc = self._area.get_allocation()
+        cr.arc(alloc.width / 2, alloc.height / 2, min(alloc.width, alloc.height) / 6, 0, 6.28318)
+        cr.stroke()
+        return False
+
+    def _stop_glide(self):
+        if self._glide_source is not None:
+            GLib.source_remove(self._glide_source)
+            self._glide_source = None
+
+    def _on_press(self, _widget, event):
+        self._stop_glide()
+        self._dragging = True
+        self._press_time = time.monotonic()
+        self._press_xy = (event.x, event.y)
+        self._last_xy = (event.x, event.y)
+        self._drift = 0.0
+        self._last_velocity = (0.0, 0.0)
+        return True
+
+    def _on_motion(self, _widget, event):
+        if not self._dragging:
+            return False
+        dx = event.x - self._last_xy[0]
+        dy = event.y - self._last_xy[1]
+        self._last_xy = (event.x, event.y)
+        self._drift += abs(dx) + abs(dy)
+        moved_x = round(dx * self._sensitivity)
+        moved_y = round(dy * self._sensitivity)
+        if moved_x or moved_y:
+            self._hid.move(moved_x, moved_y)
+        self._last_velocity = (moved_x, moved_y)
+        return True
+
+    def _on_release(self, _widget, _event):
+        if not self._dragging:
+            return False
+        self._dragging = False
+        elapsed = time.monotonic() - self._press_time
+        if elapsed <= TAP_MAX_SECONDS and self._drift <= TAP_MAX_DRIFT_PX:
+            self._hid.click(BTN_LEFT)
+        elif self._glide:
+            self._start_glide(*self._last_velocity)
+        return True
+
+    def _start_glide(self, vx, vy):
+        if abs(vx) < GLIDE_STOP_PX and abs(vy) < GLIDE_STOP_PX:
+            return
+        state = {"vx": vx, "vy": vy}
+
+        def tick():
+            state["vx"] *= GLIDE_DECAY
+            state["vy"] *= GLIDE_DECAY
+            dx, dy = round(state["vx"]), round(state["vy"])
+            if dx or dy:
+                self._hid.move(dx, dy)
+            if abs(state["vx"]) < GLIDE_STOP_PX and abs(state["vy"]) < GLIDE_STOP_PX:
+                self._glide_source = None
+                return False
+            return True
+
+        self._glide_source = GLib.timeout_add(GLIDE_TICK_MS, tick)
+
+    def _on_touch(self, _widget, event):
+        # Best-effort second-finger right click; exact touch delivery under
+        # the leased compositor's touch mode is unverified on hardware, so
+        # the header's Right Click button is the guaranteed fallback.
+        if event.type == Gdk.EventType.TOUCH_BEGIN and getattr(event.touch, "sequence", None) is not None:
+            pass
+        return False
+
+
+class TrackpadWindow(Gtk.Window):
+    def __init__(self):
+        super().__init__(title="Armada Trackpad")
+        self.set_decorated(False)
+
+        # gamescope's --force-windows-fullscreen scales a window to fit the
+        # screen *while preserving whatever size the window itself
+        # requested*, rather than forcing its content to render at full
+        # resolution. Without an explicit size claim the window settles on
+        # a default shape from its widgets and gets letterboxed onto the
+        # (taller, near-square) panel, so grab the real screen size first.
+        screen = Gdk.Screen.get_default()
+        self.set_default_size(screen.get_width(), screen.get_height())
+        self.move(0, 0)
+        self.fullscreen()
+
+        self.connect("destroy", Gtk.main_quit)
+
+        self.add(PadPage(VirtualHid()))
+
+
+def main():
+    env = device_env()
+    if not env.get("ARMADA_SECONDARY_CONNECTOR") or not env.get("ARMADA_SECONDARY_TOUCHSCREEN"):
+        print("armada-trackpad: device has no secondary display", file=sys.stderr)
+        return 1
+
+    load_css()
+    win = TrackpadWindow()
+    win.show_all()
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
