@@ -22,6 +22,8 @@ SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
 ABL_VERSION_TOOL = "/usr/lib/armada/abl-version"
 RGB_TOOL = "/usr/bin/armada-rgb"
 ABL_CONFIG = Path("/etc/armada/abl.conf")
+DISPLAY_CONFIG = Path("/etc/armada/display.conf")
+SOFTWARE_DIM_DEFAULT_PERCENT = 8
 ABL_MANIFEST = Path("/usr/lib/armada/abl/manifest")
 ABL_PARTITIONS = (
     ("A", "/dev/disk/by-partlabel/abl_a"),
@@ -305,6 +307,36 @@ def restore_bottom_screen_brightness(path=None):
         pass
 
 
+def _read_display_config():
+    try:
+        lines = DISPLAY_CONFIG.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    values = {}
+    for line in lines:
+        name, sep, raw = line.partition("=")
+        if sep:
+            values[name.strip()] = raw.strip()
+    return values
+
+
+def _write_display_config(**values):
+    atomic_write(DISPLAY_CONFIG, "".join(f"{key}={value}\n" for key, value in values.items()))
+
+
+def software_dim_enabled():
+    return _read_display_config().get("software_dim_enabled") == "1"
+
+
+def software_dim_percent():
+    raw = _read_display_config().get("software_dim_percent", "")
+    try:
+        percent = int(raw)
+    except ValueError:
+        return SOFTWARE_DIM_DEFAULT_PERCENT
+    return percent if 0 <= percent <= 100 else SOFTWARE_DIM_DEFAULT_PERCENT
+
+
 def abl_version():
     versions = []
     for name, partition in ABL_PARTITIONS:
@@ -450,6 +482,41 @@ def action_set_bottom_screen_enabled(request):
         session_systemctl("disable", "--now", BOTTOM_SCREEN_SERVICE)
 
     return {"enabled": bottom_screen_enabled()}
+
+
+def action_get_software_dim_enabled(request):
+    return {"enabled": software_dim_enabled()}
+
+
+def action_set_software_dim_enabled(request):
+    enabled = bool(request.get("enabled"))
+    _write_display_config(
+        software_dim_enabled=int(enabled),
+        software_dim_percent=software_dim_percent(),
+    )
+    if not enabled:
+        # Otherwise a software dim from while it was on lingers until the
+        # next brightness write, not when the toggle flips.
+        subprocess.run(
+            ["/usr/libexec/armada/armada-software-dim", "reset"],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+        )
+    return {"enabled": software_dim_enabled()}
+
+
+def action_get_software_dim_percent(request):
+    return {"percent": software_dim_percent()}
+
+
+def action_set_software_dim_percent(request):
+    percent = request.get("percent")
+    if not isinstance(percent, int) or isinstance(percent, bool) or not 0 <= percent <= 100:
+        raise ValueError("invalid software dim percent")
+    _write_display_config(
+        software_dim_enabled=int(software_dim_enabled()),
+        software_dim_percent=percent,
+    )
+    return {"percent": software_dim_percent()}
 
 
 def action_get_abl_version(request):
@@ -721,6 +788,10 @@ ACTIONS = {
     "get_bottom_screen_enabled": action_get_bottom_screen_enabled,
     "get_bottom_screen_brightness": action_get_bottom_screen_brightness,
     "get_abl_version": action_get_abl_version,
+    "get_software_dim_enabled": action_get_software_dim_enabled,
+    "set_software_dim_enabled": action_set_software_dim_enabled,
+    "get_software_dim_percent": action_get_software_dim_percent,
+    "set_software_dim_percent": action_set_software_dim_percent,
     "get_rgb": action_get_rgb,
     "set_rgb": action_set_rgb,
     "get_abl_auto_enabled": action_get_abl_auto_enabled,
