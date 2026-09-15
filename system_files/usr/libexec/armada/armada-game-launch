@@ -185,8 +185,12 @@ def apply_perf(settings, game_id):
         os.sched_setaffinity(0, cores)
     else:
         os.sched_setaffinity(0, armada_perf.online_cpus())
-    if cores and clean.get("wineTopology", True) and "WINE_CPU_TOPOLOGY" not in os.environ:
-        os.environ["WINE_CPU_TOPOLOGY"] = f"{len(cores)}:{','.join(map(str, cores))}"
+    if cores and clean.get("wineTopology", True):
+        topology = os.environ.get("PROTON_CPU_TOPOLOGY", os.environ.get(
+            "WINE_CPU_TOPOLOGY", f"{len(cores)}:{','.join(map(str, cores))}"))
+        os.environ.setdefault("WINE_CPU_TOPOLOGY", topology)
+        # PROTON_CPU_TOPOLOGY takes precedence over Proton's per-game defaults.
+        os.environ.setdefault("PROTON_CPU_TOPOLOGY", topology)
 
     nice = clean.get("nice", 0)
     if nice > 0:

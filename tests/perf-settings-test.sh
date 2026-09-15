@@ -265,17 +265,23 @@ check("missing profile uses safety fallback",
 
 # --- armada-game-launch: explicit affinity reset ----------------------------
 saved = os.sched_getaffinity(0)
+topology_keys = ("WINE_CPU_TOPOLOGY", "PROTON_CPU_TOPOLOGY")
+saved_topology = {key: os.environ[key] for key in topology_keys if key in os.environ}
 try:
     restricted = set(list(saved)[:2]) if len(saved) > 2 else saved
     os.sched_setaffinity(0, restricted)
-    os.environ.pop("WINE_CPU_TOPOLOGY", None)
+    for key in topology_keys:
+        os.environ.pop(key, None)
     launch.apply_perf({}, None)  # session socket warning on stderr is fine
     check("wrapper resets inherited mask", os.sched_getaffinity(0) == set(ap.online_cpus()))
-    check("no topology without cores", "WINE_CPU_TOPOLOGY" not in os.environ)
+    check("no topology without cores", all(key not in os.environ for key in topology_keys))
     launch.apply_perf({"cores": "7,3-6"}, None)
     check("ordered topology derived", os.environ.get("WINE_CPU_TOPOLOGY") == "5:7,3,4,5,6")
+    check("Proton override matches Wine topology",
+          os.environ.get("PROTON_CPU_TOPOLOGY") == "5:7,3,4,5,6")
     check("cores mask applied", os.sched_getaffinity(0) == {3, 4, 5, 6, 7})
-    os.environ.pop("WINE_CPU_TOPOLOGY", None)
+    for key in topology_keys:
+        os.environ.pop(key, None)
     launch.apply_perf({"cores": "big", "scheduler": "cosmos"}, None)
     check("cosmos skips hard mask", os.sched_getaffinity(0) == set(ap.online_cpus()))
     # a malformed env name must not abort the rest of the launch path
@@ -285,9 +291,33 @@ try:
     check("bad env entry contained", os.environ.get("GOODVAR") == "1")
     check("launch path survives bad env", os.sched_getaffinity(0) == {3, 4, 5, 6, 7})
     os.environ.pop("GOODVAR", None)
-    os.environ.pop("WINE_CPU_TOPOLOGY", None)
+    for explicit in (
+            {"WINE_CPU_TOPOLOGY": "2:6,7"},
+            {"PROTON_CPU_TOPOLOGY": "2:7,6"},
+            {"WINE_CPU_TOPOLOGY": "1:6", "PROTON_CPU_TOPOLOGY": "1:7"}):
+        for source in ("inherited", "settings"):
+            for key in topology_keys:
+                os.environ.pop(key, None)
+            settings = {"cores": "7,3-6"}
+            if source == "inherited":
+                os.environ.update(explicit)
+            else:
+                settings["env"] = explicit
+            launch.apply_perf(settings, None)
+            expected = explicit.get("PROTON_CPU_TOPOLOGY", explicit.get("WINE_CPU_TOPOLOGY"))
+            check(f"{source} topology overrides preserved: {explicit}",
+                  all(os.environ.get(key) == explicit.get(key, expected) for key in topology_keys))
+    for key in topology_keys:
+        os.environ.pop(key, None)
+    launch.apply_perf({"cores": "6-7", "wineTopology": False}, None)
+    check("disabled topology exports neither variable",
+          all(key not in os.environ for key in topology_keys))
+    check("disabled topology still pins cores", os.sched_getaffinity(0) == {6, 7})
 finally:
     os.sched_setaffinity(0, saved)
+    for key in topology_keys:
+        os.environ.pop(key, None)
+    os.environ.update(saved_topology)
 
 # --- device-env: topology emission + empty-override semantics ---------------
 device_env_script = os.path.join(ROOT, "system_files/usr/libexec/armada/device-env")
