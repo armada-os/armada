@@ -8,6 +8,8 @@ from .system import (
     bottom_screen_brightness,
     bottom_screen_enabled,
     device_env,
+    trackpad_enabled,
+    trackpad_settings,
     mtp_enabled,
     os_version,
     perf_info,
@@ -23,6 +25,10 @@ def build_config(include_games=True):
     fex_contract = load_fex_contract()
     env = device_env()
     secondary_brightness = bottom_screen_brightness()
+    dual_screen_supported = bool(
+        env.get("ARMADA_SECONDARY_CONNECTOR") and env.get("ARMADA_SECONDARY_TOUCHSCREEN")
+    )
+    trackpad = trackpad_settings()
     return {
         "power": parse_power(),
         "powerDefaults": factory_power_defaults(),
@@ -40,12 +46,14 @@ def build_config(include_games=True):
         "osVersion": os_version(),
         "ablVersion": abl_version(),
         "ablAutoEnabled": abl_auto_enabled(),
-        "bottomScreenSupported": bool(
-            env.get("ARMADA_SECONDARY_CONNECTOR") and env.get("ARMADA_SECONDARY_TOUCHSCREEN")
-        ),
+        "bottomScreenSupported": dual_screen_supported,
         "bottomScreenEnabled": bottom_screen_enabled(),
         "bottomScreenBrightnessSupported": secondary_brightness is not None,
         "bottomScreenBrightness": secondary_brightness or 0,
+        "trackpadSupported": dual_screen_supported,
+        "trackpadEnabled": trackpad_enabled(),
+        "trackpadSensitivity": trackpad["sensitivity"],
+        "trackpadGlide": trackpad["glide"],
         "sshEnabled": ssh_enabled(),
         "mtpEnabled": mtp_enabled(),
         "desktopMode": desktop_mode(),

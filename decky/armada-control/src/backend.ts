@@ -21,6 +21,9 @@ export const setMtpEnabled = (enabled: boolean) => call<[boolean], boolean>("set
 export const setAblAutoEnabled = (enabled: boolean) => call<[boolean], boolean>("set_abl_auto_enabled", enabled);
 export const setBottomScreenEnabled = (enabled: boolean) => call<[boolean], boolean>("set_bottom_screen_enabled", enabled);
 export const setBottomScreenBrightness = (brightness: number) => call<[number], number>("set_bottom_screen_brightness", brightness);
+export const setTrackpadEnabled = (enabled: boolean) => call<[boolean], boolean>("set_trackpad_enabled", enabled);
+export const setTrackpadSettings = (sensitivity: number, glide: boolean) =>
+  call<[number, boolean], { sensitivity: number; glide: boolean }>("set_trackpad_settings", sensitivity, glide);
 export const setDesktopMode = (value: string) => call<[string], string>("set_desktop_mode", value);
 export const setSleepMode = (value: string) => call<[string], string>("set_sleep_mode", value);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");

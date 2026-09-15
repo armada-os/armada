@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ -z "${DISPLAY:-}" ]]; then
+    echo "armada-trackpad-session: nested Gamescope did not provide an X11 display" >&2
+    exit 1
+fi
+
+# Plain GTK app on gamescope's own Xwayland -- no nested compositor needed.
+exec /usr/libexec/armada/armada-trackpad

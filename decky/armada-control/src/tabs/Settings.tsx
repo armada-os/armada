@@ -7,6 +7,8 @@ import {
   setBottomScreenBrightness as applyBottomScreenBrightness,
   setBottomScreenEnabled as applyBottomScreenEnabled,
   setControllerType as applyControllerType,
+  setTrackpadEnabled as applyTrackpadEnabled,
+  setTrackpadSettings as applyTrackpadSettings,
   setMtpEnabled as applyMtpEnabled,
   setDesktopMode as applyDesktopMode,
   setSleepMode as applySleepMode,
@@ -17,6 +19,7 @@ import { SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
 import type { Config } from "../types";
 
 const BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS: number = 150;
+const TRACKPAD_SENSITIVITY_DELAY_MS: number = 150;
 
 export function Settings({ config, setConfig }: {
   config: Config;
@@ -25,10 +28,15 @@ export function Settings({ config, setConfig }: {
   const bottomScreenBrightnessTimer = useRef<number | undefined>(undefined);
   const bottomScreenBrightnessRequest = useRef<number>(0);
   const appliedBottomScreenBrightness = useRef<number>(config.bottomScreenBrightness);
+  const trackpadSensitivityTimer = useRef<number | undefined>(undefined);
+  const trackpadSensitivityRequest = useRef<number>(0);
+  const appliedTrackpadSensitivity = useRef<number>(config.trackpadSensitivity);
 
   useEffect(() => () => {
     window.clearTimeout(bottomScreenBrightnessTimer.current);
     bottomScreenBrightnessRequest.current += 1;
+    window.clearTimeout(trackpadSensitivityTimer.current);
+    trackpadSensitivityRequest.current += 1;
   }, []);
 
   const setSshEnabled = async (enabled: boolean) => {
@@ -110,6 +118,58 @@ export function Settings({ config, setConfig }: {
       }
     }, BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS);
   };
+  const setTrackpadEnabled = async (enabled: boolean) => {
+    if (enabled === !!config.trackpadEnabled) {
+      return;
+    }
+    setConfig((current) => (current ? {
+      ...current,
+      trackpadEnabled: enabled,
+      // The two bottom-screen modes share one DRM-leased connector.
+      bottomScreenEnabled: enabled ? false : current.bottomScreenEnabled,
+    } : current));
+    try {
+      const applied = await applyTrackpadEnabled(enabled);
+      setConfig((current) => (current ? { ...current, trackpadEnabled: applied } : current));
+    } catch (error) {
+      setConfig((current) => (current ? { ...current, trackpadEnabled: !enabled } : current));
+      toaster.toast({ title: "Could not change Trackpad", body: String(error) });
+    }
+  };
+  const setTrackpadGlide = async (glide: boolean) => {
+    const previous = !!config.trackpadGlide;
+    if (glide === previous) {
+      return;
+    }
+    setConfig((current) => (current ? { ...current, trackpadGlide: glide } : current));
+    try {
+      const applied = await applyTrackpadSettings(config.trackpadSensitivity, glide);
+      setConfig((current) => (current ? { ...current, trackpadGlide: applied.glide } : current));
+    } catch (error) {
+      setConfig((current) => (current ? { ...current, trackpadGlide: previous } : current));
+      toaster.toast({ title: "Could not change Trackpad ball mode", body: String(error) });
+    }
+  };
+  const setTrackpadSensitivity = (sensitivity: number) => {
+    setConfig((current) => (current ? { ...current, trackpadSensitivity: sensitivity } : current));
+    window.clearTimeout(trackpadSensitivityTimer.current);
+    const request = ++trackpadSensitivityRequest.current;
+    trackpadSensitivityTimer.current = window.setTimeout(async () => {
+      try {
+        const applied = await applyTrackpadSettings(sensitivity, !!config.trackpadGlide);
+        if (request !== trackpadSensitivityRequest.current) return;
+        appliedTrackpadSensitivity.current = applied.sensitivity;
+        setConfig((current) => (current ? { ...current, trackpadSensitivity: applied.sensitivity } : current));
+      } catch (error) {
+        if (request !== trackpadSensitivityRequest.current) return;
+        setConfig((current) => (current ? {
+          ...current,
+          trackpadSensitivity: appliedTrackpadSensitivity.current,
+        } : current));
+        toaster.toast({ title: "Could not change Trackpad sensitivity", body: String(error) });
+      }
+    }, TRACKPAD_SENSITIVITY_DELAY_MS);
+  };
   const setDesktopMode = async (value: string) => {
     const previous = config.desktopMode || "desktop";
     setConfig((current: Config | null) => (current ? { ...current, desktopMode: value } : current));
@@ -172,6 +232,34 @@ export function Settings({ config, setConfig }: {
                 step={1}
                 onChange={setBottomScreenBrightness}
               />
+            )}
+          </>
+        )}
+        {config.trackpadSupported && (
+          <>
+            <ToggleRow
+              label="Armada Trackpad"
+              description="Use the second display as a touchpad for the top screen"
+              value={!!config.trackpadEnabled}
+              onChange={setTrackpadEnabled}
+            />
+            {config.trackpadEnabled && (
+              <>
+                <ToggleRow
+                  label="Ball Mode"
+                  description="Cursor keeps gliding after you lift your finger"
+                  value={!!config.trackpadGlide}
+                  onChange={setTrackpadGlide}
+                />
+                <SliderEdit
+                  label="Trackpad Sensitivity"
+                  value={config.trackpadSensitivity}
+                  min={0.1}
+                  max={5}
+                  step={0.1}
+                  onChange={setTrackpadSensitivity}
+                />
+              </>
             )}
           </>
         )}

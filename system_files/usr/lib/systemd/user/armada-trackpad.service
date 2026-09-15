@@ -1,0 +1,16 @@
+[Unit]
+Description=Armada Trackpad -- bottom screen as a touchpad for the top screen
+PartOf=gamescope-session-plus@steam.service
+# The DRM-leased bottom screen can only be owned by one client at a time.
+Conflicts=armada-bottom-screen.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecStartPre=/usr/bin/touch %t/armada-trackpad-active
+ExecStart=/usr/bin/armada-run-bottom -- /usr/libexec/armada/armada-trackpad-session
+ExecStopPost=/usr/bin/rm -f %t/armada-trackpad-active
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=gamescope-session-plus@steam.service
