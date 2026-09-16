@@ -3,6 +3,7 @@ import {
   DialogBody,
   DialogButton,
   DialogFooter,
+  Dropdown,
   Field,
   Focusable,
   ModalRoot,
@@ -16,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { getCompatMappedAppids, reapplyPerf, restartGameMode, saveCompatApplied, saveTweaks } from "../backend";
 import { SelectEdit, SliderEdit } from "../components/widgets";
+import { envPresets, findPreset, resolveEnvValues } from "../lib/envPresets";
 import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
 import { clone } from "../lib/util";
 import { availableGames, editTargetOptions } from "../lib/games";
@@ -159,18 +161,31 @@ function EnvVarModal({
   closeModal,
   initialKey,
   initialValue,
+  fromPresets,
+  known,
   onSave,
   onDelete,
 }: {
   closeModal?: () => void;
   initialKey: string;
   initialValue: string;
+  // Picker mode: the name comes from the documented list instead of a text field.
+  fromPresets?: boolean;
+  // Values already in effect on this profile, so picking a variable shows its current setting.
+  known?: Record<string, string>;
   onSave: (key: string, value: string) => void;
   onDelete?: () => void;
 }) {
   const [key, setKey] = useState(initialKey);
   const [value, setValue] = useState(initialValue);
   const [nameError, setNameError] = useState("");
+  const preset = findPreset(key);
+  const pickPreset = (name: string) => {
+    setKey(name);
+    // The docs list no defaults, so an unset variable with an option list starts empty.
+    setValue(known?.[name] ?? findPreset(name)?.value ?? "");
+    setNameError("");
+  };
   const save = () => {
     const name = key.trim();
     if (!name || name.includes("=") || name.includes("\0")) {
@@ -183,13 +198,41 @@ function EnvVarModal({
   return (
     <ModalRoot onCancel={closeModal}>
       <DialogBody>
-        <TextField label="Name" value={key} onChange={(event) => setKey(event.target.value)} />
+        {fromPresets ? (
+          <Field label="Name" childrenLayout="below" childrenContainerWidth="max">
+            <Dropdown
+              strDefaultLabel="Select a variable"
+              selectedOption={key}
+              rgOptions={envPresets.map((item) => ({ data: item.name, label: item.name }))}
+              onChange={(option) => pickPreset(String(option.data))}
+            />
+          </Field>
+        ) : (
+          <TextField label="Name" value={key} onChange={(event) => setKey(event.target.value)} />
+        )}
+        {preset ? <Field description={preset.description} /> : null}
         {nameError ? <Field description={nameError} /> : null}
-        <TextField label="Value" value={value} onChange={(event) => setValue(event.target.value)} />
+        {preset?.options ? (
+          <Field label="Value" childrenLayout="below" childrenContainerWidth="max">
+            <Dropdown
+              strDefaultLabel="Select a value"
+              selectedOption={value}
+              rgOptions={preset.options}
+              onChange={(option) => setValue(String(option.data))}
+            />
+          </Field>
+        ) : (
+          <TextField
+            label="Value"
+            description={preset?.example ? `e.g. ${preset.example}` : undefined}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        )}
       </DialogBody>
       <DialogFooter>
         <Focusable style={{ display: "flex", flexDirection: "row", gap: "8px", width: "100%" }}>
-          <DialogButton onClick={save}>Save</DialogButton>
+          <DialogButton disabled={fromPresets && (!key || !value)} onClick={save}>Save</DialogButton>
           {onDelete ? (
             <DialogButton
               onClick={() => {
@@ -622,11 +665,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       delete next[key];
     });
   };
-  const openEnvVar = (key: string | null) => {
+  const openEnvVar = (key: string | null, fromPresets = false) => {
     showModal(
       <EnvVarModal
         initialKey={key || ""}
         initialValue={key ? String(ownEnv[key] ?? "") : ""}
+        // A documented variable gets its typed field however it was created.
+        fromPresets={fromPresets || (!!key && !!findPreset(key))}
+        known={resolveEnvValues(ownEnv, globalEnv)}
         onSave={(nextKey, nextValue) => saveEnvVar(key, nextKey, nextValue)}
         onDelete={key ? () => deleteEnvVar(key) : undefined}
       />,
@@ -779,8 +825,11 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
           </div>
         </ButtonItem>
       ))}
+      <ButtonItem layout="below" onClick={() => openEnvVar(null, true)}>
+        + Add Common Variable
+      </ButtonItem>
       <ButtonItem layout="below" onClick={() => openEnvVar(null)}>
-        + Add Variable
+        + Add Custom Variable
       </ButtonItem>
     </>
   );
