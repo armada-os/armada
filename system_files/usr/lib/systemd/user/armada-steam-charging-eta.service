@@ -1,0 +1,10 @@
+[Unit]
+Description=Show UPower charging ETA in Steam Game Mode
+
+[Service]
+ExecStart=/usr/libexec/armada/armada-steam-charging-eta
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
