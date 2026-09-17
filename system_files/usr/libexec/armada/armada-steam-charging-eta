@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import logging
 import os
-import socket
 import subprocess
 import time
 from pathlib import Path
@@ -26,14 +25,6 @@ def write(name, value):
     temporary = ROOT / f".{name}.{os.getpid()}"
     temporary.write_text(f"{value}\n")
     os.replace(temporary, ROOT / name)
-
-
-def notify_ready():
-    address = os.environ["NOTIFY_SOCKET"]
-    if address.startswith("@"):
-        address = "\0" + address[1:]
-    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
-        notify.sendto(b"READY=1", address)
 
 
 def publish():
@@ -66,15 +57,10 @@ def publish():
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    ready = False
     last_error = None
     while True:
         try:
             publish()
-            if not ready:
-                notify_ready()
-                ready = True
-                LOG.info("Steam vpower bridge ready")
             last_error = None
         except Exception as error:
             if str(error) != last_error:
