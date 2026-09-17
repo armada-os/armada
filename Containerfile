@@ -98,12 +98,16 @@ RUN bootc container lint
 
 FROM ${CHUNKAH_IMAGE} AS chunkah
 ARG CHUNKAH_CONFIG_STR
+ARG ARMADA_SOURCE_DATE_EPOCH
 RUN --mount=from=armada-rootfs,target=/chunkah,ro \
     /bin/bash -o pipefail -c ' \
         set -e; \
+        if ! [[ "${ARMADA_SOURCE_DATE_EPOCH}" =~ ^[1-9][0-9]*$ ]]; then \
+            echo "ARMADA_SOURCE_DATE_EPOCH must be a non-zero Unix timestamp" >&2; exit 1; \
+        fi; \
         start=${SECONDS}; \
         chunkah build --verbose --compressed --compression-level 6 \
-            --arch arm64 --max-layers 128 --source-date-epoch 0 \
+            --arch arm64 --max-layers 128 --source-date-epoch "${ARMADA_SOURCE_DATE_EPOCH}" \
             --prune /sysroot/ \
             --label ostree.commit- --label ostree.final-diffid- \
             --config-str "${CHUNKAH_CONFIG_STR}" \

@@ -103,9 +103,11 @@ jobs:
       - name: Get image version
         id: version
         run: |
+          set -euo pipefail
           echo "created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)" >> $GITHUB_OUTPUT
           echo "version=$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_date_epoch=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
 
       - name: Generate image metadata
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -167,6 +169,7 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             ARMADA_VERSION=${{ steps.version.outputs.version }}
+            ARMADA_SOURCE_DATE_EPOCH=${{ steps.version.outputs.source_date_epoch }}
             BASE_IMAGE=${{ steps.chunkah_config.outputs.base_image }}
             CHUNKAH_CONFIG_STR=${{ steps.chunkah_config.outputs.config }}
           # armada-rootfs is consumed through RUN --mount, so retain otherwise-unused stages.
