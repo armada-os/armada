@@ -3,7 +3,6 @@ Description=Publish UPower battery estimates to Steam vpower
 
 [Service]
 Type=notify
-NotifyAccess=main
 TimeoutStartSec=30
 ExecStart=/usr/libexec/armada/armada-steam-charging-eta
 Restart=always
