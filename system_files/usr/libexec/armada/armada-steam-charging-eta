@@ -29,8 +29,7 @@ def set_eta(ws, request_id, seconds):
     expression = (
         "(() => { if (typeof SystemPowerStore === 'undefined') "
         "throw new Error('Steam battery store unavailable'); "
-        f"SystemPowerStore.m_nBatterySecondsRemaining = {seconds}; "
-        "return SystemPowerStore.m_nBatterySecondsRemaining; })()"
+        f"SystemPowerStore.m_nBatterySecondsRemaining = {seconds}; }})()"
     )
     ws.send(json.dumps({
         "id": request_id,
