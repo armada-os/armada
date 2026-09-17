@@ -1,73 +1,86 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-import json
 import logging
+import os
+import socket
 import subprocess
 import time
-import urllib.request
-import websocket
+from pathlib import Path
 
 LOG = logging.getLogger("armada-steam-charging-eta")
+ROOT = Path("/run/vpower")
 UP = [
     "busctl", "--system", "get-property", "org.freedesktop.UPower",
     "/org/freedesktop/UPower/devices/DisplayDevice",
     "org.freedesktop.UPower.Device",
 ]
+ROOT_UP = [*UP[:4], "/org/freedesktop/UPower", "org.freedesktop.UPower"]
 
 
-def upower(name):
-    return int(subprocess.check_output([*UP, name], text=True, timeout=2).split()[-1])
+def upower(name, root=False):
+    output = subprocess.check_output([*(ROOT_UP if root else UP), name], text=True, timeout=2)
+    return output.split(maxsplit=1)[1].strip()
 
 
-def connect():
-    with urllib.request.urlopen("http://127.0.0.1:8080/json/list", timeout=2) as response:
-        target = next(t for t in json.load(response) if t.get("title") == "SharedJSContext")
-    return websocket.create_connection(target["webSocketDebuggerUrl"], timeout=3, suppress_origin=True)
+def write(name, value):
+    temporary = ROOT / f".{name}.{os.getpid()}"
+    temporary.write_text(f"{value}\n")
+    os.replace(temporary, ROOT / name)
 
 
-def set_eta(ws, request_id, seconds):
-    expression = (
-        "(() => { if (typeof SystemPowerStore === 'undefined') "
-        "throw new Error('Steam battery store unavailable'); "
-        f"SystemPowerStore.m_nBatterySecondsRemaining = {seconds}; }})()"
+def notify_ready():
+    address = os.environ["NOTIFY_SOCKET"]
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notify:
+        notify.sendto(b"READY=1", address)
+
+
+def publish():
+    state = int(upower("State"))
+    on_battery = upower("OnBattery", root=True) == "true"
+    percent = float(upower("Percentage"))
+    time_to_full = int(upower("TimeToFull"))
+    time_to_empty = int(upower("TimeToEmpty"))
+
+    charging = state == 1
+    discharging = state in (2, 3, 6)
+    status = (
+        "Charging" if charging else "Discharging" if discharging else
+        "Full" if state == 4 else "Not charging"
     )
-    ws.send(json.dumps({
-        "id": request_id,
-        "method": "Runtime.evaluate",
-        "params": {"expression": expression, "returnByValue": True},
-    }))
-    while True:
-        reply = json.loads(ws.recv())
-        if reply.get("id") != request_id:
-            continue
-        if "error" in reply or "exceptionDetails" in reply.get("result", {}):
-            raise RuntimeError("Steam rejected battery ETA update")
-        return
+    # Steam uses these separate vpower files for charging and discharge ETAs.
+    secs_until_full = time_to_full if charging and time_to_full > 0 else -1
+    secs_until_shutdown = time_to_empty if discharging and time_to_empty > 0 else -1
+
+    values = {
+        "ac_status": "Disconnected" if on_battery else "Connected",
+        "battery_percent": f"{percent:.2f}",
+        "battery_status": status,
+        "secs_until_battery_full": secs_until_full,
+        "secs_until_shutdown_request": secs_until_shutdown,
+    }
+    for name, value in values.items():
+        write(name, value)
 
 
 def main():
-    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
-    ws, request_id, last_error = None, 0, None
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    ready = False
+    last_error = None
     while True:
         try:
-            if upower("State") == 1:
-                seconds = upower("TimeToFull")
-                if ws is None:
-                    ws = connect()
-                request_id += 1
-                set_eta(ws, request_id, seconds if seconds > 0 else -1)
-            elif ws is not None:
-                ws.close()
-                ws = None
+            publish()
+            if not ready:
+                notify_ready()
+                ready = True
+                LOG.info("Steam vpower bridge ready")
             last_error = None
         except Exception as error:
-            if ws is not None:
-                ws.close()
-                ws = None
             if str(error) != last_error:
-                LOG.warning("ETA update unavailable: %s", error)
+                LOG.warning("vpower update unavailable: %s", error)
                 last_error = str(error)
-        time.sleep(1)
+        time.sleep(2)
 
 
 if __name__ == "__main__":
