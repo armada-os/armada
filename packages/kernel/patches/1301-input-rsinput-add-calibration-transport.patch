@@ -1,0 +1,662 @@
+From: Diogo Trindade <diogotr7@gmail.com>
+Subject: [PATCH] input: rsinput: add a constrained calibration transport
+
+The controller MCU owns the persistent KTH577x joystick calibration. The
+vendor tools drive it with six top-level commands, but rsinput currently has
+no way to capture original status payloads or issue those commands.
+
+Add an opt-in misc character device for an engineering calibration helper.
+The device is registered only when the controller's device-tree node has the
+'mcu-calibration' property.
+Reads return versioned fixed-size records containing unmodified 14-byte or
+26-byte status payloads. Writes accept a versioned fixed-size record and
+permit only the observed commands, their exact payload lengths, and their
+valid transaction ordering. Userspace never supplies the UART envelope,
+sequence number, or checksum.
+
+Use serdev_device_write() so success means that the complete frame was
+accepted rather than an arbitrary prefix. Serialize all command TX, correct
+the existing payload length guards, reject suspend during an active
+calibration transaction, and retain open calibration sessions safely across
+device removal.
+
+This interface deliberately does not calculate coefficients, replay anything
+at boot, or claim that END rolls a partially written calibration back.
+---
+diff --git a/Documentation/ABI/testing/dev-rsinput-calibration b/Documentation/ABI/testing/dev-rsinput-calibration
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/Documentation/ABI/testing/dev-rsinput-calibration
+@@ -0,0 +1,44 @@
++What:		/dev/rsinput-calibration-<serdev-name>
++Date:		September 2026
++Contact:	Diogo Trindade <diogotr7@gmail.com>
++Description:
++		Engineering transport for persistent KTH577x stick calibration
++		on controller MCUs handled by rsinput. The misc device is mode
++		0600 and permits one open file at a time. Its parent in sysfs is
++		the associated serdev device.
++
++		Each read must request exactly one 48-byte struct
++		rsinput_cal_sample. The record carries ABI version 1, flags zero,
++		a monotonic timestamp, driver generation, MCU sequence, cumulative
++		FIFO-drop count, and an unmodified 14-byte or 26-byte controller
++		status payload. poll() reports readable records and reports error
++		and hangup after device removal.
++
++		Each write must supply exactly one 64-byte struct
++		rsinput_cal_command with ABI version 1. Reserved bytes and unused
++		payload bytes must be zero. Only these payloads are accepted:
++
++			A0 01		enter left calibration mode
++			A1 01		enter right calibration mode
++			A0 00		end calibration mode
++			A2 + 4 bytes	write left centre
++			A3 + 58 bytes	write left calibration table
++			A5 + 4 bytes	write right centre
++			A6 + 58 bytes	write right calibration table
++
++		The centre and table commands are accepted only for an active side,
++		and a table only after that side's centre. A successful write means
++		the complete UART frame was accepted by serdev; it does not prove
++		that sensor NVM committed the values. A partial or timed-out write
++		is never retried automatically.
++
++		Closing a file with a mode active attempts the generic A0 00 end
++		command. END is cleanup, not rollback: A2, A3, A5, and A6 may alter
++		sensor NVM as soon as their transmission begins. Suspend is rejected
++		while a calibration mode remains active. Probe and resume never replay
++		calibration writes.
++
++		Userspace must continuously drain samples during capture, establish
++		the cumulative-drop baseline from its first record, and reject any
++		increase. It must treat a failed or partial persistent write as an
++		unknown outcome and must not retry it automatically.
+diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
+index 434f883..bdc914f 100644
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -6,19 +6,28 @@
+  *
+  */
+
++#include <linux/atomic.h>
+ #include <linux/errno.h>
++#include <linux/fs.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/init.h>
+ #include <linux/input.h>
+ #include <linux/kernel.h>
++#include <linux/kref.h>
++#include <linux/miscdevice.h>
+ #include <linux/module.h>
+ #include <linux/minmax.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/poll.h>
++#include <linux/property.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/serdev.h>
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/qcom_hv_haptics.h>
++#include <linux/uaccess.h>
+ #include <linux/workqueue.h>
++#include <uapi/linux/rsinput.h>
+ #include <uapi/linux/sched/types.h>
+
+ static int update_params=0;
+@@ -128,6 +137,18 @@ module_param(axis_righty_antideadzone,int,0660);
+
+ #define MCU_VERSION_MAX_LEN       64
+
++#define RSINPUT_TX_TIMEOUT_MS      250
++#define RSINPUT_CAL_LEFT           BIT(0)
++#define RSINPUT_CAL_RIGHT          BIT(1)
++#define RSINPUT_CAL_LEFT_CENTER    BIT(0)
++#define RSINPUT_CAL_LEFT_TABLE     BIT(1)
++#define RSINPUT_CAL_RIGHT_CENTER   BIT(2)
++#define RSINPUT_CAL_RIGHT_TABLE    BIT(3)
++#define RSINPUT_CAL_FIFO_ORDER     8
++#define RSINPUT_CAL_FIFO_SIZE      BIT(RSINPUT_CAL_FIFO_ORDER)
++
++struct rsinput_calibration;
++
+ struct rsinput_driver {
+     struct serdev_device *serdev;
+     struct input_dev *input;
+@@ -145,6 +166,26 @@ struct rsinput_driver {
+     struct work_struct rumble_work;
+     int rumble_effect_id;
+     int rumble_val;
++    struct mutex tx_lock;
++    struct rsinput_calibration *calibration;
++};
++
++struct rsinput_calibration {
++    struct miscdevice miscdev;
++    struct kref refcount;
++    struct mutex io_lock;
++    spinlock_t sample_lock;
++    wait_queue_head_t sample_wait;
++    struct rsinput_cal_sample samples[RSINPUT_CAL_FIFO_SIZE];
++    struct rsinput_driver *drv;
++    atomic_t opened;
++    u32 generation;
++    u32 sample_head;
++    u32 sample_tail;
++    u32 dropped;
++    u8 active_sides;
++    u8 stages;
++    bool disconnected;
+ };
+
+ static const unsigned int keymap[] = {
+@@ -164,10 +205,13 @@ static uint8_t compute_checksum(const uint8_t *data, size_t len) {
+     return checksum;
+ }
+
+-static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd, const uint8_t *data, size_t len) {
++static int __rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd,
++                                  const uint8_t *data, size_t len)
++{
+     uint8_t frame[256];
+     uint8_t checksum = 0;
+     size_t frame_len = 0;
++    ssize_t written;
+
+     frame[frame_len++] = FRAME_HEAD_1;
+     frame[frame_len++] = FRAME_HEAD_2;
+@@ -190,7 +234,26 @@ static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd, const u
+     checksum = compute_checksum(frame, frame_len + 1);
+     frame[frame_len++] = checksum;
+
+-    return serdev_device_write_buf(drv->serdev, frame, frame_len);
++    written = serdev_device_write(drv->serdev, frame, frame_len,
++                                  msecs_to_jiffies(RSINPUT_TX_TIMEOUT_MS));
++    if (written < 0)
++        return written;
++    if (written != frame_len)
++        return -EIO;
++
++    return 0;
++}
++
++static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd,
++                                const uint8_t *data, size_t len)
++{
++    int ret;
++
++    mutex_lock(&drv->tx_lock);
++    ret = __rsinput_send_command(drv, cmd, data, len);
++    mutex_unlock(&drv->tx_lock);
++
++    return ret;
+ }
+
+ static int rsinput_init_commands(struct rsinput_driver *drv) {
+@@ -235,9 +298,13 @@ static int rsinput_init_commands(struct rsinput_driver *drv) {
+ }
+
+ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
++    if (payload_length < 1) {
++        dev_warn(&drv->serdev->dev, "Invalid CMD_COMMOD response length\n");
++        return;
++    }
++
+     switch (data[FRAME_POS_DATA_1]) {
+         case DATA_COMMOD_VERSION:
+-            if (payload_length >= 1) {
+                 char mcu_version[MCU_VERSION_MAX_LEN] = {0};
+                 size_t version_length = payload_length;
+                 if (version_length > MCU_VERSION_MAX_LEN - 1) {
+@@ -246,9 +313,6 @@ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, s
+                 memcpy(mcu_version, &data[FRAME_POS_DATA_1], version_length);
+                 mcu_version[version_length] = '\0';
+                 dev_info(&drv->serdev->dev, "MCU Version: %s\n", mcu_version);
+-            } else {
+-                dev_err(&drv->serdev->dev, "Invalid MCU version response length\n");
+-            }
+             break;
+         case DATA_COMMOD_SET_PAR:
+             dev_info(&drv->serdev->dev, "MCU parameters set successfully\n");
+@@ -259,13 +323,50 @@ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, s
+     }
+ }
+
++static void rsinput_calibration_sample(struct rsinput_driver *drv,
++                                       const uint8_t *frame,
++                                       size_t payload_length)
++{
++    struct rsinput_calibration *cal = READ_ONCE(drv->calibration);
++    struct rsinput_cal_sample *sample;
++    size_t sample_length;
++    unsigned long flags;
++
++    if (!cal || payload_length < RSINPUT_CAL_INPUT_SIZE ||
++        !atomic_read(&cal->opened))
++        return;
++
++    spin_lock_irqsave(&cal->sample_lock, flags);
++    if (cal->sample_head - cal->sample_tail >= RSINPUT_CAL_FIFO_SIZE) {
++        cal->sample_tail++;
++        cal->dropped++;
++    }
++    sample = &cal->samples[cal->sample_head & (RSINPUT_CAL_FIFO_SIZE - 1)];
++    sample->timestamp_ns = ktime_get_ns();
++    sample->generation = ++cal->generation;
++    sample->sequence = frame[FRAME_POS_SEQ];
++    sample_length = min_t(size_t, payload_length, RSINPUT_CAL_STATUS_SIZE);
++    sample->length = sample_length;
++    memset(sample->data, 0, sizeof(sample->data));
++    memcpy(sample->data, &frame[FRAME_POS_DATA_1],
++           sample_length);
++    sample->abi_version = RSINPUT_CAL_ABI_VERSION;
++    sample->flags = 0;
++    cal->sample_head++;
++    spin_unlock_irqrestore(&cal->sample_lock, flags);
++
++    wake_up_interruptible(&cal->sample_wait);
++}
++
+ static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
+-    if (payload_length >= 6) {
++    if (payload_length >= RSINPUT_CAL_INPUT_SIZE) {
+     static unsigned long prev_states;
+     unsigned long keys = data[FRAME_POS_DATA_1] | (data[FRAME_POS_DATA_2] << 8);
+     unsigned long current_states = keys, changes;
+     int i;
+
++    rsinput_calibration_sample(drv, data, payload_length);
++
+     if (update_params) {
+         input_set_abs_params(drv->input, ABS_X,
+             INT_SIGN(axis_leftx_min) * ( abs(axis_leftx_min) - axis_leftx_antideadzone ),
+@@ -442,10 +543,284 @@ static size_t rsinput_rx(struct serdev_device *serdev, const u8 *data, size_t co
+     return count;
+ }
+
++static void rsinput_write_wakeup(struct serdev_device *serdev)
++{
++    serdev_device_write_wakeup(serdev);
++}
++
+ static const struct serdev_device_ops rsinput_rx_ops = {
+     .receive_buf = rsinput_rx,
++    .write_wakeup = rsinput_write_wakeup,
+ };
+
++static bool rsinput_calibration_command_valid(struct rsinput_calibration *cal,
++                                              const struct rsinput_cal_command *cmd)
++{
++    if (cmd->abi_version != RSINPUT_CAL_ABI_VERSION ||
++        memchr_inv(cmd->reserved, 0, sizeof(cmd->reserved)) ||
++        cmd->length > RSINPUT_CAL_MAX_PAYLOAD ||
++        memchr_inv(cmd->data + cmd->length, 0,
++                   RSINPUT_CAL_MAX_PAYLOAD - cmd->length))
++        return false;
++
++    switch (cmd->command) {
++    case RSINPUT_CAL_CMD_LEFT_MODE:
++        if (cmd->length != 1 || cmd->data[0] > 1)
++            return false;
++        return cmd->data[0] ? !(cal->active_sides & RSINPUT_CAL_LEFT) :
++                              cal->active_sides;
++    case RSINPUT_CAL_CMD_RIGHT_MODE:
++        return cmd->length == 1 && cmd->data[0] == 1 &&
++               !(cal->active_sides & RSINPUT_CAL_RIGHT);
++    case RSINPUT_CAL_CMD_LEFT_CENTER:
++        return cmd->length == 4 &&
++               (cal->active_sides & RSINPUT_CAL_LEFT) &&
++               !(cal->stages & (RSINPUT_CAL_LEFT_CENTER |
++                                RSINPUT_CAL_LEFT_TABLE));
++    case RSINPUT_CAL_CMD_LEFT_TABLE:
++        return cmd->length == RSINPUT_CAL_TABLE_SIZE &&
++               (cal->active_sides & RSINPUT_CAL_LEFT) &&
++               (cal->stages & RSINPUT_CAL_LEFT_CENTER) &&
++               !(cal->stages & RSINPUT_CAL_LEFT_TABLE);
++    case RSINPUT_CAL_CMD_RIGHT_CENTER:
++        return cmd->length == 4 &&
++               (cal->active_sides & RSINPUT_CAL_RIGHT) &&
++               !(cal->stages & (RSINPUT_CAL_RIGHT_CENTER |
++                                RSINPUT_CAL_RIGHT_TABLE));
++    case RSINPUT_CAL_CMD_RIGHT_TABLE:
++        return cmd->length == RSINPUT_CAL_TABLE_SIZE &&
++               (cal->active_sides & RSINPUT_CAL_RIGHT) &&
++               (cal->stages & RSINPUT_CAL_RIGHT_CENTER) &&
++               !(cal->stages & RSINPUT_CAL_RIGHT_TABLE);
++    default:
++        return false;
++    }
++}
++
++static void rsinput_calibration_advance(struct rsinput_calibration *cal,
++                                        const struct rsinput_cal_command *cmd)
++{
++    switch (cmd->command) {
++    case RSINPUT_CAL_CMD_LEFT_MODE:
++        if (cmd->data[0]) {
++            cal->active_sides |= RSINPUT_CAL_LEFT;
++            cal->stages &= ~(RSINPUT_CAL_LEFT_CENTER |
++                             RSINPUT_CAL_LEFT_TABLE);
++        } else {
++            cal->active_sides = 0;
++            cal->stages = 0;
++        }
++        break;
++    case RSINPUT_CAL_CMD_RIGHT_MODE:
++        cal->active_sides |= RSINPUT_CAL_RIGHT;
++        cal->stages &= ~(RSINPUT_CAL_RIGHT_CENTER |
++                         RSINPUT_CAL_RIGHT_TABLE);
++        break;
++    case RSINPUT_CAL_CMD_LEFT_CENTER:
++        cal->stages |= RSINPUT_CAL_LEFT_CENTER;
++        break;
++    case RSINPUT_CAL_CMD_LEFT_TABLE:
++        cal->stages |= RSINPUT_CAL_LEFT_TABLE;
++        break;
++    case RSINPUT_CAL_CMD_RIGHT_CENTER:
++        cal->stages |= RSINPUT_CAL_RIGHT_CENTER;
++        break;
++    case RSINPUT_CAL_CMD_RIGHT_TABLE:
++        cal->stages |= RSINPUT_CAL_RIGHT_TABLE;
++        break;
++    }
++}
++
++static void rsinput_calibration_release_ref(struct kref *ref)
++{
++    struct rsinput_calibration *cal =
++        container_of(ref, struct rsinput_calibration, refcount);
++
++    kfree(cal->miscdev.name);
++    kfree(cal);
++}
++
++static int rsinput_calibration_open(struct inode *inode, struct file *file)
++{
++    struct miscdevice *misc = file->private_data;
++    struct rsinput_calibration *cal =
++        container_of(misc, struct rsinput_calibration, miscdev);
++
++    if (atomic_cmpxchg(&cal->opened, 0, 1))
++        return -EBUSY;
++    if (!kref_get_unless_zero(&cal->refcount)) {
++        atomic_set(&cal->opened, 0);
++        return -ENODEV;
++    }
++
++    spin_lock_irq(&cal->sample_lock);
++    if (cal->disconnected) {
++        spin_unlock_irq(&cal->sample_lock);
++        atomic_set(&cal->opened, 0);
++        kref_put(&cal->refcount, rsinput_calibration_release_ref);
++        return -ENODEV;
++    }
++    /* A new reader starts with samples produced after this open. */
++    cal->sample_tail = cal->sample_head;
++    cal->dropped = 0;
++    spin_unlock_irq(&cal->sample_lock);
++
++    file->private_data = cal;
++    return nonseekable_open(inode, file);
++}
++
++static ssize_t rsinput_calibration_read(struct file *file, char __user *buf,
++                                        size_t count, loff_t *ppos)
++{
++    struct rsinput_calibration *cal = file->private_data;
++    struct rsinput_cal_sample sample;
++    unsigned long flags;
++    int ret;
++
++    if (count != sizeof(sample))
++        return -EINVAL;
++
++    if (!(file->f_flags & O_NONBLOCK)) {
++        ret = wait_event_interruptible(cal->sample_wait,
++                READ_ONCE(cal->disconnected) ||
++                READ_ONCE(cal->sample_head) !=
++                    READ_ONCE(cal->sample_tail));
++        if (ret)
++            return ret;
++    }
++
++    spin_lock_irqsave(&cal->sample_lock, flags);
++    if (cal->sample_head == cal->sample_tail) {
++        ret = cal->disconnected ? -ENODEV : -EAGAIN;
++        spin_unlock_irqrestore(&cal->sample_lock, flags);
++        return ret;
++    }
++    sample = cal->samples[cal->sample_tail & (RSINPUT_CAL_FIFO_SIZE - 1)];
++    cal->sample_tail++;
++    sample.dropped = cal->dropped;
++    spin_unlock_irqrestore(&cal->sample_lock, flags);
++
++    if (copy_to_user(buf, &sample, sizeof(sample)))
++        return -EFAULT;
++    return sizeof(sample);
++}
++
++static ssize_t rsinput_calibration_write(struct file *file,
++                                         const char __user *buf,
++                                         size_t count, loff_t *ppos)
++{
++    struct rsinput_calibration *cal = file->private_data;
++    struct rsinput_cal_command cmd;
++    u8 payload[RSINPUT_CAL_MAX_PAYLOAD + 1];
++    int ret;
++
++    if (count != sizeof(cmd))
++        return -EINVAL;
++    if (copy_from_user(&cmd, buf, sizeof(cmd)))
++        return -EFAULT;
++
++    mutex_lock(&cal->io_lock);
++    if (cal->disconnected || !cal->drv) {
++        ret = -ENODEV;
++        goto out;
++    }
++    if (!rsinput_calibration_command_valid(cal, &cmd)) {
++        ret = -EINVAL;
++        goto out;
++    }
++
++    payload[0] = cmd.command;
++    memcpy(&payload[1], cmd.data, cmd.length);
++    ret = rsinput_send_command(cal->drv, CMD_COMMOD, payload,
++                               cmd.length + 1);
++    if (!ret) {
++        rsinput_calibration_advance(cal, &cmd);
++        ret = sizeof(cmd);
++    }
++out:
++    mutex_unlock(&cal->io_lock);
++    return ret;
++}
++
++static __poll_t rsinput_calibration_poll(struct file *file, poll_table *wait)
++{
++    struct rsinput_calibration *cal = file->private_data;
++
++    poll_wait(file, &cal->sample_wait, wait);
++    if (READ_ONCE(cal->disconnected))
++        return EPOLLERR | EPOLLHUP;
++    if (READ_ONCE(cal->sample_head) !=
++        READ_ONCE(cal->sample_tail))
++        return EPOLLIN | EPOLLRDNORM;
++    return 0;
++}
++
++static int rsinput_calibration_release(struct inode *inode, struct file *file)
++{
++    struct rsinput_calibration *cal = file->private_data;
++    const u8 end = 0;
++
++    mutex_lock(&cal->io_lock);
++    if (cal->active_sides && cal->drv && !cal->disconnected) {
++        const u8 payload[] = { RSINPUT_CAL_CMD_LEFT_MODE, end };
++
++        rsinput_send_command(cal->drv, CMD_COMMOD, payload, sizeof(payload));
++    }
++    cal->active_sides = 0;
++    cal->stages = 0;
++    mutex_unlock(&cal->io_lock);
++
++    atomic_set(&cal->opened, 0);
++    kref_put(&cal->refcount, rsinput_calibration_release_ref);
++    return 0;
++}
++
++static const struct file_operations rsinput_calibration_fops = {
++    .owner = THIS_MODULE,
++    .open = rsinput_calibration_open,
++    .read = rsinput_calibration_read,
++    .write = rsinput_calibration_write,
++    .poll = rsinput_calibration_poll,
++    .release = rsinput_calibration_release,
++    .llseek = noop_llseek,
++};
++
++static int rsinput_calibration_register(struct rsinput_driver *drv)
++{
++    struct rsinput_calibration *cal;
++    int ret;
++
++    cal = kzalloc(sizeof(*cal), GFP_KERNEL);
++    if (!cal)
++        return -ENOMEM;
++
++    cal->miscdev.minor = MISC_DYNAMIC_MINOR;
++    cal->miscdev.name = kasprintf(GFP_KERNEL, "rsinput-calibration-%s",
++                                  dev_name(&drv->serdev->dev));
++    if (!cal->miscdev.name) {
++        kfree(cal);
++        return -ENOMEM;
++    }
++    cal->miscdev.fops = &rsinput_calibration_fops;
++    cal->miscdev.parent = &drv->serdev->dev;
++    cal->miscdev.mode = 0600;
++    kref_init(&cal->refcount);
++    mutex_init(&cal->io_lock);
++    spin_lock_init(&cal->sample_lock);
++    init_waitqueue_head(&cal->sample_wait);
++    atomic_set(&cal->opened, 0);
++    cal->drv = drv;
++
++    ret = misc_register(&cal->miscdev);
++    if (ret) {
++        kref_put(&cal->refcount, rsinput_calibration_release_ref);
++        return ret;
++    }
++
++    WRITE_ONCE(drv->calibration, cal);
++    return 0;
++}
++
+ static void rsinput_rumble_work(struct work_struct *work)
+ {
+     struct rsinput_driver *drv =
+@@ -581,6 +956,7 @@ static int rsinput_probe(struct serdev_device *serdev) {
+
+     drv->serdev = serdev;
+     drv->sequence_number = 0;
++    mutex_init(&drv->tx_lock);
+
+     serdev_device_set_drvdata(serdev, drv);
+
+@@ -664,13 +1040,35 @@ static int rsinput_probe(struct serdev_device *serdev) {
+         return error;
+     }
+
++    if (device_property_read_bool(&serdev->dev, "mcu-calibration")) {
++        error = rsinput_calibration_register(drv);
++        if (error)
++            dev_warn(&serdev->dev,
++                     "Calibration transport unavailable: %d\n", error);
++    }
++
+     return 0;
+ }
+
+ static void rsinput_remove(struct serdev_device *serdev) {
+     struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
+-
++    struct rsinput_calibration *cal = READ_ONCE(drv->calibration);
++
++    if (cal) {
++        misc_deregister(&cal->miscdev);
++        mutex_lock(&cal->io_lock);
++        cal->disconnected = true;
++        cal->drv = NULL;
++        cal->active_sides = 0;
++        cal->stages = 0;
++        mutex_unlock(&cal->io_lock);
++        wake_up_interruptible(&cal->sample_wait);
++    }
+     serdev_device_close(serdev);
++    if (cal) {
++        WRITE_ONCE(drv->calibration, NULL);
++        kref_put(&cal->refcount, rsinput_calibration_release_ref);
++    }
+     input_unregister_device(drv->input);
+     /* flush, not cancel: unregister queues the final rumble stop */
+     if (drv->rumble_work.func)
+@@ -687,6 +1085,10 @@ static void rsinput_remove(struct serdev_device *serdev) {
+ static int rsinput_suspend(struct device *dev)
+ {
+     struct rsinput_driver *drv = dev_get_drvdata(dev);
++    struct rsinput_calibration *cal = READ_ONCE(drv->calibration);
++
++    if (cal && READ_ONCE(cal->active_sides))
++        return -EBUSY;
+
+     /* a pending rumble start must not fire into or after haptics suspend */
+     if (drv->rumble_work.func)
+diff --git a/include/uapi/linux/rsinput.h b/include/uapi/linux/rsinput.h
+new file mode 100644
+index 0000000..f46811e
+--- /dev/null
++++ b/include/uapi/linux/rsinput.h
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
++#ifndef _UAPI_LINUX_RSINPUT_H
++#define _UAPI_LINUX_RSINPUT_H
++
++#include <linux/types.h>
++
++#define RSINPUT_CAL_ABI_VERSION 1
++#define RSINPUT_CAL_MAX_PAYLOAD 58
++#define RSINPUT_CAL_TABLE_SIZE  58
++#define RSINPUT_CAL_INPUT_SIZE  14
++#define RSINPUT_CAL_STATUS_SIZE 26
++
++#define RSINPUT_CAL_CMD_LEFT_MODE    0xa0
++#define RSINPUT_CAL_CMD_RIGHT_MODE   0xa1
++#define RSINPUT_CAL_CMD_LEFT_CENTER  0xa2
++#define RSINPUT_CAL_CMD_LEFT_TABLE   0xa3
++#define RSINPUT_CAL_CMD_RIGHT_CENTER 0xa5
++#define RSINPUT_CAL_CMD_RIGHT_TABLE  0xa6
++
++/* A complete write record. Unused data bytes must be zero. */
++struct rsinput_cal_command {
++    __u16 abi_version;
++    __u8 command;
++    __u8 length;
++    __u8 data[RSINPUT_CAL_MAX_PAYLOAD];
++    __u8 reserved[2];
++};
++
++/* A complete read record containing an unmodified status payload. */
++struct rsinput_cal_sample {
++    __aligned_u64 timestamp_ns;
++    __u32 generation;
++    __u8 sequence;
++    __u8 length;
++    __u8 data[RSINPUT_CAL_STATUS_SIZE];
++    __u32 dropped;
++    __u16 abi_version;
++    __u16 flags;
++};
++
++#endif /* _UAPI_LINUX_RSINPUT_H */

@@ -75,6 +75,7 @@
 1004-input-haptics-stop-zero-amplitude-immediately.patch
 1300-input-rsinput-axis-deadzone.patch
 0515-input-rsinput-reassemble-uart-frames-instead-of-dropping-them.patch
+1301-input-rsinput-add-calibration-transport.patch
 
 # ============== Audio ==============
 0059-ASoC-aw88395-lib-skip-monitor-sections-in-V1-ACF-parse.patch
