@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Applies armada's software dimming to a primary-panel backlight write.
+
+Some panels show a visible tint at very low PWM-driven brightness. Rather
+than clamping requested brightness to a safe minimum (which would flatten
+the bottom of the range), this rescales the requested value onto
+[hardware minimum, max] of the target panel - the panel's hardware
+backlight never goes below that minimum - and covers the range below it
+with software (compositor) dimming instead, via gamescope's
+GAMESCOPE_SDR_INPUT_GAIN, so what's actually displayed still matches
+what was requested exactly. The two combine continuously across the
+whole range: at the top of the range the software gain is 1.0 (no-op),
+tapering in as requested brightness drops, so there is no visible jump
+at any point, including when software dimming itself is toggled on/off.
+
+Usage:
+  armada-software-dim apply TARGET_BACKLIGHT_DIR REQUESTED_VALUE
+  armada-software-dim reset
+
+REQUESTED_VALUE is on the target panel's own 0..max_brightness scale
+(the caller has already rescaled if it came from a differently-scaled
+source panel). `reset` sets the software gain back to 1.0 (no dim) -
+call it whenever software dimming is turned off, so a dim from while it
+was on doesn't linger.
+
+Must run as root (`apply` writes TARGET_BACKLIGHT_DIR/brightness).
+Best-effort sets the software gain in the armada session's gamescope on
+DISPLAY=:0 - a missing/inactive session doesn't fail the caller.
+"""
+import ctypes
+import ctypes.util
+import os
+import pwd
+import struct
+import sys
+
+DISPLAY_CONFIG = "/etc/armada/display.conf"
+DEFAULT_DIM_PERCENT = 8
+SESSION_USER = "armada"
+SESSION_DISPLAY = ":0"
+XA_CARDINAL = 6
+
+
+def read_display_config():
+    values = {}
+    try:
+        with open(DISPLAY_CONFIG, encoding="utf-8") as f:
+            for line in f:
+                name, sep, raw = line.partition("=")
+                if sep:
+                    values[name.strip()] = raw.strip()
+    except OSError:
+        pass
+    return values
+
+
+def dim_percent():
+    raw = read_display_config().get("software_dim_percent", "")
+    try:
+        percent = int(raw)
+    except ValueError:
+        return DEFAULT_DIM_PERCENT
+    return percent if 0 <= percent <= 100 else DEFAULT_DIM_PERCENT
+
+
+def set_sdr_input_gain(gain):
+    """Drop to the session user and set gamescope's SDR gain via libX11."""
+    pid = os.fork()
+    if pid != 0:
+        _, status = os.waitpid(pid, 0)
+        return status == 0
+
+    try:
+        user = pwd.getpwnam(SESSION_USER)
+        os.setgroups([])
+        os.setgid(user.pw_gid)
+        os.setuid(user.pw_uid)
+        os.environ["DISPLAY"] = SESSION_DISPLAY
+
+        libX11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+        libX11.XOpenDisplay.restype = ctypes.c_void_p
+        libX11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        libX11.XInternAtom.restype = ctypes.c_ulong
+        libX11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        libX11.XDefaultRootWindow.restype = ctypes.c_ulong
+        libX11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        libX11.XChangeProperty.restype = ctypes.c_int
+        libX11.XChangeProperty.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+            ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
+        ]
+        libX11.XSync.restype = ctypes.c_int
+        libX11.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+
+        dpy = libX11.XOpenDisplay(None)
+        if not dpy:
+            os._exit(1)
+        root = libX11.XDefaultRootWindow(dpy)
+        atom = libX11.XInternAtom(dpy, b"GAMESCOPE_SDR_INPUT_GAIN", False)
+        buf = struct.pack("=f", gain)
+        cbuf = ctypes.create_string_buffer(buf, len(buf))
+        libX11.XChangeProperty(dpy, root, atom, XA_CARDINAL, 32, 0, cbuf, 1)
+        libX11.XSync(dpy, False)
+        os._exit(0)
+    except Exception:
+        os._exit(1)
+
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "reset":
+        return 0 if set_sdr_input_gain(1.0) else 1
+
+    if len(sys.argv) != 4 or sys.argv[1] != "apply":
+        print(__doc__, file=sys.stderr)
+        return 2
+
+    tgt_dir, requested_s = sys.argv[2], sys.argv[3]
+    try:
+        requested = int(requested_s)
+    except ValueError:
+        print("invalid requested value", file=sys.stderr)
+        return 1
+
+    try:
+        with open(os.path.join(tgt_dir, "max_brightness"), encoding="utf-8") as f:
+            tgt_max = int(f.read().strip())
+    except (OSError, ValueError):
+        print("could not read target max_brightness", file=sys.stderr)
+        return 1
+    if tgt_max <= 0:
+        print("invalid target max_brightness", file=sys.stderr)
+        return 1
+
+    requested = max(0, min(requested, tgt_max))
+    requested_fraction = requested / tgt_max
+    minimum_fraction = dim_percent() / 100
+    hardware_fraction = minimum_fraction + requested_fraction * (1 - minimum_fraction)
+    hardware_value = round(hardware_fraction * tgt_max)
+    software_gain = (requested_fraction / hardware_fraction) if hardware_fraction > 0 else 1.0
+
+    try:
+        with open(os.path.join(tgt_dir, "brightness"), "w", encoding="utf-8") as f:
+            f.write(f"{hardware_value}\n")
+    except OSError:
+        print("could not write target brightness", file=sys.stderr)
+        return 1
+
+    set_sdr_input_gain(software_gain)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
