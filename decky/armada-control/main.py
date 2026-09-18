@@ -2,13 +2,13 @@ import asyncio
 
 from armada_control.calibration import (
     begin_session,
-    begin_mcu_calibration_preview,
+    begin_mcu_calibration_capture,
     commit_mcu_calibration,
     controller_state,
-    end_mcu_calibration_preview,
+    end_mcu_calibration_capture,
     end_session,
     mcu_calibration_capability,
-    mcu_calibration_preview_status,
+    mcu_calibration_capture_status,
     reset_calibration_params,
     save_calibration,
 )
@@ -116,14 +116,14 @@ class Plugin:
     async def get_mcu_calibration_capability(self):
         return await asyncio.to_thread(mcu_calibration_capability)
 
-    async def begin_mcu_calibration_preview(self, token, stick, phase):
-        return await asyncio.to_thread(begin_mcu_calibration_preview, token, stick, phase)
+    async def begin_mcu_calibration_capture(self, token, stick, phase):
+        return await asyncio.to_thread(begin_mcu_calibration_capture, token, stick, phase)
 
-    async def get_mcu_calibration_preview(self, token):
-        return await asyncio.to_thread(mcu_calibration_preview_status, token)
+    async def get_mcu_calibration_capture(self, token):
+        return await asyncio.to_thread(mcu_calibration_capture_status, token)
 
-    async def end_mcu_calibration_preview(self, token):
-        return await asyncio.to_thread(end_mcu_calibration_preview, token)
+    async def end_mcu_calibration_capture(self, token):
+        return await asyncio.to_thread(end_mcu_calibration_capture, token)
 
     async def commit_mcu_calibration(self, token):
         return await asyncio.to_thread(commit_mcu_calibration, token)

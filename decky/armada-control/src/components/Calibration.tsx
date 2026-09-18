@@ -8,22 +8,23 @@ import {
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import {
-  beginMcuCalibrationPreview,
+  beginMcuCalibrationCapture,
   commitMcuCalibration,
   beginCalibrationSession,
-  endMcuCalibrationPreview,
+  endMcuCalibrationCapture,
   endCalibrationSession,
   getControllerState,
   getMcuCalibrationCapability,
-  getMcuCalibrationPreview,
+  getMcuCalibrationCapture,
   resetCalibration,
   saveCalibration,
 } from "../backend";
 import { t } from "../i18n";
 import { makeCapture, normalizedValue, triggerPercent, updateCapture } from "../lib/calibration";
-import type { CalibrationState, Capture, McuCalibrationCapability, McuCalibrationPreview } from "../types";
+import { centerOverlay, type StickOverlay } from "../lib/mcuCalibration";
+import type { CalibrationState, Capture, McuCalibrationCapability, McuCalibrationCapture } from "../types";
 
-type Phase = "idle" | "recording" | "mcu-preview" | "mcu-complete" | "mcu-confirm";
+type Phase = "idle" | "recording" | "mcu-capture" | "mcu-ready" | "mcu-applying" | "mcu-applied";
 
 type OverlayBar = { label: string; fraction: number };
 
@@ -34,6 +35,36 @@ const MCU_STEPS = [
   { stick: "right", phase: "range" },
 ] as const;
 
+const COMPASS_ANGLES = [270, 315, 0, 45, 90, 135, 180, 225];
+
+function RimDots({ overlay }: { overlay: StickOverlay }) {
+  return (
+    <>
+      {overlay.dots.map((filled, index) => {
+        const angle = (COMPASS_ANGLES[index] * Math.PI) / 180;
+        const pending = overlay.pendingIndex === index;
+        return (
+          <div
+            key={index}
+            style={{
+              position: "absolute",
+              width: "10px",
+              height: "10px",
+              margin: "-5px 0 0 -5px",
+              borderRadius: "50%",
+              background: filled ? "#2677d8" : "rgba(255,255,255,0.10)",
+              border: pending ? "2px solid #ffffff" : "1px solid rgba(255,255,255,0.35)",
+              left: `${50 + 47 * Math.cos(angle)}%`,
+              top: `${50 + 47 * Math.sin(angle)}%`,
+              animation: pending ? "armada-cal-pulse 1.1s ease-in-out infinite" : undefined,
+            }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 function OverlayBar({ bar }: { bar: OverlayBar }) {
   return (
     <div style={{ marginTop: "10px" }}>
@@ -43,7 +74,7 @@ function OverlayBar({ bar }: { bar: OverlayBar }) {
   );
 }
 
-function StickPlot({ title, xName, yName, state, bar }: { title: string; xName: string; yName: string; state: CalibrationState | null; bar?: OverlayBar }) {
+function StickPlot({ title, xName, yName, state, overlay, bar }: { title: string; xName: string; yName: string; state: CalibrationState | null; overlay?: StickOverlay; bar?: OverlayBar }) {
   const x = normalizedValue(state, xName);
   const y = normalizedValue(state, yName);
   return (
@@ -74,6 +105,7 @@ function StickPlot({ title, xName, yName, state, bar }: { title: string; xName: 
             top: `${50 + y * 44}%`,
           }}
         />
+        {overlay ? <RimDots overlay={overlay} /> : null}
       </div>
       {bar ? <OverlayBar bar={bar} /> : null}
     </div>
@@ -103,6 +135,11 @@ const focusStyles = `
     -webkit-filter: none !important;
     filter: none !important;
   }
+
+  @keyframes armada-cal-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
 `;
 
 function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
@@ -110,10 +147,10 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
   const [capture, setCapture] = useState<Capture | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [mcuCapability, setMcuCapability] = useState<McuCalibrationCapability | null>(null);
-  const [mcuPreview, setMcuPreview] = useState<McuCalibrationPreview | null>(null);
+  const [mcuCapture, setMcuCapture] = useState<McuCalibrationCapture | null>(null);
   const [mcuCommitError, setMcuCommitError] = useState("");
-  const [mcuCommitted, setMcuCommitted] = useState(false);
-  const sessionToken = useRef(`${Date.now()}-${Math.random()}`);
+  const inputSessionToken = useRef(`${Date.now()}-${Math.random()}`);
+  const mcuSessionToken = useRef(`${Date.now()}-${Math.random()}`);
   const phaseRef = useRef<Phase>("idle");
   const canApply = !!state?.canApply;
   useEffect(() => {
@@ -154,14 +191,14 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
   }, []);
 
   useEffect(() => {
-    if (phase !== "mcu-preview") return;
+    if (phase !== "mcu-capture") return;
     let cancelled = false;
     const tick = async () => {
       try {
-        const next = await getMcuCalibrationPreview(sessionToken.current);
-        if (!cancelled) setMcuPreview(next);
+        const next = await getMcuCalibrationCapture(mcuSessionToken.current);
+        if (!cancelled) setMcuCapture(next);
       } catch (error) {
-        if (!cancelled) setMcuPreview((current) => ({
+        if (!cancelled) setMcuCapture((current) => ({
           ...(current || { stick: "left", phase: "center", complete: false, progress: {} }),
           error: String(error),
         }));
@@ -177,16 +214,17 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
 
   // Keep calibration input from reaching Steam behind the modal.
   useEffect(() => {
-    const token = sessionToken.current;
-    beginCalibrationSession(token).catch(() => {});
+    const inputToken = inputSessionToken.current;
+    beginCalibrationSession(inputToken).catch(() => {});
     return () => {
-      endMcuCalibrationPreview(token).catch(() => {});
-      endCalibrationSession(token).catch(() => {});
+      endMcuCalibrationCapture(mcuSessionToken.current).catch(() => {});
+      endCalibrationSession(inputToken).catch(() => {});
     };
   }, []);
 
   const close = () => {
-    endMcuCalibrationPreview(sessionToken.current).catch(() => {});
+    if (phaseRef.current === "mcu-applying") return;
+    endMcuCalibrationCapture(mcuSessionToken.current).catch(() => {});
     closeModal?.();
   };
   const start = () => {
@@ -213,85 +251,96 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
       setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
     }
   };
-  const startMcuPreview = async (stick: "left" | "right", previewPhase: "center" | "range") => {
+  const startMcuCapture = async (stick: "left" | "right", capturePhase: "center" | "range") => {
     try {
-      const next = await beginMcuCalibrationPreview(sessionToken.current, stick, previewPhase);
-      setMcuPreview(next);
-      setPhase("mcu-preview");
+      const next = await beginMcuCalibrationCapture(mcuSessionToken.current, stick, capturePhase);
+      setMcuCapture(next);
+      setPhase("mcu-capture");
     } catch (error) {
-      setMcuPreview({ stick, phase: previewPhase, complete: false, progress: {}, error: String(error) });
-      setPhase("mcu-preview");
+      setMcuCapture({ stick, phase: capturePhase, complete: false, progress: {}, error: String(error) });
+      setPhase("mcu-capture");
     }
   };
-  const stopMcuPreview = async () => {
-    await endMcuCalibrationPreview(sessionToken.current).catch(() => {});
+  const stopMcuCapture = async () => {
+    await endMcuCalibrationCapture(mcuSessionToken.current).catch(() => {});
     setPhase("idle");
   };
   const startMcuWizard = () => {
-    setMcuCommitted(false);
+    mcuSessionToken.current = `${Date.now()}-${Math.random()}`;
     setMcuCommitError("");
-    startMcuPreview("left", "center");
+    startMcuCapture("left", "center");
   };
   const continueMcuWizard = async () => {
-    if (!mcuPreview?.complete) return;
-    await endMcuCalibrationPreview(sessionToken.current).catch(() => {});
-    const index = MCU_STEPS.findIndex((step) => step.stick === mcuPreview.stick && step.phase === mcuPreview.phase);
+    if (!mcuCapture?.complete) return;
+    await endMcuCalibrationCapture(mcuSessionToken.current).catch(() => {});
+    const index = MCU_STEPS.findIndex((step) => step.stick === mcuCapture.stick && step.phase === mcuCapture.phase);
     const next = MCU_STEPS[index + 1];
     if (!next) {
-      setPhase("mcu-complete");
+      setPhase("mcu-ready");
     } else {
-      await startMcuPreview(next.stick, next.phase);
+      await startMcuCapture(next.stick, next.phase);
     }
   };
   const commitMcuWizard = async () => {
+    setPhase("mcu-applying");
     try {
-      await commitMcuCalibration(sessionToken.current);
+      await commitMcuCalibration(mcuSessionToken.current);
       setMcuCommitError("");
-      setMcuCommitted(true);
+      setPhase("mcu-applied");
     } catch (error) {
       setMcuCommitError(String(error));
+      setPhase("mcu-ready");
     }
-    setPhase("mcu-complete");
   };
 
-  const activePreview = phase === "mcu-preview" && mcuPreview && !mcuPreview.error ? mcuPreview : null;
+  const activeCapture = phase === "mcu-capture" && mcuCapture && !mcuCapture.error ? mcuCapture : null;
+  const overlayFor = (stick: "left" | "right"): StickOverlay | undefined => {
+    if (!activeCapture || activeCapture.stick !== stick || activeCapture.phase !== "center") return undefined;
+    return centerOverlay(stick, activeCapture.progress.coveredDirections, activeCapture.progress.pendingDirection);
+  };
   const barFor = (stick: "left" | "right"): OverlayBar | undefined => {
-    if (!activePreview || activePreview.stick !== stick) return undefined;
-    if (activePreview.phase === "center") {
-      const stable = activePreview.progress.stableSamples ?? 0;
-      const stableGoal = activePreview.progress.stableGoal || 250;
-      return { label: t("calibration.centerProgress", { stable, goal: stableGoal }), fraction: stableGoal ? stable / stableGoal : 0 };
+    if (!activeCapture || activeCapture.stick !== stick) return undefined;
+    if (activeCapture.phase === "center") {
+      const covered = activeCapture.progress.directionCount ?? 0;
+      const goal = activeCapture.progress.directionGoal || 8;
+      const pending = activeCapture.progress.pendingDirection;
+      if (pending) {
+        const stable = activeCapture.progress.stableSamples ?? 0;
+        const stableGoal = activeCapture.progress.stableGoal || 30;
+        return { label: t("calibration.returnProgress", { stable, goal: stableGoal }), fraction: stableGoal ? stable / stableGoal : 0 };
+      }
+      return { label: t("calibration.centerProgress", { covered, goal }), fraction: covered / goal };
     }
-    const turns = activePreview.progress.turns ?? 0;
-    const turnGoal = activePreview.progress.turnGoal || 4;
-    const headings = activePreview.progress.coveredHeadings ?? 0;
-    const headingGoal = activePreview.progress.headingGoal || 8;
+    const turns = activeCapture.progress.turns ?? 0;
+    const turnGoal = activeCapture.progress.turnGoal || 4;
+    const headings = activeCapture.progress.coveredHeadings ?? 0;
+    const headingGoal = activeCapture.progress.headingGoal || 8;
     return {
       label: t("calibration.turnProgress", { turns: turns.toFixed(1), goal: turnGoal, headings, headingGoal }),
       fraction: Math.min(turnGoal ? turns / turnGoal : 0, headingGoal ? headings / headingGoal : 0),
     };
   };
 
-  const wizardStep = mcuPreview
-    ? MCU_STEPS.findIndex((step) => step.stick === mcuPreview.stick && step.phase === mcuPreview.phase) + 1
+  const wizardStep = mcuCapture
+    ? MCU_STEPS.findIndex((step) => step.stick === mcuCapture.stick && step.phase === mcuCapture.phase) + 1
     : 0;
 
   const instructions = !state
     ? t("calibration.checking")
-    : phase === "mcu-preview"
-      ? mcuPreview?.error
-        ? t("calibration.previewStopped", { error: mcuPreview.error })
-        : mcuPreview?.phase === "center"
+    : phase === "mcu-capture"
+      ? mcuCapture?.error
+        ? t("calibration.captureStopped", { error: mcuCapture.error })
+        : mcuCapture?.phase === "center"
           ? t("calibration.centerStep", { step: wizardStep, total: MCU_STEPS.length })
           : t("calibration.rangeStep", { step: wizardStep, total: MCU_STEPS.length })
-    : phase === "mcu-confirm"
-      ? t("calibration.confirmApply")
-    : phase === "mcu-complete"
+    : phase === "mcu-ready"
       ? mcuCommitError
         ? t("calibration.notApplied", { error: mcuCommitError })
-        : mcuCommitted
-          ? t("calibration.applied")
-          : t("calibration.review")
+        : t("calibration.readyToApply")
+    : phase === "mcu-applying"
+      ? t("calibration.applying")
+    : phase === "mcu-applied"
+      ? t("calibration.applied")
     : phase === "recording"
       ? mcuCapability?.available
         ? t("calibration.triggerCapture")
@@ -308,10 +357,10 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
     <ModalRoot onCancel={close}>
       <DialogBody>
         <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "22px" }}>
-          <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state} bar={barFor("left")} />
-          <StickPlot title={t("calibration.rightStick")} xName="right_x" yName="right_y" state={state} bar={barFor("right")} />
+          <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state} overlay={overlayFor("left")} bar={barFor("left")} />
+          <StickPlot title={t("calibration.rightStick")} xName="right_x" yName="right_y" state={state} overlay={overlayFor("right")} bar={barFor("right")} />
         </div>
-        {phase !== "mcu-preview" ? (
+        {phase !== "mcu-capture" ? (
           <div style={{ ...gridTwoCol, marginBottom: "16px" }}>
             <TriggerBar title="LT" name="left_trigger" state={state} />
             <TriggerBar title="RT" name="right_trigger" state={state} />
@@ -321,29 +370,29 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
       </DialogBody>
       <DialogFooter>
         <style>{focusStyles}</style>
-        {phase === "mcu-preview" ? (
+        {phase === "mcu-capture" ? (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            {mcuPreview?.complete && !mcuPreview.error ? (
+            {mcuCapture?.complete && !mcuCapture.error ? (
               <DialogButton onClick={continueMcuWizard}>
-                {mcuPreview.stick === "right" && mcuPreview.phase === "range" ? t("calibration.finishPreview") : t("common.continue")}
+                {mcuCapture.stick === "right" && mcuCapture.phase === "range" ? t("calibration.finishMeasurements") : t("common.continue")}
               </DialogButton>
             ) : null}
-            <DialogButton onClick={stopMcuPreview}>{mcuPreview?.error ? t("common.back") : t("common.cancel")}</DialogButton>
+            <DialogButton onClick={stopMcuCapture}>{mcuCapture?.error ? t("common.back") : t("common.cancel")}</DialogButton>
             <DialogButton onClick={close}>{t("common.close")}</DialogButton>
           </div>
-        ) : phase === "mcu-complete" ? (
+        ) : phase === "mcu-ready" ? (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            {mcuCapability?.available && !mcuCommitError && !mcuCommitted ? <DialogButton onClick={() => setPhase("mcu-confirm")}>{t("calibration.applyMeasured")}</DialogButton> : null}
+            <DialogButton onClick={commitMcuWizard}>{t("calibration.applyCalibration")}</DialogButton>
+            <DialogButton onClick={startMcuWizard}>{t("calibration.runAgain")}</DialogButton>
+            <DialogButton onClick={close}>{t("common.close")}</DialogButton>
+          </div>
+        ) : phase === "mcu-applied" ? (
+          <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
             {state?.canCalibrateTriggers ? <DialogButton onClick={start}>{t("calibration.calibrateTriggers")}</DialogButton> : null}
             <DialogButton onClick={startMcuWizard}>{t("calibration.runAgain")}</DialogButton>
             <DialogButton onClick={close}>{t("common.close")}</DialogButton>
           </div>
-        ) : phase === "mcu-confirm" ? (
-          <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={commitMcuWizard}>{t("calibration.applyPermanently")}</DialogButton>
-            <DialogButton onClick={() => setPhase("mcu-complete")}>{t("common.back")}</DialogButton>
-          </div>
-        ) : phase === "recording" ? (
+        ) : phase === "mcu-applying" ? null : phase === "recording" ? (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
             <DialogButton onClick={save} disabled={!capture}>{t("calibration.save")}</DialogButton>
             <DialogButton onClick={close}>{t("common.close")}</DialogButton>

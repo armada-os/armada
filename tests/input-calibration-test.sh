@@ -118,16 +118,23 @@ decoded = rsinput_calibration.decode_sample(sample, "left")
 assert decoded["generation"] == 2 and decoded["dropped"] == 7
 
 center = rsinput_calibration.CenterTracker("left")
-for _ in range(100):
-    center.observe({"logicalX": 0, "logicalY": 0, "rawX": 32600, "rawY": 32500})
-center.observe({"logicalX": 500, "logicalY": 0, "rawX": 33000, "rawY": 32500})
-assert center.progress()["stableSamples"] == 0
-for index in range(rsinput_calibration.CENTER_SAMPLE_GOAL):
-    center.observe({"logicalX": 0, "logicalY": 0,
-                    "rawX": 32600 + index % 2, "rawY": 32500 + index % 2})
+physical_directions = {
+    "left": (-800, 0), "right": (800, 0), "up": (0, -800), "down": (0, 800),
+    "up-left": (-600, -600), "up-right": (600, -600),
+    "down-left": (-600, 600), "down-right": (600, 600),
+}
+for index, name in enumerate(rsinput_calibration.CENTER_DIRECTIONS):
+    physical_x, physical_y = physical_directions[name]
+    center.observe({"logicalX": -physical_x, "logicalY": -physical_y,
+                    "rawX": 32600 + index, "rawY": 32500 + index})
+    assert center.progress()["pendingDirection"] == name
+    for _ in range(rsinput_calibration.CENTER_STABLE_SAMPLE_GOAL):
+        center.observe({"logicalX": 0, "logicalY": 0,
+                        "rawX": 32600 + index, "rawY": 32500 + index})
 assert center.complete
-assert center.progress()["stableSamples"] == rsinput_calibration.CENTER_SAMPLE_GOAL
-assert center.result()["centerWords"] == [32600, 32500]
+assert center.progress()["directionCount"] == 8
+assert center.result()["centerWords"] == [32603, 32503]
+assert center.result()["returns"] == [[32600 + index, 32500 + index] for index in range(8)]
 
 def sweep(tracker, radius_x=1000, radius_y=1000, short_positive_y=False):
     for degree in range(0, 1801):
@@ -328,7 +335,7 @@ control = load_script(
     "armada_control_daemon_test",
 )
 
-class FakePreviewManager:
+class FakeCaptureManager:
     def capability(self):
         return {"available": True}
 
@@ -345,7 +352,7 @@ class FakePreviewManager:
         return {"committed": token == "test"}
 
 
-control.RSINPUT_CALIBRATION = FakePreviewManager()
+control.RSINPUT_CALIBRATION = FakeCaptureManager()
 assert control.action_rsinput_calibration_capability({})["available"] is True
 assert control.action_rsinput_calibration_begin(
     {"token": "test", "stick": "left", "phase": "center"}
@@ -357,7 +364,7 @@ assert control.action_rsinput_calibration_commit(
 )["committed"] is True
 
 # Commit writes the stock command order with a dwell after each frame.
-manager = rsinput_calibration.PreviewManager()
+manager = rsinput_calibration.CaptureManager()
 writes = []
 original_write = rsinput_calibration.os.write
 original_open = rsinput_calibration.os.open
@@ -393,7 +400,10 @@ try:
         raise AssertionError("incomplete manager accepted a commit")
     assert writes == []
     for stick in ("left", "right"):
-        manager.completed[("test", stick, "center")] = {"centerWords": [32760, 32770]}
+        manager.completed[("test", stick, "center")] = {
+            "centerWords": [32760, 32770],
+            "returns": [[32760, 32770]] * 8,
+        }
         manager.completed[("test", stick, "range")] = {
             "rawSpaceCandidate": {"tableWords": list(range(29))},
         }

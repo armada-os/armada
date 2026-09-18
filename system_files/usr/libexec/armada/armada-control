@@ -84,7 +84,7 @@ CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
-RSINPUT_CALIBRATION = rsinput_calibration.PreviewManager()
+RSINPUT_CALIBRATION = rsinput_calibration.CaptureManager()
 
 
 def atomic_write(path, text):

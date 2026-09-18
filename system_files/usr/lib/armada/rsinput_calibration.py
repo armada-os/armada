@@ -1,4 +1,4 @@
-"""Privileged rsinput MCU calibration preview and explicit commit transport."""
+"""Privileged rsinput MCU calibration capture and explicit commit transport."""
 
 import glob
 import hashlib
@@ -17,7 +17,11 @@ COMMAND = struct.Struct("<HBB58s2x")
 SAMPLE = struct.Struct("<QIBB26sIHH")
 MODE_COMMANDS = {"left": 0xA0, "right": 0xA1}
 PHASES = {"center", "range"}
-CENTER_SAMPLE_GOAL = 250
+CENTER_DIRECTIONS = (
+    "left", "right", "up", "down",
+    "up-left", "up-right", "down-left", "down-right",
+)
+CENTER_STABLE_SAMPLE_GOAL = 30
 RIGHT_SLOT_ANGLES = (90, 180, 270, 0, 45, 135, 225, 315)
 RAW_MOUNTING_ROTATION = {"left": 180, "right": 180}
 DATA_COMMANDS = {"left": (0xA2, 0xA3), "right": (0xA5, 0xA6)}
@@ -80,6 +84,23 @@ def decode_sample(raw, stick):
     return result
 
 
+def physical_axes(stick, x, y):
+    return (-x, -y) if stick == "left" else (x, y)
+
+
+def reached_direction(stick, x, y):
+    x, y = physical_axes(stick, x, y)
+    checks = (
+        ("up-left", x < -500 and y < -500),
+        ("up-right", x > 500 and y < -500),
+        ("down-left", x < -500 and y > 500),
+        ("down-right", x > 500 and y > 500),
+        ("left", x < -700), ("right", x > 700),
+        ("up", y < -700), ("down", y > 700),
+    )
+    return next((name for name, reached in checks if reached), None)
+
+
 def derived_words(triples):
     ratios = []
     for x, y, z in triples:
@@ -103,36 +124,54 @@ def derived_words(triples):
 class CenterTracker:
     def __init__(self, stick):
         self.stick = stick
-        self.samples = []
+        self.pending = None
+        self.stable = 0
+        self.returns = []
+        self.covered = set()
 
     def observe(self, sample):
+        direction = reached_direction(self.stick, sample["logicalX"], sample["logicalY"])
+        if direction and direction not in self.covered and self.pending is None:
+            self.pending = direction
+            self.stable = 0
+        if self.pending is None:
+            return
         if abs(sample["logicalX"]) <= 350 and abs(sample["logicalY"]) <= 350:
-            self.samples.append((sample["rawX"], sample["rawY"]))
+            self.stable += 1
+            if self.stable >= CENTER_STABLE_SAMPLE_GOAL:
+                self.covered.add(self.pending)
+                self.returns.append((sample["rawX"], sample["rawY"]))
+                self.pending = None
+                self.stable = 0
         else:
-            self.samples.clear()
+            self.stable = 0
 
     @property
     def complete(self):
-        return len(self.samples) >= CENTER_SAMPLE_GOAL
+        return len(self.covered) == len(CENTER_DIRECTIONS)
 
     def progress(self):
         return {
-            "stableSamples": min(len(self.samples), CENTER_SAMPLE_GOAL),
-            "stableGoal": CENTER_SAMPLE_GOAL,
+            "coveredDirections": [name for name in CENTER_DIRECTIONS if name in self.covered],
+            "directionCount": len(self.covered),
+            "directionGoal": len(CENTER_DIRECTIONS),
+            "pendingDirection": self.pending,
+            "stableSamples": self.stable,
+            "stableGoal": CENTER_STABLE_SAMPLE_GOAL,
         }
 
     def result(self):
         if not self.complete:
             return None
-        retained = self.samples[-CENTER_SAMPLE_GOAL:]
-        spread_x = max(value[0] for value in retained) - min(value[0] for value in retained)
-        spread_y = max(value[1] for value in retained) - min(value[1] for value in retained)
+        spread_x = max(value[0] for value in self.returns) - min(value[0] for value in self.returns)
+        spread_y = max(value[1] for value in self.returns) - min(value[1] for value in self.returns)
         if max(spread_x, spread_y) > 256:
             raise RuntimeError("stick returns are too inconsistent for a center candidate")
-        center = (sum(value[0] for value in retained) // len(retained),
-                  sum(value[1] for value in retained) // len(retained))
+        center = (sum(value[0] for value in self.returns) // len(self.returns),
+                  sum(value[1] for value in self.returns) // len(self.returns))
         return {"centerWords": list(center), "centerHex": "".join(f"{word:04X}" for word in center),
-                "returnSpread": [spread_x, spread_y]}
+                "returnSpread": [spread_x, spread_y],
+                "returns": [list(value) for value in self.returns]}
 
 
 class RangeTracker:
@@ -256,7 +295,7 @@ class RangeTracker:
         }
 
 
-class PreviewSession:
+class CaptureSession:
     def __init__(self, token, stick, phase, center=None):
         if stick not in MODE_COMMANDS:
             raise ValueError("invalid stick")
@@ -268,7 +307,7 @@ class PreviewSession:
         self.tracker = CenterTracker(stick) if phase == "center" else RangeTracker(stick, center)
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
-        self.thread = threading.Thread(target=self._run, name="rsinput-calibration-preview", daemon=True)
+        self.thread = threading.Thread(target=self._run, name="rsinput-calibration-capture", daemon=True)
         self.state = {
             "active": True,
             "stick": stick,
@@ -298,7 +337,7 @@ class PreviewSession:
         self.stop_event.set()
         self.thread.join(timeout=3)
         if self.thread.is_alive():
-            raise RuntimeError("calibration preview did not stop")
+            raise RuntimeError("calibration capture did not stop")
         return self.snapshot()
 
     def _update(self, **values):
@@ -324,7 +363,7 @@ class PreviewSession:
             deadline = time.monotonic() + MAX_SESSION_SECONDS
             while not self.stop_event.is_set():
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("calibration preview timed out")
+                    raise RuntimeError("calibration capture timed out")
                 events = poller.poll(100)
                 if not events:
                     continue
@@ -379,7 +418,7 @@ class PreviewSession:
             self._update(active=False)
 
 
-class PreviewManager:
+class CaptureManager:
     def __init__(self):
         self.lock = threading.Lock()
         self.session = None
@@ -390,26 +429,29 @@ class PreviewManager:
 
     def begin(self, token, stick, phase):
         if not token:
-            raise ValueError("calibration preview token is required")
+            raise ValueError("calibration capture token is required")
         if device_path() is None:
             raise RuntimeError("MCU calibration is not supported on this device")
         with self.lock:
             if self.session and self.session.snapshot()["active"]:
-                raise RuntimeError("another calibration preview is active")
+                raise RuntimeError("another calibration capture is active")
+            if stick == "left" and phase == "center":
+                self.completed = {key: value for key, value in self.completed.items()
+                                  if key[0] != str(token)}
             if phase == "range":
                 center = self.completed.get((str(token), stick, "center"), {}).get("centerWords")
                 if not center:
                     raise RuntimeError("a completed center capture is required before raw-space range capture")
             else:
                 center = None
-            self.session = PreviewSession(token, stick, phase, center)
+            self.session = CaptureSession(token, stick, phase, center)
             self.session.start()
             return self.session.snapshot()
 
     def status(self, token):
         with self.lock:
             if not self.session or self.session.token != str(token):
-                raise RuntimeError("calibration preview session not found")
+                raise RuntimeError("calibration capture session not found")
             return self.session.snapshot()
 
     def end(self, token):
@@ -421,21 +463,22 @@ class PreviewManager:
         session.stop()
         state = session.snapshot()
         if state["complete"] and not state["error"] and state["result"]:
+            token_hash = hashlib.sha256(str(token).encode()).hexdigest()[:16]
+            capture_path = JOURNAL_ROOT / f"capture-{token_hash}-{state['stick']}-{state['phase']}.json"
+            JOURNAL_ROOT.mkdir(parents=True, exist_ok=True)
+            artifact = {"schemaVersion": 1, "stick": state["stick"], "phase": state["phase"],
+                        "result": state["result"]}
             if state["phase"] == "range":
-                token_hash = hashlib.sha256(str(token).encode()).hexdigest()[:16]
-                trace_path = JOURNAL_ROOT / f"capture-{token_hash}-{state['stick']}-range.json"
-                JOURNAL_ROOT.mkdir(parents=True, exist_ok=True)
-                artifact = {"schemaVersion": 1, "stick": state["stick"],
-                            "result": state["result"], "trace": session.tracker.trace}
-                data = json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n"
-                tmp = trace_path.with_suffix(".tmp")
-                with tmp.open("w", encoding="utf-8") as handle:
-                    handle.write(data)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(tmp, trace_path)
-                state["result"]["capturePath"] = str(trace_path)
-                state["result"]["captureSha256"] = hashlib.sha256(data.encode()).hexdigest()
+                artifact["trace"] = session.tracker.trace
+            data = json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n"
+            tmp = capture_path.with_suffix(".tmp")
+            with tmp.open("w", encoding="utf-8") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, capture_path)
+            state["result"]["capturePath"] = str(capture_path)
+            state["result"]["captureSha256"] = hashlib.sha256(data.encode()).hexdigest()
             with self.lock:
                 self.completed[(str(token), state["stick"], state["phase"])] = state["result"]
         return True
@@ -473,8 +516,10 @@ class PreviewManager:
                                  "interCommandDelaySeconds": WRITE_DELAY_SECONDS,
                                  "candidates": {
                                      stick: {"centerWords": results[(stick, "center")]["centerWords"],
+                                             "centerReturns": results[(stick, "center")]["returns"],
+                                             "centerCaptureSha256": results[(stick, "center")].get("captureSha256"),
                                              "tableWords": results[(stick, "range")]["rawSpaceCandidate"]["tableWords"],
-                                             "captureSha256": results[(stick, "range")].get("captureSha256"),
+                                             "rangeCaptureSha256": results[(stick, "range")].get("captureSha256"),
                                              "traceSha256": results[(stick, "range")].get("traceSha256")}
                                      for stick in ("left", "right")}})
         fd = os.open(path, os.O_RDWR | os.O_CLOEXEC)

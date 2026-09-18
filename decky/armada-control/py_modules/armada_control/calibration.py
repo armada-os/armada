@@ -532,7 +532,7 @@ def mcu_calibration_capability():
     return call("rsinput_calibration_capability")
 
 
-def begin_mcu_calibration_preview(token, stick, phase):
+def begin_mcu_calibration_capture(token, stick, phase):
     return call(
         "rsinput_calibration_begin",
         token=str(token),
@@ -541,11 +541,11 @@ def begin_mcu_calibration_preview(token, stick, phase):
     )
 
 
-def mcu_calibration_preview_status(token):
+def mcu_calibration_capture_status(token):
     return call("rsinput_calibration_status", token=str(token))
 
 
-def end_mcu_calibration_preview(token):
+def end_mcu_calibration_capture(token):
     return call("rsinput_calibration_end", token=str(token))
 
 

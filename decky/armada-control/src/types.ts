@@ -76,18 +76,23 @@ export interface McuCalibrationCapability {
   available: boolean;
 }
 
-export interface McuCalibrationPreview {
+export interface McuCalibrationCapture {
   stick: "left" | "right";
   phase: "center" | "range";
   error: string;
   complete: boolean;
   progress: {
+    coveredDirections?: string[];
+    directionCount?: number;
+    directionGoal?: number;
+    pendingDirection?: string | null;
     stableSamples?: number;
     stableGoal?: number;
     turns?: number;
     turnGoal?: number;
     coveredHeadings?: number;
     headingGoal?: number;
+    samplesPerHeading?: number[];
   };
 }
 
