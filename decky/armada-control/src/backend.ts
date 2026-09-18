@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import type { CalibrationState, Capture, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, PowerConfig, RgbConfig, Tweaks } from "./types";
+import type { CalibrationState, Capture, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, McuCalibrationCapability, McuCalibrationPreview, PowerConfig, RgbConfig, Tweaks } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
@@ -35,6 +35,15 @@ export const saveCalibration = (capture: Capture) => call<[Capture], Calibration
 export const resetCalibration = () => call<[], CalibrationState>("reset_calibration");
 export const beginCalibrationSession = (token: string) => call<[string], boolean>("begin_calibration_session", token);
 export const endCalibrationSession = (token: string) => call<[string], boolean>("end_calibration_session", token);
+export const getMcuCalibrationCapability = () => call<[], McuCalibrationCapability>("get_mcu_calibration_capability");
+export const beginMcuCalibrationPreview = (token: string, stick: "left" | "right", phase: "center" | "range") =>
+  call<[string, "left" | "right", "center" | "range"], McuCalibrationPreview>("begin_mcu_calibration_preview", token, stick, phase);
+export const getMcuCalibrationPreview = (token: string) =>
+  call<[string], McuCalibrationPreview>("get_mcu_calibration_preview", token);
+export const endMcuCalibrationPreview = (token: string) =>
+  call<[string], { ended: boolean }>("end_mcu_calibration_preview", token);
+export const commitMcuCalibration = (token: string) =>
+  call<[string], { committed: boolean; journal: string; outcome: string }>("commit_mcu_calibration", token);
 export const getFansState = () => call<[], CurvesState>("get_fans_state");
 export const saveFanCurves = (fanCurves: Record<string, FanCurve>, fanSettings: FanSettings) =>
   call<[Record<string, FanCurve>, FanSettings], CurvesState>("save_fan_curves", fanCurves, fanSettings);

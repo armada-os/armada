@@ -66,9 +66,29 @@ export interface CalibrationState {
   controls: Record<string, AbsControl>;
   event: any;
   canApply?: boolean;
+  canCalibrateTriggers?: boolean;
   backend?: string;
   saved?: boolean;
   params?: Record<string, number>;
+}
+
+export interface McuCalibrationCapability {
+  available: boolean;
+}
+
+export interface McuCalibrationPreview {
+  stick: "left" | "right";
+  phase: "center" | "range";
+  error: string;
+  complete: boolean;
+  progress: {
+    stableSamples?: number;
+    stableGoal?: number;
+    turns?: number;
+    turnGoal?: number;
+    coveredHeadings?: number;
+    headingGoal?: number;
+  };
 }
 
 export interface RgbConfig {
