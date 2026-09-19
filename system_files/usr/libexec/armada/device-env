@@ -17,6 +17,7 @@ case "$model" in
     "AYN Thor") profile=ayn-thor ;;
     "AYN Thor Lite") profile=ayn-thor-lite ;;
     "MANGMI Air Y Pro") profile=mangmi-air-y-pro ;;
+    "MANGMI Pocket Max") profile=mangmi-pocket-max ;;
     "AYANEO Pocket ACE") profile=ayaneo-pocket-ace ;;
     "AYANEO Pocket DMG") profile=ayaneo-pocket-dmg ;;
     "AYANEO Pocket DS") profile=ayaneo-pocket-ds ;;

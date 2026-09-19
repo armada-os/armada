@@ -56,7 +56,7 @@
       }
     },
     {
-      "models": ["MANGMI Air Y Pro"],
+      "models": ["MANGMI Air Y Pro", "MANGMI Pocket Max"],
       "backend": {
         "type": "channels",
         "targets": [
