@@ -166,6 +166,9 @@ dnf5 -y install --setopt=install_weak_deps=False \
     bazaar \
     krunner-bazaar
 
+mkdir -p /usr/libexec/
+mv /usr/bin/flatpak /usr/libexec/flatpak
+
 mkdir -p /etc/flatpak/remotes.d
 curl --retry 3 -fsSL -o /etc/flatpak/remotes.d/flathub.flatpakrepo \
     https://dl.flathub.org/repo/flathub.flatpakrepo
