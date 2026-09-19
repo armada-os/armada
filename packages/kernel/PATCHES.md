@@ -604,7 +604,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/linux/dts/qcom/sm8750-konkr-pf-elite.dts
 - `dts/sm8750-konkr-pf-elite.dts.patch`
   source: armada
-  notes: Armada adapts the Elite touchscreen node to the full ROCKNIX Chipone fork shared with the SM8650 Pocket FIT, keeps volume-up from waking the system, and adds the DisplayPort playback link required for USB-C DP Alt Mode audio; the touchscreen driver is selected only by those two device-tree nodes.
+  notes: Armada adapts the Elite touchscreen node to the full ROCKNIX Chipone fork shared with the SM8650 Pocket FIT, keeps volume-up from waking the system, adds the DisplayPort playback link required for USB-C DP Alt Mode audio, and adds a PCIe0 suspend OPP. The suspend OPP keeps a nonzero DDR/LLCC sleep-set vote while the CPU cluster collapses in s2idle, preventing the KONKR SM8750 AOP handoff from hanging; it was validated on hardware with RTC suspend/resume and is intentionally KONKR-only.
 - `dts/cq8725s-ayn-common.dtsi`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0046-arm64-dts-qcom-Add-AYN-CQ8725S-Common.patch
   notes: Armada extracted this DTS from the cited ROCKNIX patch and then applied later ROCKNIX DTS updates, including the Odin 3 haptics nodes from ROCKNIX commit `81a31e3d0f`.

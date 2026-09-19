@@ -1,8 +1,11 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: pocket-fit-elite: configure touch and DP audio
+Subject: [PATCH] arm64: dts: qcom: pocket-fit-elite: fix s2idle and configure touch and DP audio
 
 Use the full Chipone binding expected by Armada's touchscreen driver,
-remove volume-up as a wakeup source, and add the DisplayPort audio link.
+remove volume-up as a wakeup source, add the DisplayPort audio link, and
+keep a nonzero PCIe DDR/LLCC sleep-set vote across s2idle. The latter
+prevents the SM8750 AOP from failing to return after the final CPU
+cluster power collapse.
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts b/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
 index eba9f43..5bb5f29 100644
@@ -76,3 +79,21 @@ index eba9f43..5bb5f29 100644
  	};
  
  	wcn7860-pmu {
+@@ -1706 +1706,17 @@
+ };
++
++/*
++ * Keep a nonzero PCIe DDR/LLCC sleep-set vote while the CPU cluster
++ * collapses in s2idle. Without this the SM8750 AOP can fail to hand control
++ * back after the final cluster/domain state, leaving the device hung until
++ * the watchdog resets it. This mirrors the SM8550 fix in patches 0513/0520;
++ * Odin 3 currently suspends without it, so keep the override KONKR-only.
++ */
++&pcie0_opp_table {
++	opp-suspend-1 {
++		opp-hz = /bits/ 64 <1>;
++		required-opps = <&rpmhpd_opp_min_svs>;
++		opp-peak-kBps = <1000 1>;
++		opp-suspend;
++	};
++};
