@@ -30,9 +30,9 @@ export function triggerPercent(state: CalibrationState | null, name: string): nu
   return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
 }
 
-export function makeCapture(state: CalibrationState | null): Capture {
+export function makeCapture(state: CalibrationState | null, triggersOnly = false): Capture {
   const capture: Capture = {};
-  for (const name of CAPTURE_CONTROLS) {
+  for (const name of CAPTURE_CONTROLS.filter((name) => !triggersOnly || name.endsWith("_trigger"))) {
     const value = controlValue(state, name);
     const range = controlRange(state, name);
     capture[name] = {

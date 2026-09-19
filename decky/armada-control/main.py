@@ -2,6 +2,7 @@ import asyncio
 
 from armada_control.calibration import (
     begin_session,
+    mcu_calibration,
     controller_state,
     end_session,
     reset_calibration_params,
@@ -107,6 +108,9 @@ class Plugin:
 
     async def end_calibration_session(self, token=None):
         return await asyncio.to_thread(end_session, token)
+
+    async def mcu_calibration(self, operation, token, step=None):
+        return await asyncio.to_thread(mcu_calibration, operation, token, step)
 
     async def get_fans_state(self):
         return await asyncio.to_thread(get_fans_state)
