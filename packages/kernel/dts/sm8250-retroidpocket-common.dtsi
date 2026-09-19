@@ -26,6 +26,22 @@
 		sdhc2 = &sdhc_2;
 	};
 
+	typec_sbu_mux: usb-c-sbu-mux {
+		compatible = "gpio-sbu-mux";
+
+		select-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
+		enable-gpios = <&tlmm 9 GPIO_ACTIVE_LOW>;
+
+		orientation-switch;
+		mode-switch;
+
+		port {
+			sbu_mux_usb_con: endpoint {
+				remote-endpoint = <&pm8150b_typec_sbu_out>;
+			};
+		};
+	};
+
 	battery: battery {
 		compatible = "simple-battery";
 
@@ -794,8 +810,6 @@
 		compatible = "onnn,nb7vpq904m";
 		reg = <0x1c>;
 
-	 	enable-gpios = <&tlmm 9 GPIO_ACTIVE_LOW>;
-
 		vcc-supply = <&vreg_s4a_1p8>;
 
 		retimer-switch;
@@ -819,14 +833,6 @@
 				redriver_phy_con_ss: endpoint {
 					remote-endpoint = <&usb_1_qmpphy_out>;
 					data-lanes = <0 1 2 3>;
-				};
-			};
-
-			port@2 {
-				reg = <2>;
-
-				redriver_usb_con_sbu: endpoint {
-					remote-endpoint = <&pm8150b_typec_sbu_out>;
 				};
 			};
 		};
@@ -1001,6 +1007,8 @@
 	connector {
 		compatible = "usb-c-connector";
 
+		vbus-supply = <&pm8150b_vbus>;
+
 		power-role = "dual";
 		data-role = "dual";
 		try-power-role = "sink";
@@ -1047,7 +1055,7 @@
 				reg = <2>;
 
 				pm8150b_typec_sbu_out: endpoint {
-					remote-endpoint = <&redriver_usb_con_sbu>;
+					remote-endpoint = <&sbu_mux_usb_con>;
 				};
 			};
 		};
