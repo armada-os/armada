@@ -1,9 +1,12 @@
 #!/usr/bin/python3
 import json
+import sys
 from pathlib import Path
 
 
 CONFIG = Path("/etc/armada/input-calibration.json")
+sys.path.insert(0, "/usr/lib/armada")
+import input_calibration_policy as policy
 CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
@@ -51,6 +54,7 @@ def main():
         return
     if not parameters.exists():
         return
+    params = policy.clean_config(params)
     for name in PARAM_NAMES:
         if name in params:
             (parameters / name).write_text(str(int(params[name])), encoding="utf-8")

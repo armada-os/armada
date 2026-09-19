@@ -204,4 +204,7 @@ else:
     raise AssertionError("unknown calibration backend was accepted")
 PYEOF
 
+python3 -B "$ROOT/tests/input-calibration-policy-test.py"
+python3 -B "$ROOT/tests/mcu-calibration-test.py"
+
 echo "Input calibration tests passed"

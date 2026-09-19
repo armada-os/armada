@@ -2,12 +2,16 @@ import copy
 import fcntl
 import json
 import struct
+import sys
 import subprocess
 import time
 from pathlib import Path
 
 from .privileged import call
 from .system import read_text
+
+sys.path.insert(0, "/usr/lib/armada")
+import input_calibration_policy as calibration_policy
 
 INPUT_CALIBRATION_CONFIG = Path("/etc/armada/input-calibration.json")
 CALIBRATION_BACKENDS = {
@@ -24,7 +28,7 @@ ABS_CODES = {
     "right_y": 4,
 }
 TRIGGER_CODES = {
-    "default": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
+    "rsinput": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
     "retroid": {"left_trigger": (20,), "right_trigger": (21,)},
 }
 CALIBRATION_PARAMS = (
@@ -273,7 +277,7 @@ def read_backend_controls(fd, backend=None):
             controls[name] = read_abs(fd, code)
         except OSError:
             pass
-    trigger_codes = TRIGGER_CODES.get(backend, TRIGGER_CODES["default"])
+    trigger_codes = TRIGGER_CODES.get(backend, TRIGGER_CODES["rsinput"])
     for name, codes in trigger_codes.items():
         for code in codes:
             try:
@@ -293,12 +297,12 @@ def build_state(event, controls):
         "event": event,
         "canApply": bool(backend),
         "backend": backend or "tester",
+        "calibration": calibration_policy.capability(backend),
     }
 
 
 def open_session_device():
-    # Resolve the controller once per modal session and hold the fd open so each
-    # ~50ms poll is a couple of ioctls, not a fresh device-enumeration + open.
+    # Keep the event node open across the UI's 50 ms polls.
     global _session_device, _session_fd
     close_session_device()
     event = calibration_event()
@@ -332,7 +336,7 @@ def controller_state():
                 read_backend_controls(_session_fd.fileno(), event_backend(_session_device)),
             )
         except OSError:
-            # Node went away (device re-registered); re-resolve once.
+            # Re-resolve a device that was re-registered.
             if open_session_device() and _session_fd is not None:
                 try:
                     return build_state(
@@ -373,6 +377,8 @@ def reset_calibration_params():
     backend = calibration_backend()
     if backend is None:
         raise RuntimeError("controller calibration is not supported on this device")
+    if calibration_policy.uses_mcu(backend):
+        raise RuntimeError("stick calibration is managed by the MCU on this device")
     params = {}
     axis_range = 1408 if backend == "retroid" else 1024
     axis_deadzone = 0 if backend == "retroid" else 70
@@ -391,7 +397,7 @@ def reset_calibration_params():
     return calibration_status()
 
 
-def calibration_from_capture(capture, current=None):
+def calibration_from_capture(capture, current=None, backend=None):
     current = current or {}
 
     def axis_params(prefix, x_key, y_key):
@@ -412,13 +418,16 @@ def calibration_from_capture(capture, current=None):
             result[f"{prefix}{suffix}_antideadzone"] = 0
         return result
     params = {}
-    params.update(axis_params("axis_left", "left_x", "left_y"))
-    params.update(axis_params("axis_right", "right_x", "right_y"))
+    if not calibration_policy.uses_mcu(backend):
+        params.update(axis_params("axis_left", "left_x", "left_y"))
+        params.update(axis_params("axis_right", "right_x", "right_y"))
     for name, key in (("trigger_left", "left_trigger"), ("trigger_right", "right_trigger")):
         values = capture.get(key) or {}
         minimum = int(values.get("min", 0))
         maximum = int(values.get("max", 0))
         span = max(maximum - minimum, 1)
+        if calibration_policy.uses_mcu(backend) and span < int(1552 * 0.8):
+            raise RuntimeError(f"{key.replace('_', ' ')} was not fully pressed")
         params[f"{name}_max"] = span
         params[f"{name}_deadzone"] = max(int(span * 0.03), 4)
         params[f"{name}_antideadzone"] = 0
@@ -451,8 +460,10 @@ def save_calibration(capture):
     backend = state.get("backend") if state.get("canApply") else None
     if backend not in CALIBRATION_BACKENDS:
         raise RuntimeError("controller calibration is not supported on this device")
+    if not calibration_policy.capability(backend)["triggers"]:
+        raise RuntimeError("trigger calibration requires raw trigger support from the driver")
     capture = merge_capture_sample(capture, state)
-    params = calibration_from_capture(capture, read_calibration_params(backend))
+    params = calibration_from_capture(capture, read_calibration_params(backend), backend)
     params["backend"] = backend
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     return calibration_status()
@@ -472,3 +483,7 @@ def end_session(token=None):
     _calibration_session_token = None
     close_session_device()
     return end_calibration_intercept()
+
+
+def mcu_calibration(operation, token, step=None):
+    return call("rsinput_calibration", operation=operation, token=token, step=step)
