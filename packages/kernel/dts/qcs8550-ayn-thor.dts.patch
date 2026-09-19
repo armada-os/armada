@@ -28,7 +28,11 @@ Subject: [PATCH] arm64: dts: qcom: thor: hall wake, touch orientation, DPU dithe
  			wakeup-source;
  		};
  	};
-@@ -167,6 +171,9 @@
+@@ -167,6 +171,13 @@
++&gamepad {
++	mcu-calibration;
++};
++
  &display_panel {
  	compatible = "chipone,icna3520";
  

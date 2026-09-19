@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 CONFIG = Path("/etc/armada/input-calibration.json")
+COMPATIBLE = Path("/sys/firmware/devicetree/base/compatible")
 CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
@@ -51,7 +52,13 @@ def main():
         return
     if not parameters.exists():
         return
+    try:
+        compatible = COMPATIBLE.read_bytes().split(b"\0", 1)[0].decode()
+    except (OSError, UnicodeDecodeError):
+        compatible = ""
     for name in PARAM_NAMES:
+        if compatible == "ayn,odin3" and name.startswith("axis_"):
+            continue
         if name in params:
             (parameters / name).write_text(str(int(params[name])), encoding="utf-8")
     (parameters / "update_params").write_text("1", encoding="utf-8")

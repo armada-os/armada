@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, "/usr/lib/armada")
 import armada_game_tweaks
 import armada_perf
+import rsinput_calibration
 
 SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
@@ -83,6 +84,7 @@ CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
+RSINPUT_CALIBRATION = rsinput_calibration.CaptureManager()
 
 
 def atomic_write(path, text):
@@ -538,6 +540,28 @@ def action_inputplumber_intercept(request):
     return {"ok": True}
 
 
+def action_rsinput_calibration_capability(request):
+    return RSINPUT_CALIBRATION.capability()
+
+
+def action_rsinput_calibration_begin(request):
+    return RSINPUT_CALIBRATION.begin(
+        request.get("token"), request.get("stick"), request.get("phase")
+    )
+
+
+def action_rsinput_calibration_status(request):
+    return RSINPUT_CALIBRATION.status(request.get("token"))
+
+
+def action_rsinput_calibration_end(request):
+    return {"ended": RSINPUT_CALIBRATION.end(request.get("token"))}
+
+
+def action_rsinput_calibration_commit(request):
+    return RSINPUT_CALIBRATION.commit(request.get("token"))
+
+
 def action_write_config(request):
     name = str(request.get("name", ""))
     text = request.get("text")
@@ -742,6 +766,11 @@ ACTIONS = {
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
+    "rsinput_calibration_capability": action_rsinput_calibration_capability,
+    "rsinput_calibration_begin": action_rsinput_calibration_begin,
+    "rsinput_calibration_status": action_rsinput_calibration_status,
+    "rsinput_calibration_end": action_rsinput_calibration_end,
+    "rsinput_calibration_commit": action_rsinput_calibration_commit,
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_bottom_screen_enabled": action_set_bottom_screen_enabled,
