@@ -1,0 +1,8 @@
+[Unit]
+Description=Publish UPower battery estimates to Steam vpower
+PartOf=gamescope-session-plus@steam.service
+
+[Service]
+ExecStart=/usr/libexec/armada/armada-steam-charging-eta
+Restart=always
+RestartSec=3

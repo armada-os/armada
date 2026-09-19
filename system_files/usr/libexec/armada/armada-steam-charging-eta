@@ -1,0 +1,73 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+import logging
+import os
+import subprocess
+import time
+from pathlib import Path
+
+LOG = logging.getLogger("armada-steam-charging-eta")
+ROOT = Path("/run/vpower")
+UP = [
+    "busctl", "--system", "get-property", "org.freedesktop.UPower",
+    "/org/freedesktop/UPower/devices/DisplayDevice",
+    "org.freedesktop.UPower.Device",
+]
+ROOT_UP = [*UP[:4], "/org/freedesktop/UPower", "org.freedesktop.UPower"]
+
+
+def upower(name, root=False):
+    output = subprocess.check_output([*(ROOT_UP if root else UP), name], text=True, timeout=2)
+    return output.split(maxsplit=1)[1].strip()
+
+
+def write(name, value):
+    temporary = ROOT / f".{name}.{os.getpid()}"
+    temporary.write_text(f"{value}\n")
+    os.replace(temporary, ROOT / name)
+
+
+def publish():
+    state = int(upower("State"))
+    on_battery = upower("OnBattery", root=True) == "true"
+    percent = float(upower("Percentage"))
+    time_to_full = int(upower("TimeToFull"))
+    time_to_empty = int(upower("TimeToEmpty"))
+
+    charging = state == 1
+    discharging = state in (2, 3, 6)
+    status = (
+        "Charging" if charging else "Discharging" if discharging else
+        "Full" if state == 4 else "Not charging"
+    )
+    # Steam uses these separate vpower files for charging and discharge ETAs.
+    secs_until_full = time_to_full if charging and time_to_full > 0 else -1
+    secs_until_shutdown = time_to_empty if discharging and time_to_empty > 0 else -1
+
+    values = {
+        "ac_status": "Disconnected" if on_battery else "Connected",
+        "battery_percent": f"{percent:.2f}",
+        "battery_status": status,
+        "secs_until_battery_full": secs_until_full,
+        "secs_until_shutdown_request": secs_until_shutdown,
+    }
+    for name, value in values.items():
+        write(name, value)
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    last_error = None
+    while True:
+        try:
+            publish()
+            last_error = None
+        except Exception as error:
+            if str(error) != last_error:
+                LOG.warning("vpower update unavailable: %s", error)
+                last_error = str(error)
+        time.sleep(2)
+
+
+if __name__ == "__main__":
+    main()
