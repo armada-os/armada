@@ -100,8 +100,8 @@ class Plugin:
     async def save_calibration(self, capture):
         return await asyncio.to_thread(save_calibration, capture)
 
-    async def reset_calibration(self):
-        return await asyncio.to_thread(reset_calibration_params)
+    async def reset_calibration(self, triggers_only=False):
+        return await asyncio.to_thread(reset_calibration_params, triggers_only)
 
     async def begin_calibration_session(self, token=None):
         return await asyncio.to_thread(begin_session, token)

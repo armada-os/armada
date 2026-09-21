@@ -127,6 +127,47 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse((self.params / 'axis_leftx_center').exists())
         self.assertEqual((self.params / 'trigger_left_deadzone').read_text(), '42')
 
+    def test_trigger_capture_recovers_from_shortened_saved_range(self):
+        self.enable()
+        (self.tree / 'compatible').write_bytes(b'ayn,odin3\0')
+        app = script('armada-control')
+        app.CONFIG_PATHS['calibration'] = self.config
+        app.CALIBRATION_BACKENDS['rsinput'] = self.params
+        app.action_write_config({'name': 'calibration', 'text': json.dumps({
+            **self.old, 'trigger_left_max': 1000, 'trigger_right_max': 1000})})
+
+        def full_press_capture():
+            # rsinput reports max(0, trigger_max - raw) minus antideadzone.
+            return {key: {'min': 0, 'max': int((self.params / f'{prefix}_max').read_text())
+                          - int((self.params / f'{prefix}_antideadzone').read_text())}
+                    for key, prefix in [('left_trigger', 'trigger_left'),
+                                        ('right_trigger', 'trigger_right')]}
+
+        with self.assertRaisesRegex(RuntimeError, 'not fully pressed'):
+            calibration.calibration_from_capture(full_press_capture(), backend='rsinput')
+        with patch.object(calibration, 'calibration_backend', return_value='rsinput'), \
+             patch.object(calibration, 'CALIBRATION_BACKENDS', {'rsinput': self.params}), \
+             patch.object(calibration, 'calibration_status', return_value={}), \
+             patch.object(calibration, 'call', side_effect=lambda action, **kw: app.action_write_config(kw)):
+            calibration.reset_calibration_params(triggers_only=True)
+        for prefix in ('trigger_left', 'trigger_right'):
+            for suffix, value in [('max', 1552), ('deadzone', 0), ('antideadzone', 0)]:
+                self.assertEqual((self.params / f'{prefix}_{suffix}').read_text(), str(value))
+        self.assertFalse(any(p.name.startswith('axis_') for p in self.params.iterdir()))
+        captured = calibration.calibration_from_capture(full_press_capture(), backend='rsinput')
+        self.assertEqual(captured['trigger_left_max'], 1552)
+        self.assertEqual(captured['trigger_right_max'], 1552)
+        self.assertFalse(any(k.startswith('axis_') for k in captured))
+
+    def test_trigger_reset_rejects_boards_without_raw_triggers(self):
+        self.enable()
+        (self.tree / 'compatible').write_bytes(b'retroidpocket,rp6\0')
+        with patch.object(calibration, 'calibration_backend', return_value='rsinput'), \
+             patch.object(calibration, 'call') as call:
+            with self.assertRaisesRegex(RuntimeError, 'raw trigger support'):
+                calibration.reset_calibration_params(triggers_only=True)
+            call.assert_not_called()
+
 
 
 if __name__ == '__main__':

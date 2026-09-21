@@ -32,7 +32,7 @@ export const setRgb = (enabled: boolean, color: string, brightness: number) =>
   call<[boolean, string, number], RgbConfig>("set_rgb", enabled, color, brightness);
 export const getControllerState = () => call<[], CalibrationState>("get_controller_state");
 export const saveCalibration = (capture: Capture) => call<[Capture], CalibrationState>("save_calibration", capture);
-export const resetCalibration = () => call<[], CalibrationState>("reset_calibration");
+export const resetCalibration = (triggersOnly = false) => call<[boolean], CalibrationState>("reset_calibration", triggersOnly);
 export const beginCalibrationSession = (token: string) => call<[string], boolean>("begin_calibration_session", token);
 export const endCalibrationSession = (token: string) => call<[string], boolean>("end_calibration_session", token);
 export const mcuCalibration = (operation: McuCalibrationOperation, token: string, step?: number) =>

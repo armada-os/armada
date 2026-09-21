@@ -17,6 +17,36 @@ import input_calibration_policy as policy
 
 
 class CalculationTests(unittest.TestCase):
+    def test_moving_center_is_rejected_then_settled_window_is_averaged(self):
+        tracker = rsinput_calibration.CenterTracker('left')
+        with patch.object(policy, 'mcu_node', return_value=None):
+            tracker.observe(dict(logicalX=800, logicalY=0, rawX=33568, rawY=32768))
+            for i in range(120):
+                offset = 300 if i % 2 else -300
+                tracker.observe(dict(logicalX=offset, logicalY=0,
+                                     rawX=32768 + offset, rawY=32768))
+            self.assertEqual(tracker.progress()['directionCount'], 0)
+            self.assertLess(tracker.stable, rsinput_calibration.CENTER_STABLE_SAMPLE_GOAL)
+            for i in range(30):
+                tracker.observe(dict(logicalX=0, logicalY=0,
+                                     rawX=32768 + i % 2 * 10, rawY=32768))
+            self.assertEqual(tracker.returns, [(32773, 32768)])
+            self.assertEqual(tracker.progress()['directionCount'], 1)
+
+    def test_center_drift_and_leaving_center_restart_settling(self):
+        tracker = rsinput_calibration.CenterTracker('left')
+        with patch.object(policy, 'mcu_node', return_value=None):
+            tracker.observe(dict(logicalX=800, logicalY=0, rawX=33568, rawY=32768))
+            for i in range(100):
+                tracker.observe(dict(logicalX=0, logicalY=0, rawX=32768 + i * 2, rawY=32768))
+            self.assertEqual(tracker.returns, [])
+            tracker.observe(dict(logicalX=800, logicalY=0, rawX=33568, rawY=32768))
+            for _ in range(29):
+                tracker.observe(dict(logicalX=0, logicalY=0, rawX=32768, rawY=32768))
+            self.assertEqual(tracker.returns, [])
+            tracker.observe(dict(logicalX=0, logicalY=0, rawX=32768, rawY=32768))
+            self.assertEqual(tracker.returns, [(32768, 32768)])
+
     def test_measurement_gates_and_stock_coefficients(self):
         assert rsinput_calibration.COMMAND.size == 64
         assert rsinput_calibration.SAMPLE.size == 48

@@ -23,6 +23,8 @@ CENTER_DIRECTIONS = (
     "up-left", "up-right", "down-left", "down-right",
 )
 CENTER_STABLE_SAMPLE_GOAL = 30
+# Maximum peak-to-peak Hall movement within a settling window, in raw counts.
+CENTER_STABLE_RAW_SPREAD = 32
 RIGHT_SLOT_ANGLES = (90, 180, 270, 0, 45, 135, 225, 315)
 DATA_COMMANDS = {"left": (0xA2, 0xA3), "right": (0xA5, 0xA6)}
 WRITE_DELAY_SECONDS = 1.0
@@ -121,6 +123,7 @@ class CenterTracker:
         self.stick = stick
         self.pending = None
         self.stable = 0
+        self.window = []
         self.returns = []
         self.covered = set()
 
@@ -132,14 +135,22 @@ class CenterTracker:
         if self.pending is None:
             return
         if abs(sample["logicalX"]) <= 350 and abs(sample["logicalY"]) <= 350:
-            self.stable += 1
+            self.window.append((sample["rawX"], sample["rawY"]))
+            # Keep only the contiguous suffix whose raw axes have settled.
+            while any(max(p[axis] for p in self.window) - min(p[axis] for p in self.window)
+                      > CENTER_STABLE_RAW_SPREAD for axis in (0, 1)):
+                self.window.pop(0)
+            self.stable = len(self.window)
             if self.stable >= CENTER_STABLE_SAMPLE_GOAL:
                 self.covered.add(self.pending)
-                self.returns.append((sample["rawX"], sample["rawY"]))
+                self.returns.append(tuple(sum(p[axis] for p in self.window) // len(self.window)
+                                          for axis in (0, 1)))
                 self.pending = None
                 self.stable = 0
+                self.window.clear()
         else:
             self.stable = 0
+            self.window.clear()
 
     @property
     def complete(self):

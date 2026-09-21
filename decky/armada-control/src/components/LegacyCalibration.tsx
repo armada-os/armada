@@ -16,9 +16,22 @@ export function LegacyCalibration({ state, setState, close, triggersOnly = false
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (recording && state.supported) {
+      // The driver updates evdev ranges on its next input report after reset.
+      if (triggersOnly && ["left_trigger", "right_trigger"].some(
+        (name) => state.controls?.[name]?.max !== 1552)) return;
       setCapture((current) => updateCapture(current || makeCapture(state, triggersOnly), state));
     }
   }, [state, recording, triggersOnly]);
+  const start = async () => {
+    setBusy(true);
+    setError("");
+    setCapture(null);
+    try {
+      if (triggersOnly) setState(await resetCalibration(true));
+      setRecording(true);
+    } catch (error) { setError(String(error)); }
+    finally { setBusy(false); }
+  };
   const save = async () => {
     if (!capture) return;
     setBusy(true);
@@ -51,7 +64,7 @@ export function LegacyCalibration({ state, setState, close, triggersOnly = false
       <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
         {recording ? <DialogButton disabled={busy || !capture} onClick={save}>{t("calibration.save")}</DialogButton>
           : state.canApply ? <>
-            <DialogButton disabled={busy} onClick={() => { setError(""); setCapture(null); setRecording(true); }}>
+            <DialogButton disabled={busy} onClick={start}>
               {t(triggersOnly ? "calibration.calibrateTriggers" : "calibration.start")}
             </DialogButton>
             {!triggersOnly && <DialogButton disabled={busy} onClick={reset}>{t("calibration.resetDefaults")}</DialogButton>}

@@ -373,16 +373,18 @@ def read_calibration_params(backend=None):
     return params
 
 
-def reset_calibration_params():
+def reset_calibration_params(triggers_only=False):
     backend = calibration_backend()
     if backend is None:
         raise RuntimeError("controller calibration is not supported on this device")
-    if calibration_policy.uses_mcu(backend):
+    if triggers_only and not calibration_policy.capability(backend)["triggers"]:
+        raise RuntimeError("trigger calibration requires raw trigger support from the driver")
+    if not triggers_only and calibration_policy.uses_mcu(backend):
         raise RuntimeError("stick calibration is managed by the MCU on this device")
-    params = {}
+    params = read_calibration_params(backend) if triggers_only else {}
     axis_range = 1408 if backend == "retroid" else 1024
     axis_deadzone = 0 if backend == "retroid" else 70
-    for axis in ("axis_leftx", "axis_lefty", "axis_rightx", "axis_righty"):
+    for axis in (() if triggers_only else ("axis_leftx", "axis_lefty", "axis_rightx", "axis_righty")):
         params[f"{axis}_min"] = -axis_range
         params[f"{axis}_center"] = 0
         params[f"{axis}_max"] = axis_range
