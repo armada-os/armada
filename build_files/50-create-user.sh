@@ -30,6 +30,7 @@ cat > /etc/sudoers.d/armada-user <<'EOF'
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl poweroff
 %wheel ALL=(ALL) NOPASSWD: /usr/bin/systemctl reboot
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/session-control switch-desktop
+%wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/session-control recover-desktop
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/session-control switch-gamemode
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/session-control default-gamemode
 %wheel ALL=(ALL) NOPASSWD: /usr/libexec/armada/armada-installer *

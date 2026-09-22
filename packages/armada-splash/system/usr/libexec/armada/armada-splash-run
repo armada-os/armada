@@ -1,19 +1,26 @@
 #!/usr/bin/bash
 # CLIENTCMD wrapper: run Steam behind the boot-gap splash, forward updater
-# progress, and surface launch failures.
+# progress, and switch to Desktop Mode on launch failures.
 set -u
 
 # shellcheck source=/dev/null
 [[ -r /etc/armada/splash.conf ]] && source /etc/armada/splash.conf
 
 MODE="${ARMADA_SPLASH_MODE:-x11}"              # x11 | off
+[[ -e /etc/armada/splash-disabled ]] && MODE=off
 DIR="${ARMADA_SPLASH_DIR:-/usr/share/armada/splash}"
 # Unset = X display size; a forced portrait size gets fit-scaled/pillarboxed.
 W="${ARMADA_SPLASH_W:-}"
 H="${ARMADA_SPLASH_H:-}"
 CEF_PORT="${ARMADA_SPLASH_CEF_PORT:-8080}"
 SLOW_AFTER="${ARMADA_SPLASH_SLOW_AFTER:-25}"   # secs -> "still starting" message
-ERROR_HOLD="${ARMADA_SPLASH_ERROR_HOLD:-45}"   # secs to show a launch failure
+ERROR_HOLD="${ARMADA_SPLASH_ERROR_HOLD:-10}"   # secs to show a launch failure
+MIN_FREE_KIB="${ARMADA_STEAM_MIN_FREE_KIB:-256000}" # 250 MiB required by Steam
+if [[ "$MIN_FREE_KIB" =~ ^[0-9]+$ ]]; then
+    MIN_FREE_KIB=$((10#$MIN_FREE_KIB))
+else
+    MIN_FREE_KIB=256000
+fi
 SPLASH_BIN="${ARMADA_SPLASH_BIN:-/usr/libexec/armada/armada-splash}"
 ASSET="${ARMADA_SPLASH_ASSET:-${DIR}/splash.asp}"
 FONT="${ARMADA_SPLASH_FONT:-${DIR}/font.ttf}"
@@ -21,6 +28,7 @@ FONT="${ARMADA_SPLASH_FONT:-${DIR}/font.ttf}"
 # One status file across all boot phases; writes go through armada-splash-progress.
 STATUS="${ARMADA_SPLASH_STATUS:-/run/armada/splash/status}"
 PROGRESS="${ARMADA_SPLASH_PROGRESS:-/usr/libexec/armada/armada-splash-progress}"
+steam_root="${STEAM_ROOT:-${HOME}/.local/share/Steam}"
 logdir="${HOME}/.local/share/armada/logs"
 mkdir -p "$logdir"
 stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo boot)"
@@ -49,69 +57,88 @@ if [[ "$MODE" == "x11" && -n "${DISPLAY:-}" && -x "$SPLASH_BIN" ]]; then
     splash_pid=$!
 fi
 
-# A listener that predates this launch is not this Steam's CEF; trust the
-# port only after it has been observed closed.
-cef_stale=0
-cef_up && cef_stale=1
+space_path="$steam_root"
+[[ -e "$space_path" ]] || space_path="$HOME"
+available_kib="$(df -Pk "$space_path" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+low_space=0
+if [[ "$available_kib" =~ ^[0-9]+$ ]]; then
+    available_kib=$((10#$available_kib))
+    (( available_kib < MIN_FREE_KIB )) && low_space=1
+fi
+if (( low_space )); then
+    # Do not let Steam consume the last space Plasma needs to start. Steam's
+    # own low-space check is too late: its updater can leave the filesystem
+    # full, turning Desktop Mode into a black screen.
+    code=254
+    tail_line="Fatal Error: Steam needs 250MB of free disk space to update."
+    printf '%s\n' "$tail_line" > "$steamlog"
+else
+    # A listener that predates this launch is not this Steam's CEF; trust the
+    # port only after it has been observed closed.
+    cef_stale=0
+    cef_up && cef_stale=1
 
-# Child, not exec: a Steam crash must not tear down gamescope (and the
-# splash) before the error can be shown.
-"$@" >"$steamlog" 2>&1 &
-steam_pid=$!
+    # Child, not exec: select the recovery session before a Steam crash can
+    # tear down gamescope and cause SDDM to autologin to Gaming Mode again.
+    "$@" >"$steamlog" 2>&1 &
+    steam_pid=$!
 
-waited=0
-# Forward bootstrapper lines ("[ 45%] Downloading update...") to the splash.
-fwd_last=""
-saw_update=0
-forward_updater() {
-    local raw
-    raw="$(tail -c 8192 "$steamlog" 2>/dev/null \
-        | grep -aE '^(\[[0-9 -]{1,4}%?\]|Installing bootstrap)' | tail -1)"
-    [[ -z "$raw" || "$raw" == "$fwd_last" ]] && return
-    fwd_last="$raw"
-    # The sub-second "Checking..." and every-boot "Verifying..." are noise
-    # unless a real update was seen.
-    case "$raw" in
-        *"Checking for available updates"*) return ;;
-        *[Dd]ownload*|*Extracting*|*Applying*|"Installing bootstrap"*) saw_update=1 ;;
-        *"Verifying installation"*) (( saw_update )) || return ;;
-    esac
-    case "$raw" in
-        "Installing bootstrap"*) say "Installing Steam" ;;
-        # Valve's wording; drop its trailing ellipsis to match the rest.
-        *) say "$(sed -E 's/^\[-+\] *//; s/\.\.\.$//' <<<"$raw")" ;;
-    esac
-}
+    waited=0
+    # Forward bootstrapper lines ("[ 45%] Downloading update...") to the splash.
+    fwd_last=""
+    saw_update=0
+    forward_updater() {
+        local raw
+        raw="$(tail -c 8192 "$steamlog" 2>/dev/null \
+            | grep -aE '^(\[[0-9 -]{1,4}%?\]|Installing bootstrap)' | tail -1)"
+        [[ -z "$raw" || "$raw" == "$fwd_last" ]] && return
+        fwd_last="$raw"
+        # The sub-second "Checking..." and every-boot "Verifying..." are noise
+        # unless a real update was seen.
+        case "$raw" in
+            *"Checking for available updates"*) return ;;
+            *[Dd]ownload*|*Extracting*|*Applying*|"Installing bootstrap"*) saw_update=1 ;;
+            *"Verifying installation"*) (( saw_update )) || return ;;
+        esac
+        case "$raw" in
+            "Installing bootstrap"*) say "Installing Steam" ;;
+            # Valve's wording; drop its trailing ellipsis to match the rest.
+            *) say "$(sed -E 's/^\[-+\] *//; s/\.\.\.$//' <<<"$raw")" ;;
+        esac
+    }
 
-steam_up=0
-while kill -0 "$steam_pid" 2>/dev/null; do
-    if (( cef_stale )); then
-        cef_up || cef_stale=0
-    elif cef_up && { sleep 0.3; cef_up; }; then
-        steam_up=1; break
+    steam_up=0
+    while kill -0 "$steam_pid" 2>/dev/null; do
+        if (( cef_stale )); then
+            cef_up || cef_stale=0
+        elif cef_up && { sleep 0.3; cef_up; }; then
+            steam_up=1; break
+        fi
+        forward_updater
+        if (( waited == SLOW_AFTER )) && [[ -z "$fwd_last" ]]; then
+            say "Still starting. First boot installs Steam and can take a few minutes."
+        fi
+        sleep 1; (( waited++ ))
+    done
+
+    wait "$steam_pid"; code=$?
+
+    # 42 = Steam's relaunch request (self-update applied), not a failure; the
+    # session restarts Steam and the splash exits on displacement.
+    if (( code == 42 )); then
+        say "Restarting Steam"
+        exit 42
     fi
-    forward_updater
-    if (( waited == SLOW_AFTER )) && [[ -z "$fwd_last" ]]; then
-        say "Still starting. First boot installs Steam and can take a few minutes."
-    fi
-    sleep 1; (( waited++ ))
-done
 
-wait "$steam_pid"; code=$?
+    # The UI came up (or Steam left cleanly): the session's to handle, not a
+    # launch failure. Desktop recovery is for nonzero pre-UI exits only.
+    if (( steam_up )) || (( code == 0 )); then exit "$code"; fi
 
-# 42 = Steam's relaunch request (self-update applied), not a failure; the
-# session restarts Steam and the splash exits on displacement.
-if (( code == 42 )); then
-    say "Restarting Steam"
-    exit 42
+    tail_line="$(grep -aiE 'error|fatal|segfault|assert|abort|not found|failed' "$steamlog" 2>/dev/null | tail -1)"
+    [[ -z "$tail_line" ]] && tail_line="$(tail -1 "$steamlog" 2>/dev/null)"
 fi
 
-# The UI came up (or Steam left cleanly): the session's to handle, not a
-# launch failure. The red screen is for nonzero pre-UI exits only.
-if (( steam_up )) || (( code == 0 )); then exit "$code"; fi
-
-tail_line="$(grep -aiE 'error|fatal|segfault|assert|abort|not found|failed' "$steamlog" | tail -1)"
-[[ -z "$tail_line" ]] && tail_line="$(tail -1 "$steamlog" 2>/dev/null)"
+# Best effort: a full disk must not prevent the desktop switch.
 {
     echo "armada steam launch failure @ $stamp"
     echo "exit code: $code"
@@ -120,13 +147,13 @@ tail_line="$(grep -aiE 'error|fatal|segfault|assert|abort|not found|failed' "$st
     tail -40 "$steamlog" 2>/dev/null
 } > "$faillog"
 
-# A '!' line renders red; raw and verbatim, full text in $faillog.
+# A '!' line renders red; keep the underlying error visible before recovery.
 msg="!Steam launch failed (exit ${code})"
 [[ -n "$tail_line" ]] && msg="${msg}"$'\n'"!${tail_line}"
-say "$msg"
+say "${msg}"$'\n'"Rebooting to Desktop Mode in ${ERROR_HOLD} seconds"
 
-# A fresh renderer for the error: the startup one may have been displaced
-# already (or be about to process a displacement), ending the hold early.
+# The startup renderer may already have been displaced by a Steam window.
+# Start a fresh one so the error gets its own bounded display time.
 if [[ -n "$splash_pid" ]]; then
     kill "$splash_pid" 2>/dev/null
     wait "$splash_pid" 2>/dev/null
@@ -137,12 +164,21 @@ if [[ "$MODE" == "x11" && -n "${DISPLAY:-}" && -x "$SPLASH_BIN" ]]; then
     splash_pid=$!
 fi
 
-# Hold the error long enough to read, then return control to the session;
-# an unbounded hold wedges the boot with no input path to escape it.
+# Skip the delay without a renderer, and recover early if it exits itself.
 if [[ -n "$splash_pid" ]]; then
     ( sleep "$ERROR_HOLD"; kill "$splash_pid" 2>/dev/null ) &
     killer=$!
     wait "$splash_pid"
     kill "$killer" 2>/dev/null
+    wait "$killer" 2>/dev/null
+fi
+
+say "Steam could not start. Restarting in Desktop Mode"
+
+# Gamescope already owns the Odin's display at this point. Starting KWin via
+# SDDM in the same boot can wedge the DPU/Adreno driver, so select Plasma for
+# the next login and reboot instead of attempting a live compositor handoff.
+if ! sudo -n /usr/libexec/armada/session-control recover-desktop; then
+    echo "armada-splash-run: failed to restart in Desktop Mode after Steam exited with $code" >&2
 fi
 exit "$code"

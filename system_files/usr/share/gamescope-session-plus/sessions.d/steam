@@ -123,7 +123,8 @@ fi
 export GAMESCOPE_FALLBACK_APPID=0x41524d41
 CLIENTCMD='/usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck'
 armada_running_from_internal || CLIENTCMD+=' -noverifyfiles'
-[[ -e /etc/armada/splash-disabled ]] || CLIENTCMD="/usr/libexec/armada/armada-splash-run ${CLIENTCMD}"
+# Keep startup recovery active even when the wrapper's splash is disabled.
+CLIENTCMD="/usr/libexec/armada/armada-splash-run ${CLIENTCMD}"
 export CLIENTCMD
 
 # Workaround for Steam login issue while Steam client change propagates out of Beta
