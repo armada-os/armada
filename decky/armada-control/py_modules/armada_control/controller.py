@@ -1,6 +1,7 @@
 import subprocess
 
 from .privileged import call
+from .proc import clean_env
 
 CONTROLLER_TYPE = "/usr/libexec/armada/controller-type"
 DEFAULT_TYPE = "deck-uhid"
@@ -20,7 +21,7 @@ def controller_type():
     except Exception:
         pass
     try:
-        value = subprocess.check_output((CONTROLLER_TYPE, "get"), text=True, timeout=3).strip()
+        value = subprocess.check_output((CONTROLLER_TYPE, "get"), text=True, timeout=3, env=clean_env()).strip()
     except (OSError, subprocess.SubprocessError):
         return DEFAULT_TYPE
     return value if value in CONTROLLER_TYPES else DEFAULT_TYPE

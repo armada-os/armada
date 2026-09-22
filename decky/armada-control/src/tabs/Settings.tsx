@@ -1,9 +1,10 @@
 import { toaster } from "@decky/api";
 import { ButtonItem, Field, PanelSection } from "@decky/ui";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import {
   getBottomScreenActive,
+  getSleepLogsEnabled,
   setAblAutoEnabled as applyAblAutoEnabled,
   setBottomScreenBrightness as applyBottomScreenBrightness,
   setBottomScreenEnabled as applyBottomScreenEnabled,
@@ -11,6 +12,7 @@ import {
   setMtpEnabled as applyMtpEnabled,
   setDesktopMode as applyDesktopMode,
   setSleepMode as applySleepMode,
+  setSleepLogsEnabled as applySleepLogsEnabled,
   setSshEnabled as applySshEnabled,
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
@@ -24,6 +26,8 @@ export function Settings({ config, setConfig }: {
   config: Config;
   setConfig: Dispatch<SetStateAction<Config | null>>;
 }) {
+  const [sleepLogsEnabled, setSleepLogsEnabled] = useState<boolean | null>(null);
+  const [sleepLogsSaving, setSleepLogsSaving] = useState(false);
   const bottomScreenBrightnessTimer = useRef<number | undefined>(undefined);
   const bottomScreenBrightnessRequest = useRef<number>(0);
   const appliedBottomScreenBrightness = useRef<number>(config.bottomScreenBrightness);
@@ -31,6 +35,14 @@ export function Settings({ config, setConfig }: {
   useEffect(() => () => {
     window.clearTimeout(bottomScreenBrightnessTimer.current);
     bottomScreenBrightnessRequest.current += 1;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSleepLogsEnabled()
+      .then((enabled) => { if (!cancelled) setSleepLogsEnabled(enabled); })
+      .catch(() => { if (!cancelled) setSleepLogsEnabled(false); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -157,6 +169,19 @@ export function Settings({ config, setConfig }: {
       toaster.toast({ title: t("settings.sleepModeError"), body: String(error) });
     }
   };
+  const setSleepLogs = async (enabled: boolean) => {
+    const previous = sleepLogsEnabled ?? false;
+    setSleepLogsEnabled(enabled);
+    setSleepLogsSaving(true);
+    try {
+      setSleepLogsEnabled(await applySleepLogsEnabled(enabled));
+    } catch (error) {
+      setSleepLogsEnabled(previous);
+      toaster.toast({ title: t("settings.sleepLogsError"), body: String(error) });
+    } finally {
+      setSleepLogsSaving(false);
+    }
+  };
   return (
     <>
       <PanelSection title={t("settings.controller")}>
@@ -219,6 +244,14 @@ export function Settings({ config, setConfig }: {
           description={t("settings.updatesDuringShutdown")}
           value={!!config.ablAutoEnabled}
           onChange={setAblAutoEnabled}
+        />
+      </PanelSection>
+      <PanelSection title={t("settings.diagnostics")}>
+        <ToggleRow
+          label={t("settings.sleepLogs")}
+          value={sleepLogsEnabled ?? false}
+          disabled={sleepLogsEnabled === null || sleepLogsSaving}
+          onChange={(enabled) => { void setSleepLogs(enabled); }}
         />
       </PanelSection>
     </>
