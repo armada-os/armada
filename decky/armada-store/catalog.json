@@ -391,6 +391,18 @@
         "releases": "https://api.github.com/repos/xXJSONDeruloXx/decky-lsfg-vk/releases/364422297",
         "asset": "^Decky\\.LSFG-VK\\.zip$"
       }
+    },
+    {
+      "id": "optiscaler",
+      "name": "OptiScaler (ARM64EC)",
+      "summary": "Plugin for installing OptiScaler into games with minimal effort",
+      "category": "plugins",
+      "icon": "https://github.com/user-attachments/assets/c7dad5da-0b29-4710-8a57-b58e4e407abd",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://github.com/justradical/decky-optiscaler-arm64ec/releases?per_page=10",
+        "asset": "^OptiScaler.zip$"
+      }
     }
   ]
 }
