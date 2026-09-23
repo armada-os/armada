@@ -35,6 +35,11 @@ dnf5 -y install --setopt=install_weak_deps=False /packages/armada-rgb/*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False /packages/jupiter-hw-support/*.rpm
 
+# Patched protontricks: Ships with https://github.com/Matoking/protontricks/pull/503
+dnf5 -y install --setopt=install_weak_deps=False \
+    winetricks \
+    /packages/protontricks/protontricks-[0-9]*.rpm
+
 # Avoid gamescope-session-ogui-steam/-powerstation; Terra's aarch64 deps are broken.
 dnf5 -y install --setopt=install_weak_deps=False --enable-repo=terra \
     steam-notif-daemon

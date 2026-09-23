@@ -140,6 +140,15 @@ FROM scratch AS out-powerdevil
 COPY --from=pkg-powerdevil /work/out/ /rpms/
 
 
+FROM builder-base AS pkg-protontricks
+COPY protontricks/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-protontricks
+COPY --from=pkg-protontricks /work/out/ /rpms/
+
+
 FROM builder-base AS pkg-steamos-manager
 COPY steamos-manager/ /work/
 WORKDIR /work

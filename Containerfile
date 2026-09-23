@@ -35,6 +35,9 @@ FROM ${PLASMA_MOBILE_REF} AS plasma-mobile
 ARG POWERDEVIL_REF
 FROM ${POWERDEVIL_REF} AS powerdevil
 
+ARG PROTONTRICKS_REF
+FROM ${PROTONTRICKS_REF} AS protontricks
+
 ARG KERNEL_REF
 FROM ${KERNEL_REF} AS kernel
 
@@ -104,6 +107,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
     --mount=type=bind,from=plasma-mobile,source=/rpms,target=/packages/plasma-mobile \
     --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
+    --mount=type=bind,from=protontricks,source=/rpms,target=/packages/protontricks \
     --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
     --mount=type=bind,from=inputplumber,source=/rpms,target=/packages/inputplumber \
     --mount=type=bind,from=steamos-manager,source=/rpms,target=/packages/steamos-manager \
