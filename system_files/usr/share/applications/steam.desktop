@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Steam
-Exec=/usr/libexec/armada/launch-steam --desktop %U
+Exec=/usr/bin/steam %U
 Icon=steam
 Terminal=false
 Categories=Game;

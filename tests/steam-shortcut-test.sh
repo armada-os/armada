@@ -32,7 +32,7 @@ cat > "$stub" <<'STUB'
 printf '%s\n' "$@"
 STUB
 chmod 0755 "$stub"
-sed "s#/usr/libexec/armada/launch-steam#$stub#" "$SHIM" > "$TEST_ROOT/steam"
+sed "s#/usr/bin/steam#$stub#" "$SHIM" > "$TEST_ROOT/steam"
 chmod 0755 "$TEST_ROOT/steam"
 
 got="$("$TEST_ROOT/steam" 'steam://rungameid/434050' 'two words')"
@@ -43,7 +43,7 @@ expected=$'--desktop\nsteam://rungameid/434050\ntwo words'
 got="$("$TEST_ROOT/steam")"
 [[ "$got" == "--desktop" ]] || fail "bare shim should pass only --desktop, got: $got"
 
-grep -qx 'Exec=/usr/libexec/armada/launch-steam --desktop %U' "$ENTRY" \
+grep -qx 'Exec=/usr/bin/steam %U' "$ENTRY" \
     || fail "steam.desktop Exec is missing %U"
 grep -qx 'MimeType=x-scheme-handler/steam;' "$ENTRY" \
     || fail "steam.desktop does not advertise x-scheme-handler/steam"
