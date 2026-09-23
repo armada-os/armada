@@ -4,21 +4,16 @@ Date: Mon, 27 Oct 2025 16:53:15 +0800
 Subject: [PATCH] drm/panel: Add panel driver for DDIC CH13726A based panels
 
 Signed-off-by: Teguh Sobirin <teguh@sobir.in>
----
- drivers/gpu/drm/panel/Kconfig               |  11 +
- drivers/gpu/drm/panel/Makefile              |   1 +
- drivers/gpu/drm/panel/panel-ddic-ch13726a.c | 328 ++++++++++++++++++++
- 3 files changed, 340 insertions(+)
- create mode 100644 drivers/gpu/drm/panel/panel-ddic-ch13726a.c
 
+---
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index cc2b93322628..fd889664ff6b 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -157,6 +157,17 @@
+@@ -136,6 +136,17 @@
+ 	help
  	  Say Y here if you want to enable support for ChipWealth
  	  CH13726A-based display panels.
- 
++
 +config DRM_PANEL_DDIC_CH13726A
 +	tristate "DDIC CH13726A-based DSI panel"
 +	depends on OF
@@ -29,16 +24,14 @@ index cc2b93322628..fd889664ff6b 100644
 +	help
 +	  Say Y here if you want to enable support for DDIC CH13726A-based
 +	  display panels.
-+
+ 
  config DRM_PANEL_EBBG_FT8719
  	tristate "EBBG FT8719 panel driver"
- 	depends on GPIOLIB
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index 339a5cb9f31b..c5f4f5f7bd82 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
-@@ -14,6 +14,7 @@
- obj-$(CONFIG_DRM_PANEL_BOE_XM91080G) += panel-boe-xm91080g.o
+@@ -12,6 +12,7 @@
+ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
  obj-$(CONFIG_DRM_PANEL_CHIPONE_ICNA35XX) += panel-chipone-icna35xx.o
  obj-$(CONFIG_DRM_PANEL_CHIPWEALTH_CH13726A) += panel-chipwealth-ch13726a.o
 +obj-$(CONFIG_DRM_PANEL_DDIC_CH13726A) += panel-ddic-ch13726a.o
@@ -46,11 +39,9 @@ index 339a5cb9f31b..c5f4f5f7bd82 100644
  obj-$(CONFIG_DRM_PANEL_LVDS) += panel-lvds.o
  obj-$(CONFIG_DRM_PANEL_SIMPLE) += panel-simple.o
 diff --git a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
-new file mode 100644
-index 000000000000..946ad32f9b82
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,329 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * DDIC CH13726A MIPI-DSI panel driver
@@ -66,6 +57,7 @@ index 000000000000..946ad32f9b82
 +
 +#include <drm/drm_mipi_dsi.h>
 +#include <drm/drm_modes.h>
++#include <drm/drm_of.h>
 +#include <drm/drm_panel.h>
 +
 +#include <video/mipi_display.h>
@@ -313,7 +305,7 @@ index 000000000000..946ad32f9b82
 +		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
 +				     "Failed to get reset-gpios\n");
 +
-+	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	ret = drm_of_get_panel_orientation(dev->of_node, &ctx->orientation);
 +	if (ret < 0) {
 +		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
 +		return ret;
@@ -379,5 +371,3 @@ index 000000000000..946ad32f9b82
 +
 +MODULE_DESCRIPTION("DRM driver for CH13726A DSI panels");
 +MODULE_LICENSE("GPL");
--- 
-2.34.1

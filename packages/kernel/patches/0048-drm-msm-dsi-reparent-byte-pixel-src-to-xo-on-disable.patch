@@ -8,12 +8,12 @@ left on a live parent. The next enable then cleanly reparents them back to
 the PLL.
 
 Signed-off-by: tiopex <tiopxyz@gmail.com>
+
 ---
 diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
-index 982abaa..80f0016 100644
 --- a/drivers/gpu/drm/msm/dsi/dsi_host.c
 +++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
-@@ -127,6 +127,8 @@ struct msm_dsi_host {
+@@ -127,6 +127,8 @@
  	struct clk *pixel_src_clk;
  	struct clk *dsi_pll_byte_clk;
  	struct clk *dsi_pll_pixel_clk;
@@ -21,20 +21,20 @@ index 982abaa..80f0016 100644
 +	struct clk *pixel_src_parent;
  
  	unsigned long byte_clk_rate;
- 	unsigned long byte_intf_clk_rate;
-@@ -416,6 +418,11 @@ int dsi_link_clk_set_rate_6g_v2_9(struct msm_dsi_host *msm_host)
+ 	bool byte_intf_clk_div_2;
+@@ -432,6 +434,11 @@
+ {
  	struct device *dev = &msm_host->pdev->dev;
  	int ret;
- 
++
 +	if (!msm_host->byte_src_parent)
 +		msm_host->byte_src_parent = clk_get_parent(msm_host->byte_src_clk);
 +	if (!msm_host->pixel_src_parent)
 +		msm_host->pixel_src_parent = clk_get_parent(msm_host->pixel_src_clk);
-+
+ 
  	/*
  	 * DSI PHY PLLs have to be enabled to allow reparenting to them, so
- 	 * cannot use assigned-clock-parents.
-@@ -2556,6 +2563,11 @@ int msm_dsi_host_power_off(struct mipi_dsi_host *host)
+@@ -2563,6 +2570,11 @@
  
  	pinctrl_pm_select_sleep_state(&msm_host->pdev->dev);
  
@@ -46,5 +46,3 @@ index 982abaa..80f0016 100644
  	cfg_hnd->ops->link_clk_disable(msm_host);
  	pm_runtime_put(&msm_host->pdev->dev);
  
--- 
-2.43.0

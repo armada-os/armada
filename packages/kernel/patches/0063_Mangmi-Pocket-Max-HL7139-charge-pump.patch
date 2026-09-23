@@ -3,46 +3,37 @@ From: sunshineinabox <aqemail@gmail.com>
 Date: Wed, 10 Jun 2026 06:03:45 +0000
 Subject: [PATCH] power: supply: add Halo Microelectronics HL7139 charge pump
 
----
- drivers/power/supply/Kconfig          |   7 +
- drivers/power/supply/Makefile         |   1 +
- drivers/power/supply/hl7139_charger.c | 374 ++++++++++++++++++++++++++
- 3 files changed, 382 insertions(+)
- create mode 100644 drivers/power/supply/hl7139_charger.c
 
+---
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index f0ede1c..18afeec 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
-@@ -839,6 +839,13 @@ config CHARGER_BQ25980
- 	  Say Y to enable support for the TI BQ25980, BQ25975 and BQ25960
- 	  series of fast battery chargers.
- 
+@@ -845,6 +845,13 @@
+ 	select REGMAP_I2C
+ 	help
+ 	  Say Y to enable support for the TI BQ25630 battery charger.
++
 +config CHARGER_HL7139
 +	tristate "Halo Microelectronics HL7139 charge pump"
 +	depends on I2C
 +	select REGMAP_I2C
 +	help
 +	  Say Y to enable support for the Halo Microelectronics HL7139
-+
+ 
  config CHARGER_BQ256XX
  	tristate "TI BQ256XX battery charger driver"
- 	depends on I2C
 diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
-index 31fe4a1..557aef5 100644
 --- a/drivers/power/supply/Makefile
 +++ b/drivers/power/supply/Makefile
-@@ -105,6 +105,7 @@ obj-$(CONFIG_CHARGER_BQ2515X)	+= bq2515x_charger.o
+@@ -105,6 +105,7 @@
  obj-$(CONFIG_CHARGER_BQ257XX)	+= bq257xx_charger.o
  obj-$(CONFIG_CHARGER_BQ25890)	+= bq25890_charger.o
  obj-$(CONFIG_CHARGER_BQ25980)	+= bq25980_charger.o
 +obj-$(CONFIG_CHARGER_HL7139)	+= hl7139_charger.o
+ obj-$(CONFIG_CHARGER_BQ25630)	+= bq25630_charger.o
  obj-$(CONFIG_CHARGER_BQ256XX)	+= bq256xx_charger.o
  obj-$(CONFIG_CHARGER_RK817)	+= rk817_charger.o
- obj-$(CONFIG_CHARGER_S2M)	+= s2m-charger.o
 diff --git a/drivers/power/supply/hl7139_charger.c b/drivers/power/supply/hl7139_charger.c
-new file mode 100644
-index 0000000..3ce3d5d
 --- /dev/null
 +++ b/drivers/power/supply/hl7139_charger.c
 @@ -0,0 +1,374 @@
@@ -420,5 +411,3 @@ index 0000000..3ce3d5d
 +
 +MODULE_DESCRIPTION("Halo Microelectronics HL7139 charge pump driver");
 +MODULE_LICENSE("GPL");
--- 
-2.55.0

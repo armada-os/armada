@@ -6,7 +6,6 @@
 0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740.patch
 0010-msm-resource-cleanup.patch
 0048-drm-msm-dsi-reparent-byte-pixel-src-to-xo-on-disable.patch
-0048a-drm-msm-dsi-round-byte-clock-rate-after-reparenting-to-PLL.patch
 0049-drm-msm-dpu-panel-opt-in-8bpc-dither.patch
 0066-drm-msm-dpu-enable-inline-rotation.patch
 0068-drm-msm-dpu-lutdma-dspp-igc-gamut.patch
@@ -17,7 +16,6 @@
 0028-drm-panel-Add-panel-driver-for-Chipone-ICNA35XX-base.patch
 0051-gpu-panel-add-Pocket-ACE-panel-driver.patch
 0052-gpu-panel-add-Pocket-DMG-panel-driver.patch
-0053-gpu-panel-st7703-add-Pocket-DS-lower-panel.patch
 0055_Synaptics-TD4328-LCD-panel.patch
 0057_DDIC-CH13726A-panel.patch
 0059-drm-panel-add-brightness-levels-helper.patch
@@ -85,7 +83,6 @@
 0064-ASoC-wcd-mbhc-clear-stale-jack-report-on-mechanical-removal.patch
 0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch
 0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch
-0618-drm-msm-dp-dont-fail-audio-prepare-when-display-off.patch
 
 # ============== LED / RGB ==============
 0030-leds-Add-driver-for-HEROIC-HTR3212.patch
@@ -96,7 +93,6 @@
 
 # ============== SoC / Platform ==============
 20260424_neil_armstrong_arm64_dts_qcom_sm8_456_50_add_missing_cx_power_domain_to_gcc.patch
-v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0504-mailbox-qcom-ipcc-mask-summary-irq-for-suspend-to-ram.patch
 0505-msm_gem-lock-before-put_iova_spaces.patch
 0204-thermal-qcom-tsens-mask-lower-threshold-irqs-across-suspend.patch
@@ -128,12 +124,8 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 # ============== SM8650 (AYANEO Pocket S2, KONKR Pocket FIT) ==============
 0001-pcie-update-sm8650-dtsi.patch
 0006-add-hw_params-callback-function-to-drm_connector_hdmi_audio_ops.patch
-0007-ASoC-qcom-audioreach-compute-active-channel-maps.patch
-0008-ASoC-dt-bindings-qcom-sm8250-Add-Ayaneo-Pocket-S2.patch
-0009-ASoC-qcom-sc8280xp-add-Ayaneo-Pocket-S2-card.patch
 0010-ASoC-qcom-add-KONKR-Pocket-FIT-WSA2-card.patch
 0011-ASoC-qcom-audioreach-use-wsa-interface-for-sm8650-wsa2.patch
-v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0063-gpu-drm-panel-add-pocket-fit-panel.patch
 0064-input-touchscreen-add-rocknix-chipone-tddi.patch
 
@@ -160,7 +152,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 # ============== SM8750 (AYN Odin 3, KONKR Pocket FIT Elite) ==============
 0026-dt-bindings-arm-qcom-ids-Add-SoC-ID-for-CQ8725S.patch
 0027-soc-qcom-socinfo-Add-CQ8725S-SoC-ID.patch
-0034-arm64-dts-qcom-sm8750-Add-UART15.patch
 0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch
 0038-arm64-dts-qcom-sm8750-add-GPU-nodes.patch
 0038a-arm64-dts-qcom-sm8750-map-A8xx-RSCC-registers.patch

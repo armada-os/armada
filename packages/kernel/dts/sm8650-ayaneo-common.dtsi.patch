@@ -3,6 +3,14 @@ Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 drive
 
 --- a/arch/arm64/boot/dts/qcom/sm8650-ayaneo-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm8650-ayaneo-common.dtsi
+@@ -20,6 +20,7 @@
+ /delete-node/ &camera_mem;
+ /delete-node/ &ipa_fw_mem;
+ /delete-node/ &ipa_gsi_mem;
++/delete-node/ &ipa;
+ /delete-node/ &rmtfs_mem;
+ /delete-node/ &hwfence_shbuf;
+ 
 @@ -121,6 +121,22 @@
  		pinctrl-names = "default";
  	};

@@ -3,21 +3,16 @@ From: Philippe Simons <simons.philippe@gmail.com>
 Date: Tue, 13 Jan 2026 20:48:26 +0100
 Subject: [PATCH] gpu:drm:panel:add pocket fit panel
 
----
- drivers/gpu/drm/panel/Kconfig            |  13 +
- drivers/gpu/drm/panel/Makefile           |   1 +
- drivers/gpu/drm/panel/panel-ar14-144hz.c | 481 +++++++++++++++++++++++
- 3 files changed, 495 insertions(+)
- create mode 100644 drivers/gpu/drm/panel/panel-ar14-144hz.c
 
+---
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index 407c5f6a268b..6481e0100061 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -37,6 +37,19 @@
+@@ -46,6 +46,19 @@
+ 	help
  	  Say Y here if you want to enable support for Ayaneo Pocket DMG
  	  1080x1240 60hz Panel.
- 
++
 +config DRM_PANEL_AR14
 +	tristate "Ayaneo Pocket FIT panel driver"
 +	depends on OF
@@ -30,27 +25,24 @@ index 407c5f6a268b..6481e0100061 100644
 +	  used in Ayaneo handheld gaming devices.
 +
 +	  To compile this driver as a module, choose M here.
-+
+ 
  config DRM_PANEL_ARM_VERSATILE
  	tristate "ARM Versatile panel driver"
- 	depends on OF
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index 3615a761b44f..5ae127482f10 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
-@@ -1,5 +1,6 @@
- # SPDX-License-Identifier: GPL-2.0
- obj-$(CONFIG_DRM_PANEL_ABT_Y030XX067A) += panel-abt-y030xx067a.o
-+obj-$(CONFIG_DRM_PANEL_AR14) += panel-ar14-144hz.o
+@@ -3,6 +3,7 @@
  obj-$(CONFIG_DRM_PANEL_AR06_4INCH) += panel-ar06-4inch.o
+ obj-$(CONFIG_DRM_PANEL_ANBERNIC_TD4310) += panel-anbernic-td4310.o
  obj-$(CONFIG_DRM_PANEL_AR02_3INCH) += panel-ar02-3inch.o
++obj-$(CONFIG_DRM_PANEL_AR14) += panel-ar14-144hz.o
  obj-$(CONFIG_DRM_PANEL_ARM_VERSATILE) += panel-arm-versatile.o
+ obj-$(CONFIG_DRM_PANEL_ASUS_Z00T_TM5P5_NT35596) += panel-asus-z00t-tm5p5-n35596.o
+ obj-$(CONFIG_DRM_PANEL_AUO_A030JTN01) += panel-auo-a030jtn01.o
 diff --git a/drivers/gpu/drm/panel/panel-ar14-144hz.c b/drivers/gpu/drm/panel/panel-ar14-144hz.c
-new file mode 100644
-index 000000000000..5e38005a0398
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ar14-144hz.c
-@@ -0,0 +1,551 @@
+@@ -0,0 +1,552 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +// Copyright (c) 2026 Philippe Simons <simons.philippe@gmail.com>
 +// Generated with linux-mdss-dsi-panel-driver-generator from vendor device tree:
@@ -67,6 +59,7 @@ index 000000000000..5e38005a0398
 +#include <drm/display/drm_dsc_helper.h>
 +#include <drm/drm_mipi_dsi.h>
 +#include <drm/drm_modes.h>
++#include <drm/drm_of.h>
 +#include <drm/drm_panel.h>
 +#include <drm/drm_probe_helper.h>
 +
@@ -521,7 +514,7 @@ index 000000000000..5e38005a0398
 +		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
 +				     "Failed to get reset-gpios\n");
 +
-+	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	ret = drm_of_get_panel_orientation(dev->of_node, &ctx->orientation);
 +	if (ret < 0) {
 +		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
 +		return ret;

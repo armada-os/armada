@@ -9,26 +9,28 @@ floor is a corner logic can run at.
 [Modified: Armada scopes the flags to dedicated SM8550/SM8750
 descriptors so other Qualcomm SoCs keep stock clamp behavior.]
 
+
 ---
+diff --git a/drivers/pmdomain/qcom/rpmhpd.c b/drivers/pmdomain/qcom/rpmhpd.c
 --- a/drivers/pmdomain/qcom/rpmhpd.c
 +++ b/drivers/pmdomain/qcom/rpmhpd.c
-@@ -42,6 +42,7 @@
+@@ -41,6 +41,7 @@
+  * @addr:		Resource address as looped up using resource name from
   *			cmd-db
   * @state_synced:	Indicator that sync_state has been invoked for the rpmhpd resource
-  * @skip_retention_level: Indicate that retention level should not be used for the power domain
 + * @presync_floor:	Clamp to the lowest functional corner instead of the highest before sync_state
   */
  struct rpmhpd {
  	struct device	*dev;
-@@ -59,6 +60,7 @@
+@@ -57,6 +58,7 @@
+ 	const char	*res_name;
  	u32		addr;
  	bool		state_synced;
- 	bool            skip_retention_level;
 +	bool		presync_floor;
  };
  
  struct rpmhpd_desc {
-@@ -122,6 +124,13 @@
+@@ -120,6 +122,12 @@
  	.res_name = "gfx.lvl",
  };
  
@@ -36,27 +38,25 @@ descriptors so other Qualcomm SoCs keep stock clamp behavior.]
 +	.pd = { .name = "gfx", },
 +	.res_name = "gfx.lvl",
 +	.presync_floor = true,
-+	.skip_retention_level = true,
 +};
 +
  static struct rpmhpd gfx1 = {
  	.pd = { .name = "gfx1", },
  	.res_name = "gfx1.lvl",
-@@ -237,6 +246,13 @@
+@@ -231,6 +239,12 @@
+ static struct rpmhpd gmxc = {
+ 	.pd = { .name = "gmxc", },
  	.res_name = "gmxc.lvl",
- };
- 
++};
++
 +static struct rpmhpd gmxc_sm8750 = {
 +	.pd = { .name = "gmxc", },
 +	.res_name = "gmxc.lvl",
 +	.presync_floor = true,
-+	.skip_retention_level = true,
-+};
-+
+ };
+ 
  /* Eliza RPMH powerdomains */
- static struct rpmhpd *eliza_rpmhpds[] = {
- 	[RPMHPD_CX] = &cx,
-@@ -593,7 +609,7 @@
+@@ -589,7 +603,7 @@
  	[RPMHPD_CX] = &cx,
  	[RPMHPD_CX_AO] = &cx_ao,
  	[RPMHPD_EBI] = &ebi,
@@ -65,7 +65,7 @@ descriptors so other Qualcomm SoCs keep stock clamp behavior.]
  	[RPMHPD_LCX] = &lcx,
  	[RPMHPD_LMX] = &lmx,
  	[RPMHPD_MMCX] = &mmcx_w_cx_parent,
-@@ -640,8 +656,8 @@
+@@ -636,8 +650,8 @@
  	[RPMHPD_CX] = &cx,
  	[RPMHPD_CX_AO] = &cx_ao,
  	[RPMHPD_EBI] = &ebi,
@@ -76,7 +76,7 @@ descriptors so other Qualcomm SoCs keep stock clamp behavior.]
  	[RPMHPD_LCX] = &lcx,
  	[RPMHPD_LMX] = &lmx,
  	[RPMHPD_MX] = &mx,
-@@ -971,6 +987,10 @@
+@@ -967,6 +981,10 @@
  
  	if (pd->state_synced) {
  		to_active_sleep(pd, corner, &this_active_corner, &this_sleep_corner);

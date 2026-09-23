@@ -3,6 +3,14 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayaneo: drop the SDHCI capability mas
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocket-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocket-common.dtsi
+@@ -18,6 +18,7 @@
+ /delete-node/ &camera_mem;
+ /delete-node/ &ipa_fw_mem;
+ /delete-node/ &ipa_gsi_mem;
++/delete-node/ &ipa;
+ /delete-node/ &mpss_dsm_mem;
+ /delete-node/ &mpss_mem;
+ /delete-node/ &q6_mpss_dtb_mem;
 @@ -52,7 +52,6 @@
  			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
  			linux,code = <KEY_VOLUMEUP>;

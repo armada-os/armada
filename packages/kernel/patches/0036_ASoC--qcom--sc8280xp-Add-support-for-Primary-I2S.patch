@@ -3,34 +3,33 @@ From: Philippe Simons <simons.philippe@gmail.com>
 Date: Thu, 19 Feb 2026 22:26:05 +0100
 Subject: [PATCH] ASoC: qcom: sc8280xp: Add Primary I2S support
 
----
- sound/soc/qcom/sc8280xp.c | 49 +++++++++++++++++++++++++++++++++++++--
- 1 file changed, 47 insertions(+), 2 deletions(-)
 
+---
 diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
-index 7925aa3f63ba..db46d788d052 100644
 --- a/sound/soc/qcom/sc8280xp.c
 +++ b/sound/soc/qcom/sc8280xp.c
 @@ -2,6 +2,7 @@
  // Copyright (c) 2022, Linaro Limited
-
+ 
  #include <dt-bindings/sound/qcom,q6afe.h>
 +#include <linux/clk.h>
  #include <linux/module.h>
  #include <linux/platform_device.h>
  #include <sound/soc.h>
-@@ -20,6 +21,7 @@ struct sc8280xp_snd_data {
+@@ -79,6 +80,7 @@
  	struct snd_soc_card *card;
  	struct snd_soc_jack jack;
  	struct snd_soc_jack dp_jack[8];
 +	struct clk *i2s_clk;
+ 	const struct qcom_snd_soc_common *priv;
  	bool jack_setup;
  };
-
-@@ -67,6 +69,45 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
- 	return qcom_snd_wcd_jack_setup(rtd, &data->jack, &data->jack_setup);
- }
-
+@@ -213,6 +215,45 @@
+ 		return qcom_snd_wcd_jack_setup(rtd, &data->jack, &data->jack_setup);
+ 
+ 	return 0;
++}
++
 +static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
 +{
 +	unsigned int fmt = SND_SOC_DAIFMT_BP_FP;
@@ -68,32 +67,28 @@ index 7925aa3f63ba..db46d788d052 100644
 +	}
 +
 +	qcom_snd_sdw_shutdown(substream);
-+}
-+
- static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
- 				     struct snd_pcm_hw_params *params)
- {
-@@ -115,8 +156,8 @@ static int sc8280xp_snd_hw_free(struct snd_pcm_substream *substream)
  }
-
+ 
+ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+@@ -369,8 +410,8 @@
+ }
+ 
  static const struct snd_soc_ops sc8280xp_be_ops = {
 -	.startup = qcom_snd_sdw_startup,
 -	.shutdown = qcom_snd_sdw_shutdown,
 +	.startup = sc8280xp_snd_startup,
 +	.shutdown = sc8280xp_snd_shutdown,
+ 	.hw_params = sc8280xp_snd_hw_params,
  	.hw_free = sc8280xp_snd_hw_free,
  	.prepare = sc8280xp_snd_prepare,
- };
-@@ -158,6 +199,10 @@ static int sc8280xp_platform_probe(struct platform_device *pdev)
- 	if (ret)
- 		return ret;
-
+@@ -412,6 +453,10 @@
+ 
+ 	card->owner = THIS_MODULE;
+ 	card->dev = dev;
 +	data->i2s_clk = devm_clk_get_optional(dev, "i2s_clk");
 +	if (IS_ERR(data->i2s_clk))
 +		return dev_err_probe(dev, PTR_ERR(data->i2s_clk), "unable to get i2s clock\n");
 +
- 	card->driver_name = of_device_get_match_data(dev);
- 	sc8280xp_add_be_ops(card);
- 	return devm_snd_soc_register_card(dev, card);
---
-2.52.0
+ 	dev_set_drvdata(dev, card);
+ 	snd_soc_card_set_drvdata(card, data);
+ 	card->dapm_widgets = data->priv->dapm_widgets;
