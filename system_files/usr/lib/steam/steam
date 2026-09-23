@@ -1,12 +1,6 @@
 #!/usr/bin/bash
 set -euo pipefail
 
-steam_args=()
-if [[ ${1:-} == "--desktop" ]]; then
-    shift
-    steam_args=(-steamdeck)
-fi
-
 steam_root="${STEAM_ROOT:-${HOME}/.local/share/Steam}"
 steam_arm_dir="${steam_root}/steamrtarm64"
 steam_arm="${steam_arm_dir}/steam"
@@ -38,6 +32,12 @@ fi
 
 touch "${steam_root}/.cef-enable-remote-debugging"
 cd "${steam_arm_dir}"
-exec "${steam_arm}" \
-    "${steam_args[@]}" \
+"${steam_arm}" \
     "$@"
+
+EXITCODE=$?
+
+if [ $EXITCODE -eq 42 ]; then
+	echo "Restarting Steam"
+	exec "$0" "$@"
+fi
