@@ -3,6 +3,7 @@ import grp
 import json
 import os
 import pwd
+import re
 import selectors
 import shlex
 import socket
@@ -35,8 +36,12 @@ SLEEP_CONFIG = Path("/etc/armada/sleep.conf")
 SUSPEND_MODE_KEY = "suspend_mode"
 NM_IGNORE_SLEEP = Path("/etc/NetworkManager/ignore-sleep")
 MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
-DESKTOP_SESSION_PATH = Path("/etc/armada/desktop-session")
-DESKTOP_MODES = {"desktop", "mobile"}
+STEAMOSCTL = "/usr/bin/steamosctl"
+STEAMOS_MANAGER_STATE = Path("/var/home/armada/.config/steamos-manager/state.toml")
+DESKTOP_SESSION_FOR_MODE = {
+    "desktop": "armada-plasma.desktop",
+    "mobile": "armada-plasma-mobile.desktop",
+}
 BOTTOM_SCREEN_SERVICE = "armada-bottom-screen.service"
 GAME_MODE_SERVICE = "gamescope-session-plus@steam.service"
 BOTTOM_SCREEN_BRIGHTNESS_PATH = Path("/etc/armada/bottom-screen-brightness")
@@ -155,19 +160,25 @@ def set_networkmanager_sleep_allowed(allow_sleep):
         NM_IGNORE_SLEEP.touch()
 
 def get_desktop_mode() -> str:
+    # steamos-manager (steamosctl set-default-desktop-session) is the source of truth
     try:
-        mode = DESKTOP_SESSION_PATH.read_text(encoding="utf-8").strip()
+        text = STEAMOS_MANAGER_STATE.read_text(encoding="utf-8")
     except OSError:
         return "desktop"
 
-    return mode if mode in DESKTOP_MODES else "desktop"
+    match = re.search(r'(?m)^desktop_session\s*=\s*"([^"]*)"', text)
+    session = match.group(1) if match else ""
+    for mode, mode_session in DESKTOP_SESSION_FOR_MODE.items():
+        if session == mode_session:
+            return mode
+    return "desktop"
 
 
 def set_desktop_mode(mode: str):
-    if mode not in DESKTOP_MODES:
+    if mode not in DESKTOP_SESSION_FOR_MODE:
         raise ValueError("invalid desktop mode")
 
-    atomic_write(DESKTOP_SESSION_PATH, f"{mode}\n")
+    steamosctl("set-default-desktop-session", DESKTOP_SESSION_FOR_MODE[mode])
 
 def select_mem_sleep(mode):
     if mode == "s2idle":
@@ -213,17 +224,21 @@ def bottom_screen_supported():
     )
 
 
-def session_systemctl(*args, check=True, timeout=30):
+def session_user_command(*command):
     user = os.environ.get("ARMADA_SESSION_USER", "armada")
     account = pwd.getpwnam(user)
+    return [
+        "/usr/bin/runuser", "-u", user, "--", "env",
+        f"HOME={account.pw_dir}",
+        f"XDG_RUNTIME_DIR=/run/user/{account.pw_uid}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{account.pw_uid}/bus",
+        *command,
+    ]
+
+
+def session_systemctl(*args, check=True, timeout=30):
     result = subprocess.run(
-        [
-            "/usr/bin/runuser", "-u", user, "--", "env",
-            f"HOME={account.pw_dir}",
-            f"XDG_RUNTIME_DIR=/run/user/{account.pw_uid}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{account.pw_uid}/bus",
-            "/usr/bin/systemctl", "--user", *args,
-        ],
+        session_user_command("/usr/bin/systemctl", "--user", *args),
         check=False,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -232,6 +247,20 @@ def session_systemctl(*args, check=True, timeout=30):
     if check and result.returncode != 0:
         raise RuntimeError("could not update bottom-screen service")
     return result
+
+
+def steamosctl(*args, timeout=10):
+    result = subprocess.run(
+        session_user_command(STEAMOSCTL, *args),
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or "steamosctl failed").strip())
+    return result.stdout.strip()
 
 
 def bottom_screen_enabled():

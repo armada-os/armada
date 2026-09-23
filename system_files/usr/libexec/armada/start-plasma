@@ -1,5 +1,11 @@
 #!/usr/bin/bash
+# Steam starts this through steamos-manager, which knows nothing about the
+# desktop/mobile split, so activate our config here rather than in session-control.
 set -euo pipefail
+
+source "${ARMADA_PLASMA_CONFIG_LIB:-/usr/lib/armada/plasma-config-lib}"
+
+armada_plasma_activate_config desktop
 
 export DESKTOP_SESSION=plasma
 export XDG_CURRENT_DESKTOP=KDE

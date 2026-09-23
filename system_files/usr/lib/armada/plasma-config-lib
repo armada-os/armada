@@ -1,0 +1,27 @@
+# Plasma keeps one plasmashellrc, but the desktop and mobile shells want different
+# layouts, so each session points that name at its own variant before starting.
+
+armada_plasma_activate_config() {
+    local mode=$1
+    local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
+    local config="${config_dir}/plasmashellrc"
+    local target="plasmashellrc.${mode}"
+
+    install -d -m 0700 "${config_dir}"
+
+    # A config predating the split is the desktop one; keep it rather than overwriting it.
+    if [[ -e "${config}" && ! -L "${config}" ]]; then
+        if [[ -e "${config}.desktop" || -L "${config}.desktop" ]]; then
+            echo "plasma-config: refusing to overwrite ${config}.desktop" >&2
+            return 1
+        fi
+        mv "${config}" "${config}.desktop"
+    fi
+
+    [[ -e "${config}.${mode}" ]] || install -m 0600 /dev/null "${config}.${mode}"
+
+    if [[ ! -L "${config}" || "$(readlink "${config}")" != "${target}" ]]; then
+        ln -sfn "${target}" "${config}.new"
+        mv -Tf "${config}.new" "${config}"
+    fi
+}
