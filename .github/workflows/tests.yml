@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Tests and recipe checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The Justfile uses [group(...)] attributes, which need just >= 1.22.
+      # Ubuntu 24.04's archive still ships 1.21, so just is installed here
+      # rather than with apt.
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      # armada-control-rgb-test.sh checks for the absence of ARMADA_RGB_ with
+      # ripgrep; without ripgrep those two assertions pass vacuously.
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
+      - name: just check (test suite + Justfile formatting)
+        run: just check

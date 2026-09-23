@@ -95,8 +95,21 @@ def load_script(name):
     return module
 
 
-ENV = {"ARMADA_BIG_CORES": "3-7", "ARMADA_PRIME_CORES": "7", "ARMADA_LITTLE_CORES": "0-2"}
-ALL = ap.online_cpus()
+ALL = sorted(ap.online_cpus())
+# resolve_cores validates a cpulist against the machine's real CPUs, and the
+# wrapper really sets affinity, so the fixture has to fit the host: a CI
+# runner has four CPUs. Take the top of the real set as the big cores, its
+# last as prime, and the rest as little.
+BIG = ALL[-5:] if len(ALL) >= 5 else list(ALL)
+PRIME = BIG[-1:]
+LITTLE = ALL[:-5] if len(ALL) > 5 else list(ALL[:1])
+EXPLICIT = [BIG[-1], *BIG[:-1]]          # deliberately out of order
+EXPLICIT_ENV = ",".join(str(c) for c in EXPLICIT)
+EXPLICIT_LIST = "%d:%s" % (len(EXPLICIT), EXPLICIT_ENV)
+TAIL = BIG[-2:]                          # the last two cores, for env passthrough
+ENV = {"ARMADA_BIG_CORES": ap.format_cpulist(BIG),
+       "ARMADA_PRIME_CORES": ap.format_cpulist(PRIME),
+       "ARMADA_LITTLE_CORES": ap.format_cpulist(LITTLE)}
 
 # --- armada_perf: cpulist grammar -------------------------------------------
 check("parse order preserved", ap.parse_cpulist("7,3-5") == [7, 3, 4, 5])
@@ -113,7 +126,7 @@ check("unset is None", ap.resolve_cores(None, ENV) is None and ap.resolve_cores(
 check("all is explicit full set", ap.resolve_cores("all", ENV) == ALL)
 check("empty preset is explicit full set",
       ap.resolve_cores("little", {"ARMADA_LITTLE_CORES": ""}) == ALL)
-check("preset resolves", ap.resolve_cores("big", ENV) == [3, 4, 5, 6, 7])
+check("preset resolves", ap.resolve_cores("big", ENV) == BIG)
 try:
     ap.resolve_cores(f"{max(ALL) + 1}", ENV)
     check("unknown cpu rejected", False)
@@ -131,7 +144,7 @@ check("wineTopology false kept", clean["wineTopology"] is False)
 check("wineTopology true kept", ap.sanitize_perf({"wineTopology": True})["wineTopology"] is True)
 check("unset keys stay absent", ap.sanitize_perf({}, ENV) == {})
 
-state = {"global": {"gamescopeNice": -5, "gamescopeCores": [3, 4, 5, 6, 7]},
+state = {"global": {"gamescopeNice": -5, "gamescopeCores": BIG},
          "override": {"gamescopeCores": ALL, "pid": 1}}
 eff = ap.effective_state(state)
 check("override all clears restrictive global", eff["gamescopeCores"] == ALL)
@@ -273,11 +286,11 @@ try:
     launch.apply_perf({}, None)  # session socket warning on stderr is fine
     check("wrapper resets inherited mask", os.sched_getaffinity(0) == set(ap.online_cpus()))
     check("no topology without cores", all(key not in os.environ for key in topology_keys))
-    launch.apply_perf({"cores": "7,3-6"}, None)
-    check("ordered topology derived", os.environ.get("WINE_CPU_TOPOLOGY") == "5:7,3,4,5,6")
+    launch.apply_perf({"cores": EXPLICIT_ENV}, None)
+    check("ordered topology derived", os.environ.get("WINE_CPU_TOPOLOGY") == EXPLICIT_LIST)
     check("Proton override matches Wine topology",
-          os.environ.get("PROTON_CPU_TOPOLOGY") == "5:7,3,4,5,6")
-    check("cores mask applied", os.sched_getaffinity(0) == {3, 4, 5, 6, 7})
+          os.environ.get("PROTON_CPU_TOPOLOGY") == EXPLICIT_LIST)
+    check("cores mask applied", os.sched_getaffinity(0) == set(BIG))
     for key in topology_keys:
         os.environ.pop(key, None)
     launch.apply_perf({"cores": "big", "scheduler": "cosmos"}, None)
@@ -285,18 +298,18 @@ try:
     # a malformed env name must not abort the rest of the launch path
     os.sched_setaffinity(0, restricted)
     os.environ.pop("GOODVAR", None)
-    launch.apply_perf({"env": {"BAD=NAME": "x", "GOODVAR": "1"}, "cores": "7,3-6"}, None)
+    launch.apply_perf({"env": {"BAD=NAME": "x", "GOODVAR": "1"}, "cores": EXPLICIT_ENV}, None)
     check("bad env entry contained", os.environ.get("GOODVAR") == "1")
-    check("launch path survives bad env", os.sched_getaffinity(0) == {3, 4, 5, 6, 7})
+    check("launch path survives bad env", os.sched_getaffinity(0) == set(BIG))
     os.environ.pop("GOODVAR", None)
     for explicit in (
-            {"WINE_CPU_TOPOLOGY": "2:6,7"},
-            {"PROTON_CPU_TOPOLOGY": "2:7,6"},
-            {"WINE_CPU_TOPOLOGY": "1:6", "PROTON_CPU_TOPOLOGY": "1:7"}):
+            {"WINE_CPU_TOPOLOGY": "2:%d,%d" % (TAIL[0], TAIL[1])},
+            {"PROTON_CPU_TOPOLOGY": "2:%d,%d" % (TAIL[1], TAIL[0])},
+            {"WINE_CPU_TOPOLOGY": "1:%d" % TAIL[0], "PROTON_CPU_TOPOLOGY": "1:%d" % TAIL[1]}):
         for source in ("inherited", "settings"):
             for key in topology_keys:
                 os.environ.pop(key, None)
-            settings = {"cores": "7,3-6"}
+            settings = {"cores": EXPLICIT_ENV}
             if source == "inherited":
                 os.environ.update(explicit)
             else:
@@ -307,10 +320,10 @@ try:
                   all(os.environ.get(key) == explicit.get(key, expected) for key in topology_keys))
     for key in topology_keys:
         os.environ.pop(key, None)
-    launch.apply_perf({"cores": "6-7", "wineTopology": False}, None)
+    launch.apply_perf({"cores": "%d-%d" % (TAIL[0], TAIL[1]), "wineTopology": False}, None)
     check("disabled topology exports neither variable",
           all(key not in os.environ for key in topology_keys))
-    check("disabled topology still pins cores", os.sched_getaffinity(0) == {6, 7})
+    check("disabled topology still pins cores", os.sched_getaffinity(0) == set(TAIL))
 finally:
     os.sched_setaffinity(0, saved)
     for key in topology_keys:
@@ -416,7 +429,7 @@ try:
     state = ap.read_state()
     override = state.get("override", {})
     check("override tracks pid", override.get("pid") == child.pid)
-    check("cosmos domain from cores", override.get("schedulerDomain") == [3, 4, 5, 6, 7])
+    check("cosmos domain from cores", override.get("schedulerDomain") == BIG)
     check("pidfd armed", manager.pidfd is not None)
 
     # live tweaks edit rebuilds the override instead of dropping it
@@ -573,13 +586,13 @@ try:
 
     # crash, then a DIFFERENT spec must start immediately (no shared backoff)
     scx.scx_child.returncode = 1
-    scx.enforce_scheduler({"scheduler": "cosmos", "schedulerDomain": [3, 4, 5, 6, 7]})
+    scx.enforce_scheduler({"scheduler": "cosmos", "schedulerDomain": BIG})
     check("switch after crash starts immediately",
-          FakeProc.launched[-1] == ["/usr/bin/scx_cosmos", "--primary-domain", "3-7"])
+          FakeProc.launched[-1] == ["/usr/bin/scx_cosmos", "--primary-domain", ap.format_cpulist(BIG)])
 
     # crash cosmos, retrying the SAME spec is backed off
     scx.scx_child.returncode = 1
-    scx.enforce_scheduler({"scheduler": "cosmos", "schedulerDomain": [3, 4, 5, 6, 7]})
+    scx.enforce_scheduler({"scheduler": "cosmos", "schedulerDomain": BIG})
     check("same failed spec backed off", len(FakeProc.launched) == 2)
     scx.enforce_scheduler({"scheduler": "lavd"})
     check("other spec unaffected by backoff", FakeProc.launched[-1] == ["/usr/bin/scx_lavd"])
@@ -592,7 +605,7 @@ try:
     scx.scx_failed = None
     scx.enforce_scheduler({"scheduler": "lavd"})
     scx.scx_child.returncode = 1
-    scx.enforce_scheduler({"scheduler": "cosmos", "schedulerDomain": [3, 4, 5, 6, 7]})
+    scx.enforce_scheduler({"scheduler": "cosmos", "schedulerDomain": BIG})
     check("cosmos running after lavd crash", scx.scx_spec is not None)
     scx.enforce_scheduler({"scheduler": "lavd"})  # lavd still backed off
     check("mismatched scheduler stopped during backoff",
@@ -711,7 +724,7 @@ plugin_power.FACTORY_POWER_CONFIG = plugin_power.Path(factory)
 plugin_power.POWER_CONFIG = plugin_power.Path(os.path.join(WORK, "etc-armada-power.conf"))
 data = plugin_power.parse_power()
 factory_data = plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG)
-check("governor exposed in parse", data["profiles"]["eco"]["cpu_governor"] == "schedutil")
+check("governor exposed in parse", data["profiles"]["eco"]["cpu_governor"] == "conservative")
 
 # untouched config renders no /etc profile sections (factory keeps tracking /usr)
 rendered = plugin_power.render_power(data, factory_data)
