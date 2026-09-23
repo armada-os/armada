@@ -32,6 +32,7 @@ Patch8:         0008-Add-GPU-manual-clock-minimum-value.patch
 Patch9:         0009-Rename-minfreq-field-to-min_freq-for-consistency.patch
 Patch10:        0010-Allow-CpuScaling1-to-be-served-by-a-remote-interface.patch
 Patch11:        0011-inputplumber-Only-manage-target-devices-when-configu.patch
+Patch12:        0012-wifi-Always-write-wpa_supplicant-as-the-backend.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust

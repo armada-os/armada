@@ -34,3 +34,6 @@ upstream and dropped out.
 - `patches/0011-inputplumber-Only-manage-target-devices-when-configu.patch`
   source: armada
   notes: `DeckService` races `armada-controller-type.service` at boot and re-asserts on every composite-device recreation. With no `[inputplumber]` section it forces `[deck-uhid]`, and `is_deck()` wants exactly one target, so our keyboard/mouse extras are dropped with no user involvement. We cannot express our targets in the config either - an unknown `InputPlumberTargetDevice` fails deserialization and drops the whole SoC file.
+- `patches/0012-wifi-Always-write-wpa_supplicant-as-the-backend.patch`
+  source: armada
+  notes: Steam derives the backend it wants from its own `steamos_wifi_force_wpa_supplicant` setting and only skips the write when the current value already matches, so no NetworkManager config can refuse it. With the setting off it writes `iwd` on every launch. Pinning it in the daemon is the only place the request can be declined.
