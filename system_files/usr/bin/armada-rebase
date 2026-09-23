@@ -4,16 +4,28 @@ import json
 import subprocess
 import os
 import sys
+import argparse
 
 CONTAINER_HOST="ghcr.io/"
 
-args = sys.argv
+raw_args = sys.argv
 
 if os.getuid() != 0:
     try:
-        os.execv("/usr/bin/sudo", ["/usr/bin/sudo"]+args)
+        os.execv("/usr/bin/sudo", ["/usr/bin/sudo"]+raw_args)
     except Exception as e:
         print(f"Failed to elevate to root: {e}")
+
+parser = argparse.ArgumentParser(
+    prog="armada-rebase",
+    description="Helper for switching branches in Armada",
+    epilog="Example usage: armada-rebase armada-os:beta",
+)
+
+parser.add_argument('target', nargs='?', default=None, help="Image to rebase Armada onto")
+parser.add_argument('-r', '--reboot', action='store_true', help="Reboot into the image after staging it")
+
+args = parser.parse_args()
 
 try:
     output = subprocess.run(["bootc", "status", "--json"], capture_output=True)
@@ -29,17 +41,22 @@ bootc = json.loads(output.stdout)
 
 booted_image = bootc["status"]["booted"]["image"]["image"]["image"]
 
-if len(args) < 2:
+if args.target is None:
     print(f"Booted image: {booted_image}")
     if bootc["status"]["staged"] != None:
         print(f"Staged image: {bootc["status"]["staged"]["image"]["image"]["image"]}")
     exit(0)
 
-target = args[1]
+cmd = ["/usr/bin/bootc", "switch"]
 
-if ":" not in target:
+if ":" not in args.target:
     (image, _) = booted_image.split(':')
-    os.execv("/usr/bin/bootc", ["/usr/bin/bootc", "switch", f"{image}:{target}"])    
+    cmd.append(f"{image}:{args.target}")
 else:
-    (username, branch) = target.split(':')
-    os.execv("/usr/bin/bootc", ["/usr/bin/bootc", "switch", f"{CONTAINER_HOST}{username}/armada:{branch}"])
+    (username, branch) = args.target.split(':')
+    cmd.append(f"{CONTAINER_HOST}{username}/armada:{branch}")
+
+if args.reboot:
+    cmd.append("--apply")
+
+os.execv("/usr/bin/bootc", cmd)
