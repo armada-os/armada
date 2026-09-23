@@ -27,7 +27,10 @@ BuildRequires:  python3dist(vdf) >= 3.2
 BuildRequires:  python3dist(pillow)
 BuildRequires:  desktop-file-utils
 
-Requires:       winetricks
+# Installed manually in Armada, Fedora has a hard dependency on wine-common
+# which has no aarch64 package.
+#Requires:       winetricks
+
 Recommends:     yad
 Suggests:       zenity
 
