@@ -37,8 +37,10 @@ for branch in ['testing', 'preview', 'beta', 'stable', 'latest', 'feature/slash'
     result, values = run('Resolve publication channel', EVENT_NAME='workflow_dispatch', BUILD_REF=f'refs/heads/{branch}')
     assert result.returncode != 0 and not values, branch
 
+# A pull-request merge ref is not a branch, and the step refuses anything
+# that is not refs/heads/* ("Select a branch to build").
 result, values = run('Resolve publication channel', EVENT_NAME='pull_request', BUILD_REF='refs/pull/123/merge')
-assert result.returncode == 0 and not values
+assert result.returncode != 0 and not values
 
 for ref in ['refs/tags/main', 'refs/tags/staging', 'refs/tags/v1.0', 'main', '']:
     result, values = run('Resolve publication channel', EVENT_NAME='workflow_dispatch', BUILD_REF=ref)
