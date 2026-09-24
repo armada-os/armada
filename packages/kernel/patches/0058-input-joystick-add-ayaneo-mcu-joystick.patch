@@ -37,7 +37,7 @@ new file mode 100644
 index 0000000..f66adc811
 --- /dev/null
 +++ b/drivers/input/joystick/mcu_joystick.c
-@@ -0,0 +1,784 @@
+@@ -0,0 +1,793 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * AYANEO SPI MCU gamepad driver (KONKR Pocket FIT Elite / AYN AYANEO SM8750 family)
