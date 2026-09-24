@@ -17,6 +17,8 @@ from pathlib import Path
 sys.path.insert(0, "/usr/lib/armada")
 import armada_game_tweaks
 import armada_perf
+import rsinput_calibration
+import input_calibration_policy as calibration_policy
 
 SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
@@ -88,6 +90,7 @@ CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
+RSINPUT_CALIBRATION = rsinput_calibration.CalibrationManager()
 
 
 def atomic_write(path, text):
@@ -567,6 +570,11 @@ def action_inputplumber_intercept(request):
     return {"ok": True}
 
 
+def action_rsinput_calibration(request):
+    return RSINPUT_CALIBRATION.dispatch(
+        request.get("operation"), request.get("token"), request.get("step"))
+
+
 def action_write_config(request):
     name = str(request.get("name", ""))
     text = request.get("text")
@@ -584,6 +592,9 @@ def action_write_config(request):
             raise ValueError("invalid calibration backend")
         if not parameters.exists():
             raise RuntimeError("controller calibration is not supported on this device")
+        if calibration_policy.uses_mcu(backend):
+            params = calibration_policy.clean_config(params)
+            text = json.dumps(params, indent=2, sort_keys=True) + "\n"
         for param in CALIBRATION_PARAMS:
             if param in params:
                 (parameters / param).write_text(str(int(params[param])), encoding="utf-8")
@@ -771,6 +782,7 @@ ACTIONS = {
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
+    "rsinput_calibration": action_rsinput_calibration,
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_bottom_screen_enabled": action_set_bottom_screen_enabled,

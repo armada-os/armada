@@ -3,6 +3,11 @@ Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering
 
 --- a/arch/arm64/boot/dts/qcom/cq8725s-ayn-odin3.dts
 +++ b/arch/arm64/boot/dts/qcom/cq8725s-ayn-odin3.dts
+@@ -36,0 +37,4 @@
++&gamepad {
++	mcu-calibration;
++};
++
 @@ -217,6 +217,9 @@
  &display_panel {
  	compatible = "chipone,icna3520";

@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import type { CalibrationState, Capture, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, PowerConfig, RgbConfig, Tweaks } from "./types";
+import type { CalibrationState, Capture, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, McuCalibrationOperation, McuCalibrationSession, PowerConfig, RgbConfig, Tweaks } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
@@ -34,9 +34,11 @@ export const setRgb = (enabled: boolean, color: string, brightness: number) =>
   call<[boolean, string, number], RgbConfig>("set_rgb", enabled, color, brightness);
 export const getControllerState = () => call<[], CalibrationState>("get_controller_state");
 export const saveCalibration = (capture: Capture) => call<[Capture], CalibrationState>("save_calibration", capture);
-export const resetCalibration = () => call<[], CalibrationState>("reset_calibration");
+export const resetCalibration = (triggersOnly = false) => call<[boolean], CalibrationState>("reset_calibration", triggersOnly);
 export const beginCalibrationSession = (token: string) => call<[string], boolean>("begin_calibration_session", token);
 export const endCalibrationSession = (token: string) => call<[string], boolean>("end_calibration_session", token);
+export const mcuCalibration = (operation: McuCalibrationOperation, token: string, step?: number) =>
+  call<[McuCalibrationOperation, string, number | undefined], McuCalibrationSession>("mcu_calibration", operation, token, step);
 export const getFansState = () => call<[], CurvesState>("get_fans_state");
 export const saveFanCurves = (fanCurves: Record<string, FanCurve>, fanSettings: FanSettings) =>
   call<[Record<string, FanCurve>, FanSettings], CurvesState>("save_fan_curves", fanCurves, fanSettings);
