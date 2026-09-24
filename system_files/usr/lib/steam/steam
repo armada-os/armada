@@ -32,10 +32,9 @@ fi
 
 touch "${steam_root}/.cef-enable-remote-debugging"
 cd "${steam_arm_dir}"
-"${steam_arm}" \
-    "$@"
 
-EXITCODE=$?
+EXITCODE=0
+"${steam_arm}" "$@" || EXITCODE=$?
 
 if [ $EXITCODE -eq 42 ]; then
 	echo "Restarting Steam"
