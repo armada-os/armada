@@ -6,7 +6,7 @@ connectors only), internal, and has_edid to known-display matches() so Lua
 profiles can identify EDID-less panels.
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 919f7005..0e61b374 100644
+index 5fc61a02..a581685f 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -2902,7 +2902,19 @@ namespace gamescope
@@ -121,7 +121,7 @@ index 1e5a5ff0..4f3390db 100644
      };
  
 diff --git a/src/edid.cpp b/src/edid.cpp
-index 4ecd80b1..7e31b888 100644
+index 81239da3..6c835ce8 100644
 --- a/src/edid.cpp
 +++ b/src/edid.cpp
 @@ -225,6 +225,9 @@ namespace gamescope
@@ -135,15 +135,15 @@ index 4ecd80b1..7e31b888 100644
                      // Data block is where the dtd was.
                      uint8_t *data_block = dtd;
 diff --git a/tests/meson.build b/tests/meson.build
-index 6ad2413..3c1b785 100644
+index 9e96bba9..220e8447 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -8,7 +8,7 @@ endforeach
  
  gamescope_tests = executable(
  	'gamescope_tests',
--	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_edid.cpp'],
-+	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_edid.cpp'],
+-	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_display_lookup.cpp', 'test_edid.cpp'],
  	include_directories: [srcdir, sol2_include],
  	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
  	cpp_args: gamescope_cpp_args,
@@ -224,7 +224,7 @@ index 00000000..db7618bf
 +    script.Manager().Gamescope().Config.KnownDisplays["test_model_panel"] = sol::lua_nil;
 +}
 diff --git a/tests/test_edid.cpp b/tests/test_edid.cpp
-index 144111ec..37ea7a00 100644
+index 379c33d4..6bb93b93 100644
 --- a/tests/test_edid.cpp
 +++ b/tests/test_edid.cpp
 @@ -1,5 +1,6 @@

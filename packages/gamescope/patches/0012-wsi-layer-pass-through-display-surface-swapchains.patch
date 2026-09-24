@@ -11,22 +11,22 @@ retired path); the warning stays for genuinely unhooked swapchains.
 
 ---
 diff --git a/layer/VkLayer_FROG_gamescope_wsi.cpp b/layer/VkLayer_FROG_gamescope_wsi.cpp
-index c6ca5b1..45942e1 100644
+index b470dc67..367782ad 100644
 --- a/layer/VkLayer_FROG_gamescope_wsi.cpp
 +++ b/layer/VkLayer_FROG_gamescope_wsi.cpp
-@@ -15,6 +15,8 @@
+@@ -21,6 +21,8 @@
  #include <algorithm>
  #include <functional>
  #include <unordered_map>
 +#include <map>
 +#include <mutex>
  #include <optional>
-
+ 
  #include <poll.h>
-@@ -532,6 +534,32 @@ namespace GamescopeWSILayer {
+@@ -594,6 +596,32 @@ namespace GamescopeWSILayer {
    };
    VKROOTS_DEFINE_SYNCHRONIZED_MAP_TYPE(GamescopeSurface, VkSurfaceKHR);
-
+ 
 +  // VK_KHR_display surfaces (DRM lease clients) and their swapchains are
 +  // legitimately non-Gamescope; both pass through without the hook warning.
 +  // Keys carry the parent handle because non-dispatchable handle values are
@@ -56,10 +56,10 @@ index c6ca5b1..45942e1 100644
    struct GamescopeSwapchainData {
      gamescope_swapchain *object;
      wl_display* display;
-@@ -742,6 +770,18 @@ namespace GamescopeWSILayer {
+@@ -804,6 +832,18 @@ namespace GamescopeWSILayer {
        return GetPhysicalDeviceGamescopePresentationSupport(pDispatch, gamescopeInstance, physicalDevice, queueFamilyIndex);
      }
-
+ 
 +    static VkResult CreateDisplayPlaneSurfaceKHR(
 +      const vkroots::VkInstanceDispatch*   pDispatch,
 +            VkInstance                     instance,
@@ -75,7 +75,7 @@ index c6ca5b1..45942e1 100644
      static VkResult CreateXcbSurfaceKHR(
        const vkroots::VkInstanceDispatch* pDispatch,
              VkInstance                   instance,
-@@ -1003,6 +1043,12 @@ namespace GamescopeWSILayer {
+@@ -1066,6 +1106,12 @@ namespace GamescopeWSILayer {
              VkInstance                   instance,
              VkSurfaceKHR                 surface,
        const VkAllocationCallbacks*       pAllocator) {
@@ -87,8 +87,8 @@ index c6ca5b1..45942e1 100644
 +
        if (auto state = GamescopeSurface::get(surface)) {
          pDispatch->DestroySurfaceKHR(instance, state->fallbackSurface, pAllocator);
-         wl_surface_destroy(state->surface);
-@@ -1149,6 +1195,12 @@ namespace GamescopeWSILayer {
+         if (!state->isNativeSurface) {
+@@ -1215,6 +1261,12 @@ namespace GamescopeWSILayer {
              VkDevice                   device,
              VkSwapchainKHR             swapchain,
        const VkAllocationCallbacks*     pAllocator) {
@@ -101,7 +101,7 @@ index c6ca5b1..45942e1 100644
        if (auto state = GamescopeSwapchain::get(swapchain)) {
          gamescope_swapchain_destroy(state->object);
        }
-@@ -1164,6 +1216,14 @@ namespace GamescopeWSILayer {
+@@ -1230,6 +1282,14 @@ namespace GamescopeWSILayer {
        const VkSwapchainCreateInfoKHR*  pCreateInfo,
        const VkAllocationCallbacks*     pAllocator,
              VkSwapchainKHR*            pSwapchain) {
@@ -114,12 +114,12 @@ index c6ca5b1..45942e1 100644
 +      }
 +
        auto gamescopeSurface = GamescopeSurface::get(pCreateInfo->surface);
-
+ 
        if (!gamescopeSurface) {
-@@ -1425,6 +1485,41 @@ namespace GamescopeWSILayer {
+@@ -1491,6 +1551,41 @@ namespace GamescopeWSILayer {
        const VkPresentInfoKHR*          pPresentInfo) {
        VkPresentInfoKHR presentInfo = *pPresentInfo;
-
+ 
 +      uint32_t gamescopeCount = 0;
 +      uint32_t displayCount = 0;
 +      bool anyRetired = false;
@@ -155,6 +155,6 @@ index c6ca5b1..45942e1 100644
 +        return pDispatch->QueuePresentKHR(queue, pPresentInfo);
 +      }
 +
-       bool forceFifo = gamescopeIsForcingFifo();
-
        auto pPresentTimes = vkroots::FindInChain<const VkPresentTimesInfoGOOGLE>(&presentInfo);
+ 
+       wl_display *display = nullptr;

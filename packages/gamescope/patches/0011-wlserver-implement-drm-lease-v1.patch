@@ -38,7 +38,7 @@ index cf8fbd18..de31d9b5 100644
  	'color-management-v1.xml',
  
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 4ef9c7e0..9a5f52c9 100644
+index 89bde8ad..dea45a96 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -172,6 +172,8 @@ struct drm_t {
@@ -167,10 +167,10 @@ index 4ef9c7e0..9a5f52c9 100644
  {
  	if ( !drm->pConnector )
 diff --git a/src/main.cpp b/src/main.cpp
-index b998019d..c9158ddb 100644
+index 323c615c..00f0757a 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -792,6 +792,8 @@ const char *g_sOutputName = nullptr;
+@@ -786,6 +786,8 @@ const char *g_sOutputName = nullptr;
  const char *g_sLeaseConnectorName = nullptr;
  const char *g_sIgnoreTouchDevice = nullptr;
  std::atomic<int> g_nActiveLeaseClients = { 0 };
@@ -180,7 +180,7 @@ index b998019d..c9158ddb 100644
  bool g_bForceDisableColorMgmt = false;
  bool g_bRt = false;
 diff --git a/src/main.hpp b/src/main.hpp
-index 47e01c9e..458934a2 100644
+index 3170bd64..8d5b2fdd 100644
 --- a/src/main.hpp
 +++ b/src/main.hpp
 @@ -3,6 +3,7 @@
@@ -188,10 +188,10 @@ index 47e01c9e..458934a2 100644
  
  #include <atomic>
 +#include <mutex>
- #include <vector>
- 
- extern const char *gamescope_optstring;
-@@ -45,6 +46,19 @@ extern std::vector<uint32_t> g_customRefreshRates;
+ #include <optional>
+ #include <string_view>
+ #include <utility>
+@@ -50,6 +51,19 @@ extern std::vector<uint32_t> g_customRefreshRates;
  // normally so the bottom touchscreen works in the Plasma session.
  extern std::atomic<int> g_nActiveLeaseClients;
  
@@ -212,7 +212,7 @@ index 47e01c9e..458934a2 100644
  {
      LINEAR = 0,
 diff --git a/src/wlserver.cpp b/src/wlserver.cpp
-index 383f4aac..d654a005 100644
+index 8899b747..52997bff 100644
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
 @@ -52,6 +52,7 @@
@@ -223,8 +223,8 @@ index 383f4aac..d654a005 100644
  #include "gamescope-private-protocol.h"
  #include "gamescope-swapchain-protocol.h"
  #include "presentation-time-protocol.h"
-@@ -1577,6 +1578,195 @@ static void create_gamescope_control( void )
- 	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
+@@ -1619,6 +1620,195 @@ static void create_gamescope_control( void )
+ 	wl_global_create( wlserver.display, &gamescope_control_interface, gamescope_control_interface.version, NULL, gamescope_control_bind );
  }
  
 +
@@ -419,7 +419,7 @@ index 383f4aac..d654a005 100644
  ////////////////////////
  // gamescope_private
  ////////////////////////
-@@ -2248,6 +2438,8 @@ bool wlserver_init( void ) {
+@@ -2365,6 +2555,8 @@ bool wlserver_init( void ) {
  
  	create_gamescope_control();
  
