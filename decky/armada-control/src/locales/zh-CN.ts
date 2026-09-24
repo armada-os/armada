@@ -1,6 +1,14 @@
 import type { TranslationKey } from "./en";
 
 export const zhCN = {
+  // English placeholders until these labels receive a reviewed translation.
+  "touchscreen.title": "Touchscreen",
+  "touchscreen.mode": "Mode",
+  "touchscreen.useDefault": "Use Default ({mode})",
+  "touchscreen.direct": "Direct touch",
+  "touchscreen.trackpad": "Trackpad",
+  "touchscreen.sensitivity": "Pointer sensitivity (%)",
+  "touchscreen.tapToClick": "Tap to click",
   "common.loading": "正在加载",
   "common.default": "默认",
   "common.native": "原生",

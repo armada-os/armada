@@ -1,6 +1,13 @@
 import type { TranslationKey } from "./en";
 
 export const ptBR = {
+  "touchscreen.title": "Tela sensível ao toque",
+  "touchscreen.mode": "Modo",
+  "touchscreen.useDefault": "Usar padrão ({mode})",
+  "touchscreen.direct": "Toque direto",
+  "touchscreen.trackpad": "Trackpad",
+  "touchscreen.sensitivity": "Sensibilidade do ponteiro (%)",
+  "touchscreen.tapToClick": "Clicar com o toque",
   "common.loading": "Carregando",
   "common.default": "Padrão",
   "common.native": "Nativo",
@@ -56,10 +63,7 @@ export const ptBR = {
   "settings.ablVersion": "Versão do ABL",
   "common.unknown": "desconhecido",
   "settings.experimental": "Experimental",
-  "settings.diagnostics": "Diagnósticos",
   "settings.sleepMode": "Modo de descanso",
-  "settings.sleepLogs": "Ativar logs de suspensão",
-  "settings.sleepLogsError": "Não foi possível atualizar os logs de suspensão",
   "settings.bottomScreen": "Tela inferior",
   "settings.bottomScreenDescription": "Inicia o Plasma Mobile na tela inferior",
   "settings.bottomScreenBrightness": "Brilho da tela inferior",

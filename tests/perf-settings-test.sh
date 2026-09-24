@@ -141,7 +141,11 @@ factory_global = factory_tweaks["global"]
 check("factory declares every displayed default", set(factory_global) == {
     "cores", "fexProfile", "gamescopeCores", "gamescopeNice",
     "gamescopeVulkanRealtime", "nice", "scheduler", "thunks", "wineTopology",
+    "touchscreenMode", "touchscreenSensitivity", "touchscreenTapToClick",
 })
+check("factory touchscreen defaults loaded",
+      factory_global["touchscreenMode"] == "direct" and factory_global["touchscreenSensitivity"] == 1.0 and
+      factory_global["touchscreenTapToClick"] is True)
 check("factory FEX profile loaded", factory_global["fexProfile"] == "default")
 check("factory core masks are unset",
       factory_global["cores"] is None and factory_global["gamescopeCores"] is None)

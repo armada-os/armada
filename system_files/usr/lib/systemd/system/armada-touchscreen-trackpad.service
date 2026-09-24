@@ -1,0 +1,15 @@
+[Unit]
+Description=Armada per-game touchscreen trackpad
+After=armada-control.service inputplumber.service
+Requires=armada-control.service
+PartOf=armada-control.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/touchscreen-trackpad
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,9 @@
     "gamescopeVulkanRealtime": true,
     "nice": 0,
     "scheduler": null,
+    "touchscreenMode": "direct",
+    "touchscreenSensitivity": 1.0,
+    "touchscreenTapToClick": true,
     "thunks": {
       "Vulkan": true,
       "GL": true,

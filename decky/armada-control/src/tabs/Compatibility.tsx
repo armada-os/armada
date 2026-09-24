@@ -15,7 +15,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { getCompatMappedAppids, reapplyPerf, restartGameMode, saveCompatApplied, saveTweaks } from "../backend";
-import { SelectEdit, SliderEdit } from "../components/widgets";
+import { SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
 import { t, translateLabel } from "../i18n";
 import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
 import { clone } from "../lib/util";
@@ -832,6 +832,19 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
             ))
           : null}
       </PanelSection>
+      {config.touchscreenTrackpadSupported ? <PanelSection title={t("touchscreen.title")}>
+        <SelectEdit label={t("touchscreen.mode")} value={editingDefault ? (values.touchscreenMode || "direct") : (gameSettings.touchscreenMode || "default")} options={[
+          ...(!editingDefault ? [{ data: "default", label: t("touchscreen.useDefault", { mode: t(tweaks.global.touchscreenMode === "trackpad" ? "touchscreen.trackpad" : "touchscreen.direct") }) }] : []),
+          { data: "direct", label: t("touchscreen.direct") },
+          { data: "trackpad", label: t("touchscreen.trackpad") },
+        ]} onChange={(value) => patchSettings({ touchscreenMode: value === "default" ? undefined : value })} />
+        {values.touchscreenMode === "trackpad" ? <>
+          <SliderEdit label={t("touchscreen.sensitivity")} value={Math.round((values.touchscreenSensitivity ?? 1) * 100)} min={25} max={300} step={25}
+            onChange={(value) => patchSettings({ touchscreenSensitivity: value / 100 })} />
+          <ToggleRow label={t("touchscreen.tapToClick")} value={values.touchscreenTapToClick !== false}
+            onChange={(value) => patchSettings({ touchscreenTapToClick: value })} />
+        </> : null}
+      </PanelSection> : null}
       <PanelSection title={t("common.advanced")}>
         <ButtonItem layout="below" onClick={() => setShowPerf((value) => !value)}>
           {showPerf ? t("compatibility.hidePerformance") : t("options.performance")}

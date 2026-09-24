@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""Grab the primary touch panel only while the active game's profile requests it."""
+import array
+from contextlib import ExitStack, suppress
+import fcntl
+import select
+import shlex
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from evdev import InputDevice, UInput, ecodes, list_devices
+
+sys.path.insert(0, "/usr/lib/armada")
+import armada_game_tweaks
+import armada_perf
+from touchscreen_trackpad import Slots, TouchpadGestureEngine, orient_coordinates, settings_for_session
+
+VIRTUAL_DEVICE_NAME = "Armada Touchscreen Trackpad"
+POLL_SECONDS = 1.0
+STOP = False
+
+
+def stop(_signum, _frame):
+    global STOP
+    STOP = True
+
+
+def device_environment():
+    output = subprocess.check_output(["/usr/libexec/armada/device-env"], text=True, timeout=3)
+    env = {}
+    for line in output.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            words = shlex.split(value)
+            env[key] = words[0] if words else ""
+    return env
+
+
+def pid_alive(pid):
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
+        return False
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return stat[0] not in {"Z", "X"}
+    except (OSError, IndexError):
+        return False
+
+
+def configured_settings():
+    return settings_for_session(armada_game_tweaks.load(), armada_perf.read_state(), pid_alive)
+
+
+def find_touchscreen(preferred_name="", secondary_name=""):
+    candidates = []
+    try:
+        for path in sorted(list_devices()):
+            device = None
+            try:
+                device = InputDevice(path)
+                properties = subprocess.check_output(
+                    ["udevadm", "info", "--query=property", "--name", path],
+                    text=True, stderr=subprocess.DEVNULL, timeout=3,
+                ).splitlines()
+                axes = device.capabilities(absinfo=False).get(ecodes.EV_ABS, [])
+                if ("ID_INPUT_TOUCHSCREEN=1" not in properties
+                        or device.name in {VIRTUAL_DEVICE_NAME, secondary_name}
+                        or (preferred_name and device.name != preferred_name)
+                        or not {Slots.SLOT, Slots.X, Slots.Y, Slots.TRACKING}.issubset(axes)):
+                    continue
+                candidates.append(device)
+                device = None
+            except (OSError, subprocess.SubprocessError):
+                continue
+            finally:
+                if device is not None:
+                    device.close()
+        # Never guess on a multi-screen device without a named primary.
+        if len(candidates) == 1:
+            return candidates.pop()
+        return None
+    finally:
+        for device in candidates:
+            device.close()
+
+
+def snapshot(device):
+    info = device.absinfo(Slots.SLOT)
+    count = info.max + 1
+    if info.min != 0 or not 1 <= count <= 256:
+        raise OSError("unsupported multitouch slot range")
+    values = {slot: {} for slot in range(count)}
+    for code in (Slots.TRACKING, Slots.X, Slots.Y):
+        data = array.array("i", [code] + [0] * count)
+        # EVIOCGMTSLOTS(len), asm-generic ioctl layout used by aarch64.
+        request = (2 << 30) | (len(data) * data.itemsize << 16) | (ord("E") << 8) | 0x0a
+        fcntl.ioctl(device.fd, request, data, True)
+        for slot, value in enumerate(data[1:]):
+            values[slot][code] = value
+    return Slots(values, info.value)
+
+
+class MouseSink:
+    def __init__(self, device):
+        self.device = device
+
+    def move(self, dx, dy):
+        if dx:
+            self.device.write(ecodes.EV_REL, ecodes.REL_X, dx)
+        if dy:
+            self.device.write(ecodes.EV_REL, ecodes.REL_Y, dy)
+        self.device.syn()
+
+    def scroll(self, steps):
+        self.device.write(ecodes.EV_REL, ecodes.REL_WHEEL, steps)
+        self.device.syn()
+
+    def button(self, name, pressed):
+        self.device.write(ecodes.EV_KEY, ecodes.BTN_LEFT if name == "left" else ecodes.BTN_RIGHT, int(pressed))
+        self.device.syn()
+
+
+def suspend_clock_offset():
+    # CLOCK_MONOTONIC pauses in suspend; CLOCK_BOOTTIME includes sleep time.
+    return time.clock_gettime(getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)) - time.monotonic()
+
+
+def drain(device):
+    while select.select([device], [], [], 0)[0]:
+        list(device.read())
+
+
+def release_capture(device):
+    with suppress(OSError):
+        device.ungrab()
+
+
+def run_trackpad(device, orientation, settings):
+    x_info, y_info = device.absinfo(Slots.X), device.absinfo(Slots.Y)
+    width, height = x_info.max - x_info.min, y_info.max - y_info.min
+    if width <= 0 or height <= 0:
+        raise OSError("invalid touchscreen coordinate range")
+
+    def transform(x, y):
+        return orient_coordinates(
+            min(1, max(0, (x - x_info.min) / width)),
+            min(1, max(0, (y - y_info.min) / height)), orientation,
+        )
+
+    # EVIOCSCLOCKID: gesture durations use kernel timestamps, so batching
+    # queued events cannot turn a long hold into a tap.
+    fcntl.ioctl(device.fd, 0x400445a0, array.array("i", [time.CLOCK_MONOTONIC]))
+    slots = snapshot(device)
+    # Let the compositor see the end of any direct touch before grabbing.
+    if slots.contacts(transform):
+        return
+    with ExitStack() as cleanup:
+        virtual = UInput({
+            ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_RIGHT],
+            ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL],
+        }, name=VIRTUAL_DEVICE_NAME, bustype=ecodes.BUS_VIRTUAL)
+        cleanup.callback(virtual.close)
+        device.grab()
+        cleanup.callback(release_capture, device)
+        # Discard pre-grab events, then query all cached slot values. Suppress
+        # any contact that raced the grab until every finger has lifted.
+        drain(device)
+        slots = snapshot(device)
+        blocked = bool(slots.contacts(transform))
+        aspect = width / height if orientation in {"left", "right"} else height / width
+        engine = TouchpadGestureEngine(
+            MouseSink(virtual), sensitivity=settings[1], aspect=aspect, tap_to_click=settings[2],
+        )
+        cleanup.callback(engine.reset)
+        print(f"trackpad: {device.path} ({device.name}), speed {settings[1]:g}, tap-to-click {settings[2]}", flush=True)
+        dropping = False
+        next_check = 0
+        sleep_offset = suspend_clock_offset()
+        while not STOP:
+            now = time.monotonic()
+            if now >= next_check:
+                if configured_settings() != settings:
+                    break
+                next_check = now + POLL_SECONDS
+            ready = select.select([device], [], [], max(0, next_check - now))[0]
+            # Check after select: the first event that wakes us after resume
+            # must not move the pointer using a pre-suspend contact.
+            current_offset = suspend_clock_offset()
+            if abs(current_offset - sleep_offset) > 0.5:
+                engine.reset()
+                blocked = True
+            sleep_offset = current_offset
+            if not ready:
+                continue
+            for event in device.read():
+                if event.type == ecodes.EV_SYN and event.code == ecodes.SYN_DROPPED:
+                    engine.reset()
+                    dropping = True
+                elif event.type == ecodes.EV_SYN and event.code == ecodes.SYN_REPORT:
+                    if dropping:
+                        # The snapshot may include newer events than this
+                        # read batch: discard the batch and queue before using it.
+                        drain(device)
+                        slots = snapshot(device)
+                        dropping = False
+                        blocked = bool(slots.contacts(transform))
+                        break
+                    contacts = slots.contacts(transform)
+                    if blocked:
+                        blocked = bool(contacts)
+                    else:
+                        engine.frame(contacts, event.timestamp())
+                elif not dropping and event.type == ecodes.EV_ABS:
+                    slots.update(event.code, event.value)
+
+
+def main():
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    env = device_environment()
+    if sys.argv[1:] == ["--supported"]:
+        device = find_touchscreen(env.get("ARMADA_PRIMARY_TOUCHSCREEN", ""),
+                                  env.get("ARMADA_SECONDARY_TOUCHSCREEN", ""))
+        if device is None:
+            return 1
+        device.close()
+        return 0
+    last_error = None
+    while not STOP:
+        device = None
+        delay = POLL_SECONDS
+        try:
+            settings = configured_settings()
+            if settings[0] == "trackpad":
+                device = find_touchscreen(env.get("ARMADA_PRIMARY_TOUCHSCREEN", ""),
+                                          env.get("ARMADA_SECONDARY_TOUCHSCREEN", ""))
+                if device is None:
+                    raise OSError("no unambiguous primary type-B touchscreen found")
+                run_trackpad(device, env.get("ARMADA_PANEL_ORIENTATION", "normal"), settings)
+                last_error = None
+        except (OSError, subprocess.SubprocessError) as exc:
+            if str(exc) != last_error:
+                print(f"trackpad unavailable (normal touch retained): {exc}", file=sys.stderr, flush=True)
+                last_error = str(exc)
+            delay = 2
+        finally:
+            if device is not None:
+                device.close()
+        time.sleep(delay)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
