@@ -8,7 +8,7 @@ no HDR) and feed it through the existing parser. Physical EDIDs stay
 preferred and unchanged; the synthetic EDID is never committed to KMS.
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 5709410..10dd00e 100644
+index 9b75a255..5fc61a02 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -417,6 +417,7 @@ namespace gamescope
@@ -96,7 +96,7 @@ index 5709410..10dd00e 100644
  		di_info *pInfo = di_info_parse_edid( m_Mutable.EdidData.data(), m_Mutable.EdidData.size() );
  		if ( !pInfo )
 diff --git a/src/edid.cpp b/src/edid.cpp
-index 6215829..81239da 100644
+index 62158293..81239da3 100644
 --- a/src/edid.cpp
 +++ b/src/edid.cpp
 @@ -4,8 +4,10 @@
@@ -221,7 +221,7 @@ index 6215829..81239da 100644
 +    }
  }
 diff --git a/src/edid.h b/src/edid.h
-index d0ed88f..0cc7e74 100644
+index d0ed88f4..0cc7e74a 100644
 --- a/src/edid.h
 +++ b/src/edid.h
 @@ -9,9 +9,27 @@ namespace gamescope
@@ -255,7 +255,7 @@ index d0ed88f..0cc7e74 100644
 \ No newline at end of file
 +}
 diff --git a/tests/meson.build b/tests/meson.build
-index e2667ea..6ad2413 100644
+index 9f73a337..9e96bba9 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -2,15 +2,15 @@ catch2_dep = dependency('catch2-with-main', required: true)
@@ -269,8 +269,8 @@ index e2667ea..6ad2413 100644
  
  gamescope_tests = executable(
  	'gamescope_tests',
--	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp'],
-+	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_edid.cpp'],
+-	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp'],
  	include_directories: [srcdir, sol2_include],
 -	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, wlroots_dep],
 +	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
@@ -279,7 +279,7 @@ index e2667ea..6ad2413 100644
  
 diff --git a/tests/test_edid.cpp b/tests/test_edid.cpp
 new file mode 100644
-index 0000000..379c33d
+index 00000000..379c33d4
 --- /dev/null
 +++ b/tests/test_edid.cpp
 @@ -0,0 +1,178 @@

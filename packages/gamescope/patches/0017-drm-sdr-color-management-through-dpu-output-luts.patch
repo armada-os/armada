@@ -11,7 +11,7 @@ that transition needs a modeset; being post-blend, a translucent overlay
 is corrected as the blended pixel. Per-plane offload is the follow-up.
 ---
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index d3e9ea2..cfea826 100644
+index a432b861..e32eafd2 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -76,6 +76,7 @@ gamescope::ConVar<bool> cv_drm_debug_disable_regamma_tf( "drm_debug_disable_rega
@@ -214,7 +214,7 @@ index d3e9ea2..cfea826 100644
  	drm->pending.color_mgmt_serial = g_ColorMgmt.serial;
  
  	for ( uint32_t i = 0; i < EOTF_Count; i++ )
-@@ -4402,7 +4492,8 @@
+@@ -4538,7 +4628,8 @@ namespace gamescope
  					bSupportsHardwareColorManagement,
  					pFrameInfo->outputEncodingEOTF,
  					pFrameInfo->layers.count(),
@@ -224,7 +224,7 @@ index d3e9ea2..cfea826 100644
  				if ( !bSupportsHardwareColorManagement )
  				{
  					// Scanout can't apply the LUT-baked backlight dim here.
-@@ -4550,6 +4640,13 @@ namespace gamescope
+@@ -4553,6 +4644,13 @@ namespace gamescope
  
  			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
  			bNeedsFullComposite |= g_uOutputRotation != 0; // can't rotate planes at scanout
@@ -238,7 +238,7 @@ index d3e9ea2..cfea826 100644
  
  			bool bDoComposite = true;
  			if ( !bNeedsFullComposite && !bWantsPartialComposite )
-@@ -4663,6 +4760,8 @@ namespace gamescope
+@@ -4666,6 +4764,8 @@ namespace gamescope
  			FrameInfo_t presentCompFrameInfo = {};
  			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
  			presentCompFrameInfo.outputEncodingEOTF = pFrameInfo->outputEncodingEOTF;
@@ -247,7 +247,7 @@ index d3e9ea2..cfea826 100644
  
  			if ( bNeedsFullComposite )
  			{
-@@ -4952,6 +5051,21 @@ namespace gamescope
+@@ -4955,6 +5055,21 @@ namespace gamescope
  			return drm_supports_color_mgmt( &g_DRM );
  		}
  
@@ -269,84 +269,8 @@ index d3e9ea2..cfea826 100644
  		int Commit( const FrameInfo_t *pFrameInfo )
  		{
  			drm_t *drm = &g_DRM;
-diff --git a/src/backend.h b/src/backend.h
-index 5137506..97c47a3 100644
---- a/src/backend.h
-+++ b/src/backend.h
-@@ -347,6 +347,11 @@ namespace gamescope
-         virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) = 0;
- 
-         virtual bool UsesModifiers() const = 0;
-+        // Post-blend degamma + 3D LUT on the output (msm DPU): carries the SDR shaper + 3D LUT
-+        // after blending, resampled to the hardware's table sizes.
-+        virtual bool SupportsOutputLUTs() const { return false; }
-+        // An output LUT pair exists; it may be one frame behind the color management state.
-+        virtual bool OutputLUTsReady() const { return false; }
-         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
- 		inline bool SupportsFormat( uint32_t uDrmFormat ) const
- 		{
-diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
-index 3928f81..6ca1e7e 100644
---- a/src/rendervulkan.hpp
-+++ b/src/rendervulkan.hpp
-@@ -292,6 +292,9 @@ struct FrameInfo_t
- 	bool allowVRR;
- 	bool applyOutputColorMgmt; // drm only
- 	EOTF outputEncodingEOTF;
-+	// The SDR shaper + 3D LUT are left to the output (msm DPU): set only when every
-+	// layer is SDR and the shader skips its gamma 2.2 LUTs.
-+	bool outputLuts;
- 
- 	struct Layer_t
- 	{
-diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index 6976903..50c6fe7 100644
---- a/src/steamcompmgr.cpp
-+++ b/src/steamcompmgr.cpp
-@@ -3103,8 +3103,24 @@ paint_all( global_focus_t *pFocus, bool async )
- 		frameInfo.applyOutputColorMgmt = false;
- 	}
- 
-+	// The output applies the gamma 2.2 shaper + 3D LUT post-blend, so the shader
-+	// leaves them unbound and a composited frame is not corrected twice.
-+	bool bOutputLUTs = GetBackend()->SupportsOutputLUTs() && GetBackend()->OutputLUTsReady() && !bDoMuraCompensation &&
-+		g_ColorMgmt.current.enabled && g_ColorMgmtLuts[EOTF_Gamma22].HasLuts() &&
-+		g_ColorMgmt.current.outputEncodingEOTF == EOTF_Gamma22 && g_ColorMgmt.current.displayEOTF == EOTF_Gamma22;
-+	for ( int i = 0; i < frameInfo.layers.count(); i++ )
-+	{
-+		GamescopeAppTextureColorspace eColorspace = frameInfo.layers.get( i ).colorspace;
-+		if ( eColorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB && eColorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR )
-+			bOutputLUTs = false;
-+	}
-+	frameInfo.outputLuts = bOutputLUTs;
-+
- 	for (uint32_t i = 0; i < EOTF_Count; i++)
- 	{
-+		if ( bOutputLUTs && i == EOTF_Gamma22 )
-+			continue;
-+
- 		if ( g_ColorMgmtLuts[i].HasLuts() )
- 		{
- 			frameInfo.shaperLut[i] = g_ColorMgmtLuts[i].vk_lut1d;
-@@ -3208,6 +3224,17 @@ paint_all( global_focus_t *pFocus, bool async )
- 
- 			frameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
- 
-+			// The output LUTs ran in the DPU, which Vulkan cannot replay; rebind the
-+			// gamma 2.2 LUTs so the capture carries them (the present is already done).
-+			if ( frameInfo.outputLuts && drmCaptureFormat != DRM_FORMAT_NV12 &&
-+				oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER &&
-+				g_ColorMgmtLuts[EOTF_Gamma22].HasLuts() )
-+			{
-+				frameInfo.shaperLut[EOTF_Gamma22] = g_ColorMgmtLuts[EOTF_Gamma22].vk_lut1d;
-+				frameInfo.lut3D[EOTF_Gamma22] = g_ColorMgmtLuts[EOTF_Gamma22].vk_lut3d;
-+				frameInfo.outputLuts = false;
-+			}
-+
- 			uint32_t uCompositeDebugBackup = g_uCompositeDebug;
- 
- 			if ( oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
 diff --git a/src/Backends/DRMComposition.h b/src/Backends/DRMComposition.h
+index 1210f78c..84d7cd9c 100644
 --- a/src/Backends/DRMComposition.h
 +++ b/src/Backends/DRMComposition.h
 @@ -6,18 +6,16 @@
@@ -372,10 +296,88 @@ diff --git a/src/Backends/DRMComposition.h b/src/Backends/DRMComposition.h
              return false;
  
          return eOutputEncodingEOTF != EOTF_PQ ||
+diff --git a/src/backend.h b/src/backend.h
+index 834e9fd4..814b4586 100644
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -347,6 +347,11 @@ namespace gamescope
+         virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) = 0;
+ 
+         virtual bool UsesModifiers() const = 0;
++        // Post-blend degamma + 3D LUT on the output (msm DPU): carries the SDR shaper + 3D LUT
++        // after blending, resampled to the hardware's table sizes.
++        virtual bool SupportsOutputLUTs() const { return false; }
++        // An output LUT pair exists; it may be one frame behind the color management state.
++        virtual bool OutputLUTsReady() const { return false; }
+         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
+ 		inline bool SupportsFormat( uint32_t uDrmFormat ) const
+ 		{
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 0545a7a6..e0fe28d2 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -300,6 +300,9 @@ struct FrameInfo_t
+ 	bool allowVRR;
+ 	bool applyOutputColorMgmt; // drm only
+ 	EOTF outputEncodingEOTF;
++	// The SDR shaper + 3D LUT are left to the output (msm DPU): set only when every
++	// layer is SDR and the shader skips its gamma 2.2 LUTs.
++	bool outputLuts;
+ 
+ 	// Maps output space onto the focused window's own space for absolute input.
+ 	// Not the base layer's transform, whose texture may already be upscaled.
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 1ea8073d..3b6f78b1 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -3518,8 +3518,24 @@ paint_all( global_focus_t *pFocus, bool async )
+ 		frameInfo.applyOutputColorMgmt = false;
+ 	}
+ 
++	// The output applies the gamma 2.2 shaper + 3D LUT post-blend, so the shader
++	// leaves them unbound and a composited frame is not corrected twice.
++	bool bOutputLUTs = GetBackend()->SupportsOutputLUTs() && GetBackend()->OutputLUTsReady() && !bDoMuraCompensation &&
++		g_ColorMgmt.current.enabled && g_ColorMgmtLuts[EOTF_Gamma22].HasLuts() &&
++		g_ColorMgmt.current.outputEncodingEOTF == EOTF_Gamma22 && g_ColorMgmt.current.displayEOTF == EOTF_Gamma22;
++	for ( int i = 0; i < frameInfo.layers.count(); i++ )
++	{
++		GamescopeAppTextureColorspace eColorspace = frameInfo.layers.get( i ).colorspace;
++		if ( eColorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB && eColorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR )
++			bOutputLUTs = false;
++	}
++	frameInfo.outputLuts = bOutputLUTs;
++
+ 	for (uint32_t i = 0; i < EOTF_Count; i++)
+ 	{
++		if ( bOutputLUTs && i == EOTF_Gamma22 )
++			continue;
++
+ 		if ( g_ColorMgmtLuts[i].HasLuts() )
+ 		{
+ 			frameInfo.shaperLut[i] = g_ColorMgmtLuts[i].vk_lut1d;
+@@ -3623,6 +3639,17 @@ paint_all( global_focus_t *pFocus, bool async )
+ 
+ 			frameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
+ 
++			// The output LUTs ran in the DPU, which Vulkan cannot replay; rebind the
++			// gamma 2.2 LUTs so the capture carries them (the present is already done).
++			if ( frameInfo.outputLuts && drmCaptureFormat != DRM_FORMAT_NV12 &&
++				oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER &&
++				g_ColorMgmtLuts[EOTF_Gamma22].HasLuts() )
++			{
++				frameInfo.shaperLut[EOTF_Gamma22] = g_ColorMgmtLuts[EOTF_Gamma22].vk_lut1d;
++				frameInfo.lut3D[EOTF_Gamma22] = g_ColorMgmtLuts[EOTF_Gamma22].vk_lut3d;
++				frameInfo.outputLuts = false;
++			}
++
+ 			uint32_t uCompositeDebugBackup = g_uCompositeDebug;
+ 
+ 			if ( oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
 diff --git a/tests/test_drm_composition.cpp b/tests/test_drm_composition.cpp
+index a08d192a..71da8503 100644
 --- a/tests/test_drm_composition.cpp
 +++ b/tests/test_drm_composition.cpp
-@@ -13,14 +13,22 @@
+@@ -13,14 +13,22 @@ TEST_CASE("Gamma 2.2 HDR cannot direct scan without hardware color management",
  {
      // Regression: the old DRM path allowed this exact single-PQ-layer case to
      // direct scan, bypassing the PQ-to-native-Gamma-2.2 Vulkan transform.

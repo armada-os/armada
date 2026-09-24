@@ -6,7 +6,7 @@ PQ layer targeting a PQ output. A Gamma 2.2 HDR panel needs the Vulkan
 color pipeline to map even a single PQ layer into its native encoding.
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 0e61b374..4ef9c7e0 100644
+index a581685f..89bde8ad 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -32,6 +32,7 @@
@@ -17,7 +17,7 @@ index 0e61b374..4ef9c7e0 100644
  #include "Utils/Defer.h"
  #include "Utils/Parsers.h"
  #include "Utils/String.h"
-@@ -4263,9 +4264,15 @@ namespace gamescope
+@@ -4266,9 +4267,15 @@ namespace gamescope
  			if ( g_bOutputHDREnabled )
  			{
  				bNeedsFullComposite |= g_bHDRItmEnable;
@@ -69,15 +69,15 @@ index 00000000..1210f78c
 +    }
 +}
 diff --git a/tests/meson.build b/tests/meson.build
-index 3c1b785..528ac36 100644
+index 220e8447..2ca5fe6d 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -8,7 +8,7 @@ endforeach
  
  gamescope_tests = executable(
  	'gamescope_tests',
--	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_edid.cpp'],
-+	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
+-	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_display_lookup.cpp', 'test_edid.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
  	include_directories: [srcdir, sol2_include],
  	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
  	cpp_args: gamescope_cpp_args,

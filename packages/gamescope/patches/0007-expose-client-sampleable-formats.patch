@@ -33,7 +33,7 @@ index 00000000..914b00d1
 +    }
 +}
 diff --git a/src/main.cpp b/src/main.cpp
-index 8dbd1a95..aefedb3f 100644
+index 8531f7d1..38cb0747 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -54,6 +54,7 @@ const char *g_pOriginalDisplay = nullptr;
@@ -52,7 +52,7 @@ index 8dbd1a95..aefedb3f 100644
  	{ "keep-alive", no_argument, nullptr, 0 },
  
  	{} // keep last
-@@ -291,6 +293,8 @@ const char usage[] =
+@@ -292,6 +294,8 @@ const char usage[] =
  	"\n"
  	"Platform options:\n"
  	"  --allow-deferred-backend       Allows initting the backend in a deferred way, if it doesn't work immediately. (Note: This has some very minor correctness compromises that you should consider wrt. your platform with modifiers, etc).\n"
@@ -61,7 +61,7 @@ index 8dbd1a95..aefedb3f 100644
  	"  --keep-alive                   Keep Gamescope alive even when the primary process has died.\n"
  	"\n"
  	"Keyboard shortcuts:\n"
-@@ -944,6 +948,8 @@ int main(int argc, char **argv)
+@@ -938,6 +942,8 @@ int main(int argc, char **argv)
  					g_bLaunchMangoapp = true;
  				} else if (strcmp(opt_name, "allow-deferred-backend") == 0) {
  					g_bAllowDeferredBackend = true;
@@ -71,10 +71,10 @@ index 8dbd1a95..aefedb3f 100644
  					cv_shutdown_on_primary_child_death = false;
  				} else if (strcmp(opt_name, "lease-connector") == 0) {
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
-index b6eb3627..04d78da7 100644
+index 54e4efc3..37c51e0d 100644
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -32,6 +32,7 @@
+@@ -33,6 +33,7 @@
  #include "wlr_end.hpp"
  
  #include "rendervulkan.hpp"
@@ -82,7 +82,7 @@ index b6eb3627..04d78da7 100644
  #include "main.hpp"
  #include "steamcompmgr.hpp"
  #include "log.hpp"
-@@ -56,6 +57,7 @@
+@@ -59,6 +60,7 @@
  
  extern bool g_bWasPartialComposite;
  extern bool g_bAllowDeferredBackend;
@@ -90,7 +90,7 @@ index b6eb3627..04d78da7 100644
  
  static constexpr mat3x4 g_rgb2yuv_srgb_to_bt601_limited = {{
    { 0.257f, 0.504f, 0.098f, 0.0625f },
-@@ -2900,11 +2902,16 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+@@ -2928,11 +2930,16 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
  				continue;
  			}
  
@@ -111,7 +111,7 @@ index b6eb3627..04d78da7 100644
  			}
  
  			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
-@@ -2916,8 +2923,17 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+@@ -2944,8 +2951,17 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
  	}
  	else
  	{
@@ -130,7 +130,7 @@ index b6eb3627..04d78da7 100644
  
  		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
  		return false;
-@@ -2926,6 +2942,16 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+@@ -2954,6 +2970,16 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
  
  bool vulkan_init_formats()
  {
@@ -148,15 +148,15 @@ index b6eb3627..04d78da7 100644
  	{
  		if (s_DRMVKFormatTable[i].internal)
 diff --git a/tests/meson.build b/tests/meson.build
-index 3305e63..d4ca3d1 100644
+index 38aba520..5b44529a 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -8,7 +8,7 @@ endforeach
  
  gamescope_tests = executable(
  	'gamescope_tests',
--	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
-+	unittest_src + ['test_client_format_policy.cpp', 'test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
+-	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_client_format_policy.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
  	include_directories: [srcdir, sol2_include],
  	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
  	cpp_args: gamescope_cpp_args,
