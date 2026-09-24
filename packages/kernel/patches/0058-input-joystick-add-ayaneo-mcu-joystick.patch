@@ -37,7 +37,7 @@ new file mode 100644
 index 0000000..f66adc811
 --- /dev/null
 +++ b/drivers/input/joystick/mcu_joystick.c
-@@ -0,0 +1,775 @@
+@@ -0,0 +1,784 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * AYANEO SPI MCU gamepad driver (KONKR Pocket FIT Elite / AYN AYANEO SM8750 family)
@@ -140,7 +140,7 @@ index 0000000..f66adc811
 +#define MCU_AXIS_FLAT		128
 +#define MCU_TRIG_MAX		255
 +
-+/* Pocket FIT Elite Hall-interference workaround. */
++/* KONKR Pocket FIT input-glitch workaround. */
 +static unsigned int r3_debounce_ms = 50;
 +module_param(r3_debounce_ms, uint, 0644);
 +MODULE_PARM_DESC(r3_debounce_ms,
@@ -199,6 +199,8 @@ index 0000000..f66adc811
 +	struct pinctrl *pctl;
 +	struct pinctrl_state *pctl_active;
 +	struct mutex io_lock;
++	/* Serialize complete frame transactions across IRQ and fallback polling. */
++	struct mutex frame_lock;
 +	struct delayed_work poll_work;
 +	struct work_struct ff_work;	/* rumble: deferred SPI write (play is atomic) */
 +	u8 ff_strong;
@@ -475,6 +477,8 @@ index 0000000..f66adc811
 +	struct input_dev *in = mcu->input;
 +	int i;
 +
++	mutex_lock(&mcu->frame_lock);
++
 +	input_report_abs(in, ABS_X, 0);
 +	input_report_abs(in, ABS_Y, 0);
 +	input_report_abs(in, ABS_RX, 0);
@@ -493,15 +497,24 @@ index 0000000..f66adc811
 +	mcu->trig_right_nonzero_frames = 0;
 +	mcu->r3_raw_down = false;
 +	mcu->r3_reported_down = false;
++
++	mutex_unlock(&mcu->frame_lock);
 +}
 +
 +/* returns true if the frame header validated */
 +static bool mcu_poll_once(struct mcu_joystick *mcu)
 +{
 +	u16 regs[MCU_NREGS];
++	bool ok = false;
 +
++	/*
++	 * IRQ and fallback polling can hand over while both execution paths are
++	 * live. Keep read + ACK + filter/report state as one ordered transaction
++	 * so one MCU frame cannot advance the stateful filters twice.
++	 */
++	mutex_lock(&mcu->frame_lock);
 +	if (mcu_read_frame(mcu, regs))
-+		return false;
++		goto out;
 +
 +	/*
 +	 * The stock poll loop sends 0x7f01 after EVERY frame read (disasm:
@@ -516,11 +529,14 @@ index 0000000..f66adc811
 +		dev_dbg(&mcu->spi->dev, "head check failed: %04x %04x %04x\n",
 +			regs[MCU_FRAME_HDR], regs[MCU_FRAME_HDR + 1],
 +			regs[MCU_FRAME_HDR + 2]);
-+		return false;
++		goto out;
 +	}
 +
 +	mcu_report(mcu, regs);
-+	return true;
++	ok = true;
++out:
++	mutex_unlock(&mcu->frame_lock);
++	return ok;
 +}
 +
 +static irqreturn_t mcu_irq(int irq, void *data)
@@ -599,11 +615,13 @@ index 0000000..f66adc811
 +
 +	mcu->spi = spi;
 +	mutex_init(&mcu->io_lock);
++	mutex_init(&mcu->frame_lock);
 +	spi_set_drvdata(spi, mcu);
 +	mcu->input_filter_enabled =
-+		of_machine_is_compatible("konkr,pocket-fit-elite");
++		of_machine_is_compatible("konkr,pocket-fit-elite") ||
++		of_machine_is_compatible("konkr,pocket-fit");
 +	if (mcu->input_filter_enabled)
-+		dev_info(dev, "enabling Pocket FIT Elite input glitch filter\n");
++		dev_info(dev, "enabling KONKR Pocket FIT input glitch filter\n");
 +
 +	/*
 +	 * The MCU runs in SPI mode 3 (CPOL=1/CPHA=1) — confirmed from the stock
