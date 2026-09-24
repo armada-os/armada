@@ -12,6 +12,7 @@ from .system import (
     mtp_enabled,
     os_version,
     perf_info,
+    run_cmd,
     desktop_mode,
     desktop_modes,
     sleep_modes,
@@ -24,6 +25,7 @@ def build_config(include_games=True):
     fex_contract = load_fex_contract()
     env = device_env()
     secondary_brightness = bottom_screen_brightness()
+    trackpad = run_cmd(["/usr/libexec/armada/touchscreen-trackpad", "--supported"])
     return {
         "power": parse_power(),
         "powerDefaults": factory_power_defaults(),
@@ -33,6 +35,7 @@ def build_config(include_games=True):
         "perf": perf_info(),
         "cpuDeviceClass": env.get("ARMADA_SOC_CLASS", ""),
         "rgbSupported": rgb_supported(),
+        "touchscreenTrackpadSupported": trackpad is not None and trackpad.returncode == 0,
         "protonDefaults": [
             default.strip()
             for default in env.get("ARMADA_PROTON_DEFAULTS", "").split(":")

@@ -1,6 +1,14 @@
 import type { TranslationKey } from "./en";
 
 export const ptBR = {
+  // English placeholders until these labels receive a reviewed translation.
+  "touchscreen.title": "Touchscreen",
+  "touchscreen.mode": "Mode",
+  "touchscreen.useDefault": "Use Default ({mode})",
+  "touchscreen.direct": "Direct touch",
+  "touchscreen.trackpad": "Trackpad",
+  "touchscreen.sensitivity": "Pointer sensitivity (%)",
+  "touchscreen.tapToClick": "Tap to click",
   "common.loading": "Carregando",
   "common.default": "Padrão",
   "common.native": "Nativo",

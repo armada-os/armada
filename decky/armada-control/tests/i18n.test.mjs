@@ -62,6 +62,7 @@ assert.equal(translate("zh-CN", "power.cpuGovernor"), "CPU 调频策略");
 assert.equal(translate("zh-CN", "games.appFallback", { id: 123 }), "应用 123");
 assert.equal(translate("pt-BR", "common.loading"), "Carregando");
 assert.equal(translate("pt-PT", "common.loading"), "A carregar");
+assert.equal(translate("en", "touchscreen.useDefault", { mode: "Direct touch" }), "Use Default (Direct touch)");
 assert.equal(translateLabelForLocale("en", "Balanced"), "Balanced");
 assert.equal(translateLabelForLocale("zh-CN", "Balanced"), "均衡");
 assert.equal(translateLabelForLocale("zh-CN", "Big Cores (4-7)"), "大核心 (4-7)");

@@ -22,6 +22,9 @@ export interface PowerConfig {
 }
 
 export interface GameTweak {
+  touchscreenMode?: "direct" | "trackpad";
+  touchscreenSensitivity?: number;
+  touchscreenTapToClick?: boolean;
   enabled?: boolean;
   name?: string;
   fexProfile?: string;
@@ -100,6 +103,7 @@ export interface Config {
   perf?: PerfInfo;
   cpuDeviceClass: string;
   rgbSupported: boolean;
+  touchscreenTrackpadSupported?: boolean;
   protonDefaults: string[];
   osVersion: string;
   ablVersion: string;
