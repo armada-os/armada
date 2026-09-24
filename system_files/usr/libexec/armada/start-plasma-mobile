@@ -2,6 +2,8 @@
 # See start-plasma: the launcher may not have gone through session-control.
 set -euo pipefail
 
+systemctl --user stop graphical-session.target || true
+
 source "${ARMADA_PLASMA_CONFIG_LIB:-/usr/lib/armada/plasma-config-lib}"
 
 armada_plasma_activate_config mobile
