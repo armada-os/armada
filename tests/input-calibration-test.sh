@@ -33,21 +33,26 @@ def parameter_dir(name):
 
 rsinput_params = parameter_dir("rsinput")
 retroid_params = parameter_dir("retroid")
+mangmi_params = parameter_dir("mangmi")
 calibration.CALIBRATION_BACKENDS = {
+    "mangmi": mangmi_params,
     "rsinput": rsinput_params,
     "retroid": retroid_params,
 }
 
 rsinput_event = {"name": "RSInput Gamepad", "phys": "rsinput-gamepad/input0"}
 retroid_event = {"name": "Retroid Pocket Gamepad", "phys": "retroid-pocket-gamepad/input0"}
+mangmi_event = {"name": "MANGMI Pocket Max Joypad", "phys": "mangmi-pocket-max/input0"}
 tester_event = {"name": "AYANEO Controller", "phys": "usb-controller/input0"}
 virtual_event = {"name": "Microsoft X-Box 360 pad 0", "phys": ""}
 
 assert calibration.event_backend(rsinput_event) == "rsinput"
 assert calibration.event_backend(retroid_event) == "retroid"
+assert calibration.event_backend(mangmi_event) == "mangmi"
 assert calibration.event_backend(tester_event) is None
 assert calibration.calibration_backend(rsinput_event) == "rsinput"
 assert calibration.calibration_backend(retroid_event) == "retroid"
+assert calibration.calibration_backend(mangmi_event) == "mangmi"
 assert calibration.calibration_backend(tester_event) is None
 
 calibration.inputplumber_source_events = lambda: []
@@ -79,10 +84,13 @@ def fake_ioctl(_fd, request, _buffer):
 calibration.fcntl.ioctl = fake_ioctl
 default_controls = calibration.read_backend_controls(0)
 retroid_controls = calibration.read_backend_controls(0, "retroid")
+mangmi_controls = calibration.read_backend_controls(0, "mangmi")
 assert default_controls["left_trigger"]["value"] == 111
 assert default_controls["right_trigger"]["value"] == 222
 assert retroid_controls["left_trigger"]["value"] == 333
 assert retroid_controls["right_trigger"]["value"] == 444
+assert mangmi_controls["left_trigger"]["value"] == 333
+assert mangmi_controls["right_trigger"]["value"] == 444
 
 values[2] = (0, 0, 0)
 values[5] = (0, 0, 0)
@@ -160,6 +168,7 @@ apply_calibration = load_script(
 )
 apply_calibration.CONFIG = work / "input-calibration.json"
 apply_calibration.CALIBRATION_BACKENDS = {
+    "mangmi": mangmi_params,
     "rsinput": rsinput_params,
     "retroid": retroid_params,
 }
@@ -181,6 +190,7 @@ control = load_script(
     "armada_control_daemon_test",
 )
 control.CALIBRATION_BACKENDS = {
+    "mangmi": mangmi_params,
     "rsinput": rsinput_params,
     "retroid": retroid_params,
 }

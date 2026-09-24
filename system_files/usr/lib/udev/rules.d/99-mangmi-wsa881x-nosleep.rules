@@ -1,0 +1,6 @@
+# Both MANGMI SM8250 devices wire their WSA881x speaker amps to a shared
+# powerdown GPIO. Runtime PM can suspend one amp, assert the shared line,
+# and strand the other amp during SoundWire enumeration, causing silent
+# audio / WSA Playback -ETIMEDOUT. Keep both amps active after bind.
+ACTION=="bind", SUBSYSTEM=="soundwire", KERNEL=="sdw:*:0217:2010:*", IMPORT{program}="/usr/libexec/armada/device-env", ENV{ARMADA_DEVICE_ID}=="mangmi-pocket-max", ATTR{power/control}="on"
+ACTION=="bind", SUBSYSTEM=="soundwire", KERNEL=="sdw:*:0217:2010:*", IMPORT{program}="/usr/libexec/armada/device-env", ENV{ARMADA_DEVICE_ID}=="mangmi-air-y-pro", ATTR{power/control}="on"

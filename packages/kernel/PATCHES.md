@@ -80,6 +80,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0060-drm-panel-icna35xx-luminance-linear-backlight-scale.patch`
   source: armada
   upstream: not submitted
+- `patches/0060a-drm-panel-icna35xx-add-mangmi-pocket-max.patch`
+  source: https://github.com/ROCKNIX/distribution/blob/807c74fc46c124891d8aa9b57a68533d38e9a6b2/projects/ROCKNIX/devices/SM8250/patches/linux/0057_Chipone-ICNA35XX-panel.patch
+  upstream: unknown
+  notes: Ports the Pocket Max init sequence, four vendor modes and per-panel shutdown delays onto Armada's Linux 7.2 managed-panel driver while retaining Armada's luminance-linear backlight scale.
 - `patches/0106-drm-panel-il97680a-luminance-linear-backlight-scale.patch`
   source: armada
   upstream: not submitted
@@ -587,6 +591,12 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `dts/sm8250-mangmi-air-y-pro.dts`
   source: https://github.com/ROCKNIX/distribution/blob/807c74fc46c124891d8aa9b57a68533d38e9a6b2/projects/ROCKNIX/devices/SM8250/linux/dts/qcom/sm8250-mangmi-air-y-pro.dts
   notes: Imported verbatim from ROCKNIX; SHA-256 `d98f1104f4fe29f9bf8c94692beb491e840332a851f1f6994f015973ba24c018`.
+- `dts/sm8250-mangmi-pocket-max.dts`
+  source: https://github.com/ROCKNIX/distribution/blob/807c74fc46c124891d8aa9b57a68533d38e9a6b2/projects/ROCKNIX/devices/SM8250/linux/dts/qcom/sm8250-mangmi-pocket-max.dts
+  notes: Imported verbatim from ROCKNIX; SHA-256 `f6128a97cf510fcd9ecf568a2e512c3f6f4210ad43e4fb1f542740f4b140dfd2`.
+- `dts/sm8250-mangmi-pocket-max.dts.patch`
+  source: armada
+  notes: Drops ROCKNIX's kernel thermal-zone fan include after copying the DTS; Armada powerd owns the PWM fan curve and must not race a second controller.
 - `dts/sm8250-retroidpocket-flip2.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/linux/dts/qcom/sm8250-retroidpocket-flip2.dts
 - `dts/sm8250-retroidpocket-flip2-visionox.dts`

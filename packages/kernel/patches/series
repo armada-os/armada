@@ -22,6 +22,7 @@
 0057_DDIC-CH13726A-panel.patch
 0059-drm-panel-add-brightness-levels-helper.patch
 0060-drm-panel-icna35xx-luminance-linear-backlight-scale.patch
+0060a-drm-panel-icna35xx-add-mangmi-pocket-max.patch
 0062-gpu-drm-panel-add-wt0630-panel.patch
 0063-gpu-drm-panel-add-wt0600-1k-panel.patch
 0104-drm-panel-Add-Retroid-Pocket-6-panel.patch

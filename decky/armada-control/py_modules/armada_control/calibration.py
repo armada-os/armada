@@ -12,6 +12,7 @@ from .system import read_text
 
 INPUT_CALIBRATION_CONFIG = Path("/etc/armada/input-calibration.json")
 CALIBRATION_BACKENDS = {
+    "mangmi": Path("/sys/module/mangmi_pocket_max/parameters"),
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
@@ -26,6 +27,7 @@ ABS_CODES = {
 }
 TRIGGER_CODES = {
     "default": {"left_trigger": (2, 10), "right_trigger": (5, 9)},
+    "mangmi": {"left_trigger": (20,), "right_trigger": (21,)},
     "retroid": {"left_trigger": (20,), "right_trigger": (21,)},
 }
 CALIBRATION_PARAMS = (
@@ -209,6 +211,8 @@ def calibration_event():
     if not events:
         events = input_events()
     preferred = (
+        lambda event: "mangmi-pocket-max" in event["phys"].casefold()
+        or "mangmi pocket max joypad" in event["name"].casefold(),
         lambda event: "rsinput-gamepad" in event["phys"].casefold() or "rsinput" in event["name"].casefold(),
         lambda event: "retroid-pocket-gamepad" in event["phys"].casefold()
         or "retroid pocket gamepad" in event["name"].casefold(),
@@ -256,6 +260,8 @@ def event_backend(event):
         return None
     name = str(event.get("name", "")).casefold()
     phys = str(event.get("phys", "")).casefold()
+    if "mangmi pocket max joypad" in name or "mangmi-pocket-max" in phys:
+        return "mangmi"
     if "rsinput" in name or "rsinput-gamepad" in phys:
         return "rsinput"
     if "retroid pocket gamepad" in name or "retroid-pocket-gamepad" in phys:

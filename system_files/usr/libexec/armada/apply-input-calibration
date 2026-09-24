@@ -5,6 +5,7 @@ from pathlib import Path
 
 CONFIG = Path("/etc/armada/input-calibration.json")
 CALIBRATION_BACKENDS = {
+    "mangmi": Path("/sys/module/mangmi_pocket_max/parameters"),
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
