@@ -1,0 +1,160 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] wsi-layer: pass through VK_KHR_display surfaces and swapchains
+
+VK_KHR_display surfaces (DRM lease clients) are legitimate
+non-Gamescope surfaces, but the layer's hook-failure dialogs fire for
+them at swapchain creation and present, and abort on Cancel. Track them
+by parent handle and pass their swapchains and presents through
+untouched. Presents that are not all-Gamescope forward the caller's
+original present info (retired Gamescope swapchains still take the
+retired path); the warning stays for genuinely unhooked swapchains.
+
+---
+diff --git a/layer/VkLayer_FROG_gamescope_wsi.cpp b/layer/VkLayer_FROG_gamescope_wsi.cpp
+index c6ca5b1..45942e1 100644
+--- a/layer/VkLayer_FROG_gamescope_wsi.cpp
++++ b/layer/VkLayer_FROG_gamescope_wsi.cpp
+@@ -15,6 +15,8 @@
+ #include <algorithm>
+ #include <functional>
+ #include <unordered_map>
++#include <map>
++#include <mutex>
+ #include <optional>
+
+ #include <poll.h>
+@@ -532,6 +534,32 @@ namespace GamescopeWSILayer {
+   };
+   VKROOTS_DEFINE_SYNCHRONIZED_MAP_TYPE(GamescopeSurface, VkSurfaceKHR);
+
++  // VK_KHR_display surfaces (DRM lease clients) and their swapchains are
++  // legitimately non-Gamescope; both pass through without the hook warning.
++  // Keys carry the parent handle because non-dispatchable handle values are
++  // not unique across instances/devices; counted to tolerate aliases.
++  template <typename Parent, typename T>
++  struct DisplayHandleMap {
++    std::mutex mutex;
++    std::map<std::pair<Parent, T>, uint32_t> map;
++    void insert(Parent parent, T handle) {
++      std::lock_guard lock(mutex);
++      map[std::pair(parent, handle)]++;
++    }
++    void remove(Parent parent, T handle) {
++      std::lock_guard lock(mutex);
++      auto iter = map.find(std::pair(parent, handle));
++      if (iter != map.end() && --iter->second == 0)
++        map.erase(iter);
++    }
++    bool contains(Parent parent, T handle) {
++      std::lock_guard lock(mutex);
++      return map.find(std::pair(parent, handle)) != map.end();
++    }
++  };
++  static DisplayHandleMap<VkInstance, VkSurfaceKHR> s_displaySurfaces;
++  static DisplayHandleMap<VkDevice, VkSwapchainKHR> s_displaySwapchains;
++
+   struct GamescopeSwapchainData {
+     gamescope_swapchain *object;
+     wl_display* display;
+@@ -742,6 +770,18 @@ namespace GamescopeWSILayer {
+       return GetPhysicalDeviceGamescopePresentationSupport(pDispatch, gamescopeInstance, physicalDevice, queueFamilyIndex);
+     }
+
++    static VkResult CreateDisplayPlaneSurfaceKHR(
++      const vkroots::VkInstanceDispatch*   pDispatch,
++            VkInstance                     instance,
++      const VkDisplaySurfaceCreateInfoKHR* pCreateInfo,
++      const VkAllocationCallbacks*         pAllocator,
++            VkSurfaceKHR*                  pSurface) {
++      VkResult res = pDispatch->CreateDisplayPlaneSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
++      if (res == VK_SUCCESS)
++        s_displaySurfaces.insert(instance, *pSurface);
++      return res;
++    }
++
+     static VkResult CreateXcbSurfaceKHR(
+       const vkroots::VkInstanceDispatch* pDispatch,
+             VkInstance                   instance,
+@@ -1003,6 +1043,12 @@ namespace GamescopeWSILayer {
+             VkInstance                   instance,
+             VkSurfaceKHR                 surface,
+       const VkAllocationCallbacks*       pAllocator) {
++      if (s_displaySurfaces.contains(instance, surface)) {
++        s_displaySurfaces.remove(instance, surface);
++        pDispatch->DestroySurfaceKHR(instance, surface, pAllocator);
++        return;
++      }
++
+       if (auto state = GamescopeSurface::get(surface)) {
+         pDispatch->DestroySurfaceKHR(instance, state->fallbackSurface, pAllocator);
+         wl_surface_destroy(state->surface);
+@@ -1149,6 +1195,12 @@ namespace GamescopeWSILayer {
+             VkDevice                   device,
+             VkSwapchainKHR             swapchain,
+       const VkAllocationCallbacks*     pAllocator) {
++      if (s_displaySwapchains.contains(device, swapchain)) {
++        s_displaySwapchains.remove(device, swapchain);
++        pDispatch->DestroySwapchainKHR(device, swapchain, pAllocator);
++        return;
++      }
++
+       if (auto state = GamescopeSwapchain::get(swapchain)) {
+         gamescope_swapchain_destroy(state->object);
+       }
+@@ -1164,6 +1216,14 @@ namespace GamescopeWSILayer {
+       const VkSwapchainCreateInfoKHR*  pCreateInfo,
+       const VkAllocationCallbacks*     pAllocator,
+             VkSwapchainKHR*            pSwapchain) {
++      if (s_displaySurfaces.contains(pDispatch->pPhysicalDeviceDispatch->Instance,
++                                     pCreateInfo->surface)) {
++        VkResult res = pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
++        if (res == VK_SUCCESS)
++          s_displaySwapchains.insert(device, *pSwapchain);
++        return res;
++      }
++
+       auto gamescopeSurface = GamescopeSurface::get(pCreateInfo->surface);
+
+       if (!gamescopeSurface) {
+@@ -1425,6 +1485,41 @@ namespace GamescopeWSILayer {
+       const VkPresentInfoKHR*          pPresentInfo) {
+       VkPresentInfoKHR presentInfo = *pPresentInfo;
+
++      uint32_t gamescopeCount = 0;
++      uint32_t displayCount = 0;
++      bool anyRetired = false;
++      for (uint32_t i = 0; i < pPresentInfo->swapchainCount; i++) {
++        if (s_displaySwapchains.contains(pDispatch->Device, pPresentInfo->pSwapchains[i])) {
++          displayCount++;
++        } else if (auto gamescopeSwapchain = GamescopeSwapchain::get(pPresentInfo->pSwapchains[i])) {
++          gamescopeCount++;
++          anyRetired |= gamescopeSwapchain->retired;
++        }
++      }
++
++      if (gamescopeCount != pPresentInfo->swapchainCount) {
++        // Mixed and unhooked presents are forwarded untouched: the
++        // present-mode chain patcher below emits one entry per Gamescope
++        // swapchain and would undersize pPresentModes for any other mix, so
++        // Gamescope pacing does not apply to them.
++        if (anyRetired)
++          return PresentRetiredSwapchain(pDispatch, queue, pPresentInfo);
++        if (gamescopeCount + displayCount != pPresentInfo->swapchainCount) {
++          static std::once_flag s_warnedUnhooked;
++          std::call_once(s_warnedUnhooked, []() {
++            int messageId = -1;
++            messagey::ShowSimple(
++              "QueuePresentKHR: Attempting to present to a non-hooked swapchain.\nHooking has failed somewhere!\nYou may have a bad Vulkan layer interfering.\nPress OK to try to power through this error, or Cancel to stop.",
++              "Gamescope WSI Layer Error",
++              messagey::MessageBoxFlag::Warning | messagey::MessageBoxFlag::Simple_Cancel | messagey::MessageBoxFlag::Simple_OK,
++              &messageId);
++            if (messageId == 0) // Cancel
++              abort();
++          });
++        }
++        return pDispatch->QueuePresentKHR(queue, pPresentInfo);
++      }
++
+       bool forceFifo = gamescopeIsForcingFifo();
+
+       auto pPresentTimes = vkroots::FindInChain<const VkPresentTimesInfoGOOGLE>(&presentInfo);

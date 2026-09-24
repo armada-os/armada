@@ -15,7 +15,7 @@ Summary:        Input router and remapper daemon for handheld gaming devices
 License:        GPL-3.0-or-later
 URL:            %{forgeurl}
 Source0:        %{forgeurl}/archive/%{commit}/%{name}-%{commit}.tar.gz
-Patch1:         0001-fix-gamepad-honor-passthrough-config-skip-exclusive-grab.patch
+Patch1:         0001-fix-gamepad-share-raw-input.patch
 Patch2:         0002-fix-force-feedback-reset-effects-when-replacing-targets.patch
 Patch3:         0003-feat-Hardware-Support-Add-AYANEO-Pocket-DS.patch
 Patch4:         0004-feat-Hardware-Support-Add-AYN-Thor-Lite.patch
@@ -42,14 +42,19 @@ Requires:       dbus
 %description
 InputPlumber detects, manages, and routes input from handheld gaming devices,
 including combining devices into a single virtual gamepad. The Armada fork adds
-support for gamepad-source 'passthrough' and resets force-feedback effects when
-replacing or suspending virtual targets.
+automatic raw gamepad sharing and resets force-feedback effects when replacing
+or suspending virtual targets.
 
 %prep
 %autosetup -n %{appname}-%{commit} -p1
 
 %build
 make build BUILD_TYPE=release
+
+%check
+set -o pipefail
+cargo test --locked --release --target %{_target_cpu}-unknown-linux-gnu --bin inputplumber 2>&1 | tee tests.log
+grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' tests.log
 
 %install
 make install PREFIX=%{buildroot}%{_prefix}

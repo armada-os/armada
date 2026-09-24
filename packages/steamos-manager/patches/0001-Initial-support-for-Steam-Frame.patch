@@ -1,0 +1,279 @@
+From 27b26394218fd3fe3d95e6ab501b178c945f2914 Mon Sep 17 00:00:00 2001
+From: Arun Raghavan <arunr@valvesoftware.com>
+Date: Thu, 14 May 2026 19:26:32 -0700
+Subject: [PATCH] Initial support for Steam Frame
+
+Assumes aarch64 => Steam Frame for now, and Implements a basic
+devfreq-based GPU clock. More to come.
+---
+ data/devices/steam-frame.toml       |   3 +
+ steamos-manager/src/gpu.rs          | 149 ++++++++++++++++++++++++++++
+ steamos-manager/src/hardware.rs     |   1 +
+ steamos-manager/src/lib.rs          |   2 +
+ steamos-manager/src/manager/user.rs |   1 +
+ 5 files changed, 156 insertions(+)
+
+diff --git a/data/devices/steam-frame.toml b/data/devices/steam-frame.toml
+index 317707b..af265fa 100644
+--- a/data/devices/steam-frame.toml
++++ b/data/devices/steam-frame.toml
+@@ -6,3 +6,6 @@ variant = "Deckard"
+ friendly_name = "Steam Frame"
+ oui = "e0-31-9e"
+ 
++[gpu_performance]
++driver = "devfreq"
++sysfs_path = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
+index e5da50d..e894594 100644
+--- a/steamos-manager/src/gpu.rs
++++ b/steamos-manager/src/gpu.rs
+@@ -7,6 +7,7 @@
+ 
+ use anyhow::{Result, anyhow, bail, ensure};
+ use async_trait::async_trait;
++use itertools::Itertools;
+ use num_enum::TryFromPrimitive;
+ use regex::Regex;
+ use serde::Deserialize;
+@@ -26,6 +27,11 @@ use crate::{path, write_synced};
+ 
+ pub(crate) const AMDGPU_HWMON_NAME: &str = "amdgpu";
+ 
++pub(crate) const DEVFREQ_AVAILABLE_FREQ: &str = "available_frequencies";
++pub(crate) const DEVFREQ_CURRENT_FREQ: &str = "cur_freq";
++pub(crate) const DEVFREQ_MINIMUM_FREQ: &str = "min_freq";
++pub(crate) const DEVFREQ_MAXIMUM_FREQ: &str = "max_freq";
++
+ #[cfg(not(test))]
+ const DRM_PREFIX: &str = "/sys/class/drm";
+ #[cfg(test)]
+@@ -64,6 +70,7 @@ pub enum AmdgpuPowerProfile {
+ pub enum GpuPerformanceLevel {
+     Amdgpu(AmdgpuPerformanceLevel),
+     Intel(IntelPerformanceLevel),
++    Devfreq(DevfreqPerformanceLevel),
+ }
+ 
+ #[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
+@@ -83,6 +90,13 @@ pub enum IntelPerformanceLevel {
+     Manual,
+ }
+ 
++#[derive(Display, EnumString, PartialEq, Eq, Debug, Copy, Clone, Hash)]
++#[strum(serialize_all = "snake_case")]
++pub enum DevfreqPerformanceLevel {
++    Auto,
++    Manual,
++}
++
+ #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
+ #[strum(serialize_all = "snake_case", ascii_case_insensitive)]
+ #[serde(rename_all = "snake_case")]
+@@ -96,6 +110,7 @@ pub enum GpuPowerProfileDriverType {
+ pub enum GpuPerformanceLevelDriverType {
+     Amdgpu,
+     Intel,
++    Devfreq,
+ }
+ 
+ #[derive(Debug)]
+@@ -118,6 +133,12 @@ pub(crate) struct IntelGpuConfig {
+     range_max: &'static str,
+ }
+ 
++#[derive(Debug)]
++pub(crate) struct DevfreqGpuPerformanceLevelDriver {
++    sysfs_path: PathBuf,
++    available_freqs: Vec<u32>,
++}
++
+ #[async_trait]
+ pub(crate) trait GpuPowerProfileDriver: Send + Sync {
+     fn power_profile_from_str(&self, value: &str) -> Result<GpuPowerProfile>;
+@@ -162,6 +183,13 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
+         GpuPerformanceLevelDriverType::Intel => {
+             Box::new(IntelGpuPerformanceLevelDriver::new().await?)
+         }
++        GpuPerformanceLevelDriverType::Devfreq => {
++            let path = config
++                .sysfs_path
++                .as_ref()
++                .expect("devfreq gpu performance driver needs a sysfs_path");
++            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into()).await?)
++        }
+     })
+ }
+ 
+@@ -170,6 +198,7 @@ impl Display for GpuPerformanceLevel {
+         match self {
+             GpuPerformanceLevel::Amdgpu(v) => write!(f, "{v}"),
+             GpuPerformanceLevel::Intel(v) => write!(f, "{v}"),
++            GpuPerformanceLevel::Devfreq(v) => write!(f, "{v}"),
+         }
+     }
+ }
+@@ -591,6 +620,126 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
+     }
+ }
+ 
++impl DevfreqGpuPerformanceLevelDriver {
++    pub async fn new(path: PathBuf) -> Result<Self> {
++        let available_freqs = fs::read_to_string(path.join(DEVFREQ_AVAILABLE_FREQ))
++            .await
++            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
++        Ok(Self {
++            sysfs_path: path,
++            available_freqs: available_freqs
++                .split_whitespace()
++                .map(|v| {
++                    v.parse::<u32>()
++                        .unwrap_or_else(|_| panic!("available frequencies should be an int: {v}"))
++                })
++                .sorted()
++                .collect(),
++        })
++    }
++
++    pub async fn write_value(&self, file: &str, value: &str) -> Result<()> {
++        Ok(
++            write_synced(self.sysfs_path.join(PathBuf::from(file)), value.as_bytes())
++                .await
++                .inspect_err(|message| error!("Error writing to sysfs file: {message}"))?,
++        )
++    }
++
++    fn min_freq(&self) -> u32 {
++        *self.available_freqs.first().unwrap_or(&0u32)
++    }
++
++    fn max_freq(&self) -> u32 {
++        *self.available_freqs.last().unwrap_or(&0u32)
++    }
++}
++
++#[async_trait]
++impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
++    fn performance_level_from_str(&self, value: &str) -> Result<GpuPerformanceLevel> {
++        Ok(GpuPerformanceLevel::Devfreq(
++            DevfreqPerformanceLevel::from_str(value)?,
++        ))
++    }
++
++    async fn get_available_performance_levels(&self) -> Result<Vec<GpuPerformanceLevel>> {
++        Ok(vec![
++            GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto),
++            GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Manual),
++        ])
++    }
++
++    async fn get_performance_level(&self) -> Result<GpuPerformanceLevel> {
++        let min = fs::read_to_string(self.sysfs_path.join(DEVFREQ_MINIMUM_FREQ))
++            .await
++            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
++        let max = fs::read_to_string(self.sysfs_path.join(DEVFREQ_MAXIMUM_FREQ))
++            .await
++            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
++
++        Ok(GpuPerformanceLevel::Devfreq(if min == max {
++            DevfreqPerformanceLevel::Manual
++        } else {
++            DevfreqPerformanceLevel::Auto
++        }))
++    }
++
++    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
++        let GpuPerformanceLevel::Devfreq(level) = level else {
++            bail!("This is not an devfreq-compatible performance level");
++        };
++
++        match level {
++            DevfreqPerformanceLevel::Auto => {
++                self.write_value(DEVFREQ_MINIMUM_FREQ, &self.min_freq().to_string())
++                    .await?;
++                self.write_value(DEVFREQ_MAXIMUM_FREQ, &self.max_freq().to_string())
++                    .await?;
++            }
++            DevfreqPerformanceLevel::Manual => {
++                let mean = (self.min_freq() + self.max_freq()) / 2;
++                self.set_clocks(mean / 1_000_000u32).await?;
++            }
++        }
++
++        Ok(())
++    }
++
++    async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>> {
++        Ok(*self.available_freqs.first().unwrap_or(&0) / 1_000_000u32
++            ..=*self.available_freqs.last().unwrap_or(&0) / 1_000_000u32)
++    }
++
++    async fn get_clocks(&self) -> Result<u32> {
++        let current_freq = fs::read_to_string(self.sysfs_path.join(DEVFREQ_CURRENT_FREQ))
++            .await
++            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
++
++        Ok(current_freq.trim().parse::<u32>()? / 1_000_000u32)
++    }
++
++    async fn set_clocks(&self, clocks: u32) -> Result<()> {
++        let cur = self.get_clocks().await?;
++        let out = clocks * 1_000_000u32;
++
++        // Write order to widen the range first, then narrow it
++        if cur < clocks {
++            self.write_value(DEVFREQ_MINIMUM_FREQ, &out.to_string())
++                .await?;
++            self.write_value(DEVFREQ_MAXIMUM_FREQ, &out.to_string())
++                .await?;
++        } else {
++            self.write_value(DEVFREQ_MAXIMUM_FREQ, &out.to_string())
++                .await?;
++            self.write_value(DEVFREQ_MINIMUM_FREQ, &out.to_string())
++                .await?;
++        }
++
++        Ok(())
++    }
++}
++
+ #[cfg(test)]
+ pub(crate) mod test {
+     use super::*;
+diff --git a/steamos-manager/src/hardware.rs b/steamos-manager/src/hardware.rs
+index d33f70f..793ce9c 100644
+--- a/steamos-manager/src/hardware.rs
++++ b/steamos-manager/src/hardware.rs
+@@ -161,6 +161,7 @@ pub(crate) struct FirmwareAttributeConfig {
+ pub(crate) struct GpuPerformanceConfig {
+     pub driver: GpuPerformanceLevelDriverType,
+     pub clocks: Option<RangeConfig<u32>>,
++    pub sysfs_path: Option<String>,
+ }
+ 
+ #[derive(Clone, Deserialize, Debug)]
+diff --git a/steamos-manager/src/lib.rs b/steamos-manager/src/lib.rs
+index a86f102..f6f46e1 100644
+--- a/steamos-manager/src/lib.rs
++++ b/steamos-manager/src/lib.rs
+@@ -41,6 +41,8 @@ mod uinput;
+ pub mod cec;
+ pub mod daemon;
+ pub mod gpu;
++// FIXME: remove once aarch64 has parity with x86_64
++#[allow(unused_imports)]
+ pub mod hardware;
+ pub mod power;
+ pub mod screenreader;
+diff --git a/steamos-manager/src/manager/user.rs b/steamos-manager/src/manager/user.rs
+index 8e5e30b..4927723 100644
+--- a/steamos-manager/src/manager/user.rs
++++ b/steamos-manager/src/manager/user.rs
+@@ -2232,6 +2232,7 @@ mod test {
+             gpu_performance: Some(GpuPerformanceConfig {
+                 driver: GpuPerformanceLevelDriverType::Amdgpu,
+                 clocks: Some(RangeConfig::new(200, 1600)),
++                sysfs_path: None,
+             }),
+             gpu_power_profile: Some(GpuPowerProfileConfig {
+                 driver: GpuPowerProfileDriverType::Amdgpu,

@@ -30,4 +30,5 @@ exec "$gamescope" \
     --xwayland-count 1 \
     --default-touch-mode 4 \
     --force-orientation "$ARMADA_PANEL_ORIENTATION" \
+    --force-composition-rotation \
     -- "$@"

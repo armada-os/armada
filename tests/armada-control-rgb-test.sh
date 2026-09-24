@@ -87,10 +87,14 @@ assert calls.pop() == (
     "set_rgb",
     {"enabled": True, "color": "112233", "brightness": 50},
 )
+
+paths = list((root / "system_files/usr/lib/armada/devices").rglob("*"))
+paths.append(root / "system_files/usr/libexec/armada/device-env")
+for path in paths:
+    if path.is_file():
+        assert "ARMADA_RGB_" not in path.read_text(), path
 PYEOF
 
-! rg -q 'ARMADA_RGB_' "$ROOT/system_files/usr/lib/armada/devices"
-! rg -q 'ARMADA_RGB_' "$ROOT/system_files/usr/libexec/armada/device-env"
 grep -Fq 'ConditionPathExists=/etc/armada/rgb.json' "$ROOT/system_files/usr/lib/systemd/system/armada-rgb.service"
 grep -Fq 'ExecStart=/usr/bin/armada-rgb apply' "$ROOT/system_files/usr/lib/systemd/system/armada-rgb.service"
 grep -Fq 'systemctl enable armada-rgb.service' "$ROOT/build_files/40-vendor-system-files.sh"

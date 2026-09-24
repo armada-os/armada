@@ -1,0 +1,463 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] drm: synthesize a client EDID for EDID-less internal panels
+
+Internal DSI panels often expose no EDID, leaving gamescope without display
+identity, colorimetry defaults, or a client-facing EDID. Generate a valid
+baseline EDID from the connector preferred kernel mode (sRGB chromaticity,
+no HDR) and feed it through the existing parser. Physical EDIDs stay
+preferred and unchanged; the synthetic EDID is never committed to KMS.
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 5709410..10dd00e 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -417,6 +417,7 @@ namespace gamescope
+ 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
+ 
+ 		std::span<const uint8_t> GetRawEDID() const override { return std::span<const uint8_t>{ m_Mutable.EdidData.begin(), m_Mutable.EdidData.end() }; }
++		bool HasPhysicalEdid() const { return m_Mutable.bHasPhysicalEdid; }
+ 		bool HandleEdidChange()
+ 		{
+ 			bool bChanged = m_Mutable.bEdidChanged;
+@@ -549,7 +550,8 @@ namespace gamescope
+ 			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
+ 			DRMModeGenerator fnDynamicModeGenerator;
+ 			std::vector<uint32_t> ValidDynamicRefreshRates{};
+-			std::vector<uint8_t> EdidData; // Raw, unmodified.
++			std::vector<uint8_t> EdidData; // Physical or synthetic; never committed to KMS.
++			bool bHasPhysicalEdid = false;
+ 			std::vector<BackendMode> BackendModes;
+ 			
+ 			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
+@@ -2800,20 +2802,54 @@ namespace gamescope
+ 
+ 	void CDRMConnector::ParseEDID()
+ 	{
+-		if ( !GetProperties().EDID )
+-			return;
++		if ( GetProperties().EDID )
++		{
++			const uint64_t ulBlobId = GetProperties().EDID->GetCurrentValue();
++			if ( ulBlobId )
++			{
++				drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( g_DRM.fd, ulBlobId );
++				if ( pBlob )
++				{
++					defer( drmModeFreePropertyBlob( pBlob ) );
++					const uint8_t *pDataPointer = reinterpret_cast<const uint8_t *>( pBlob->data );
++					m_Mutable.EdidData = std::vector<uint8_t>{ pDataPointer, pDataPointer + pBlob->length };
++					m_Mutable.bHasPhysicalEdid = true;
++				}
++			}
++		}
+ 
+-		uint64_t ulBlobId = GetProperties().EDID->GetCurrentValue();
+-		if ( !ulBlobId )
+-			return;
++		if ( m_Mutable.EdidData.empty() && GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL )
++		{
++			const drmModeModeInfo *pPreferredMode = find_mode( m_pConnector.get(), 0, 0, 0 );
++			if ( pPreferredMode && !( pPreferredMode->flags & DRM_MODE_FLAG_INTERLACE ) )
++			{
++				m_Mutable.bHasPhysicalEdid = false;
++				m_Mutable.EdidData = GenerateSimpleEdid( EdidModeInfo
++				{
++					.clockKHz = static_cast<uint32_t>( pPreferredMode->clock ),
++					.hdisplay = pPreferredMode->hdisplay,
++					.hsyncStart = pPreferredMode->hsync_start,
++					.hsyncEnd = pPreferredMode->hsync_end,
++					.htotal = pPreferredMode->htotal,
++					.vdisplay = pPreferredMode->vdisplay,
++					.vsyncStart = pPreferredMode->vsync_start,
++					.vsyncEnd = pPreferredMode->vsync_end,
++					.vtotal = pPreferredMode->vtotal,
++					.physicalWidthMm = m_pConnector->mmWidth > 0 ? static_cast<uint32_t>( m_pConnector->mmWidth ) : 0,
++					.physicalHeightMm = m_pConnector->mmHeight > 0 ? static_cast<uint32_t>( m_pConnector->mmHeight ) : 0,
++					.hsyncPositive = !!( pPreferredMode->flags & DRM_MODE_FLAG_PHSYNC ),
++					.vsyncPositive = !!( pPreferredMode->flags & DRM_MODE_FLAG_PVSYNC ),
++				} );
++				if ( !m_Mutable.EdidData.empty() )
++				{
++					drm_log.infof( "Generated synthetic EDID for EDID-less internal connector %s from mode %s",
++						m_Mutable.szName, pPreferredMode->name );
++				}
++			}
++		}
+ 
+-		drmModePropertyBlobRes *pBlob = drmModeGetPropertyBlob( g_DRM.fd, ulBlobId );
+-		if ( !pBlob )
++		if ( m_Mutable.EdidData.empty() )
+ 			return;
+-		defer( drmModeFreePropertyBlob( pBlob ) );
+-
+-		const uint8_t *pDataPointer = reinterpret_cast<const uint8_t *>( pBlob->data );
+-		m_Mutable.EdidData = std::vector<uint8_t>{ pDataPointer, pDataPointer + pBlob->length };
+ 
+ 		di_info *pInfo = di_info_parse_edid( m_Mutable.EdidData.data(), m_Mutable.EdidData.size() );
+ 		if ( !pInfo )
+diff --git a/src/edid.cpp b/src/edid.cpp
+index 6215829..81239da 100644
+--- a/src/edid.cpp
++++ b/src/edid.cpp
+@@ -4,8 +4,10 @@
+ #include "log.hpp"
+ #include "hdmi.h"
+ 
++#include <algorithm>
+ #include <cassert>
+ #include <climits>
++#include <cmath>
+ #include <cstring>
+ #include <cstdlib>
+ 
+@@ -355,4 +357,109 @@ namespace gamescope
+ 
+         return edid;
+     }
++
++    std::vector<uint8_t> GenerateSimpleEdid( const EdidModeInfo &mode )
++    {
++        if ( !mode.clockKHz || mode.clockKHz > 655350 ||
++             !mode.hdisplay || mode.hdisplay > 4095 ||
++             mode.hsyncStart < mode.hdisplay || mode.hsyncEnd < mode.hsyncStart || mode.htotal < mode.hsyncEnd ||
++             !mode.vdisplay || mode.vdisplay > 4095 ||
++             mode.vsyncStart < mode.vdisplay || mode.vsyncEnd < mode.vsyncStart || mode.vtotal < mode.vsyncEnd )
++        {
++            return {};
++        }
++
++        // Physical size is optional info; report unknown rather than failing
++        // when the connector reports nothing or something unencodable.
++        uint32_t widthMm = mode.physicalWidthMm;
++        uint32_t heightMm = mode.physicalHeightMm;
++        if ( !widthMm || widthMm > 4095 || !heightMm || heightMm > 4095 )
++            widthMm = heightMm = 0;
++
++        const uint32_t hblank = mode.htotal - mode.hdisplay;
++        const uint32_t vblank = mode.vtotal - mode.vdisplay;
++        if ( !hblank || hblank > 4095 || !vblank || vblank > 4095 )
++            return {};
++
++        // These fields only describe timing to EDID readers; the mode comes from the
++        // kernel. A large front porch (ICNA3512: 412 lines) overflows the DTD, so clamp.
++        const uint32_t hsyncOffset = std::min<uint32_t>( mode.hsyncStart - mode.hdisplay, 1023 );
++        const uint32_t hsyncWidth = std::clamp<uint32_t>( mode.hsyncEnd - mode.hsyncStart, 1, 1023 );
++        const uint32_t vsyncOffset = std::min<uint32_t>( mode.vsyncStart - mode.vdisplay, 63 );
++        const uint32_t vsyncWidth = std::clamp<uint32_t>( mode.vsyncEnd - mode.vsyncStart, 1, 63 );
++
++        const uint32_t pixelClock10KHz = ( mode.clockKHz + 5 ) / 10;
++        if ( !pixelClock10KHz || pixelClock10KHz > UINT16_MAX )
++            return {};
++
++        std::vector<uint8_t> edid = GenerateSimpleEdid( mode.hdisplay, mode.vdisplay );
++        uint8_t *dtd = &edid[0x36];
++        std::fill( dtd, dtd + EDID_BYTE_DESCRIPTOR_SIZE, 0 );
++
++        dtd[0] = pixelClock10KHz & 0xff;
++        dtd[1] = ( pixelClock10KHz >> 8 ) & 0xff;
++        dtd[2] = mode.hdisplay & 0xff;
++        dtd[3] = hblank & 0xff;
++        dtd[4] = ( ( mode.hdisplay >> 8 ) << 4 ) | ( hblank >> 8 );
++        dtd[5] = mode.vdisplay & 0xff;
++        dtd[6] = vblank & 0xff;
++        dtd[7] = ( ( mode.vdisplay >> 8 ) << 4 ) | ( vblank >> 8 );
++        dtd[8] = hsyncOffset & 0xff;
++        dtd[9] = hsyncWidth & 0xff;
++        dtd[10] = ( ( vsyncOffset & 0xf ) << 4 ) | ( vsyncWidth & 0xf );
++        dtd[11] = ( ( hsyncOffset >> 8 ) << 6 ) |
++                  ( ( hsyncWidth >> 8 ) << 4 ) |
++                  ( ( vsyncOffset >> 4 ) << 2 ) |
++                    ( vsyncWidth >> 4 );
++        dtd[12] = widthMm & 0xff;
++        dtd[13] = heightMm & 0xff;
++        dtd[14] = ( ( widthMm >> 8 ) << 4 ) | ( heightMm >> 8 );
++        dtd[17] = 0x18 |
++                  ( mode.vsyncPositive ? 0x04 : 0 ) |
++                  ( mode.hsyncPositive ? 0x02 : 0 );
++
++        edid[0x15] = std::min<uint32_t>( 255, ( widthMm + 5 ) / 10 );
++        edid[0x16] = std::min<uint32_t>( 255, ( heightMm + 5 ) / 10 );
++
++        // The template blob carries Deck-OLED-like wide-gamut chromaticity,
++        // which downstream colorimetry would trust. A generic panel should
++        // advertise plain sRGB instead.
++        const auto to10Bit = []( float coord ) -> uint32_t
++        {
++            return std::min<uint32_t>( 1023, static_cast<uint32_t>( lroundf( coord * 1024.0f ) ) );
++        };
++        const uint32_t rx = to10Bit( 0.640f ), ry = to10Bit( 0.330f );
++        const uint32_t gx = to10Bit( 0.300f ), gy = to10Bit( 0.600f );
++        const uint32_t bx = to10Bit( 0.150f ), by = to10Bit( 0.060f );
++        const uint32_t wx = to10Bit( 0.3127f ), wy = to10Bit( 0.3290f );
++        edid[0x19] = ( ( rx & 3 ) << 6 ) | ( ( ry & 3 ) << 4 ) | ( ( gx & 3 ) << 2 ) | ( gy & 3 );
++        edid[0x1a] = ( ( bx & 3 ) << 6 ) | ( ( by & 3 ) << 4 ) | ( ( wx & 3 ) << 2 ) | ( wy & 3 );
++        edid[0x1b] = rx >> 2;
++        edid[0x1c] = ry >> 2;
++        edid[0x1d] = gx >> 2;
++        edid[0x1e] = gy >> 2;
++        edid[0x1f] = bx >> 2;
++        edid[0x20] = by >> 2;
++        edid[0x21] = wx >> 2;
++        edid[0x22] = wy >> 2;
++
++        // The template's 45-90Hz range limits contradict the real mode; blanking it
++        // also requires clearing the continuous-frequency bit, which mandates one.
++        edid[0x18] &= ~0x01;
++        uint8_t *dummyDescriptor = &edid[0x5a];
++        std::fill( dummyDescriptor, dummyDescriptor + EDID_BYTE_DESCRIPTOR_SIZE, 0 );
++        dummyDescriptor[3] = 0x10;
++
++        // Keep a valid, empty CTA extension so display policy can add metadata
++        // without replacing this baseline EDID.
++        uint8_t *cta = &edid[EDID_BLOCK_SIZE];
++        std::fill( cta, cta + EDID_BLOCK_SIZE, 0 );
++        cta[0] = DI_EDID_EXT_CEA;
++        cta[1] = 3;
++        cta[2] = 4;
++        patch_edid_checksum( cta );
++
++        patch_edid_checksum( &edid[0] );
++        return edid;
++    }
+ }
+diff --git a/src/edid.h b/src/edid.h
+index d0ed88f..0cc7e74 100644
+--- a/src/edid.h
++++ b/src/edid.h
+@@ -9,9 +9,27 @@ namespace gamescope
+ {
+     struct BackendConnectorHDRInfo;
+ 
++    struct EdidModeInfo
++    {
++        uint32_t clockKHz = 0;
++        uint32_t hdisplay = 0;
++        uint32_t hsyncStart = 0;
++        uint32_t hsyncEnd = 0;
++        uint32_t htotal = 0;
++        uint32_t vdisplay = 0;
++        uint32_t vsyncStart = 0;
++        uint32_t vsyncEnd = 0;
++        uint32_t vtotal = 0;
++        uint32_t physicalWidthMm = 0;
++        uint32_t physicalHeightMm = 0;
++        bool hsyncPositive = false;
++        bool vsyncPositive = false;
++    };
++
+     const char *GetPatchedEdidPath();
+     void WritePatchedEdid( std::span<const uint8_t> pEdid, const BackendConnectorHDRInfo &hdrInfo, bool bRotate );
+     std::vector<uint8_t> GenerateSimpleEdid( uint32_t uWidth, uint32_t uHeight );
++    std::vector<uint8_t> GenerateSimpleEdid( const EdidModeInfo &mode );
+ 
+     std::optional<std::vector<uint8_t>> PatchEdid( std::span<const uint8_t> pEdid, const BackendConnectorHDRInfo &hdrInfo, bool bRotate );
+-}
+\ No newline at end of file
++}
+diff --git a/tests/meson.build b/tests/meson.build
+index e2667ea..6ad2413 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -2,15 +2,15 @@ catch2_dep = dependency('catch2-with-main', required: true)
+ 
+ srcdir = '../src'
+ unittest_src = []
+-foreach src : gamescope_core_src + ['Script/Script.cpp', 'convar_script.cpp']
++foreach src : gamescope_core_src + ['Script/Script.cpp', 'convar_script.cpp', 'edid.cpp']
+ 	unittest_src += srcdir / src
+ endforeach
+ 
+ gamescope_tests = executable(
+ 	'gamescope_tests',
+-	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_edid.cpp'],
+ 	include_directories: [srcdir, sol2_include],
+-	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, wlroots_dep],
++	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
+ 	cpp_args: gamescope_cpp_args,
+ )
+ 
+diff --git a/tests/test_edid.cpp b/tests/test_edid.cpp
+new file mode 100644
+index 0000000..379c33d
+--- /dev/null
++++ b/tests/test_edid.cpp
+@@ -0,0 +1,178 @@
++#include <catch2/catch_test_macros.hpp>
++
++#include "edid.h"
++
++#include <cmath>
++#include <cstdint>
++
++extern "C"
++{
++#include "libdisplay-info/edid.h"
++#include "libdisplay-info/info.h"
++}
++
++using namespace gamescope;
++
++static const EdidModeInfo k_Odin3Mode
++{
++    .clockKHz = 267843,
++    .hdisplay = 1080,
++    .hsyncStart = 1104,
++    .hsyncEnd = 1105,
++    .htotal = 1129,
++    .vdisplay = 1920,
++    .vsyncStart = 1948,
++    .vsyncEnd = 1949,
++    .vtotal = 1977,
++    .physicalWidthMm = 136,
++    .physicalHeightMm = 68,
++    .hsyncPositive = true,
++    .vsyncPositive = true,
++};
++
++TEST_CASE("Synthetic EDID represents the complete DRM mode", "[edid]")
++{
++    const EdidModeInfo expected = k_Odin3Mode;
++
++    const std::vector<uint8_t> edid = GenerateSimpleEdid( expected );
++    REQUIRE( edid.size() == 256 );
++
++    for ( size_t block = 0; block < edid.size() / 128; block++ )
++    {
++        uint8_t checksum = 0;
++        for ( size_t i = 0; i < 128; i++ )
++            checksum += edid[block * 128 + i];
++        REQUIRE( checksum == 0 );
++    }
++
++    const uint8_t *dtd = &edid[0x36];
++    const uint32_t pixelClockKHz = ( dtd[0] | ( dtd[1] << 8 ) ) * 10;
++    const uint32_t hactive = dtd[2] | ( ( dtd[4] >> 4 ) << 8 );
++    const uint32_t hblank = dtd[3] | ( ( dtd[4] & 0xf ) << 8 );
++    const uint32_t vactive = dtd[5] | ( ( dtd[7] >> 4 ) << 8 );
++    const uint32_t vblank = dtd[6] | ( ( dtd[7] & 0xf ) << 8 );
++    const double refreshHz = ( pixelClockKHz * 1000.0 ) /
++        ( ( hactive + hblank ) * ( vactive + vblank ) );
++
++    CHECK( hactive == expected.hdisplay );
++    CHECK( vactive == expected.vdisplay );
++    CHECK( std::abs( static_cast<int64_t>( pixelClockKHz ) - expected.clockKHz ) <= 5 );
++    CHECK( std::fabs( refreshHz - 120.0 ) < 0.01 );
++    CHECK( edid[0x15] == 14 );
++    CHECK( edid[0x16] == 7 );
++    CHECK( ( edid[0x18] & 0x01 ) == 0 );
++    CHECK( edid[128] == 0x02 );
++    CHECK( edid[130] == 4 );
++
++    di_info *info = di_info_parse_edid( edid.data(), edid.size() );
++    REQUIRE( info != nullptr );
++    di_info_destroy( info );
++}
++
++TEST_CASE("Synthetic EDID advertises sRGB chromaticity", "[edid]")
++{
++    const std::vector<uint8_t> edid = GenerateSimpleEdid( k_Odin3Mode );
++    REQUIRE( !edid.empty() );
++
++    di_info *info = di_info_parse_edid( edid.data(), edid.size() );
++    REQUIRE( info != nullptr );
++
++    const di_edid_chromaticity_coords *chroma =
++        di_edid_get_chromaticity_coords( di_info_get_edid( info ) );
++    REQUIRE( chroma != nullptr );
++    CHECK( std::fabs( chroma->red_x - 0.640f ) < 0.002f );
++    CHECK( std::fabs( chroma->red_y - 0.330f ) < 0.002f );
++    CHECK( std::fabs( chroma->green_x - 0.300f ) < 0.002f );
++    CHECK( std::fabs( chroma->green_y - 0.600f ) < 0.002f );
++    CHECK( std::fabs( chroma->blue_x - 0.150f ) < 0.002f );
++    CHECK( std::fabs( chroma->blue_y - 0.060f ) < 0.002f );
++    CHECK( std::fabs( chroma->white_x - 0.3127f ) < 0.002f );
++    CHECK( std::fabs( chroma->white_y - 0.3290f ) < 0.002f );
++
++    di_info_destroy( info );
++}
++
++TEST_CASE("Synthetic EDID treats unencodable physical size as unknown", "[edid]")
++{
++    EdidModeInfo mode = k_Odin3Mode;
++    mode.physicalWidthMm = 5000;
++
++    const std::vector<uint8_t> edid = GenerateSimpleEdid( mode );
++    REQUIRE( !edid.empty() );
++
++    const uint8_t *dtd = &edid[0x36];
++    CHECK( edid[0x15] == 0 );
++    CHECK( edid[0x16] == 0 );
++    CHECK( dtd[12] == 0 );
++    CHECK( dtd[13] == 0 );
++    CHECK( dtd[14] == 0 );
++}
++
++TEST_CASE("Synthetic EDID rejects timings EDID cannot encode", "[edid]")
++{
++    EdidModeInfo mode = k_Odin3Mode;
++    REQUIRE( !GenerateSimpleEdid( mode ).empty() );
++
++    mode = k_Odin3Mode;
++    mode.hdisplay = 4096;
++    REQUIRE( GenerateSimpleEdid( mode ).empty() );
++
++    mode = k_Odin3Mode;
++    mode.clockKHz = 0;
++    REQUIRE( GenerateSimpleEdid( mode ).empty() );
++
++    mode = k_Odin3Mode;
++    mode.hsyncStart = mode.hdisplay - 1;
++    REQUIRE( GenerateSimpleEdid( mode ).empty() );
++
++    mode = k_Odin3Mode;
++    mode.htotal = mode.hdisplay;
++    REQUIRE( GenerateSimpleEdid( mode ).empty() );
++}
++
++TEST_CASE("Synthetic EDID clamps sync porches it cannot describe", "[edid]")
++{
++    EdidModeInfo mode = k_Odin3Mode;
++    mode.vsyncStart = mode.vdisplay + 412;
++    mode.vsyncEnd = mode.vsyncStart + 4;
++    mode.vtotal = mode.vsyncEnd + 8;
++
++    std::vector<uint8_t> edid = GenerateSimpleEdid( mode );
++    REQUIRE( edid.size() == 256 );
++
++    const uint8_t *dtd = &edid[0x36];
++    uint32_t vsyncOffset = ( ( dtd[10] >> 4 ) & 0xf ) | ( ( ( dtd[11] >> 2 ) & 0x3 ) << 4 );
++    uint32_t vsyncWidth  = ( dtd[10] & 0xf ) | ( ( dtd[11] & 0x3 ) << 4 );
++    CHECK( vsyncOffset == 63 );
++    CHECK( vsyncWidth == 4 );
++
++    di_info *info = di_info_parse_edid( edid.data(), edid.size() );
++    REQUIRE( info != nullptr );
++    di_info_destroy( info );
++
++    mode = k_Odin3Mode;
++    mode.vsyncEnd = mode.vsyncStart + 64;
++    mode.vtotal = mode.vsyncEnd + 1;
++    edid = GenerateSimpleEdid( mode );
++    REQUIRE( edid.size() == 256 );
++    dtd = &edid[0x36];
++    vsyncWidth = ( dtd[10] & 0xf ) | ( ( dtd[11] & 0x3 ) << 4 );
++    CHECK( vsyncWidth == 63 );
++}
++
++TEST_CASE("Synthetic EDID encodes sync timings in the correct DTD bytes", "[edid]")
++{
++    const std::vector<uint8_t> edid = GenerateSimpleEdid( k_Odin3Mode );
++    REQUIRE( edid.size() == 256 );
++
++    const uint8_t *dtd = &edid[0x36];
++    const uint32_t hsyncOffset = dtd[8] | ( ( dtd[11] >> 6 ) << 8 );
++    const uint32_t hsyncWidth  = dtd[9] | ( ( ( dtd[11] >> 4 ) & 0x3 ) << 8 );
++    const uint32_t vsyncOffset = ( ( dtd[10] >> 4 ) & 0xf ) | ( ( ( dtd[11] >> 2 ) & 0x3 ) << 4 );
++    const uint32_t vsyncWidth  = ( dtd[10] & 0xf ) | ( ( dtd[11] & 0x3 ) << 4 );
++
++    CHECK( hsyncOffset == k_Odin3Mode.hsyncStart - k_Odin3Mode.hdisplay );
++    CHECK( hsyncWidth  == k_Odin3Mode.hsyncEnd - k_Odin3Mode.hsyncStart );
++    CHECK( vsyncOffset == k_Odin3Mode.vsyncStart - k_Odin3Mode.vdisplay );
++    CHECK( vsyncWidth  == k_Odin3Mode.vsyncEnd - k_Odin3Mode.vsyncStart );
++}

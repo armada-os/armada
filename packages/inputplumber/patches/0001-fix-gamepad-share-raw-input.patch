@@ -1,0 +1,379 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Sun, 20 Sep 2026 20:13:11 -0400
+Subject: [PATCH] input: share raw gamepad input
+
+Exclusive grabs prevent other consumers, such as Waydroid, from reading raw
+gamepad events. Release eligible sources only after host hiding is applied
+and verified, retaining the grab on failure so the virtual controller keeps
+working.
+
+Detect eligibility from kernel capabilities because hiding changes udev
+classification. Generate INPUTPLUMBER_SHARED_GAMEPAD=1 and host input filtering
+before uaccess is queued, without profile overrides. Exclude system controls
+and root-hidden sources.
+
+Eligible gamepads remain hidden even with passthrough: true. Other
+gamepad-driver sources retain upstream's exclusive grab.
+---
+ src/input/composite_device/mod.rs | 40 +++++++++++------
+ src/input/source/evdev.rs         | 34 +++++++++++++++
+ src/input/source/evdev/gamepad.rs | 91 +++++++++++++++++++++++++++++++++++++--
+ src/udev/mod.rs                   | 57 +++++++++++++++++++-----
+ 4 files changed, 195 insertions(+), 27 deletions(-)
+
+diff --git a/src/input/composite_device/mod.rs b/src/input/composite_device/mod.rs
+index 144372a..14a5af7 100644
+--- a/src/input/composite_device/mod.rs
++++ b/src/input/composite_device/mod.rs
+@@ -654,6 +654,18 @@ impl CompositeDevice {
+             log::debug!("Hiding device: {}", source_path);
+             if let Err(e) = hide_device(source_path.as_str(), flags).await {
+                 log::warn!("Failed to hide device '{source_path}': {e:?}");
++                continue;
++            }
++            if flags.contains(&HideFlag::ShareGamepad) {
++                if let Some(SourceDevice::Event(EventDevice::Gamepad(source))) = self
++                    .source_devices_discovered
++                    .iter()
++                    .find(|source| source.get_device_path() == source_path)
++                {
++                    if let Err(e) = source.ungrab() {
++                        log::warn!("Failed to share gamepad '{source_path}': {e}");
++                    }
++                }
+             }
+             log::debug!("Finished hiding device: {source_path}");
+         }
+@@ -1707,29 +1719,31 @@ impl CompositeDevice {
+         let source_device = match device {
+             DeviceInfo::Udev(device) => {
+                 let subsystem = device.subsystem();
++                let hide_from_root = if let Ok(value) = std::env::var("HIDE_DEVICES_FROM_ROOT") {
++                    value.as_str() == "1" || value.as_str() == "true"
++                } else if let Some(value) = device.get_property("HIDE_DEVICES_FROM_ROOT") {
++                    value.as_str() == "1" || value.as_str() == "true"
++                } else {
++                    false
++                };
++                let share_gamepad = subsystem == "input"
++                    && !hide_from_root
++                    && EventDevice::is_shared_gamepad(&device, &source_config)?;
+ 
+                 // Hide the device if specified
+                 let should_passthru = source_config
+                     .as_ref()
+                     .and_then(|c| c.passthrough)
+                     .unwrap_or(false);
+-                let should_hide =
+-                    !should_passthru && subsystem.as_str() != "iio" && subsystem.as_str() != "tty";
++                let should_hide = (share_gamepad || !should_passthru)
++                    && subsystem.as_str() != "iio"
++                    && subsystem.as_str() != "tty";
+                 if should_hide {
+                     let source_path = device.devnode();
+-                    // The device should be hidden if either the udev device has
+-                    // the appropriate property set OR if inputplumber was run
+-                    // with the appropriate environment variable.
+-                    let hide_from_root = if let Ok(value) = std::env::var("HIDE_DEVICES_FROM_ROOT")
+-                    {
+-                        value.as_str() == "1" || value.as_str() == "true"
+-                    } else if let Some(value) = device.get_property("HIDE_DEVICES_FROM_ROOT") {
+-                        value.as_str() == "1" || value.as_str() == "true"
+-                    } else {
+-                        false
+-                    };
+                     let flags: &[HideFlag] = if hide_from_root {
+                         &[HideFlag::ChangePermissions, HideFlag::MoveSourceDevice]
++                    } else if share_gamepad {
++                        &[HideFlag::ChangePermissions, HideFlag::ShareGamepad]
+                     } else {
+                         &[HideFlag::ChangePermissions]
+                     };
+diff --git a/src/input/source/evdev.rs b/src/input/source/evdev.rs
+index 2db1cad..8abbba4 100644
+--- a/src/input/source/evdev.rs
++++ b/src/input/source/evdev.rs
+@@ -169,6 +169,40 @@ impl EventDevice {
+         }
+     }
+ 
++    pub fn is_shared_gamepad(
++        device_info: &UdevDevice,
++        conf: &Option<config::SourceDevice>,
++    ) -> Result<bool, Box<dyn Error + Send + Sync>> {
++        let is_blocked = conf.as_ref().and_then(|c| c.blocked).unwrap_or(false);
++        let is_ignored = conf.as_ref().and_then(|c| c.ignore).unwrap_or(false);
++        if is_ignored
++            || !matches!(
++                Self::get_driver_type(device_info, is_blocked),
++                DriverType::Gamepad
++            )
++        {
++            return Ok(false);
++        }
++
++        let device = Device::open(device_info.devnode())?;
++        if !gamepad::has_gamepad_controls(device.supported_keys(), device.supported_absolute_axes())
++        {
++            log::debug!(
++                "Not sharing '{}': no gamepad buttons with X/Y axes",
++                device_info.devnode()
++            );
++            return Ok(false);
++        }
++        if gamepad::has_system_controls(device.supported_keys(), device.supported_switches()) {
++            log::warn!(
++                "Not sharing gamepad '{}': power/sleep key or lid switch",
++                device_info.devnode()
++            );
++            return Ok(false);
++        }
++        Ok(true)
++    }
++
+     /// Return the driver type for the given vendor and product
+     fn get_driver_type(device: &UdevDevice, is_blocked: bool) -> DriverType {
+         // TODO: add implmentations for other classes of evdev devices (e.g.
+diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
+index de2661f..2bee6d3 100644
+--- a/src/input/source/evdev/gamepad.rs
++++ b/src/input/source/evdev/gamepad.rs
+@@ -3,8 +3,8 @@ use std::os::fd::AsFd;
+ use std::{collections::HashMap, error::Error};
+ 
+ use evdev::{
+-    AbsInfo, AbsoluteAxisCode, Device, EventType, FFEffect, FFEffectData, FFEffectKind, FFReplay,
+-    FFTrigger, InputEvent,
++    AbsInfo, AbsoluteAxisCode, AttributeSetRef, Device, EventType, FFEffect, FFEffectData,
++    FFEffectKind, FFReplay, FFTrigger, InputEvent, KeyCode, SwitchCode,
+ };
+ use nix::fcntl::{FcntlArg, OFlag};
+ use packed_struct::types::SizedInteger;
+@@ -22,11 +22,90 @@ use crate::{
+         capability::{Capability, Gamepad, GamepadAxis, GamepadButton},
+         event::{evdev::EvdevEvent, native::NativeEvent},
+         output_event::OutputEvent,
+-        source::{InputError, OutputError, SourceInputDevice, SourceOutputDevice},
++        source::{InputError, OutputError, SourceDriver, SourceInputDevice, SourceOutputDevice},
+     },
+     udev::device::UdevDevice,
+ };
+ 
++pub(super) fn has_gamepad_controls(
++    keys: Option<&AttributeSetRef<KeyCode>>,
++    axes: Option<&AttributeSetRef<AbsoluteAxisCode>>,
++) -> bool {
++    let (Some(keys), Some(axes)) = (keys, axes) else {
++        return false;
++    };
++    axes.contains(AbsoluteAxisCode::ABS_X)
++        && axes.contains(AbsoluteAxisCode::ABS_Y)
++        && keys
++            .iter()
++            .any(|key| (KeyCode::BTN_SOUTH.0..=KeyCode::BTN_THUMBR.0).contains(&key.0))
++}
++
++pub(super) fn has_system_controls(
++    keys: Option<&AttributeSetRef<KeyCode>>,
++    switches: Option<&AttributeSetRef<SwitchCode>>,
++) -> bool {
++    keys.is_some_and(|keys| {
++        [KeyCode::KEY_POWER, KeyCode::KEY_SLEEP, KeyCode::KEY_SUSPEND]
++            .iter()
++            .any(|key| keys.contains(*key))
++    }) || switches.is_some_and(|switches| switches.contains(SwitchCode::SW_LID))
++}
++
++#[cfg(test)]
++mod sharing_tests {
++    use super::super::EventDevice;
++    use super::*;
++    use evdev::{AbsoluteAxisCode as Axis, AttributeSet, KeyCode as Key, SwitchCode as Switch};
++
++    fn accepts(keys: &[Key], axes: &[Axis], switches: &[Switch]) -> bool {
++        let keys: AttributeSet<Key> = keys.iter().copied().collect();
++        let axes: AttributeSet<Axis> = axes.iter().copied().collect();
++        let switches: AttributeSet<Switch> = switches.iter().copied().collect();
++        has_gamepad_controls(Some(&keys), Some(&axes))
++            && !has_system_controls(Some(&keys), Some(&switches))
++    }
++
++    #[test]
++    fn requires_gamepad_buttons_and_stick_axes() {
++        assert!(accepts(
++            &[Key::BTN_SOUTH, Key::BTN_MODE, Key::KEY_BACK],
++            &[Axis::ABS_X, Axis::ABS_Y],
++            &[],
++        ));
++        for key in [Key::BTN_SOUTH, Key::KEY_A, Key::KEY_VOLUMEUP, Key::BTN_C] {
++            assert!(!accepts(&[key], &[], &[]));
++        }
++        for key in [Key::BTN_TOUCH, Key::BTN_LEFT] {
++            assert!(!accepts(&[key], &[Axis::ABS_X, Axis::ABS_Y], &[]));
++        }
++        assert!(!accepts(&[Key::BTN_SOUTH], &[Axis::ABS_X], &[]));
++        assert!(!has_gamepad_controls(None, None));
++    }
++
++    #[test]
++    fn excludes_system_controls() {
++        for (keys, switches) in [
++            (&[Key::BTN_SOUTH, Key::KEY_POWER][..], &[][..]),
++            (&[Key::BTN_SOUTH, Key::KEY_SLEEP], &[]),
++            (&[Key::BTN_SOUTH, Key::KEY_SUSPEND], &[]),
++            (&[Key::BTN_SOUTH], &[Switch::SW_LID]),
++        ] {
++            assert!(!accepts(keys, &[Axis::ABS_X, Axis::ABS_Y], switches));
++        }
++    }
++
++    #[test]
++    fn excludes_blocked_and_ignored_sources_before_opening() {
++        for policy in ["blocked", "ignore"] {
++            let config = serde_yaml::from_str(&format!("group: gamepad\n{policy}: true")).unwrap();
++            assert!(
++                !EventDevice::is_shared_gamepad(&UdevDevice::default(), &Some(config),).unwrap()
++            );
++        }
++    }
++}
++
+ /// Source device implementation for evdev gamepads
+ pub struct GamepadEventDevice {
+     device: Device,
+@@ -39,6 +118,12 @@ pub struct GamepadEventDevice {
+     hat_state: HashMap<AbsoluteAxisCode, i32>,
+ }
+ 
++impl SourceDriver<GamepadEventDevice> {
++    pub fn ungrab(&self) -> std::io::Result<()> {
++        self.implementation.lock().unwrap().device.ungrab()
++    }
++}
++
+ impl GamepadEventDevice {
+     /// Create a new [Gamepad] source device from the given udev info
+     pub fn new(
+diff --git a/src/udev/mod.rs b/src/udev/mod.rs
+index 15c85cc..8744fd9 100644
+--- a/src/udev/mod.rs
++++ b/src/udev/mod.rs
+@@ -9,6 +9,7 @@ pub mod device;
+ use std::{
+     error::Error,
+     fs,
++    os::unix::fs::PermissionsExt,
+     path::{Path, PathBuf},
+ };
+ 
+@@ -17,7 +18,8 @@ use udev::Enumerator;
+ 
+ use self::device::Device;
+ 
+-const RULE_HIDE_DEVICE_EARLY_PRIORITY: &str = "50";
++// Run after input_id (60), before uaccess (70).
++const RULE_HIDE_DEVICE_EARLY_PRIORITY: &str = "69";
+ const RULE_HIDE_DEVICE_LATE_PRIORITY: &str = "96";
+ const RULES_PREFIX: &str = "/run/udev/rules.d";
+ 
+@@ -26,6 +28,7 @@ const RULES_PREFIX: &str = "/run/udev/rules.d";
+ pub enum HideFlag {
+     ChangePermissions,
+     MoveSourceDevice,
++    ShareGamepad,
+ }
+ 
+ /// Hide the given input device from regular users.
+@@ -91,6 +94,14 @@ KERNEL=="hidraw[0-9]*", SUBSYSTEM=="{subsystem}", RUN+="{mv_cmd} /dev/%k /dev/in
+         mv_late_rule = mv_early_rule.clone();
+     }
+ 
++    let gamepad_rule = if flags.contains(&HideFlag::ShareGamepad) {
++        r#"KERNEL=="event[0-9]*", SUBSYSTEM=="input", ENV{INPUTPLUMBER_SHARED_GAMEPAD}="1", ENV{LIBINPUT_IGNORE_DEVICE}="1", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_JOYSTICK}="", TAG-="uaccess"
++KERNEL=="js[0-9]*", SUBSYSTEM=="input", ENV{ID_INPUT_JOYSTICK}="", TAG-="uaccess"
++"#
++    } else {
++        ""
++    };
++
+     // Create an early udev rule to hide the device
+     let rule = format!(
+         r#"# Hides devices stemming from {name}
+@@ -99,6 +110,7 @@ KERNEL=="hidraw[0-9]*", SUBSYSTEM=="{subsystem}", RUN+="{mv_cmd} /dev/%k /dev/in
+ GOTO="inputplumber_end"
+ LABEL="inputplumber_valid"
+ {chmod_early_rule}
++{gamepad_rule}
+ {mv_early_rule}
+ LABEL="inputplumber_end"
+ "#
+@@ -128,7 +140,22 @@ LABEL="inputplumber_end"
+     fs::write(rule_path, rule)?;
+ 
+     // Reload udev
+-    reload_children(parent).await?;
++    reload_children(parent, flags.contains(&HideFlag::ShareGamepad)).await?;
++    if flags.contains(&HideFlag::ShareGamepad) {
++        let hidden = get_device(path.to_string()).await?;
++        if fs::metadata(path)?.permissions().mode() & 0o777 != 0
++            || hidden
++                .properties
++                .get("INPUTPLUMBER_SHARED_GAMEPAD")
++                .map(String::as_str)
++                != Some("1")
++            || ["ID_INPUT_JOYSTICK", "ID_INPUT_MOUSE"]
++                .iter()
++                .any(|key| hidden.properties.contains_key(*key))
++        {
++            return Err(format!("Gamepad '{path}' is not hidden").into());
++        }
++    }
+ 
+     Ok(())
+ }
+@@ -167,7 +194,7 @@ pub async fn unhide_device(path: String) -> Result<(), Box<dyn Error>> {
+     }
+ 
+     // Reload udev
+-    reload_children(parent).await?;
++    reload_children(parent, false).await?;
+ 
+     Ok(())
+ }
+@@ -221,19 +248,27 @@ pub async fn unhide_all() -> Result<(), Box<dyn Error>> {
+ }
+ 
+ /// Trigger udev to evaluate rules on the children of the given parent device path
+-async fn reload_children(parent: String) -> Result<(), Box<dyn Error>> {
++async fn reload_children(parent: String, settle: bool) -> Result<(), Box<dyn Error>> {
+     log::debug!("Reloading udev rules: udevadm control --reload-rules");
+-    let _ = Command::new("udevadm")
++    if !Command::new("udevadm")
+         .args(["control", "--reload-rules"])
+-        .output()
+-        .await?;
++        .status()
++        .await?
++        .success()
++    {
++        return Err("Unable to reload udev rules".into());
++    }
+ 
+     for action in ["remove", "add"] {
+         log::debug!("Retriggering udev rules: udevadm trigger --action {action} -b {parent}");
+-        let _ = Command::new("udevadm")
+-            .args(["trigger", "--action", action, "-b", parent.as_str()])
+-            .output()
+-            .await?;
++        let mut command = Command::new("udevadm");
++        command.args(["trigger", "--action", action, "-b", parent.as_str()]);
++        if settle && action == "add" {
++            command.arg("--settle");
++        }
++        if !command.status().await?.success() {
++            log::warn!("Unable to trigger udev {action} for {parent}");
++        }
+     }
+ 
+     Ok(())

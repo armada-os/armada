@@ -19,6 +19,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 BUS_NAME = "org.armada.Power"
 OBJECT_PATH = "/org/armada/Power"
 IFACE = "org.armada.Power1"
+IFACE_PROFILE = "com.steampowered.SteamOSManager1.PerformanceProfile1"
+IFACE_GPU = "com.steampowered.SteamOSManager1.GpuPerformanceLevel1"
+IFACE_CPU = "com.steampowered.SteamOSManager1.CpuScaling1"
 LOGIN1_NAME = "org.freedesktop.login1"
 LOGIN1_PATH = "/org/freedesktop/login1"
 LOGIN1_IFACE = "org.freedesktop.login1.Manager"
@@ -51,13 +54,51 @@ XML = f"""
     <property name="ManualGpuClock" type="u" access="readwrite"/>
     <property name="ManualGpuClockMin" type="u" access="read"/>
     <property name="ManualGpuClockMax" type="u" access="read"/>
+    <property name="AvailableCpuScalingGovernors" type="as" access="read"/>
+    <property name="CpuScalingGovernor" type="s" access="readwrite"/>
     <property name="FanMode" type="s" access="read"/>
     <property name="FanPwm" type="u" access="read"/>
     <property name="FanRpm" type="u" access="read"/>
     <property name="Temperature" type="u" access="read"/>
   </interface>
+  <interface name="{IFACE_PROFILE}">
+    <property name="AvailablePerformanceProfiles" type="as" access="read"/>
+    <property name="PerformanceProfile" type="s" access="readwrite"/>
+    <property name="SuggestedDefaultPerformanceProfile" type="s" access="read"/>
+  </interface>
+  <interface name="{IFACE_GPU}">
+    <property name="AvailableGpuPerformanceLevels" type="as" access="read"/>
+    <property name="GpuPerformanceLevel" type="s" access="readwrite"/>
+    <property name="ManualGpuClock" type="u" access="readwrite"/>
+    <property name="ManualGpuClockMin" type="u" access="read"/>
+    <property name="ManualGpuClockMax" type="u" access="read"/>
+  </interface>
+  <interface name="{IFACE_CPU}">
+    <property name="AvailableCpuScalingGovernors" type="as" access="read"/>
+    <property name="CpuScalingGovernor" type="s" access="readwrite"/>
+  </interface>
 </node>
 """
+
+# steamos-manager relays these through remotes.d; only the names differ.
+REMOTE_PROPS = {
+    IFACE_PROFILE: {
+        "AvailablePerformanceProfiles": "AvailableProfiles",
+        "PerformanceProfile": "Profile",
+        "SuggestedDefaultPerformanceProfile": "SuggestedDefaultProfile",
+    },
+    IFACE_GPU: {
+        "AvailableGpuPerformanceLevels": "AvailableGpuPerformanceLevels",
+        "GpuPerformanceLevel": "GpuPerformanceLevel",
+        "ManualGpuClock": "ManualGpuClock",
+        "ManualGpuClockMin": "ManualGpuClockMin",
+        "ManualGpuClockMax": "ManualGpuClockMax",
+    },
+    IFACE_CPU: {
+        "AvailableCpuScalingGovernors": "AvailableCpuScalingGovernors",
+        "CpuScalingGovernor": "CpuScalingGovernor",
+    },
+}
 
 
 def read_text(path, default=""):
@@ -566,6 +607,20 @@ class ArmadaPower:
     def profile_settings(self):
         return self.profile_config.get(self.profile, self.profile_config["balanced"])
 
+    def available_governors(self):
+        for policy in self.cpu_policies:
+            available = read_text(policy / "scaling_available_governors").split()
+            if available:
+                return available
+        return []
+
+    def current_governor(self):
+        for policy in self.cpu_policies:
+            governor = read_text(policy / "scaling_governor")
+            if governor:
+                return governor
+        return ""
+
     def write_governor(self, path, preferred):
         available = read_text(path / "scaling_available_governors").split()
         if preferred in available:
@@ -837,6 +892,10 @@ class ArmadaPower:
             return GLib.Variant("u", freqs[0] // 1000000 if freqs else 0)
         if prop == "ManualGpuClockMax":
             return GLib.Variant("u", freqs[-1] // 1000000 if freqs else 0)
+        if prop == "AvailableCpuScalingGovernors":
+            return GLib.Variant("as", self.available_governors())
+        if prop == "CpuScalingGovernor":
+            return GLib.Variant("s", self.current_governor())
         if prop == "FanMode":
             return GLib.Variant("s", "managed" if self.fan_pwm else "unavailable")
         if prop == "FanPwm":
@@ -869,6 +928,15 @@ class ArmadaPower:
                 if target:
                     self.set_gpu_manual_clock(target)
             changed["GpuPerformanceLevel"] = GLib.Variant("s", self.gpu_level)
+        elif prop == "CpuScalingGovernor":
+            governor = value.get_string()
+            if governor not in self.available_governors():
+                raise ValueError(governor)
+            # Remember it on the profile so resume and profile switches re-apply it.
+            self.profile_settings()["cpu_governor"] = governor
+            for policy in self.cpu_policies:
+                self.write_governor(policy, governor)
+            changed["CpuScalingGovernor"] = GLib.Variant("s", self.current_governor())
         elif prop == "ManualGpuClock":
             mhz = value.get_uint32()
             self.manual_gpu_clock = mhz
@@ -901,12 +969,23 @@ class ArmadaPower:
         }
 
     def emit_properties(self, changed):
+        self.emit_on(IFACE, changed)
+        for iface, props in REMOTE_PROPS.items():
+            mapped = {
+                remote: changed[native]
+                for remote, native in props.items()
+                if native in changed
+            }
+            if mapped:
+                self.emit_on(iface, mapped)
+
+    def emit_on(self, iface, changed):
         self.connection.emit_signal(
             None,
             OBJECT_PATH,
             "org.freedesktop.DBus.Properties",
             "PropertiesChanged",
-            GLib.Variant("(sa{sv}as)", (IFACE, changed, [])),
+            GLib.Variant("(sa{sv}as)", (iface, changed, [])),
         )
 
     def handle_method_call(self, _conn, _sender, _path, iface, method, _params, invocation):
@@ -941,19 +1020,26 @@ class ArmadaPower:
             return
         invocation.return_dbus_error(f"{BUS_NAME}.Error.UnknownMethod", method)
 
+    def native_prop(self, iface, prop):
+        if iface == IFACE:
+            return prop
+        return REMOTE_PROPS.get(iface, {}).get(prop)
+
     def handle_get_property(self, _conn, _sender, _path, iface, prop):
-        if iface != IFACE:
+        native = self.native_prop(iface, prop)
+        if native is None:
             return None
         try:
-            return self.get_property(prop)
+            return self.get_property(native)
         except Exception:
             return None
 
     def handle_set_property(self, _conn, _sender, _path, iface, prop, value):
-        if iface != IFACE:
+        native = self.native_prop(iface, prop)
+        if native is None:
             return False
         try:
-            self.set_property(prop, value)
+            self.set_property(native, value)
             return True
         except Exception as exc:
             print(f"armada-powerd: set {prop} failed: {exc}", file=sys.stderr)
@@ -962,13 +1048,14 @@ class ArmadaPower:
     def register(self, connection):
         self.connection = connection
         self.node = Gio.DBusNodeInfo.new_for_xml(XML)
-        connection.register_object(
-            OBJECT_PATH,
-            self.node.interfaces[0],
-            self.handle_method_call,
-            self.handle_get_property,
-            self.handle_set_property,
-        )
+        for iface in self.node.interfaces:
+            connection.register_object(
+                OBJECT_PATH,
+                iface,
+                self.handle_method_call,
+                self.handle_get_property,
+                self.handle_set_property,
+            )
         connection.signal_subscribe(
             LOGIN1_NAME,
             LOGIN1_IFACE,

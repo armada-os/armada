@@ -10,8 +10,6 @@ case "${ARMADA_SOC_CLASS:-}" in
     *) exit 0 ;;
 esac
 
-[[ -d /var/lib/waydroid/images ]] || exit 0
-
 source_dir=/usr/share/armada/waydroid/vendor/lib64
 target_dir=/var/lib/waydroid/overlay/vendor/lib64
 

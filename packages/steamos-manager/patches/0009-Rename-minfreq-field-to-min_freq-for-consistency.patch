@@ -1,0 +1,109 @@
+From ea660e4f3f547d1fdeee19261fb2e87e3fc9f0c0 Mon Sep 17 00:00:00 2001
+From: Matthieu Bucchianeri <mbucchia@valvesoftware.com>
+Date: Wed, 26 Aug 2026 10:37:45 -0700
+Subject: [PATCH] Rename minfreq field to min_freq for consistency.
+
+---
+ data/devices/steam-frame.toml       |  2 +-
+ steamos-manager/src/gpu.rs          | 12 ++++++------
+ steamos-manager/src/hardware.rs     |  2 +-
+ steamos-manager/src/manager/user.rs |  2 +-
+ 4 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/data/devices/steam-frame.toml b/data/devices/steam-frame.toml
+index 78dc8e1..f58b92a 100644
+--- a/data/devices/steam-frame.toml
++++ b/data/devices/steam-frame.toml
+@@ -9,7 +9,7 @@ oui = "e0-31-9e"
+ [gpu_performance]
+ driver = "devfreq"
+ sysfs_path = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
+-minfreq = 500
++min_freq = 500
+ 
+ [performance_profile]
+ platform_profile_driver = "custom"
+diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
+index 18aaaf6..676b720 100644
+--- a/steamos-manager/src/gpu.rs
++++ b/steamos-manager/src/gpu.rs
+@@ -139,7 +139,7 @@ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
+     available_freqs: Vec<u32>,
+     level: DevfreqPerformanceLevel,
+     manual_clocks: Option<u32>,
+-    minfreq: Option<u32>,
++    min_freq: Option<u32>,
+ }
+ 
+ #[async_trait]
+@@ -193,7 +193,7 @@ pub(crate) async fn gpu_performance_level_driver() -> Result<Box<dyn GpuPerforma
+                 .sysfs_path
+                 .as_ref()
+                 .expect("devfreq gpu performance driver needs a sysfs_path");
+-            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into(), config.minfreq).await?)
++            Box::new(DevfreqGpuPerformanceLevelDriver::new(path.into(), config.min_freq).await?)
+         }
+     })
+ }
+@@ -646,7 +646,7 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
+ }
+ 
+ impl DevfreqGpuPerformanceLevelDriver {
+-    pub async fn new(path: PathBuf, minfreq: Option<u32>) -> Result<Self> {
++    pub async fn new(path: PathBuf, min_freq: Option<u32>) -> Result<Self> {
+         let available_freqs = fs::read_to_string(path.join(DEVFREQ_AVAILABLE_FREQ))
+             .await
+             .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
+@@ -662,7 +662,7 @@ impl DevfreqGpuPerformanceLevelDriver {
+                 .collect(),
+             level: DevfreqPerformanceLevel::Auto,
+             manual_clocks: None,
+-            minfreq,
++            min_freq,
+         })
+     }
+ 
+@@ -729,7 +729,7 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>> {
+         let min = self.available_freqs.first().copied().unwrap_or(0) / 1_000_000u32;
+         let max = self.available_freqs.last().copied().unwrap_or(0) / 1_000_000u32;
+-        let min = self.minfreq.map_or(min, |cap| min.max(cap));
++        let min = self.min_freq.map_or(min, |cap| min.max(cap));
+         Ok(min..=max)
+     }
+ 
+@@ -1694,7 +1694,7 @@ CCLK_RANGE in Core0:
+             available_freqs: vec![100_000_000, 200_000_000, 500_000_000],
+             level: DevfreqPerformanceLevel::Auto,
+             manual_clocks: None,
+-            minfreq: Some(400),
++            min_freq: Some(400),
+         };
+ 
+         let range = driver.get_clocks_range().await.expect("range");
+diff --git a/steamos-manager/src/hardware.rs b/steamos-manager/src/hardware.rs
+index df755ae..feba8a3 100644
+--- a/steamos-manager/src/hardware.rs
++++ b/steamos-manager/src/hardware.rs
+@@ -161,7 +161,7 @@ pub(crate) struct FirmwareAttributeConfig {
+ pub(crate) struct GpuPerformanceConfig {
+     pub driver: GpuPerformanceLevelDriverType,
+     pub clocks: Option<RangeConfig<u32>>,
+-    pub minfreq: Option<u32>,
++    pub min_freq: Option<u32>,
+     pub sysfs_path: Option<String>,
+ }
+ 
+diff --git a/steamos-manager/src/manager/user.rs b/steamos-manager/src/manager/user.rs
+index c197063..79f2ee2 100644
+--- a/steamos-manager/src/manager/user.rs
++++ b/steamos-manager/src/manager/user.rs
+@@ -2228,7 +2228,7 @@ mod test {
+             gpu_performance: Some(GpuPerformanceConfig {
+                 driver: GpuPerformanceLevelDriverType::Amdgpu,
+                 clocks: Some(RangeConfig::new(200, 1600)),
+-                minfreq: None,
++                min_freq: None,
+                 sysfs_path: None,
+             }),
+             gpu_power_profile: Some(GpuPowerProfileConfig {

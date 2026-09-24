@@ -122,7 +122,7 @@ except ValueError:
 
 # --- armada_perf: sanitize + layering ---------------------------------------
 clean = ap.sanitize_perf(
-    {"nice": -99, "gamescopeNice": 99, "gamescopeRr": True, "scheduler": "lavd",
+    {"nice": -99, "gamescopeNice": 99, "scheduler": "lavd",
      "cores": "bogus list", "wineTopology": False}, ENV)
 check("nice clamped", clean["nice"] == ap.NICE_MIN)
 check("gamescope nice clamped", clean["gamescopeNice"] == ap.GAMESCOPE_NICE_MAX)
@@ -132,15 +132,14 @@ check("wineTopology true kept", ap.sanitize_perf({"wineTopology": True})["wineTo
 check("unset keys stay absent", ap.sanitize_perf({}, ENV) == {})
 
 state = {"global": {"gamescopeNice": -5, "gamescopeCores": [3, 4, 5, 6, 7]},
-         "override": {"gamescopeCores": ALL, "gamescopeRr": True, "pid": 1}}
+         "override": {"gamescopeCores": ALL, "pid": 1}}
 eff = ap.effective_state(state)
 check("override all clears restrictive global", eff["gamescopeCores"] == ALL)
 check("global survives where override silent", eff["gamescopeNice"] == -5)
-check("override wins", eff["gamescopeRr"] is True)
 factory_tweaks = gt.load()
 factory_global = factory_tweaks["global"]
 check("factory declares every displayed default", set(factory_global) == {
-    "cores", "fexProfile", "gamescopeCores", "gamescopeNice", "gamescopeRr",
+    "cores", "fexProfile", "gamescopeCores", "gamescopeNice",
     "gamescopeVulkanRealtime", "nice", "scheduler", "thunks", "wineTopology",
 })
 check("factory FEX profile loaded", factory_global["fexProfile"] == "default")
@@ -149,9 +148,9 @@ check("factory core masks are unset",
 check("factory game policy loaded",
       factory_global["nice"] == 0 and factory_global["wineTopology"] is True)
 check("factory gamescope policy loaded",
-      factory_global["gamescopeNice"] == -20 and factory_global["gamescopeRr"] is False and
+      factory_global["gamescopeNice"] == -20 and
       factory_global["gamescopeVulkanRealtime"] is True)
-check("factory scheduler loaded", factory_global["scheduler"] == "eevdf")
+check("factory scheduler loaded", factory_global["scheduler"] is None)
 check("factory thunk defaults loaded",
       set(factory_global["thunks"]) == {"Vulkan", "GL", "drm", "WaylandClient", "asound"} and
       all(factory_global["thunks"].values()))
@@ -182,8 +181,7 @@ check("user values override factory defaults",
       overlaid_global["gamescopeNice"] == 0 and
       overlaid_global["gamescopeVulkanRealtime"] is False)
 check("absent user values inherit factory defaults",
-      overlaid_global["scheduler"] == "eevdf" and
-      overlaid_global["gamescopeRr"] is False and
+      overlaid_global["scheduler"] is None and
       overlaid_global["wineTopology"] is True)
 gt.OVERRIDES_CONFIG.unlink()
 
@@ -256,7 +254,7 @@ def fex_result(settings):
 config_path, plain = fex_result({"fexProfile": "default"})
 check("config lands in test cache dir", config_path.startswith(WORK + "/armada-fex/"))
 _, with_perf = fex_result({"fexProfile": "default", "cores": "big", "nice": -5,
-                           "gamescopeRr": True, "scheduler": "lavd",
+                           "scheduler": "lavd",
                            "env": {"X": "1"}, "wineTopology": False})
 check("FEX config unaffected by perf keys", plain == with_perf)
 check("FEX config content sane", plain["Config"]["Multiblock"] == "0")
@@ -403,7 +401,7 @@ finally:
 
 with gt.OVERRIDES_CONFIG.open("w") as f:
     json.dump({"global": {"gamescopeNice": -5},
-               "games": {"620": {"gamescopeRr": True, "scheduler": "cosmos",
+               "games": {"620": {"scheduler": "cosmos",
                                  "cores": "big", "nice": -4}}}, f)
 
 sel = selectors.DefaultSelector()
@@ -418,19 +416,18 @@ try:
     state = ap.read_state()
     override = state.get("override", {})
     check("override tracks pid", override.get("pid") == child.pid)
-    check("override carries rr", override.get("gamescopeRr") is True)
     check("cosmos domain from cores", override.get("schedulerDomain") == [3, 4, 5, 6, 7])
     check("pidfd armed", manager.pidfd is not None)
 
     # live tweaks edit rebuilds the override instead of dropping it
     with gt.OVERRIDES_CONFIG.open("w") as f:
         json.dump({"global": {"gamescopeNice": -5},
-                   "games": {"620": {"gamescopeRr": False, "scheduler": "lavd"}}}, f)
+                   "games": {"620": {"scheduler": "lavd"}}}, f)
     manager.refresh(keep_override=True)
     override = ap.read_state().get("override", {})
     check("keep_override survives edit", override.get("pid") == child.pid)
     check("override rebuilt from new tweaks",
-          override.get("scheduler") == "lavd" and override.get("gamescopeRr") is False)
+          override.get("scheduler") == "lavd")
 
     # a launch whose layer equals global still tracks the session
     child2 = subprocess.Popen(["sleep", "30"])
@@ -714,7 +711,7 @@ plugin_power.FACTORY_POWER_CONFIG = plugin_power.Path(factory)
 plugin_power.POWER_CONFIG = plugin_power.Path(os.path.join(WORK, "etc-armada-power.conf"))
 data = plugin_power.parse_power()
 factory_data = plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG)
-check("governor exposed in parse", data["profiles"]["eco"]["cpu_governor"] == "schedutil")
+check("governor exposed in parse", data["profiles"]["eco"]["cpu_governor"] == "conservative")
 
 # untouched config renders no /etc profile sections (factory keeps tracking /usr)
 rendered = plugin_power.render_power(data, factory_data)

@@ -113,6 +113,15 @@ FROM scratch AS out-networkmanager
 COPY --from=pkg-networkmanager /work/out/ /rpms/
 
 
+FROM builder-base AS pkg-wpa_supplicant
+COPY wpa_supplicant/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-wpa_supplicant
+COPY --from=pkg-wpa_supplicant /work/out/ /rpms/
+
+
 FROM builder-base AS pkg-plasma-mobile
 COPY plasma-mobile/ /work/
 WORKDIR /work
@@ -129,6 +138,24 @@ RUN ./build.sh && /src/scrub-scratch.sh
 
 FROM scratch AS out-powerdevil
 COPY --from=pkg-powerdevil /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-protontricks
+COPY protontricks/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-protontricks
+COPY --from=pkg-protontricks /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-steamos-manager
+COPY steamos-manager/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-steamos-manager
+COPY --from=pkg-steamos-manager /work/out/ /rpms/
 
 
 FROM builder-base AS pkg-umtp-responder

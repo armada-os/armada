@@ -1,0 +1,307 @@
+From: enjihn <150061999+enjihn@users.noreply.github.com>
+Subject: [PATCH] drm: support known-display profiles for EDID-less panels
+
+Expose connector, device_id (GAMESCOPE_INTERNAL_DEVICE_ID, internal
+connectors only), internal, and has_edid to known-display matches() so Lua
+profiles can identify EDID-less panels.
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 919f7005..0e61b374 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -2902,7 +2902,19 @@ namespace gamescope
+ 		{
+ 			CScriptScopedLock script;
+ 
+-			auto oKnownDisplay = script.Manager().Gamescope().Config.LookupDisplay( script, m_Mutable.szMakePNP, pProduct->product, m_Mutable.szModel, m_Mutable.szDataString );
++			const bool bInternal = GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL;
++			const char *pszDeviceId = bInternal ? getenv( "GAMESCOPE_INTERNAL_DEVICE_ID" ) : nullptr;
++			auto oKnownDisplay = script.Manager().Gamescope().Config.LookupDisplay( script, GamescopeDisplayLookupInfo
++			{
++				.vendor = m_Mutable.szMakePNP,
++				.product = pProduct->product,
++				.model = m_Mutable.szModel,
++				.dataString = m_Mutable.szDataString,
++				.connector = m_Mutable.szName,
++				.deviceId = pszDeviceId ? pszDeviceId : "",
++				.internal = bInternal,
++				.hasEdid = m_Mutable.bHasPhysicalEdid,
++			} );
+ 			if ( oKnownDisplay )
+ 			{
+ 				sol::table tTable = oKnownDisplay->second;
+@@ -3001,9 +3013,11 @@ namespace gamescope
+ 					bHasKnownHDRInfo = true;
+ 				}
+ 			}
+-			else
++			if ( m_Mutable.ValidDynamicRefreshRates.empty() )
+ 			{
+-				// Unknown display, see if there are any other refresh rates in the EDID we can get.
++				// No display-specific rates (unknown display, or a known profile
++				// without a dynamic modegen); collect the connector's own
++				// refresh rates so the kernel mode list stays usable.
+ 				if ( GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL || cv_drm_allow_dynamic_modes_for_external_display )
+ 				{
+ 					const drmModeModeInfo *pPreferredMode = find_mode( m_pConnector.get(), 0, 0, 0 );
+diff --git a/src/Script/Script.cpp b/src/Script/Script.cpp
+index 98333390..fae5bfa1 100644
+--- a/src/Script/Script.cpp
++++ b/src/Script/Script.cpp
+@@ -243,16 +243,20 @@ namespace gamescope
+     // GamescopeScript_t
+     //
+ 
+-    std::optional<std::pair<std::string_view, sol::table>> GamescopeScript_t::Config_t::LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor,  uint16_t uProduct, std::string_view psvModel, std::string_view psvDataString )
++    std::optional<std::pair<std::string_view, sol::table>> GamescopeScript_t::Config_t::LookupDisplay( CScriptScopedLock &script, const GamescopeDisplayLookupInfo &display )
+     {
+         int nMaxPrority = -1;
+         std::optional<std::pair<std::string_view, sol::table>> oOutDisplay;
+ 
+         sol::table tDisplay = script->create_table();
+-        tDisplay["vendor"] = psvVendor;
+-        tDisplay["product"] = uProduct;
+-        tDisplay["model"] = psvModel;
+-        tDisplay["data_string"] = psvDataString;
++        tDisplay["vendor"] = display.vendor;
++        tDisplay["product"] = display.product;
++        tDisplay["model"] = display.model;
++        tDisplay["data_string"] = display.dataString;
++        tDisplay["connector"] = display.connector;
++        tDisplay["device_id"] = display.deviceId;
++        tDisplay["internal"] = display.internal;
++        tDisplay["has_edid"] = display.hasEdid;
+ 
+         for ( auto iter : KnownDisplays )
+         {
+diff --git a/src/Script/Script.h b/src/Script/Script.h
+index 1e5a5ff0..4f3390db 100644
+--- a/src/Script/Script.h
++++ b/src/Script/Script.h
+@@ -2,7 +2,9 @@
+ 
+ #include "../Utils/Dict.h"
+ 
++#include <cstdint>
+ #include <mutex>
++#include <string_view>
+ 
+ #if HAVE_SCRIPTING
+ 
+@@ -12,6 +14,22 @@ namespace gamescope
+ {
+     class CScriptScopedLock;
+ 
++    // Identity offered to known-display matches(). vendor/product/model/
++    // dataString come from the parsed EDID (physical or synthetic); connector,
++    // deviceId, internal, and hasEdid let profiles match EDID-less internal
++    // panels whose synthetic EDID carries no useful identity of its own.
++    struct GamescopeDisplayLookupInfo
++    {
++        std::string_view vendor;
++        uint16_t product = 0;
++        std::string_view model;
++        std::string_view dataString;
++        std::string_view connector;
++        std::string_view deviceId;
++        bool internal = false;
++        bool hasEdid = false;
++    };
++
+     struct GamescopeScript_t
+     {
+         // Stores table entries, and caches sol::table
+@@ -30,7 +48,7 @@ namespace gamescope
+ 
+             sol::table KnownDisplays;
+ 
+-            std::optional<std::pair<std::string_view, sol::table>> LookupDisplay( CScriptScopedLock &script, std::string_view psvVendor, uint16_t uProduct, std::string_view psvModel, std::string_view psvDataString );
++            std::optional<std::pair<std::string_view, sol::table>> LookupDisplay( CScriptScopedLock &script, const GamescopeDisplayLookupInfo &display );
+         } Config;
+     };
+ 
+diff --git a/src/edid.cpp b/src/edid.cpp
+index 4ecd80b1..7e31b888 100644
+--- a/src/edid.cpp
++++ b/src/edid.cpp
+@@ -225,6 +225,9 @@ namespace gamescope
+                     uint8_t *dtd = &ext_data[dtd_start];
+                     memmove(dtd + hdr_metadata_block_size_plus_headers, dtd, hdr_metadata_block_size_plus_headers);
+                     dtd_start += hdr_metadata_block_size_plus_headers;
++                    // The descriptor offset must follow the inserted block or
++                    // parsers read the data block as a detailed timing.
++                    ext_data[2] = dtd_start;
+ 
+                     // Data block is where the dtd was.
+                     uint8_t *data_block = dtd;
+diff --git a/tests/meson.build b/tests/meson.build
+index 6ad2413..3c1b785 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -8,7 +8,7 @@ endforeach
+ 
+ gamescope_tests = executable(
+ 	'gamescope_tests',
+-	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_edid.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_edid.cpp'],
+ 	include_directories: [srcdir, sol2_include],
+ 	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
+ 	cpp_args: gamescope_cpp_args,
+diff --git a/tests/test_display_lookup.cpp b/tests/test_display_lookup.cpp
+new file mode 100644
+index 00000000..db7618bf
+--- /dev/null
++++ b/tests/test_display_lookup.cpp
+@@ -0,0 +1,70 @@
++#include <catch2/catch_test_macros.hpp>
++
++#include "Script/Script.h"
++
++using namespace gamescope;
++
++TEST_CASE("Known-display matching receives connector identity", "[display]")
++{
++    CScriptScopedLock script;
++    script->script( R"(
++        gamescope.config.known_displays.test_edidless_panel = {
++            pretty_name = "Test EDID-less panel",
++            matches = function(display)
++                if display.connector == "DSI-1" and
++                   display.device_id == "test-device" and
++                   display.internal and
++                   not display.has_edid then
++                    return 6000
++                end
++                return -1
++            end,
++        }
++        gamescope.config.known_displays.test_model_panel = {
++            pretty_name = "Test model-matched panel",
++            matches = function(display)
++                if display.model == "Gamescope" then
++                    return 100
++                end
++                return -1
++            end,
++        }
++    )" );
++
++    // A synthetic EDID parses with the generic Gamescope identity, so an
++    // identity-based profile must outrank a model-based one.
++    const GamescopeDisplayLookupInfo panel
++    {
++        .vendor = "FRG",
++        .product = 0x01f4,
++        .model = "Gamescope",
++        .dataString = "",
++        .connector = "DSI-1",
++        .deviceId = "test-device",
++        .internal = true,
++        .hasEdid = false,
++    };
++
++    auto match = script.Manager().Gamescope().Config.LookupDisplay( script, panel );
++    REQUIRE( match.has_value() );
++    CHECK( match->first == "test_edidless_panel" );
++
++    GamescopeDisplayLookupInfo wrongDevice = panel;
++    wrongDevice.deviceId = "other-device";
++    auto fallback = script.Manager().Gamescope().Config.LookupDisplay( script, wrongDevice );
++    REQUIRE( fallback.has_value() );
++    CHECK( fallback->first == "test_model_panel" );
++
++    GamescopeDisplayLookupInfo physical = panel;
++    physical.model = "Some Panel";
++    physical.hasEdid = true;
++    CHECK_FALSE( script.Manager().Gamescope().Config.LookupDisplay( script, physical ) );
++
++    GamescopeDisplayLookupInfo external = panel;
++    external.internal = false;
++    external.model = "Some Panel";
++    CHECK_FALSE( script.Manager().Gamescope().Config.LookupDisplay( script, external ) );
++
++    script.Manager().Gamescope().Config.KnownDisplays["test_edidless_panel"] = sol::lua_nil;
++    script.Manager().Gamescope().Config.KnownDisplays["test_model_panel"] = sol::lua_nil;
++}
+diff --git a/tests/test_edid.cpp b/tests/test_edid.cpp
+index 144111ec..37ea7a00 100644
+--- a/tests/test_edid.cpp
++++ b/tests/test_edid.cpp
+@@ -1,5 +1,6 @@
+ #include <catch2/catch_test_macros.hpp>
+ 
++#include "backend.h"
+ #include "edid.h"
+ 
+ #include <cmath>
+@@ -7,6 +8,7 @@
+ 
+ extern "C"
+ {
++#include "libdisplay-info/cta.h"
+ #include "libdisplay-info/edid.h"
+ #include "libdisplay-info/info.h"
+ }
+@@ -108,6 +110,62 @@ TEST_CASE("Synthetic EDID treats unencodable physical size as unknown", "[edid]"
+     CHECK( dtd[14] == 0 );
+ }
+ 
++TEST_CASE("HDR patching inserts valid metadata into the synthetic CTA", "[edid][hdr]")
++{
++    const std::vector<uint8_t> edid = GenerateSimpleEdid( k_Odin3Mode );
++    REQUIRE( !edid.empty() );
++
++    BackendConnectorHDRInfo hdrInfo{};
++    hdrInfo.bExposeHDRSupport = true;
++    hdrInfo.eOutputEncodingEOTF = EOTF_Gamma22;
++    hdrInfo.uMaxContentLightLevel = 650;
++    hdrInfo.uMaxFrameAverageLuminance = 650;
++    REQUIRE( hdrInfo.ShouldPatchEDID() );
++
++    const std::optional<std::vector<uint8_t>> patched = PatchEdid( edid, hdrInfo, false );
++    REQUIRE( patched.has_value() );
++    REQUIRE( patched->size() == edid.size() );
++
++    for ( size_t block = 0; block < patched->size() / 128; block++ )
++    {
++        uint8_t checksum = 0;
++        for ( size_t i = 0; i < 128; i++ )
++            checksum += ( *patched )[block * 128 + i];
++        REQUIRE( checksum == 0 );
++    }
++
++    // The descriptor offset must sit past the inserted 7-byte block, or the
++    // block would be misread as a detailed timing.
++    CHECK( ( *patched )[128 + 2] == 4 + 7 );
++
++    di_info *info = di_info_parse_edid( patched->data(), patched->size() );
++    REQUIRE( info != nullptr );
++
++    const di_cta_hdr_static_metadata_block *hdrBlock = nullptr;
++    const di_edid_ext *const *exts = di_edid_get_extensions( di_info_get_edid( info ) );
++    for ( ; *exts != nullptr; exts++ )
++    {
++        const di_edid_cta *cta = di_edid_ext_get_cta( *exts );
++        if ( !cta )
++            continue;
++
++        const di_cta_data_block *const *blocks = di_edid_cta_get_data_blocks( cta );
++        for ( ; *blocks != nullptr; blocks++ )
++        {
++            if ( di_cta_data_block_get_tag( *blocks ) == DI_CTA_DATA_BLOCK_HDR_STATIC_METADATA )
++                hdrBlock = di_cta_data_block_get_hdr_static_metadata( *blocks );
++        }
++    }
++
++    REQUIRE( hdrBlock != nullptr );
++    CHECK( hdrBlock->eotfs->pq );
++    // The CTA luminance encoding is coarse; just require the right ballpark.
++    CHECK( hdrBlock->desired_content_max_luminance > 550.0f );
++    CHECK( hdrBlock->desired_content_max_luminance < 800.0f );
++
++    di_info_destroy( info );
++}
++
+ TEST_CASE("Synthetic EDID rejects timings EDID cannot encode", "[edid]")
+ {
+     EdidModeInfo mode = k_Odin3Mode;

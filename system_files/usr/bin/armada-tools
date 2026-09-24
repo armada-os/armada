@@ -1,0 +1,8 @@
+#!/usr/bin/python3
+import sys
+
+sys.path.insert(0, "/usr/lib/armada")
+from armada_tools import main
+
+if __name__ == "__main__":
+    sys.exit(main())

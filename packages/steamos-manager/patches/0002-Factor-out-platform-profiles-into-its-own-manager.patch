@@ -1,0 +1,377 @@
+From 2e8cb87726e39709e78266c0380afde4e6b37c51 Mon Sep 17 00:00:00 2001
+From: Arun Raghavan <arunr@valvesoftware.com>
+Date: Sat, 16 May 2026 16:51:17 -0700
+Subject: [PATCH] Factor out platform profiles into its own manager
+
+Will make it easier to add support for non-ACPI platform-specific
+performance profiles.
+---
+ steamos-manager/src/hardware.rs     |   6 +-
+ steamos-manager/src/manager/root.rs |  26 +++---
+ steamos-manager/src/manager/user.rs |  37 ++++-----
+ steamos-manager/src/power.rs        | 121 ++++++++++++++++++----------
+ 4 files changed, 114 insertions(+), 76 deletions(-)
+
+diff --git a/steamos-manager/src/hardware.rs b/steamos-manager/src/hardware.rs
+index 793ce9c..80fcb99 100644
+--- a/steamos-manager/src/hardware.rs
++++ b/steamos-manager/src/hardware.rs
+@@ -25,8 +25,8 @@ use crate::gpu::{GpuPerformanceLevelDriverType, GpuPowerProfileDriverType};
+ use crate::path;
+ use crate::platform::{ServiceConfig, platform_config};
+ use crate::power::{
+-    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, TdpLimitingMethod,
+-    find_hwmon,
++    BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, BatteryChargeLimitMethod, PlatformProfileDriverType,
++    TdpLimitingMethod, find_hwmon,
+ };
+ use crate::process::{run_script, script_exit_code};
+ use crate::systemd::{JobMode, SystemdUnit};
+@@ -185,6 +185,8 @@ pub(crate) struct InputPlumberConfig {
+ pub(crate) struct PerformanceProfileConfig {
+     pub suggested_default: String,
+     pub platform_profile_name: String,
++    #[serde(default)]
++    pub platform_profile_driver: PlatformProfileDriverType,
+ }
+ 
+ #[derive(Clone, Deserialize, Debug)]
+diff --git a/steamos-manager/src/manager/root.rs b/steamos-manager/src/manager/root.rs
+index 4fe59ed..f27a3aa 100644
+--- a/steamos-manager/src/manager/root.rs
++++ b/steamos-manager/src/manager/root.rs
+@@ -34,9 +34,9 @@ use crate::hardware::{
+ use crate::job::JobManager;
+ use crate::platform::{ServiceConfig, platform_config};
+ use crate::power::{
+-    CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, TdpLimitManager,
+-    set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, set_platform_profile,
+-    tdp_limit_manager,
++    CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, PlatformProfileDriver,
++    TdpLimitManager, platform_profile_driver, set_cpu_boost_state, set_cpu_scaling_governor,
++    set_max_charge_level, tdp_limit_manager,
+ };
+ use crate::process::{run_script, script_exit_code, script_output};
+ use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
+@@ -64,6 +64,7 @@ pub struct SteamOSManager {
+     wifi_debug_mode: WifiDebugMode,
+     fan_control: FanControl,
+     tdp_limit_manager: Option<Box<dyn TdpLimitManager>>,
++    platform_profile: Option<Box<dyn PlatformProfileDriver>>,
+     gpu_performance_level: Option<Box<dyn GpuPerformanceLevelDriver>>,
+     gpu_power_profile: Option<Box<dyn GpuPowerProfileDriver>>,
+     // Whether we should use trace-cmd or not.
+@@ -83,6 +84,10 @@ impl SteamOSManager {
+                 .await
+                 .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
+                 .ok(),
++            platform_profile: platform_profile_driver()
++                .await
++                .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
++                .ok(),
+             gpu_performance_level: gpu_performance_level_driver()
+                 .await
+                 .inspect_err(|e| info!("Could not set up GPU performance management: {e}"))
+@@ -716,14 +721,13 @@ impl SteamOSManager {
+     }
+ 
+     async fn set_performance_profile(&self, profile: &str) -> fdo::Result<()> {
+-        let config = device_config().await.map_err(to_zbus_fdo_error)?;
+-        let config = config
+-            .as_ref()
+-            .and_then(|config| config.performance_profile.as_ref())
+-            .ok_or(fdo::Error::Failed(String::from(
+-                "No performance platform-profile configured",
+-            )))?;
+-        set_platform_profile(&config.platform_profile_name, profile)
++        let Some(ref driver) = self.platform_profile else {
++            return Err(fdo::Error::Failed(String::from(
++                "Platform profile settings not configured",
++            )));
++        };
++        driver
++            .set_platform_profile(profile)
+             .await
+             .map_err(to_zbus_fdo_error)
+     }
+diff --git a/steamos-manager/src/manager/user.rs b/steamos-manager/src/manager/user.rs
+index 4927723..59c49dc 100644
+--- a/steamos-manager/src/manager/user.rs
++++ b/steamos-manager/src/manager/user.rs
+@@ -50,9 +50,8 @@ use crate::path;
+ use crate::platform::platform_config;
+ use crate::power::{
+     BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT, CpuSchedulerManager, TdpManagerCommand,
+-    get_available_cpu_scaling_governors, get_available_platform_profiles, get_cpu_boost_state,
+-    get_cpu_scaling_governor, get_max_charge_level, get_platform_profile, register_tdp_limit1,
+-    unregister_tdp_limit1,
++    get_available_cpu_scaling_governors, get_cpu_boost_state, get_cpu_scaling_governor,
++    get_max_charge_level, platform_profile_driver, register_tdp_limit1, unregister_tdp_limit1,
+ };
+ use crate::proxy::{
+     BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
+@@ -845,28 +844,18 @@ impl Manager2 {
+ impl PerformanceProfile1 {
+     #[zbus(property(emits_changed_signal = "const"))]
+     async fn available_performance_profiles(&self) -> fdo::Result<Vec<String>> {
+-        let config = device_config().await.map_err(to_zbus_fdo_error)?;
+-        let config = config
+-            .as_ref()
+-            .and_then(|config| config.performance_profile.as_ref())
+-            .ok_or(fdo::Error::Failed(String::from(
+-                "No performance platform-profile configured",
+-            )))?;
+-        get_available_platform_profiles(&config.platform_profile_name)
++        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
++        driver
++            .get_available_platform_profiles()
+             .await
+             .map_err(to_zbus_fdo_error)
+     }
+ 
+     #[zbus(property)]
+     async fn performance_profile(&self) -> fdo::Result<String> {
+-        let config = device_config().await.map_err(to_zbus_fdo_error)?;
+-        let config = config
+-            .as_ref()
+-            .and_then(|config| config.performance_profile.as_ref())
+-            .ok_or(fdo::Error::Failed(String::from(
+-                "No performance platform-profile configured",
+-            )))?;
+-        get_platform_profile(&config.platform_profile_name)
++        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
++        driver
++            .get_platform_profile()
+             .await
+             .map_err(to_zbus_fdo_error)
+     }
+@@ -1835,8 +1824,9 @@ async fn create_device_interfaces(
+         });
+     }
+ 
+-    if let Some(config) = config.performance_profile.as_ref()
+-        && !get_available_platform_profiles(&config.platform_profile_name)
++    if let Ok(driver) = platform_profile_driver().await
++        && !driver
++            .get_available_platform_profiles()
+             .await
+             .unwrap_or_default()
+             .is_empty()
+@@ -2100,7 +2090,9 @@ mod test {
+         FormatDeviceConfig, PlatformConfig, ResetConfig, ScriptConfig, ServiceConfig, StorageConfig,
+     };
+     use crate::power::test::Nodes as PowerNodes;
+-    use crate::power::{BatteryChargeLimitMethod, TdpLimitingMethod, TdpManagerService};
++    use crate::power::{
++        BatteryChargeLimitMethod, PlatformProfileDriverType, TdpLimitingMethod, TdpManagerService,
++    };
+     use crate::proxy::{LowPowerMode1Proxy, RemoteInterface1Proxy};
+     use crate::session::{SessionManagerState, make_managed};
+     use crate::systemd::escape;
+@@ -2245,6 +2237,7 @@ mod test {
+                 },
+             }),
+             performance_profile: Some(PerformanceProfileConfig {
++                platform_profile_driver: PlatformProfileDriverType::Acpi,
+                 platform_profile_name: String::from("power-driver"),
+                 suggested_default: String::from("balanced"),
+             }),
+diff --git a/steamos-manager/src/power.rs b/steamos-manager/src/power.rs
+index 5255428..83e5251 100644
+--- a/steamos-manager/src/power.rs
++++ b/steamos-manager/src/power.rs
+@@ -123,6 +123,20 @@ pub enum CPUBoostState {
+     Enabled = 1,
+ }
+ 
++pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>> {
++    let config = device_config().await?;
++    let config = config
++        .as_ref()
++        .and_then(|device_config| device_config.performance_profile.as_ref())
++        .ok_or(anyhow!("No platform profile driver configured"))?;
++
++    Ok(match &config.platform_profile_driver {
++        PlatformProfileDriverType::Acpi => {
++            Box::new(AcpiPlatformProfileDriver::new(&config.platform_profile_name).await?)
++        }
++    })
++}
++
+ #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
+ #[strum(serialize_all = "snake_case")]
+ #[serde(rename_all = "snake_case")]
+@@ -437,10 +451,6 @@ pub(crate) async fn find_hwmon(hwmon: &str) -> Result<PathBuf> {
+     find_sysdir(path(HWMON_PREFIX), hwmon).await
+ }
+ 
+-async fn find_platform_profile(name: &str) -> Result<PathBuf> {
+-    find_sysdir(path(PLATFORM_PROFILE_PREFIX), name).await
+-}
+-
+ #[async_trait]
+ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
+     async fn get_tdp_limit(&self) -> Result<u32> {
+@@ -494,12 +504,8 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
+         let Some(ref performance_profile) = self.performance_profile else {
+             return Ok(true);
+         };
+-        let config = device_config().await?;
+-        if let Some(config) = config
+-            .as_ref()
+-            .and_then(|config| config.performance_profile.as_ref())
+-        {
+-            Ok(get_platform_profile(&config.platform_profile_name).await? == *performance_profile)
++        if let Ok(driver) = platform_profile_driver().await {
++            Ok(driver.get_platform_profile().await? == *performance_profile)
+         } else {
+             Ok(true)
+         }
+@@ -597,12 +603,8 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
+         let Some(ref performance_profile) = self.performance_profile else {
+             return Ok(true);
+         };
+-        let config = device_config().await?;
+-        if let Some(config) = config
+-            .as_ref()
+-            .and_then(|config| config.performance_profile.as_ref())
+-        {
+-            Ok(get_platform_profile(&config.platform_profile_name).await? == *performance_profile)
++        if let Ok(driver) = platform_profile_driver().await {
++            Ok(driver.get_platform_profile().await? == *performance_profile)
+         } else {
+             Ok(true)
+         }
+@@ -727,31 +729,61 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
+     sysfs_queued_write(path, data.as_bytes().to_owned()).await
+ }
+ 
+-pub(crate) async fn get_available_platform_profiles(name: &str) -> Result<Vec<String>> {
+-    let base = find_platform_profile(name).await?;
+-    Ok(fs::read_to_string(base.join("choices"))
+-        .await
+-        .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
+-        .trim()
+-        .split(' ')
+-        .map(ToString::to_string)
+-        .collect())
++#[derive(Default, Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
++#[strum(serialize_all = "snake_case", ascii_case_insensitive)]
++#[serde(rename_all = "snake_case")]
++pub(crate) enum PlatformProfileDriverType {
++    #[default] // historical default
++    Acpi,
+ }
+ 
+-pub(crate) async fn get_platform_profile(name: &str) -> Result<String> {
+-    let base = find_platform_profile(name).await?;
+-    Ok(fs::read_to_string(base.join("profile"))
+-        .await
+-        .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
+-        .trim()
+-        .to_string())
++#[derive(Debug)]
++pub(crate) struct AcpiPlatformProfileDriver {
++    path: PathBuf,
+ }
+ 
+-pub(crate) async fn set_platform_profile(name: &str, profile: &str) -> Result<()> {
+-    let base = find_platform_profile(name).await?;
+-    fs::write(base.join("profile"), profile.as_bytes())
+-        .await
+-        .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
++#[async_trait]
++pub(crate) trait PlatformProfileDriver: Send + Sync {
++    // This can be used from the user and root managers
++    async fn get_available_platform_profiles(&self) -> Result<Vec<String>>;
++    // This can be used from the user and root managers
++    async fn get_platform_profile(&self) -> Result<String>;
++    // This can only be used from the root manager
++    async fn set_platform_profile(&self, profile: &str) -> Result<()>;
++}
++
++impl AcpiPlatformProfileDriver {
++    async fn new(name: &str) -> Result<Self> {
++        let path = find_sysdir(path(PLATFORM_PROFILE_PREFIX), name).await?;
++        Ok(Self { path })
++    }
++}
++
++#[async_trait]
++impl PlatformProfileDriver for AcpiPlatformProfileDriver {
++    async fn get_available_platform_profiles(&self) -> Result<Vec<String>> {
++        Ok(fs::read_to_string(self.path.join("choices"))
++            .await
++            .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
++            .trim()
++            .split(' ')
++            .map(ToString::to_string)
++            .collect())
++    }
++
++    async fn get_platform_profile(&self) -> Result<String> {
++        Ok(fs::read_to_string(self.path.join("profile"))
++            .await
++            .map_err(|message| anyhow!("Error reading sysfs: {message}"))?
++            .trim()
++            .to_string())
++    }
++
++    async fn set_platform_profile(&self, profile: &str) -> Result<()> {
++        fs::write(self.path.join("profile"), profile.as_bytes())
++            .await
++            .map_err(|message| anyhow!("Error writing to sysfs: {message}"))
++    }
+ }
+ 
+ pub(crate) async fn register_tdp_limit1(
+@@ -1540,7 +1572,7 @@ pub(crate) mod test {
+         let _h = testing::start();
+ 
+         assert!(
+-            get_available_platform_profiles("power-driver")
++            AcpiPlatformProfileDriver::new("power-driver")
+                 .await
+                 .is_err()
+         );
+@@ -1548,7 +1580,7 @@ pub(crate) mod test {
+         let base = path(PLATFORM_PROFILE_PREFIX).join("platform-profile0");
+         create_dir_all(&base).await.unwrap();
+         assert!(
+-            get_available_platform_profiles("power-driver")
++            AcpiPlatformProfileDriver::new("power-driver")
+                 .await
+                 .is_err()
+         );
+@@ -1557,7 +1589,10 @@ pub(crate) mod test {
+             .await
+             .unwrap();
+         assert!(
+-            get_available_platform_profiles("power-driver")
++            AcpiPlatformProfileDriver::new("power-driver")
++                .await
++                .unwrap()
++                .get_available_platform_profiles()
+                 .await
+                 .is_err()
+         );
+@@ -1566,7 +1601,10 @@ pub(crate) mod test {
+             .await
+             .unwrap();
+         assert_eq!(
+-            get_available_platform_profiles("power-driver")
++            AcpiPlatformProfileDriver::new("power-driver")
++                .await
++                .unwrap()
++                .get_available_platform_profiles()
+                 .await
+                 .unwrap(),
+             &["a", "b", "c"]
+@@ -1902,6 +1940,7 @@ pub(crate) mod test {
+         let connection = h.new_dbus().await.expect("new_dbus");
+         let config = DeviceConfig {
+             performance_profile: Some(PerformanceProfileConfig {
++                platform_profile_driver: PlatformProfileDriverType::Acpi,
+                 platform_profile_name: String::from("platform-profile0"),
+                 suggested_default: String::from("custom"),
+             }),

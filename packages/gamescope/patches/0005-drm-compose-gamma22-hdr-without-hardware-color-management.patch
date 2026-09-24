@@ -1,0 +1,108 @@
+From: enjihn <150061999+enjihn@users.noreply.github.com>
+Subject: [PATCH] drm: compose Gamma 2.2 HDR without hardware color management
+
+Without DRM hardware color management, direct scanout is only safe for one
+PQ layer targeting a PQ output. A Gamma 2.2 HDR panel needs the Vulkan
+color pipeline to map even a single PQ layer into its native encoding.
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 0e61b374..4ef9c7e0 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -32,6 +32,7 @@
+ 
+ #include "backend.h"
+ #include "color_helpers.h"
++#include "DRMComposition.h"
+ #include "Utils/Defer.h"
+ #include "Utils/Parsers.h"
+ #include "Utils/String.h"
+@@ -4263,9 +4264,15 @@ namespace gamescope
+ 			if ( g_bOutputHDREnabled )
+ 			{
+ 				bNeedsFullComposite |= g_bHDRItmEnable;
+-				if ( !SupportsColorManagement() )
++				const bool bSupportsHardwareColorManagement = SupportsColorManagement();
++				bNeedsFullComposite |= DrmHdrOutputRequiresVulkanComposition(
++					g_bOutputHDREnabled,
++					bSupportsHardwareColorManagement,
++					pFrameInfo->outputEncodingEOTF,
++					pFrameInfo->layers.count(),
++					pFrameInfo->layers.get( 0 ).colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
++				if ( !bSupportsHardwareColorManagement )
+ 				{
+-					bNeedsFullComposite |= ( pFrameInfo->layers.count() > 1 || pFrameInfo->layers.get( 0 ).colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
+ 					// Scanout can't apply the LUT-baked backlight dim here.
+ 					bNeedsFullComposite |= g_ColorMgmt.current.flBacklightLutGain != 1.0f;
+ 				}
+diff --git a/src/Backends/DRMComposition.h b/src/Backends/DRMComposition.h
+new file mode 100644
+index 00000000..1210f78c
+--- /dev/null
++++ b/src/Backends/DRMComposition.h
+@@ -0,0 +1,27 @@
++#pragma once
++
++#include "../color_helpers.h"
++
++#include <cstdint>
++
++namespace gamescope
++{
++    // Without DRM hardware color management, direct scanout is only safe for
++    // one PQ layer targeting a PQ output. In particular, a Gamma 2.2 HDR panel
++    // needs the Vulkan color pipeline to map even a single PQ layer into the
++    // panel's native encoding.
++    constexpr bool DrmHdrOutputRequiresVulkanComposition(
++        bool bOutputHDREnabled,
++        bool bSupportsHardwareColorManagement,
++        EOTF eOutputEncodingEOTF,
++        uint32_t uLayerCount,
++        bool bBaseLayerIsHDR10PQ )
++    {
++        if ( !bOutputHDREnabled || bSupportsHardwareColorManagement )
++            return false;
++
++        return eOutputEncodingEOTF != EOTF_PQ ||
++            uLayerCount != 1 ||
++            !bBaseLayerIsHDR10PQ;
++    }
++}
+diff --git a/tests/meson.build b/tests/meson.build
+index 3c1b785..528ac36 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -8,7 +8,7 @@ endforeach
+ 
+ gamescope_tests = executable(
+ 	'gamescope_tests',
+-	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_edid.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_process.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
+ 	include_directories: [srcdir, sol2_include],
+ 	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
+ 	cpp_args: gamescope_cpp_args,
+diff --git a/tests/test_drm_composition.cpp b/tests/test_drm_composition.cpp
+new file mode 100644
+index 00000000..fc79946b
+--- /dev/null
++++ b/tests/test_drm_composition.cpp
+@@ -0,0 +1,19 @@
++#include <catch2/catch_test_macros.hpp>
++
++#include "Backends/DRMComposition.h"
++
++using namespace gamescope;
++
++TEST_CASE("Gamma 2.2 HDR cannot direct scan without hardware color management", "[drm][hdr]")
++{
++    // Regression: the old DRM path allowed this exact single-PQ-layer case to
++    // direct scan, bypassing the PQ-to-native-Gamma-2.2 Vulkan transform.
++    REQUIRE( DrmHdrOutputRequiresVulkanComposition( true, false, EOTF_Gamma22, 1, true ) );
++
++    REQUIRE_FALSE( DrmHdrOutputRequiresVulkanComposition( true, true, EOTF_Gamma22, 1, true ) );
++    REQUIRE_FALSE( DrmHdrOutputRequiresVulkanComposition( true, false, EOTF_PQ, 1, true ) );
++    REQUIRE_FALSE( DrmHdrOutputRequiresVulkanComposition( false, false, EOTF_Gamma22, 1, true ) );
++
++    REQUIRE( DrmHdrOutputRequiresVulkanComposition( true, false, EOTF_PQ, 2, true ) );
++    REQUIRE( DrmHdrOutputRequiresVulkanComposition( true, false, EOTF_PQ, 1, false ) );
++}

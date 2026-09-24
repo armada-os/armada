@@ -1,0 +1,430 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] wlserver: implement drm-lease-v1
+
+Serve the connector reserved by --lease-connector through the standard
+wp_drm_lease_device_v1 protocol, alongside the existing companion socket.
+On bind, clients receive a non-master enumeration fd and the connector
+offer; on submit they are granted a dup of the startup lease, or finished
+if it is already held. A protocol lease is exclusive: it is
+granted only while no client on either frontend holds the lease, and the
+socket refuses companions while a protocol lease is out. Socket
+companions may still share the lease among themselves, as before. Grants
+and releases on both frontends serialize on a shared mutex.
+
+Compositor-initiated revocation (finished) and withdrawn broadcasts are
+not implemented yet. Requires wayland-protocols >= 1.22 for the
+drm-lease-v1 XML.
+
+---
+diff --git a/protocol/meson.build b/protocol/meson.build
+index cf8fbd18..de31d9b5 100644
+--- a/protocol/meson.build
++++ b/protocol/meson.build
+@@ -5,7 +5,7 @@ wayland_scanner_path = wayland_scanner_dep.get_variable(pkgconfig: 'wayland_scan
+ wayland_scanner = find_program(wayland_scanner_path, native: true)
+ 
+ wayland_protos = dependency('wayland-protocols',
+-	version: '>=1.17',
++	version: '>=1.22',
+ 	fallback: 'wayland-protocols',
+ 	default_options: ['tests=false'],
+ )
+@@ -23,6 +23,7 @@ protocols = [
+ 	wl_protocol_dir / 'unstable/primary-selection/primary-selection-unstable-v1.xml',
+ 	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
+ 	wl_protocol_dir / 'staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml',
++	wl_protocol_dir / 'staging/drm-lease/drm-lease-v1.xml',
+ 
+ 	'color-management-v1.xml',
+ 
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 4ef9c7e0..9a5f52c9 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -172,6 +172,8 @@ struct drm_t {
+ 	std::unordered_set< uint32_t > leasedPlaneIds;
+ 	uint32_t uLeaseId = 0;
+ 	int nLeaseFd = -1;
++	uint32_t uLeasedConnectorId = 0;
++	std::string sLeasedConnectorName;
+ 	int nLeaseSocketFd = -1;
+ 	std::atomic<bool> bLeaseThreadRunning = { false };
+ 	std::string sLeaseSocketPath;
+@@ -1417,7 +1419,11 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 			{
+ 				close( clientFds[ i ] );
+ 				clientFds.erase( clientFds.begin() + i );
+-				int nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
++				int nRemaining;
++				{
++					std::scoped_lock grantLock( g_LeaseGrantMutex );
++					nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
++				}
+ 				drm_log.infof( "lease-connector: companion app disconnected (%d still connected)", nRemaining );
+ 			}
+ 		}
+@@ -1429,6 +1435,16 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 		if ( nClientFd < 0 )
+ 			continue;
+ 
++		std::unique_lock<std::mutex> grantLock( g_LeaseGrantMutex );
++
++		if ( g_nProtocolLeaseHolders.load() > 0 )
++		{
++			grantLock.unlock();
++			drm_log.infof( "lease-connector: refusing socket companion, lease is held via drm-lease-v1" );
++			close( nClientFd );
++			continue;
++		}
++
+ 		// Send the DRM lease fd via SCM_RIGHTS
+ 		union {
+ 			char buf[ CMSG_SPACE( sizeof(int) ) ];
+@@ -1456,6 +1472,7 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 		ssize_t nSent = sendmsg( nClientFd, &msg, 0 );
+ 		if ( nSent < 0 )
+ 		{
++			grantLock.unlock();
+ 			drm_log.errorf( "lease-connector: sendmsg failed: %s", strerror( errno ) );
+ 			close( nClientFd );
+ 		}
+@@ -1466,6 +1483,7 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 			// us that it's gone and touch events should flow to wlserver again.
+ 			clientFds.push_back( nClientFd );
+ 			int nNow = g_nActiveLeaseClients.fetch_add( 1 ) + 1;
++			grantLock.unlock();
+ 			drm_log.infof( "lease-connector: sent lease fd to companion app (%d connected)", nNow );
+ 		}
+ 	}
+@@ -1473,7 +1491,10 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 	for ( int cfd : clientFds )
+ 		close( cfd );
+ 	if ( !clientFds.empty() )
++	{
++		std::scoped_lock grantLock( g_LeaseGrantMutex );
+ 		g_nActiveLeaseClients.fetch_sub( (int)clientFds.size() );
++	}
+ }
+ 
+ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1733,6 +1754,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 					drm->leasedPlaneIds.insert( uPlaneId );
+ 					drm->uLeaseId = uLeaseId;
+ 					drm->nLeaseFd = nLeaseFd;
++					drm->uLeasedConnectorId = uConnectorId;
++					drm->sLeasedConnectorName = pLeaseConnector->GetName();
+ 
+ 					drm_log.infof( "lease-connector: leased '%s' (connector=%u, crtc=%u, plane=%u) -> fd=%d, lessee=%u",
+ 						g_sLeaseConnectorName, uConnectorId, uCRTCId, uPlaneId, nLeaseFd, uLeaseId );
+@@ -4129,6 +4152,49 @@ const char *drm_get_device_name(struct drm_t *drm)
+ 	return drm->device_name;
+ }
+ 
++bool drm_lease_available()
++{
++	return g_DRM.nLeaseFd >= 0;
++}
++
++int drm_lease_dup_fd()
++{
++	if ( g_DRM.nLeaseFd < 0 )
++		return -1;
++	return fcntl( g_DRM.nLeaseFd, F_DUPFD_CLOEXEC, 0 );
++}
++
++int drm_lease_open_enum_fd()
++{
++	if ( !g_DRM.device_name )
++		return -1;
++
++	int nFd = open( g_DRM.device_name, O_RDWR | O_CLOEXEC );
++	if ( nFd < 0 )
++		return -1;
++
++	// Opening the primary node implicitly grants DRM master when none is
++	// held (e.g. mid VT switch). drm_fd must never carry master.
++	if ( drmIsMaster( nFd ) && drmDropMaster( nFd ) != 0 )
++	{
++		drm_log.errorf( "drm-lease: enum fd unexpectedly master and drop failed" );
++		close( nFd );
++		return -1;
++	}
++
++	return nFd;
++}
++
++const char *drm_lease_connector_name()
++{
++	return g_DRM.sLeasedConnectorName.c_str();
++}
++
++uint32_t drm_lease_connector_id()
++{
++	return g_DRM.uLeasedConnectorId;
++}
++
+ std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm)
+ {
+ 	if ( !drm->pConnector )
+diff --git a/src/main.cpp b/src/main.cpp
+index b998019d..c9158ddb 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -792,6 +792,8 @@ const char *g_sOutputName = nullptr;
+ const char *g_sLeaseConnectorName = nullptr;
+ const char *g_sIgnoreTouchDevice = nullptr;
+ std::atomic<int> g_nActiveLeaseClients = { 0 };
++std::atomic<int> g_nProtocolLeaseHolders = { 0 };
++std::mutex g_LeaseGrantMutex;
+ bool g_bDebugLayers = false;
+ bool g_bForceDisableColorMgmt = false;
+ bool g_bRt = false;
+diff --git a/src/main.hpp b/src/main.hpp
+index 47e01c9e..458934a2 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -3,6 +3,7 @@
+ #include <getopt.h>
+ 
+ #include <atomic>
++#include <mutex>
+ #include <vector>
+ 
+ extern const char *gamescope_optstring;
+@@ -45,6 +46,19 @@ extern std::vector<uint32_t> g_customRefreshRates;
+ // normally so the bottom touchscreen works in the Plasma session.
+ extern std::atomic<int> g_nActiveLeaseClients;
+ 
++// Protocol-frontend holders; each is also counted in g_nActiveLeaseClients.
++extern std::atomic<int> g_nProtocolLeaseHolders;
++
++// Lease grants/releases on both frontends mutate the counters under this
++// lock; reads stay lock-free.
++extern std::mutex g_LeaseGrantMutex;
++
++bool drm_lease_available();
++int drm_lease_dup_fd();
++int drm_lease_open_enum_fd();
++const char *drm_lease_connector_name();
++uint32_t drm_lease_connector_id();
++
+ enum class GamescopeUpscaleFilter : uint32_t
+ {
+     LINEAR = 0,
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 383f4aac..d654a005 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -52,6 +52,7 @@
+ #include "gamescope-xwayland-protocol.h"
+ #include "gamescope-pipewire-protocol.h"
+ #include "gamescope-control-protocol.h"
++#include "drm-lease-v1-protocol.h"
+ #include "gamescope-private-protocol.h"
+ #include "gamescope-swapchain-protocol.h"
+ #include "presentation-time-protocol.h"
+@@ -1577,6 +1578,195 @@ static void create_gamescope_control( void )
+ 	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
+ }
+ 
++
++////////////////////////
++// wp_drm_lease_device_v1
++////////////////////////
++
++static std::vector<struct wl_resource *> s_pActiveDrmLeases;
++
++struct drm_lease_request_state
++{
++	bool bConnectorRequested = false;
++};
++
++static void drm_lease_handle_destroy( struct wl_client *client, struct wl_resource *resource )
++{
++	wl_resource_destroy( resource );
++}
++
++static const struct wp_drm_lease_v1_interface drm_lease_impl = {
++	.destroy = drm_lease_handle_destroy,
++};
++
++static void drm_lease_resource_destroyed( struct wl_resource *resource )
++{
++	std::unique_lock<std::mutex> grantLock( g_LeaseGrantMutex );
++	if ( std::erase( s_pActiveDrmLeases, resource ) > 0 )
++	{
++		g_nProtocolLeaseHolders.fetch_sub( 1 );
++		int nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
++		grantLock.unlock();
++		wl_log.infof( "drm-lease: protocol lease released (%d holders remain)", nRemaining );
++	}
++}
++
++static void drm_lease_connector_handle_destroy( struct wl_client *client, struct wl_resource *resource )
++{
++	wl_resource_destroy( resource );
++}
++
++static const struct wp_drm_lease_connector_v1_interface drm_lease_connector_impl = {
++	.destroy = drm_lease_connector_handle_destroy,
++};
++
++static void drm_lease_request_handle_request_connector( struct wl_client *client, struct wl_resource *resource, struct wl_resource *connector )
++{
++	auto *pState = (drm_lease_request_state *)wl_resource_get_user_data( resource );
++
++	if ( pState->bConnectorRequested )
++	{
++		wl_resource_post_error( resource, WP_DRM_LEASE_REQUEST_V1_ERROR_DUPLICATE_CONNECTOR,
++			"connector requested twice" );
++		return;
++	}
++
++	pState->bConnectorRequested = true;
++}
++
++static void drm_lease_request_handle_submit( struct wl_client *client, struct wl_resource *resource, uint32_t id )
++{
++	auto *pState = (drm_lease_request_state *)wl_resource_get_user_data( resource );
++
++	if ( !pState->bConnectorRequested )
++	{
++		wl_resource_post_error( resource, WP_DRM_LEASE_REQUEST_V1_ERROR_EMPTY_LEASE,
++			"lease submitted with no connectors" );
++		return;
++	}
++
++	struct wl_resource *lease = wl_resource_create( client, &wp_drm_lease_v1_interface,
++		wl_resource_get_version( resource ), id );
++	if ( !lease )
++	{
++		wl_client_post_no_memory( client );
++		return;
++	}
++	wl_resource_set_implementation( lease, &drm_lease_impl, NULL, drm_lease_resource_destroyed );
++
++	// The lease has a single holder across both frontends.
++	bool bGranted = false;
++	{
++		std::unique_lock<std::mutex> grantLock( g_LeaseGrantMutex );
++		if ( g_nActiveLeaseClients.load() == 0 )
++		{
++			int nFd = drm_lease_dup_fd();
++			if ( nFd >= 0 )
++			{
++				wp_drm_lease_v1_send_lease_fd( lease, nFd );
++				close( nFd );
++
++				g_nActiveLeaseClients.fetch_add( 1 );
++				g_nProtocolLeaseHolders.fetch_add( 1 );
++				s_pActiveDrmLeases.push_back( lease );
++				bGranted = true;
++			}
++		}
++	}
++
++	if ( bGranted )
++		wl_log.infof( "drm-lease: granted lease to protocol client" );
++
++	if ( !bGranted )
++	{
++		wl_log.infof( "drm-lease: rejecting lease request, lease already held" );
++		wp_drm_lease_v1_send_finished( lease );
++	}
++
++	wl_resource_destroy( resource );
++}
++
++static const struct wp_drm_lease_request_v1_interface drm_lease_request_impl = {
++	.request_connector = drm_lease_request_handle_request_connector,
++	.submit = drm_lease_request_handle_submit,
++};
++
++static void drm_lease_device_handle_create_lease_request( struct wl_client *client, struct wl_resource *resource, uint32_t id )
++{
++	struct wl_resource *request = wl_resource_create( client, &wp_drm_lease_request_v1_interface,
++		wl_resource_get_version( resource ), id );
++	if ( !request )
++	{
++		wl_client_post_no_memory( client );
++		return;
++	}
++
++	wl_resource_set_implementation( request, &drm_lease_request_impl,
++		new drm_lease_request_state(),
++		[]( struct wl_resource *r )
++		{
++			delete (drm_lease_request_state *)wl_resource_get_user_data( r );
++		});
++}
++
++static void drm_lease_device_handle_release( struct wl_client *client, struct wl_resource *resource )
++{
++	wp_drm_lease_device_v1_send_released( resource );
++	wl_resource_destroy( resource );
++}
++
++static const struct wp_drm_lease_device_v1_interface drm_lease_device_impl = {
++	.create_lease_request = drm_lease_device_handle_create_lease_request,
++	.release = drm_lease_device_handle_release,
++};
++
++static void drm_lease_device_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
++{
++	struct wl_resource *resource = wl_resource_create( client, &wp_drm_lease_device_v1_interface, version, id );
++	if ( !resource )
++	{
++		wl_client_post_no_memory( client );
++		return;
++	}
++	wl_resource_set_implementation( resource, &drm_lease_device_impl, NULL, NULL );
++
++	int nEnumFd = drm_lease_open_enum_fd();
++	if ( nEnumFd < 0 )
++	{
++		wl_log.errorf_errno( "drm-lease: failed to open KMS node for enumeration" );
++		wl_resource_post_no_memory( resource );
++		return;
++	}
++	wp_drm_lease_device_v1_send_drm_fd( resource, nEnumFd );
++	close( nEnumFd );
++
++	struct wl_resource *connector = wl_resource_create( client, &wp_drm_lease_connector_v1_interface,
++		wl_resource_get_version( resource ), 0 );
++	if ( !connector )
++	{
++		wl_client_post_no_memory( client );
++		return;
++	}
++	wl_resource_set_implementation( connector, &drm_lease_connector_impl, NULL, NULL );
++
++	wp_drm_lease_device_v1_send_connector( resource, connector );
++	wp_drm_lease_connector_v1_send_name( connector, drm_lease_connector_name() );
++	wp_drm_lease_connector_v1_send_description( connector, "Gamescope leased output" );
++	wp_drm_lease_connector_v1_send_connector_id( connector, drm_lease_connector_id() );
++	wp_drm_lease_connector_v1_send_done( connector );
++
++	wp_drm_lease_device_v1_send_done( resource );
++}
++
++static void create_drm_lease_device( void )
++{
++	if ( !drm_lease_available() )
++		return;
++
++	wl_global_create( wlserver.display, &wp_drm_lease_device_v1_interface, 1, NULL, drm_lease_device_bind );
++	wl_log.infof( "drm-lease: exposing wp_drm_lease_device_v1 for connector '%s'", drm_lease_connector_name() );
++}
++
+ ////////////////////////
+ // gamescope_private
+ ////////////////////////
+@@ -2248,6 +2438,8 @@ bool wlserver_init( void ) {
+ 
+ 	create_gamescope_control();
+ 
++	create_drm_lease_device();
++
+ 	create_gamescope_private();
+ 
+ 	create_presentation_time();

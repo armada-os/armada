@@ -17,7 +17,7 @@ from .system import (
     sleep_modes,
     ssh_enabled,
 )
-from .tweaks import fex_profile_labels, load_fex_contract, load_tweaks
+from .tweaks import fex_profile_labels, load_env_presets, load_fex_contract, load_tweaks
 
 
 def build_config(include_games=True):
@@ -30,6 +30,7 @@ def build_config(include_games=True):
         "tweaks": load_tweaks(),
         "installedGames": installed_games() if include_games else [],
         "fexProfiles": fex_profile_labels(fex_contract),
+        "envPresets": load_env_presets(),
         "perf": perf_info(),
         "cpuDeviceClass": env.get("ARMADA_SOC_CLASS", ""),
         "rgbSupported": rgb_supported(),

@@ -6,6 +6,7 @@
 0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740.patch
 0010-msm-resource-cleanup.patch
 0048-drm-msm-dsi-reparent-byte-pixel-src-to-xo-on-disable.patch
+0048a-drm-msm-dsi-round-byte-clock-rate-after-reparenting-to-PLL.patch
 0049-drm-msm-dpu-panel-opt-in-8bpc-dither.patch
 0066-drm-msm-dpu-enable-inline-rotation.patch
 0068-drm-msm-dpu-lutdma-dspp-igc-gamut.patch
@@ -36,8 +37,6 @@
 0054-regulator-add-sgm3804-i2c-regulator-for-panel-power-.patch
 0056-backlight-aw99706-enable-hwen-before-chip-id-read.patch
 0057-backlight-aw99706-konkr-cfg7.patch
-0062-backlight-aw99706-honor-blank-power-state.patch
-0065-backlight-aw99706-use-dt-binding-property-names.patch
 0066-regulator-add-qcom-pm8150l-lcdb.patch
 
 # ============== Touchscreen ==============
@@ -105,6 +104,8 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0511-scsi-ufs-qcom-reenable-irq-on-host-reset-failure.patch
 0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch
 0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch
+0514-PCI-qcom-honor-iommu-map-cell-count.patch
+0514a-of-property-honor-iommu-cells-in-iommu-map-devlinks.patch
 
 # ============== SM8550 DTSI prerequisites ==============
 0001-pcie-update-sm8550-dtsi.patch
@@ -166,7 +167,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0035-arm64-dts-qcom-sm8750-set-CPU-capacity-dmips-mhz.patch
 0037-arm64-dts-qcom-sm8750-add-CPU-thermal-cooling.patch
 0049-drm-msm-a8xx-add-adreno-830-catalog.patch
-0050-clk-qcom-gxclkctl-kaanapali-fix-gx-gdsc-collapse.patch
 0039-wifi-ath12k-add-initial-hardware-definition-for-WCN7.patch
 0040-wifi-ath12k-send-QDSS-config-when-CNSS_QDSS_CFG_MISS.patch
 0041-wifi-ath12k-disable-CNSS_QDSS_CFG_MISS_V01-for-the-W.patch
@@ -183,5 +183,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0072-ASoC-lpass-rx-macro-add-HPH-PCM-mode.patch
 0073-ASoC-wcd939x-add-HPH-PCM-HiFi-mode.patch
 0074-soundwire-qcom-PCM-data-port-format-enable.patch
+0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch
 0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
 0613-ASoC-q6apm-scope-prepare-start-to-MI2S.patch

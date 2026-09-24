@@ -1,9 +1,13 @@
 #!/usr/bin/bash
 # Terra's steamos-session-select execs this hook (Steam "Switch to Desktop").
+# steamosctl talks to steamos-manager over the caller's own session bus, so
+# this needs no sudo/root escalation the way session-control does.
 set -euo pipefail
 
+steamosctl=${ARMADA_STEAMOSCTL:-/usr/bin/steamosctl}
+
 case "${1:-gamescope}" in
-    desktop|plasma) exec sudo /usr/libexec/armada/session-control switch-desktop ;;
-    gamescope)      exec sudo /usr/libexec/armada/session-control switch-gamemode ;;
+    desktop|plasma) exec "${steamosctl}" switch-to-desktop-mode ;;
+    gamescope)      exec "${steamosctl}" switch-to-game-mode ;;
     *) echo "unrecognised session: ${1}" >&2; exit 1 ;;
 esac

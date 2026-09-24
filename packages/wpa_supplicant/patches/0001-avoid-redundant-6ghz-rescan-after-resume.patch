@@ -1,0 +1,71 @@
+From d113fa954698482263756e554b916cbd61486bcb Mon Sep 17 00:00:00 2001
+From: Vignesh Raman <vignesh.raman@collabora.com>
+Date: Wed, 29 Jul 2026 18:16:57 +0530
+Subject: [PATCH 1/2] wpa_supplicant: avoid redundant rescan when 6 GHz was
+ already covered
+
+On suspend/resume, a regulatory domain change enabling 6 GHz
+unconditionally forces a rescan before associating, even when the
+scan that just completed already covered 6 GHz. This causes a
+redundant full scan.
+
+Check whether the last scan covered 6 GHz, and only force the rescan
+when it did not.
+
+Signed-off-by: Vignesh Raman <vignesh.raman@collabora.com>
+---
+ wpa_supplicant/events.c           | 18 +++++++++++++++++-
+ wpa_supplicant/wpa_supplicant_i.h |  1 +
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/wpa_supplicant/events.c b/wpa_supplicant/events.c
+index 49917f7aa..c2839e7bd 100644
+--- a/wpa_supplicant/events.c
++++ b/wpa_supplicant/events.c
+@@ -5276,7 +5276,9 @@ void wpa_supplicant_update_channel_list(struct wpa_supplicant *wpa_s,
+ 			wpa_dbg(ifs, MSG_INFO,
+ 				"Channel list changed: 6 GHz was enabled");
+ 
+-			ifs->crossed_6ghz_dom = true;
++			/* Only force a rescan if the 6 GHz band has not been scanned yet. */
++			if (!ifs->last_scan_covered_6ghz)
++				ifs->crossed_6ghz_dom = true;
+ 		}
+ 	}
+ 
+@@ -6121,6 +6123,20 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
+ 			break;
+ 		}
+ 
++		if (!(data && data->scan_info.external_scan)) {
++			unsigned int i;
++
++			wpa_s->last_scan_covered_6ghz = false;
++			if (data && data->scan_info.freqs) {
++				for (i = 0; i < data->scan_info.num_freqs; i++) {
++					if (is_6ghz_freq(data->scan_info.freqs[i])) {
++						wpa_s->last_scan_covered_6ghz = true;
++						break;
++					}
++				}
++			}
++		}
++
+ 		if (!(data && data->scan_info.external_scan) &&
+ 		    os_reltime_initialized(&wpa_s->scan_start_time)) {
+ 			struct os_reltime now, diff;
+diff --git a/wpa_supplicant/wpa_supplicant_i.h b/wpa_supplicant/wpa_supplicant_i.h
+index 110a8648c..f59868363 100644
+--- a/wpa_supplicant/wpa_supplicant_i.h
++++ b/wpa_supplicant/wpa_supplicant_i.h
+@@ -1589,6 +1589,7 @@ struct wpa_supplicant {
+ 
+ 	bool is_6ghz_enabled;
+ 	bool crossed_6ghz_dom;
++	bool last_scan_covered_6ghz;
+ 	bool last_scan_all_chan;
+ 	bool last_scan_non_coloc_6ghz;
+ 	bool support_6ghz;
+-- 
+2.47.3
+

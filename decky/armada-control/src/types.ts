@@ -51,6 +51,24 @@ export interface FexProfile {
   config?: Record<string, string>;
 }
 
+// A text in env-presets.json is either one string or one string per locale, so a
+// label that needs no translation does not cost four lines.
+export type LocalizedText = string | Record<string, string>;
+
+export interface EnvPresetOption {
+  data: string;
+  label: LocalizedText;
+}
+
+export interface EnvPreset {
+  name: string;
+  description: LocalizedText;
+  // Closed list of values; absent means the value is free text.
+  options?: EnvPresetOption[];
+  // A hint only. The docs show these inside examples and never state a default.
+  example?: string;
+}
+
 export interface AbsControl {
   value: number;
   min: number;
@@ -97,6 +115,7 @@ export interface Config {
   tweaks: Tweaks;
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
+  envPresets: EnvPreset[];
   perf?: PerfInfo;
   cpuDeviceClass: string;
   rgbSupported: boolean;

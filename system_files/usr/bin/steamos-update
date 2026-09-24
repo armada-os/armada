@@ -1,1 +1,15 @@
-../libexec/armada/armada-update
+#!/bin/bash
+set -uo pipefail
+
+for arg in "$@"; do
+    case "$arg" in
+        --supports-duplicate-detection) exit 0 ;;
+    esac
+done
+
+# Avoid downloading OS updates during Steam's first-run setup.
+if ! grep -qs '"AccountName"' /var/home/armada/.local/share/Steam/config/loginusers.vdf; then
+    exit 7
+fi
+
+exec /usr/libexec/armada/armada-update "$@"

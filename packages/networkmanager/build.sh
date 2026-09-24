@@ -40,9 +40,10 @@ cp /work/patches/*.patch "$HOME/rpmbuild/SOURCES/"
 LAST=$(grep -nE "^(Patch|Source)[0-9]*:" "$SPEC" | tail -1 | cut -d: -f1)
 [ -n "$LAST" ] || { echo "ERROR: no Source/Patch line to anchor on"; exit 1; }
 sed -i "${LAST}a Patch9001:       0001-armada-keep-devices-active-on-suspend.patch" "$SPEC"
+sed -i "$((LAST + 1))a Patch9002:       0002-wifi-scan-only-last-associated-freq-after-resume.patch" "$SPEC"
 
-# The patch lands only if the spec auto-applies patches; assert it so a spec
-# change cannot silently drop it (a non-matching patch fails rpmbuild itself).
+# The patches land only if the spec auto-applies them; assert it so a spec
+# change cannot silently drop them (a non-matching patch fails rpmbuild itself).
 grep -qE "^[[:space:]]*%(autosetup|autopatch)" "$SPEC" \
     || { echo "ERROR: NetworkManager.spec does not auto-apply patches; adjust build.sh"; exit 1; }
 

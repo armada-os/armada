@@ -24,6 +24,8 @@ export const setBottomScreenBrightness = (brightness: number) => call<[number], 
 export const getBottomScreenActive = () => call<[], boolean>("get_bottom_screen_active");
 export const setDesktopMode = (value: string) => call<[string], string>("set_desktop_mode", value);
 export const setSleepMode = (value: string) => call<[string], string>("set_sleep_mode", value);
+export const getSleepLogsEnabled = () => call<[], boolean>("get_sleep_logs_enabled");
+export const setSleepLogsEnabled = (enabled: boolean) => call<[boolean], boolean>("set_sleep_logs_enabled", enabled);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
 export const restartGameMode = () => call<[], boolean>("restart_game_mode");
 export const setControllerType = (value: string) => call<[string], string>("set_controller_type", value);

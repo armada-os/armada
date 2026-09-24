@@ -5,7 +5,6 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_BOTTOM="$ROOT/system_files/usr/bin/armada-run-bottom"
 BOTTOM_SESSION="$ROOT/system_files/usr/libexec/armada/bottom-screen-session"
 BOTTOM_SERVICE="$ROOT/system_files/usr/lib/systemd/user/armada-bottom-screen.service"
-WAYDROID_INPUT_PATH="$ROOT/system_files/usr/lib/systemd/system/armada-waydroid-input.path"
 WAYDROID_INPUT_SETUP="$ROOT/system_files/usr/libexec/armada/waydroid-input-setup"
 FAKE_SUSPEND="$ROOT/system_files/usr/libexec/armada/fake-suspend"
 tmp="$(mktemp -d)"
@@ -59,11 +58,13 @@ mapfile -d '' -t actual <"$args_file"
 expected=(
     --backend drm
     --drm-lease-client "$lease_socket"
+    --drm-lease-yield
     --expose-wayland
     --force-windows-fullscreen
     --xwayland-count 1
     --default-touch-mode 4
     --force-orientation right
+    --force-composition-rotation
     -- "$BOTTOM_SESSION"
 )
 [[ "${#actual[@]}" == "${#expected[@]}" ]]
@@ -189,9 +190,9 @@ grep -Fxq 'WantedBy=gamescope-session-plus@steam.service' "$BOTTOM_SERVICE"
 grep -Fxq 'Restart=always' "$BOTTOM_SERVICE"
 grep -Fxq 'ExecStartPre=/usr/bin/touch %t/armada-bottom-screen-active' "$BOTTOM_SERVICE"
 grep -Fxq 'ExecStopPost=/usr/bin/rm -f %t/armada-bottom-screen-active' "$BOTTOM_SERVICE"
-grep -Fxq 'PathChanged=/run/user/1000/armada-bottom-screen-active' "$WAYDROID_INPUT_PATH"
+grep -Fq '/run/user/1000/armada-bottom-screen-active' "$WAYDROID_INPUT_SETUP"
 grep -Fq 'each_gamescope gamescopectl drm_sleep_internal_screen 1' "$FAKE_SUSPEND"
 grep -Fq 'each_gamescope gamescopectl drm_sleep_internal_screen 0' "$FAKE_SUSPEND"
 
-bash -n "$RUN_BOTTOM" "$BOTTOM_SESSION" "$FAKE_SUSPEND" "$WAYDROID_INPUT_SETUP"
+bash -n "$RUN_BOTTOM" "$BOTTOM_SESSION" "$FAKE_SUSPEND"
 printf 'bottom-screen session tests passed\n'

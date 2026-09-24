@@ -1,0 +1,42 @@
+# SM8250 handhelds. Board compatibles from packages/kernel/dts, identity from
+# system_files/usr/lib/armada/devices/*.conf.
+
+[[device]]
+dt.compatible = "ayn,thor-lite"
+device        = "ayn_thor_lite"
+variant       = "ThorLite"
+friendly_name = "AYN Thor Lite"
+
+[[device]]
+dt.compatible = "mangmi,air-y-pro"
+device        = "mangmi_air_y_pro"
+variant       = "AirYPro"
+friendly_name = "MANGMI Air Y Pro"
+
+[[device]]
+dt.compatible = "retroidpocket,rp5"
+device        = "retroid_pocket_5"
+variant       = "RP5"
+friendly_name = "Retroid Pocket 5"
+
+[[device]]
+dt.compatible = "retroidpocket,rpflip2"
+device        = "retroid_pocket_flip2"
+variant       = "RPFlip2"
+friendly_name = "Retroid Pocket Flip2"
+
+[[device]]
+dt.compatible = "retroidpocket,rpmini"
+device        = "retroid_pocket_mini"
+variant       = "RPMini"
+friendly_name = "Retroid Pocket Mini"
+
+[[device]]
+dt.compatible = "retroidpocket,rpminiv2"
+device        = "retroid_pocket_mini_v2"
+variant       = "RPMiniV2"
+friendly_name = "Retroid Pocket Mini V2"
+
+# armada-powerd owns the governor and serves CpuScaling1 over remotes.d.
+[cpu_scaling]
+driver = "none"

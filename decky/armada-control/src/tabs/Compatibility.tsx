@@ -3,6 +3,7 @@ import {
   DialogBody,
   DialogButton,
   DialogFooter,
+  Dropdown,
   Field,
   Focusable,
   ModalRoot,
@@ -16,7 +17,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { getCompatMappedAppids, reapplyPerf, restartGameMode, saveCompatApplied, saveTweaks } from "../backend";
 import { SelectEdit, SliderEdit } from "../components/widgets";
-import { t, translateLabel } from "../i18n";
+import { getCurrentLocale, t, translateLabel } from "../i18n";
+import { findPreset, localized, resolveEnvValues } from "../lib/envPresets";
 import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
 import { clone } from "../lib/util";
 import { availableGames, editTargetOptions } from "../lib/games";
@@ -40,11 +42,11 @@ import {
   specifyCompatTool,
 } from "../lib/steamCompat";
 import type { CompatTool } from "../lib/steamCompat";
-import type { Config } from "../types";
+import type { Config, EnvPreset } from "../types";
 
 const PERF_KEYS = [
   "cores", "wineTopology", "nice", "gamescopeCores",
-  "gamescopeNice", "gamescopeRr", "scheduler",
+  "gamescopeNice", "scheduler",
 ];
 
 function cpulistError(text: string, cpuCount: number): string {
@@ -160,18 +162,35 @@ function EnvVarModal({
   closeModal,
   initialKey,
   initialValue,
+  presets,
+  fromPresets,
+  known,
   onSave,
   onDelete,
 }: {
   closeModal?: () => void;
   initialKey: string;
   initialValue: string;
+  // The documented list, shipped as data in env-presets.json.
+  presets: EnvPreset[];
+  // Picker mode: the name comes from the documented list instead of a text field.
+  fromPresets?: boolean;
+  // Values already in effect on this profile, so picking a variable shows its current setting.
+  known?: Record<string, string>;
   onSave: (key: string, value: string) => void;
   onDelete?: () => void;
 }) {
   const [key, setKey] = useState(initialKey);
   const [value, setValue] = useState(initialValue);
   const [nameError, setNameError] = useState("");
+  const locale = getCurrentLocale();
+  const preset = findPreset(presets, key);
+  const pickPreset = (name: string) => {
+    setKey(name);
+    // The docs list no defaults, so an unset variable starts empty.
+    setValue(known?.[name] ?? "");
+    setNameError("");
+  };
   const save = () => {
     const name = key.trim();
     if (!name || name.includes("=") || name.includes("\0")) {
@@ -184,13 +203,41 @@ function EnvVarModal({
   return (
     <ModalRoot onCancel={closeModal}>
       <DialogBody>
-        <TextField label={t("common.name")} value={key} onChange={(event) => setKey(event.target.value)} />
+        {fromPresets ? (
+          <Field label={t("common.name")} childrenLayout="below" childrenContainerWidth="max">
+            <Dropdown
+              strDefaultLabel={t("compatibility.selectVariable")}
+              selectedOption={key}
+              rgOptions={presets.map((item) => ({ data: item.name, label: item.name }))}
+              onChange={(option) => pickPreset(String(option.data))}
+            />
+          </Field>
+        ) : (
+          <TextField label={t("common.name")} value={key} onChange={(event) => setKey(event.target.value)} />
+        )}
+        {preset ? <Field description={localized(preset.description, locale)} /> : null}
         {nameError ? <Field description={nameError} /> : null}
-        <TextField label={t("common.value")} value={value} onChange={(event) => setValue(event.target.value)} />
+        {preset?.options ? (
+          <Field label={t("common.value")} childrenLayout="below" childrenContainerWidth="max">
+            <Dropdown
+              strDefaultLabel={t("compatibility.selectValue")}
+              selectedOption={value}
+              rgOptions={preset.options.map((option) => ({ data: option.data, label: localized(option.label, locale) }))}
+              onChange={(option) => setValue(String(option.data))}
+            />
+          </Field>
+        ) : (
+          <TextField
+            label={t("common.value")}
+            description={preset?.example ? t("compatibility.exampleValue", { example: preset.example }) : undefined}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        )}
       </DialogBody>
       <DialogFooter>
         <Focusable style={{ display: "flex", flexDirection: "row", gap: "8px", width: "100%" }}>
-          <DialogButton onClick={save}>{t("common.save")}</DialogButton>
+          <DialogButton disabled={fromPresets && (!key || !value)} onClick={save}>{t("common.save")}</DialogButton>
           {onDelete ? (
             <DialogButton
               onClick={() => {
@@ -623,11 +670,15 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       delete next[key];
     });
   };
-  const openEnvVar = (key: string | null) => {
+  const openEnvVar = (key: string | null, fromPresets = false) => {
     showModal(
       <EnvVarModal
         initialKey={key || ""}
         initialValue={key ? String(ownEnv[key] ?? "") : ""}
+        presets={config.envPresets}
+        // A documented variable gets its typed field however it was created.
+        fromPresets={fromPresets || (!!key && !!findPreset(config.envPresets, key))}
+        known={resolveEnvValues(ownEnv, globalEnv)}
         onSave={(nextKey, nextValue) => saveEnvVar(key, nextKey, nextValue)}
         onDelete={key ? () => deleteEnvVar(key) : undefined}
       />,
@@ -724,11 +775,6 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       ) : null}
       {gsCoresError && gsCoresText ? <div className="armada-field-note">{gsCoresError}</div> : null}
       <SliderEdit label={t("compatibility.nice")} value={values.gamescopeNice ?? 0} min={-20} max={19} step={1} onChange={(v) => patchSettings({ gamescopeNice: v })} />
-      <ToggleField
-        label={t("compatibility.cpuRealtimeScheduling")}
-        checked={!!values.gamescopeRr}
-        onChange={(on) => patchSettings({ gamescopeRr: on })}
-      />
       {editingDefault ? (
         <ToggleField
           label={t("compatibility.vulkanRealtimeQueue")}
@@ -780,8 +826,13 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
           </div>
         </ButtonItem>
       ))}
+      {config.envPresets.length ? (
+        <ButtonItem layout="below" onClick={() => openEnvVar(null, true)}>
+          {t("compatibility.addCommonVariable")}
+        </ButtonItem>
+      ) : null}
       <ButtonItem layout="below" onClick={() => openEnvVar(null)}>
-        {t("compatibility.addVariable")}
+        {t("compatibility.addCustomVariable")}
       </ButtonItem>
     </>
   );

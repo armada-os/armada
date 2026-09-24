@@ -1,0 +1,9 @@
+# CpuScheduler1 advertises a scheduler whether or not this unit exists, and
+# armada-powerd owns sched_ext; a no-op keeps the setting from failing.
+[Unit]
+Description=Placeholder for steamos-manager CPU scheduler selection
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true

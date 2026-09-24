@@ -1,0 +1,25 @@
+From 1e81396308b6346922043d58b28f02d394e5d510 Mon Sep 17 00:00:00 2001
+From: Matthieu Bucchianeri <mbucchia@valvesoftware.com>
+Date: Tue, 28 Jul 2026 18:23:04 -0700
+Subject: [PATCH] Fix a bug where UI could latch a bad manual clock value.
+
+---
+ steamos-manager/src/gpu.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
+index 6c64f8a..3ed6f25 100644
+--- a/steamos-manager/src/gpu.rs
++++ b/steamos-manager/src/gpu.rs
+@@ -762,10 +762,10 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+     }
+ 
+     async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
+-        self.manual_clocks = Some(clocks);
+         if self.level == DevfreqPerformanceLevel::Auto {
+             return Ok(());
+         }
++        self.manual_clocks = Some(clocks);
+ 
+         let cur = self.get_clocks().await?;
+         let out = clocks * 1_000_000u32;

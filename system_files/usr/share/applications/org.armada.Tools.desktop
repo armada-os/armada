@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Armada Tools
+Comment=Repair Steam, manage SSH, and view system information
+Exec=/usr/bin/armada-tools
+Icon=applications-system
+Terminal=false
+Categories=System;
+Keywords=steam;repair;recovery;ssh;armada;
+StartupNotify=true

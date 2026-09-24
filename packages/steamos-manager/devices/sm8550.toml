@@ -1,0 +1,74 @@
+# SM8550 handhelds. Board compatibles from packages/kernel/dts, identity from
+# system_files/usr/lib/armada/devices/*.conf.
+
+[[device]]
+dt.compatible = "ayaneo,pocketace"
+device        = "ayaneo_pocket_ace"
+variant       = "PocketACE"
+friendly_name = "AYANEO Pocket ACE"
+
+[[device]]
+dt.compatible = "ayaneo,pocketdmg"
+device        = "ayaneo_pocket_dmg"
+variant       = "PocketDMG"
+friendly_name = "AYANEO Pocket DMG"
+
+[[device]]
+dt.compatible = "ayaneo,pocketds"
+device        = "ayaneo_pocket_ds"
+variant       = "PocketDS"
+friendly_name = "AYANEO Pocket DS"
+
+[[device]]
+dt.compatible = "ayaneo,pocketevo"
+device        = "ayaneo_pocket_evo"
+variant       = "PocketEVO"
+friendly_name = "AYANEO Pocket EVO"
+
+# Pocket S 1K and S 2K share this compatible; only the DT model tells them
+# apart, which nothing here can match on yet.
+[[device]]
+dt.compatible = "ayaneo,pocket-s1"
+device        = "ayaneo_pocket_s1k"
+variant       = "PocketS1K"
+friendly_name = "AYANEO Pocket S 1K"
+
+[[device]]
+dt.compatible = "ayn,odin2"
+device        = "ayn_odin_2"
+variant       = "Odin2"
+friendly_name = "AYN Odin 2"
+
+[[device]]
+dt.compatible = "ayn,odin2mini"
+device        = "ayn_odin_2_mini"
+variant       = "Odin2Mini"
+friendly_name = "AYN Odin 2 Mini"
+
+[[device]]
+dt.compatible = "ayn,odin2portal"
+device        = "ayn_odin_2_portal"
+variant       = "Odin2Portal"
+friendly_name = "AYN Odin 2 Portal"
+
+[[device]]
+dt.compatible = "ayn,thor"
+device        = "ayn_thor"
+variant       = "Thor"
+friendly_name = "AYN Thor"
+
+[[device]]
+dt.compatible = "retroidpocket,rp6"
+device        = "retroid_pocket_6"
+variant       = "RP6"
+friendly_name = "Retroid Pocket 6"
+
+[[device]]
+dt.compatible = "retroidpocket,rpnova"
+device        = "retroid_pocket_nova"
+variant       = "RPNova"
+friendly_name = "Retroid Pocket Nova"
+
+# armada-powerd owns the governor and serves CpuScaling1 over remotes.d.
+[cpu_scaling]
+driver = "none"

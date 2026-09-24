@@ -1,0 +1,228 @@
+From 85187374d90cf3aeffd15a32e227062b3dcd0818 Mon Sep 17 00:00:00 2001
+From: Vignesh Raman <vignesh.raman@collabora.com>
+Date: Fri, 31 Jul 2026 17:19:50 +0530
+Subject: [PATCH] wifi: supplicant: scan only the last-associated frequency
+ after resume
+
+On resume, NetworkManager always triggers a full-band scan via
+wpa_supplicant before reconnecting, even when reconnecting to the same
+AP the device was connected before suspend. This takes several seconds.
+Save the last-associated frequency before suspending, and pass it to
+wpa_supplicant on resume so that it only scans that one channel instead
+of the full band.
+
+After suspend-resume, if the restricted scan was for an explicit scan
+request, schedule a full scan once the device is connected, without
+waiting for the normal rate limit.
+
+Signed-off-by: Vignesh Raman <vignesh.raman@collabora.com>
+---
+ src/core/devices/wifi/nm-device-wifi.c        | 74 ++++++++++++++++---
+ src/core/supplicant/nm-supplicant-interface.c | 15 +++-
+ src/core/supplicant/nm-supplicant-interface.h |  2 +
+ 3 files changed, 79 insertions(+), 12 deletions(-)
+
+diff --git a/src/core/devices/wifi/nm-device-wifi.c b/src/core/devices/wifi/nm-device-wifi.c
+index b836c1e82b..d4fed1ad9e 100644
+--- a/src/core/devices/wifi/nm-device-wifi.c
++++ b/src/core/devices/wifi/nm-device-wifi.c
+@@ -126,6 +126,8 @@ typedef struct {
+ 
+     guint32 rate;
+ 
++    guint32 last_freq_before_sleep;
++
+     guint8 scan_periodic_interval_sec;
+ 
+     bool enabled : 1; /* rfkilled or not */
+@@ -135,6 +137,9 @@ typedef struct {
+     bool scan_explicit_requested : 1;
+     bool ssid_found : 1;
+     bool hidden_probe_scan_warn : 1;
++    bool use_last_freq_for_next_scan : 1;
++    bool scan_followup_requested : 1;
++    bool scan_followup_bypass_ratelimit : 1;
+ 
+     bool addressing_running_indicated : 1;
+ 
+@@ -606,6 +611,10 @@ supplicant_interface_acquire_cb(NMSupplicantManager         *supplicant_manager,
+ 
+     priv->sup_iface = g_object_ref(iface);
+ 
++    if (priv->last_freq_before_sleep) {
++        priv->use_last_freq_for_next_scan = TRUE;
++    }
++
+     g_signal_connect(priv->sup_iface,
+                      NM_SUPPLICANT_INTERFACE_STATE,
+                      G_CALLBACK(supplicant_iface_state_cb),
+@@ -683,6 +692,10 @@ supplicant_interface_release(NMDeviceWifi *self)
+     nm_clear_g_source_inst(&priv->scan_request_delay_source);
+     nm_clear_g_cancellable(&priv->scan_request_cancellable);
+ 
++    priv->use_last_freq_for_next_scan    = FALSE;
++    priv->scan_followup_requested        = FALSE;
++    priv->scan_followup_bypass_ratelimit = FALSE;
++
+     _scan_request_ssids_remove_all(priv, 0, 0);
+ 
+     priv->scan_periodic_interval_sec = 0;
+@@ -1788,7 +1801,8 @@ _scan_kickoff(NMDeviceWifi *self)
+     } else
+         ratelimit_duration_msec = 1500;
+ 
+-    if (priv->scan_last_request_started_at_msec + ratelimit_duration_msec > now_msec) {
++    if (!priv->scan_followup_bypass_ratelimit
++        && priv->scan_last_request_started_at_msec + ratelimit_duration_msec > now_msec) {
+         _LOGT_scan(
+             "kickoff: don't scan (rate limited for another %d.%03d sec%s)",
+             (int) ((priv->scan_last_request_started_at_msec + ratelimit_duration_msec - now_msec)
+@@ -1806,7 +1820,7 @@ _scan_kickoff(NMDeviceWifi *self)
+         return;
+     }
+ 
+-    if (priv->scan_last_complete_msec + 200 > now_msec) {
++    if (!priv->scan_followup_bypass_ratelimit && priv->scan_last_complete_msec + 200 > now_msec) {
+         gint32 timeout_msec = priv->scan_last_complete_msec + 200 - now_msec;
+ 
+         /* after a scan just completed, it is ratelimited for another 200 msec. This is in
+@@ -1830,8 +1844,9 @@ _scan_kickoff(NMDeviceWifi *self)
+                 "kickoff: don't scan (explicit scan requested but not allowed at the moment)");
+             return;
+         }
+-        priv->scan_explicit_requested = FALSE;
+-        is_explict                    = TRUE;
++        priv->scan_explicit_requested        = FALSE;
++        priv->scan_followup_bypass_ratelimit = FALSE;
++        is_explict                           = TRUE;
+     } else {
+         if (!priv->scan_periodic_allowed) {
+             _LOGT_scan("kickoff: don't scan (periodic scan currently not allowed)");
+@@ -1913,13 +1928,37 @@ _scan_kickoff(NMDeviceWifi *self)
+ 
+     _hw_addr_set_scanning(self, FALSE);
+ 
+-    priv->scan_request_cancellable = g_cancellable_new();
+-    nm_supplicant_interface_request_scan(priv->sup_iface,
+-                                         ssids ? (GBytes *const *) ssids->pdata : NULL,
+-                                         ssids ? ssids->len : 0u,
+-                                         priv->scan_request_cancellable,
+-                                         _scan_supplicant_request_scan_cb,
+-                                         self);
++    {
++        guint32 scan_freqs[1];
++        guint   scan_freqs_len = 0;
++
++        if (priv->use_last_freq_for_next_scan && priv->last_freq_before_sleep) {
++            scan_freqs[0]  = priv->last_freq_before_sleep;
++            scan_freqs_len = 1;
++            _LOGD(LOGD_WIFI,
++                  "wifi-scan: restricting first post-resume scan to last known frequency %u MHz",
++                  scan_freqs[0]);
++            priv->last_freq_before_sleep      = 0;
++            priv->use_last_freq_for_next_scan = FALSE;
++            if (is_explict) {
++                /* This explicit scan was restricted to a single channel.
++                 * Schedule an unrestricted explicit scan to trigger once
++                 * the device is connected (ACTIVATED), bypassing the rate
++                 * limit. */
++                priv->scan_followup_requested = TRUE;
++            }
++        }
++
++        priv->scan_request_cancellable = g_cancellable_new();
++        nm_supplicant_interface_request_scan(priv->sup_iface,
++                                             ssids ? (GBytes *const *) ssids->pdata : NULL,
++                                             ssids ? ssids->len : 0u,
++                                             scan_freqs_len ? scan_freqs : NULL,
++                                             scan_freqs_len,
++                                             priv->scan_request_cancellable,
++                                             _scan_supplicant_request_scan_cb,
++                                             self);
++    }
+ 
+     /* It's OK to call _scan_notify_is_scanning() again. They mutually call each other,
+      * but _scan_kickoff() sets "priv->scan_request_cancellable" which will stop
+@@ -3679,6 +3718,11 @@ device_state_changed(NMDevice           *device,
+     if (new_state > NM_DEVICE_STATE_ACTIVATED)
+         wifi_secrets_cancel(self);
+ 
++    if (new_state == NM_DEVICE_STATE_DEACTIVATING && reason == NM_DEVICE_STATE_REASON_SLEEPING
++        && priv->current_ap) {
++        priv->last_freq_before_sleep = nm_wifi_ap_get_freq(priv->current_ap);
++    }
++
+     if (new_state <= NM_DEVICE_STATE_UNAVAILABLE) {
+         /* Clean up the supplicant interface because in these states the
+          * device cannot be used.
+@@ -3716,6 +3760,14 @@ device_state_changed(NMDevice           *device,
+         break;
+     case NM_DEVICE_STATE_ACTIVATED:
+         activation_success_handler(device);
++        if (priv->scan_followup_requested) {
++            /* The device just connected using a post-resume restricted
++             * scan's results. Now that activation succeeded, queue the
++             * unrestricted full scan. */
++            priv->scan_followup_requested        = FALSE;
++            priv->scan_explicit_requested        = TRUE;
++            priv->scan_followup_bypass_ratelimit = TRUE;
++        }
+         break;
+     case NM_DEVICE_STATE_FAILED:
+         _indicate_addressing_running_reset(self);
+diff --git a/src/core/supplicant/nm-supplicant-interface.c b/src/core/supplicant/nm-supplicant-interface.c
+index 4476c7015a..739678b6d0 100644
+--- a/src/core/supplicant/nm-supplicant-interface.c
++++ b/src/core/supplicant/nm-supplicant-interface.c
+@@ -2804,6 +2804,8 @@ void
+ nm_supplicant_interface_request_scan(NMSupplicantInterface                   *self,
+                                      GBytes *const                           *ssids,
+                                      guint                                    ssids_len,
++                                     const guint32                           *freqs,
++                                     guint                                    freqs_len,
+                                      GCancellable                            *cancellable,
+                                      NMSupplicantInterfaceRequestScanCallback callback,
+                                      gpointer                                 user_data)
+@@ -2819,7 +2821,7 @@ nm_supplicant_interface_request_scan(NMSupplicantInterface                   *se
+ 
+     priv = NM_SUPPLICANT_INTERFACE_GET_PRIVATE(self);
+ 
+-    _LOGT("request-scan: request scanning (%u ssids)...", ssids_len);
++    _LOGT("request-scan: request scanning (%u ssids, %u freqs)...", ssids_len, freqs_len);
+ 
+     g_variant_builder_init(&builder, G_VARIANT_TYPE_VARDICT);
+     g_variant_builder_add(&builder, "{sv}", "Type", g_variant_new_string("active"));
+@@ -2834,6 +2836,17 @@ nm_supplicant_interface_request_scan(NMSupplicantInterface                   *se
+         }
+         g_variant_builder_add(&builder, "{sv}", "SSIDs", g_variant_builder_end(&ssids_builder));
+     }
++    if (freqs_len > 0) {
++        GVariantBuilder channels_builder;
++
++        g_variant_builder_init(&channels_builder, G_VARIANT_TYPE("a(uu)"));
++        for (i = 0; i < freqs_len; i++)
++            g_variant_builder_add(&channels_builder, "(uu)", freqs[i], 0u);
++        g_variant_builder_add(&builder,
++                              "{sv}",
++                              "Channels",
++                              g_variant_builder_end(&channels_builder));
++    }
+ 
+     data  = g_slice_new(ScanRequestData);
+     *data = (ScanRequestData) {
+diff --git a/src/core/supplicant/nm-supplicant-interface.h b/src/core/supplicant/nm-supplicant-interface.h
+index e77f5a420f..29dde45ed7 100644
+--- a/src/core/supplicant/nm-supplicant-interface.h
++++ b/src/core/supplicant/nm-supplicant-interface.h
+@@ -140,6 +140,8 @@ typedef void (*NMSupplicantInterfaceRequestScanCallback)(NMSupplicantInterface *
+ void nm_supplicant_interface_request_scan(NMSupplicantInterface                   *self,
+                                           GBytes *const                           *ssids,
+                                           guint                                    ssids_len,
++                                          const guint32                           *freqs,
++                                          guint                                    freqs_len,
+                                           GCancellable                            *cancellable,
+                                           NMSupplicantInterfaceRequestScanCallback callback,
+                                           gpointer                                 user_data);
+-- 
+2.47.3
+

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from .privileged import call
+from .proc import clean_env
 from .system import read_text
 
 INPUT_CALIBRATION_CONFIG = Path("/etc/armada/input-calibration.json")
@@ -92,6 +93,7 @@ def busctl_get_property(path, interface, prop):
             capture_output=True,
             text=True,
             timeout=1,
+            env=clean_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -120,6 +122,7 @@ def begin_calibration_intercept():
             capture_output=True,
             text=True,
             timeout=1,
+            env=clean_env(),
         )
         return True
     except (OSError, subprocess.SubprocessError):
@@ -139,6 +142,7 @@ def end_calibration_intercept():
             capture_output=True,
             text=True,
             timeout=1,
+            env=clean_env(),
         )
         return True
     except (OSError, subprocess.SubprocessError):
@@ -157,6 +161,7 @@ def inputplumber_source_events():
             capture_output=True,
             text=True,
             timeout=1,
+            env=clean_env(),
         )
     except (OSError, subprocess.SubprocessError):
         _inputplumber_events_cache.update({"time": now, "events": []})
@@ -172,6 +177,7 @@ def inputplumber_source_events():
             capture_output=True,
             text=True,
             timeout=1,
+            env=clean_env(),
         )
     except (OSError, subprocess.SubprocessError):
         _inputplumber_events_cache.update({"time": now, "events": []})

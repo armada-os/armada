@@ -1,0 +1,46 @@
+From: danyi <308664957+mydanyi@users.noreply.github.com>
+Subject: [PATCH] ASoC: wsa884x: preserve compander gain on Pocket S2
+
+Pocket S2 uses matched WSA macro and amplifier companders with digital
+volume control. The amplifier POST_PMU sequence selects the compander,
+but unmute immediately overrides it with the fixed CSR gain. Retain the
+compander selection when its port is enabled on this board.
+
+The matching UCM must enable both macro companders, initialize both PA
+controls to 17 (hardware gain index 14, unity), and use digital volume.
+Limit this change to Pocket S2; existing configurations on other WSA884x
+machines continue to use the original fixed-gain behavior.
+
+Signed-off-by: danyi <308664957+mydanyi@users.noreply.github.com>
+---
+--- a/sound/soc/codecs/wsa884x.c
++++ b/sound/soc/codecs/wsa884x.c
+@@ -13,6 +13,7 @@
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/mutex.h>
++#include <linux/of.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
+@@ -1804,6 +1805,7 @@
+ static int wsa884x_mute_stream(struct snd_soc_dai *dai, int mute, int stream)
+ {
+ 	struct snd_soc_component *component = dai->component;
++	struct wsa884x_priv *wsa884x = snd_soc_component_get_drvdata(component);
+ 
+ 	if (mute) {
+ 		snd_soc_component_write_field(component, WSA884X_DRE_CTL_1,
+@@ -1814,9 +1816,11 @@
+ 					      0x0);
+ 
+ 	} else {
++		/* Pocket S2 uses digital volume with matched SoundWire companders. */
+ 		snd_soc_component_write_field(component, WSA884X_DRE_CTL_1,
+ 					      WSA884X_DRE_CTL_1_CSR_GAIN_EN_MASK,
+-					      0x1);
++					      !of_machine_is_compatible("ayaneo,pocket-s2") ||
++					      !wsa884x->port_enable[WSA884X_PORT_COMP]);
+ 		snd_soc_component_write_field(component, WSA884X_PA_FSM_EN,
+ 					      WSA884X_PA_FSM_EN_GLOBAL_PA_EN_MASK,
+ 					      0x1);
