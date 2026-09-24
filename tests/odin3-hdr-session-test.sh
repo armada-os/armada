@@ -47,4 +47,29 @@ for needle in \
     fi
 done
 
+POCKET_DS_LUA="$ROOT/system_files/usr/share/gamescope/scripts/10-armada/ayaneo.pocket-ds.oled.lua"
+SHARED_3512_LUA="$ROOT/system_files/usr/share/gamescope/scripts/10-armada/ayn.icna3512.oled.lua"
+
+if ! grep -Fxq 'ARMADA_HDR_NITS=786' "$DEVICES/ayaneo-pocket-ds.conf"; then
+    printf 'ayaneo-pocket-ds.conf does not advertise ARMADA_HDR_NITS=786\n' >&2
+    exit 1
+fi
+
+for needle in \
+    'display.device_id == "ayaneo-pocket-ds"' \
+    'supported = true' \
+    'max_content_light_level = 786' \
+    'max_frame_average_luminance = 393'; do
+    if ! grep -Fq "$needle" "$POCKET_DS_LUA"; then
+        printf 'Pocket DS panel profile missing: %s\n' "$needle" >&2
+        exit 1
+    fi
+done
+
+# Two profiles scoring the same would make the match order-dependent.
+if grep -Fq '"ayaneo-pocket-ds"' "$SHARED_3512_LUA"; then
+    printf 'shared ICNA3512 profile still matches the Pocket DS\n' >&2
+    exit 1
+fi
+
 printf 'Odin 3 HDR session policy test passed\n'

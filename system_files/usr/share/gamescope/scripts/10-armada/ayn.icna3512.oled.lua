@@ -1,7 +1,7 @@
--- ICNA3512 OLED used by the AYN Odin 2 Portal, AYANEO Pocket EVO, and Pocket DS
--- top display. It exposes no EDID, so gamescope synthesizes one and identifies
--- the display through GAMESCOPE_INTERNAL_DEVICE_ID;
--- this profile supplies the panel's colorimetry (nominal DCI-P3, not measured).
+-- ICNA3512 OLED used by the AYN Odin 2 Portal and AYANEO Pocket EVO. It
+-- exposes no EDID, so gamescope synthesizes one and identifies the display
+-- through GAMESCOPE_INTERNAL_DEVICE_ID; this profile supplies the panel's
+-- colorimetry (nominal DCI-P3, not measured).
 gamescope.config.known_displays.armada_ayn_icna3512_oled = {
     pretty_name = "ICNA3512 internal OLED",
     colorimetry = {
@@ -15,8 +15,7 @@ gamescope.config.known_displays.armada_ayn_icna3512_oled = {
     },
     matches = function(display)
         if (display.device_id == "ayn-odin-2-portal"
-            or display.device_id == "ayaneo-pocket-evo"
-            or display.device_id == "ayaneo-pocket-ds")
+            or display.device_id == "ayaneo-pocket-evo")
             and display.internal and not display.has_edid then
             return 6000
         end
