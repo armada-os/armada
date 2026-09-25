@@ -59,6 +59,9 @@ FROM ${JUPITER_HW_SUPPORT_REF} AS jupiter-hw-support
 ARG MESA_ANDROID_REF
 FROM ${MESA_ANDROID_REF} AS mesa-android
 
+ARG GUESTOS_ANDROID_REF
+FROM ${GUESTOS_ANDROID_REF} AS guestos-android
+
 ARG MESA_X86_REF
 FROM ${MESA_X86_REF} AS mesa-x86
 
@@ -115,6 +118,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=wpa_supplicant,source=/rpms,target=/packages/wpa_supplicant \
     --mount=type=bind,from=jupiter-hw-support,source=/rpms,target=/packages/jupiter-hw-support \
     --mount=type=bind,from=mesa-android,source=/,target=/packages/mesa-android \
+    --mount=type=bind,from=guestos-android,source=/,target=/packages/guestos-android \
     --mount=type=bind,from=mesa-x86,source=/,target=/packages/mesa-x86 \
     --mount=type=bind,from=extest,source=/,target=/packages/extest \
     --mount=type=bind,from=armada-splash,source=/rpms,target=/packages/armada-splash \

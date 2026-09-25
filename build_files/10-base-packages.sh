@@ -101,6 +101,15 @@ ln -sf libbz2.so.1 /usr/lib64/libbz2.so.1.0
 # Some AppImages link zlib's unversioned development soname.
 ln -sf libz.so.1 /usr/lib64/libz.so
 
+# Host side of Steam's Lepton compat tool: rootless podman
+# with pasta networking, plus what its launch scripts call.
+dnf5 -y install --setopt=install_weak_deps=False \
+    podman \
+    catatonit \
+    passt \
+    inotify-tools \
+    attr
+
 # pressure-vessel needs en_US.UTF-8; the base image ships only minimal-langpack (C.utf8).
 dnf5 -y install --setopt=install_weak_deps=False glibc-langpack-en
 
