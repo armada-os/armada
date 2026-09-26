@@ -31,6 +31,18 @@ FACTORY_CONFIG_FILE = Path("/usr/share/armada/power-profiles.conf")
 CONFIG_FILE = Path("/etc/armada/power-profiles.conf")
 FAN_SAFE_PWM = 128
 
+# Standard power-profile interface so stock KDE (powerdevil KCM + battery
+# applet) and powerprofilesctl can drive the profiles, at the object path
+# power-profiles-daemon uses. The name it also registers for pre-0.10 clients,
+# net.hadess.PowerProfiles, has no reader in powerdevil 6.x.
+STANDARD_BUS_NAME = "org.freedesktop.UPower.PowerProfiles"
+STANDARD_OBJECT_PATH = "/org/freedesktop/UPower/PowerProfiles"
+STANDARD_IFACE = STANDARD_BUS_NAME
+# Canonical power-profiles-daemon profile names, in spec order.
+STANDARD_PROFILES = ["power-saver", "balanced", "performance"]
+STANDARD_TO_ARMADA = dict(zip(STANDARD_PROFILES, PROFILES))
+ARMADA_TO_STANDARD = dict(zip(PROFILES, STANDARD_PROFILES))
+
 
 def normalize_profile(profile):
     value = profile.strip().lower()
@@ -99,6 +111,32 @@ REMOTE_PROPS = {
         "CpuScalingGovernor": "CpuScalingGovernor",
     },
 }
+
+# power-profiles-daemon ABI (v0.20). Profile names are strings; Profiles is
+# a{sv}-per-profile and must not lead with a "placeholder" Driver or KDE shows
+# none. HoldProfile/ReleaseProfile are intentionally omitted: nothing in the
+# desktop session holds a profile.
+_POWER_PROFILES_PROPS = (
+    '    <property name="ActiveProfile" type="s" access="readwrite"/>\n'
+    '    <property name="PerformanceInhibited" type="s" access="read"/>\n'
+    '    <property name="PerformanceDegraded" type="s" access="read"/>\n'
+    '    <property name="Profiles" type="aa{sv}" access="read"/>\n'
+    '    <property name="Actions" type="as" access="read"/>\n'
+    '    <property name="ActiveProfileHolds" type="aa{sv}" access="read"/>\n'
+    '    <property name="Version" type="s" access="read"/>\n'
+    '    <property name="BatteryAware" type="b" access="read"/>\n'
+    '    <property name="ActionsInfo" type="aa{sv}" access="read"/>\n'
+)
+
+
+STANDARD_XML = (
+    f'<node>\n  <interface name="{STANDARD_IFACE}">\n'
+    '    <method name="SetActiveProfile">\n'
+    '      <arg type="s" name="profile" direction="in"/>\n'
+    "    </method>\n"
+    + _POWER_PROFILES_PROPS
+    + "  </interface>\n</node>\n"
+)
 
 
 def read_text(path, default=""):
@@ -906,16 +944,41 @@ class ArmadaPower:
             return GLib.Variant("u", self.read_temp())
         raise KeyError(prop)
 
+    def get_power_profiles_property(self, prop):
+        active = ARMADA_TO_STANDARD.get(self.profile, "balanced")
+        if prop == "ActiveProfile":
+            return GLib.Variant("s", active)
+        if prop == "Profiles":
+            profiles = [
+                {"Profile": GLib.Variant("s", name), "Driver": GLib.Variant("s", "armada")}
+                for name in STANDARD_PROFILES
+            ]
+            return GLib.Variant("aa{sv}", profiles)
+        if prop == "PerformanceInhibited":
+            return GLib.Variant("s", "")
+        if prop == "PerformanceDegraded":
+            return GLib.Variant("s", "")
+        if prop == "ActiveProfileHolds":
+            return GLib.Variant("aa{sv}", [])
+        if prop == "Version":
+            return GLib.Variant("s", "1.0")
+        if prop == "BatteryAware":
+            return GLib.Variant("b", False)
+        if prop == "Actions":
+            return GLib.Variant("as", [])
+        if prop == "ActionsInfo":
+            return GLib.Variant("aa{sv}", [])
+        raise KeyError(prop)
+
     def set_property(self, prop, value):
-        changed = {}
         if prop == "Profile":
             profile = self.profile_for_label(value.get_string())
             if profile not in PROFILES:
                 raise ValueError(value.get_string())
-            self.profile = profile
-            self.apply_profile()
-            changed["Profile"] = GLib.Variant("s", self.label_for(self.profile))
-        elif prop == "GpuPerformanceLevel":
+            self._apply_profile_change(profile)
+            return
+        changed = {}
+        if prop == "GpuPerformanceLevel":
             level = value.get_string()
             if level not in ("auto", "manual"):
                 raise ValueError(level)
@@ -947,6 +1010,37 @@ class ArmadaPower:
             raise KeyError(prop)
         self.save_state()
         self.emit_properties(changed)
+
+    def set_power_profiles_property(self, prop, value):
+        if prop != "ActiveProfile":
+            raise KeyError(prop)
+        name = value.get_string().strip().lower()
+        profile = STANDARD_TO_ARMADA.get(name, "")
+        if profile not in PROFILES:
+            raise ValueError(value.get_string())
+        self._apply_profile_change(profile)
+
+    def _apply_profile_change(self, profile):
+        self.profile = profile
+        self.apply_profile()
+        self.save_state()
+        self.emit_profile_changed()
+
+    def emit_profile_changed(self):
+        # Propagate to the power-profile object as well as the armada one so the
+        # stock KDE applet/KCM and powerprofilesctl stay in sync whichever
+        # interface the user drove.
+        if not self.connection:
+            return
+        active = ARMADA_TO_STANDARD.get(self.profile, "balanced")
+        self.emit_properties({"Profile": GLib.Variant("s", self.label_for(self.profile))})
+        self.connection.emit_signal(
+            None,
+            STANDARD_OBJECT_PATH,
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            GLib.Variant("(sa{sv}as)", (STANDARD_IFACE, {"ActiveProfile": GLib.Variant("s", active)}, [])),
+        )
 
     def status(self):
         gpu_min, gpu_max = self.resolved_gpu_auto_limits()
@@ -989,6 +1083,17 @@ class ArmadaPower:
         )
 
     def handle_method_call(self, _conn, _sender, _path, iface, method, _params, invocation):
+        if iface == STANDARD_IFACE:
+            if method != "SetActiveProfile":
+                invocation.return_dbus_error(f"{BUS_NAME}.Error.UnknownMethod", method)
+                return
+            try:
+                self.set_power_profiles_property("ActiveProfile", _params.get_child_value(0))
+            except Exception as exc:
+                invocation.return_dbus_error(f"{BUS_NAME}.Error.InvalidProfile", str(exc))
+                return
+            invocation.return_value(None)
+            return
         if iface != IFACE:
             invocation.return_dbus_error(f"{BUS_NAME}.Error.UnknownInterface", iface)
             return
@@ -1026,6 +1131,11 @@ class ArmadaPower:
         return REMOTE_PROPS.get(iface, {}).get(prop)
 
     def handle_get_property(self, _conn, _sender, _path, iface, prop):
+        if iface == STANDARD_IFACE:
+            try:
+                return self.get_power_profiles_property(prop)
+            except Exception:
+                return None
         native = self.native_prop(iface, prop)
         if native is None:
             return None
@@ -1035,10 +1145,13 @@ class ArmadaPower:
             return None
 
     def handle_set_property(self, _conn, _sender, _path, iface, prop, value):
-        native = self.native_prop(iface, prop)
-        if native is None:
-            return False
         try:
+            if iface == STANDARD_IFACE:
+                self.set_power_profiles_property(prop, value)
+                return True
+            native = self.native_prop(iface, prop)
+            if native is None:
+                return False
             self.set_property(native, value)
             return True
         except Exception as exc:
@@ -1046,6 +1159,10 @@ class ArmadaPower:
             return False
 
     def register(self, connection):
+        # Both owned names resolve to the same system bus connection, so
+        # this fires once per acquired name; register the objects exactly once.
+        if self.connection is not None:
+            return
         self.connection = connection
         self.node = Gio.DBusNodeInfo.new_for_xml(XML)
         for iface in self.node.interfaces:
@@ -1056,6 +1173,16 @@ class ArmadaPower:
                 self.handle_get_property,
                 self.handle_set_property,
             )
+        # The power-profiles object lives at its own path, so it needs its own
+        # node definition rather than one of the ones on OBJECT_PATH.
+        self.standard_node = Gio.DBusNodeInfo.new_for_xml(STANDARD_XML)
+        connection.register_object(
+            STANDARD_OBJECT_PATH,
+            self.standard_node.interfaces[0],
+            self.handle_method_call,
+            self.handle_get_property,
+            self.handle_set_property,
+        )
         connection.signal_subscribe(
             LOGIN1_NAME,
             LOGIN1_IFACE,
@@ -1095,14 +1222,19 @@ def main():
     def name_lost(_connection, _name):
         loop.quit()
 
-    owner_id = Gio.bus_own_name(
-        Gio.BusType.SYSTEM,
-        BUS_NAME,
-        Gio.BusNameOwnerFlags.NONE,
-        bus_acquired,
-        None,
-        name_lost,
-    )
+    # Own the armada name plus the power-profile name; clients (KDE,
+    # powerprofilesctl) address that, so the daemon must hold it.
+    owner_ids = [
+        Gio.bus_own_name(
+            Gio.BusType.SYSTEM,
+            name,
+            Gio.BusNameOwnerFlags.NONE,
+            bus_acquired,
+            None,
+            name_lost,
+        )
+        for name in (BUS_NAME, STANDARD_BUS_NAME)
+    ]
     def stop(_signum, _frame):
         power.fan_safe()
         power.stop_scx()
@@ -1115,7 +1247,8 @@ def main():
     finally:
         power.fan_safe()
         power.stop_scx()
-        Gio.bus_unown_name(owner_id)
+        for owner_id in owner_ids:
+            Gio.bus_unown_name(owner_id)
 
 
 if __name__ == "__main__":
