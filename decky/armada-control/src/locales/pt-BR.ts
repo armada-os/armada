@@ -208,6 +208,8 @@ export const ptBR = {
   "rgb.changeError": "Não foi possível alterar a iluminação RGB",
   "rgb.title": "Iluminação RGB",
   "rgb.saturation": "Saturação",
+  "rgb.smartBrightness": "Brilho inteligente",
+  "rgb.maxBrightness": "Brilho máximo",
   "common.enabled": "Habilitado",
   "common.brightness": "Brilho",
   "common.color": "Cor",

@@ -12,6 +12,7 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
+    backlight: PathBuf,
     config: PathBuf,
     leds: PathBuf,
     model: PathBuf,
@@ -30,10 +31,15 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let leds: PathBuf = root.join("leds");
+        let backlight: PathBuf = root.join("backlight");
         fs::create_dir_all(&leds).unwrap();
+        fs::create_dir_all(backlight.join("panel")).unwrap();
+        fs::write(backlight.join("panel/brightness"), "50").unwrap();
+        fs::write(backlight.join("panel/max_brightness"), "100").unwrap();
 
         let fixture = Self {
             config: root.join("etc/rgb.json"),
+            backlight,
             leds,
             model: root.join("model"),
             profiles: root.join("profiles.json"),
@@ -93,6 +99,7 @@ impl Fixture {
         command
             .env("ARMADA_RGB_CONFIG_PATH", &self.config)
             .env("ARMADA_RGB_SYSFS_ROOT", &self.leds)
+            .env("ARMADA_BACKLIGHT_ROOT", &self.backlight)
             .env("ARMADA_RGB_MODEL_PATH", &self.model)
             .env("ARMADA_RGB_PROFILES_PATH", &self.profiles);
         command
@@ -109,7 +116,9 @@ fn enabled(color: &str, brightness: u8) -> LightingConfig {
     LightingConfig {
         version: 1,
         enabled: true,
+        link_brightness: false,
         brightness,
+        max_brightness: 25,
         color: color.into(),
         saturation: 100,
         correction: None,
@@ -178,6 +187,51 @@ fn saturation_is_applied_to_multicolor_output() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fixture.value("rgb:l1", "multi_intensity"), "55 55 255");
+}
+
+#[test]
+fn linked_brightness_scales_output_without_changing_saved_config() {
+    let fixture: Fixture = Fixture::new();
+    fixture.target("rgb:l1", "blue green red", "255");
+
+    let output: std::process::Output = fixture
+        .command("multicolor", &["rgb:l1"], None)
+        .args([
+            "set",
+            "--enabled",
+            "true",
+            "--link-brightness",
+            "true",
+            "--max-brightness",
+            "50",
+            "--color",
+            "FF0000",
+            "--brightness",
+            "80",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved: LightingConfig = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(saved.enabled);
+    assert!(saved.link_brightness);
+    assert_eq!(saved.max_brightness, 50);
+    assert_eq!(saved.brightness, 80);
+    assert_eq!(fixture.value("rgb:l1", "multi_intensity"), "0 0 255");
+    assert_eq!(fixture.value("rgb:l1", "brightness"), "64");
+
+    let output: std::process::Output = fixture
+        .command("multicolor", &["rgb:l1"], None)
+        .arg("get")
+        .output()
+        .unwrap();
+    let persisted: LightingConfig = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(persisted, saved);
 }
 
 #[test]

@@ -516,7 +516,14 @@ def rgb_supported():
 
 
 def run_rgb(command):
-    output = subprocess.check_output([RGB_TOOL, *command], text=True, timeout=5)
+    environment = os.environ.copy()
+    try:
+        environment.update(device_env())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    output = subprocess.check_output(
+        [RGB_TOOL, *command], text=True, timeout=5, env=environment
+    )
     config = json.loads(output)
     if not isinstance(config, dict):
         raise RuntimeError("invalid armada-rgb response")
@@ -536,12 +543,28 @@ def action_set_rgb(request):
     enabled = request.get("enabled")
     if not isinstance(enabled, bool):
         raise ValueError("invalid RGB enabled state")
-    if not enabled:
+    # Keep the legacy off payload working while callers migrate to the full
+    # RGB settings payload.
+    if not enabled and not any(
+        key in request
+        for key in ("linkBrightness", "color", "saturation", "maxBrightness", "brightness")
+    ):
         return run_rgb(["off"])
-
+    link_brightness = request.get("linkBrightness")
     color = request.get("color")
     saturation = request.get("saturation")
     brightness = request.get("brightness")
+    max_brightness = request.get("maxBrightness")
+    if link_brightness is not None and not isinstance(link_brightness, bool):
+        raise ValueError("invalid RGB screen-link state")
+    if max_brightness is not None:
+        valid_max_brightness = (
+            isinstance(max_brightness, int)
+            and not isinstance(max_brightness, bool)
+            and 0 <= max_brightness <= 100
+        )
+        if not valid_max_brightness:
+            raise ValueError("invalid RGB maximum brightness")
     valid_color = (
         isinstance(color, str)
         and len(color) == 6
@@ -565,7 +588,16 @@ def action_set_rgb(request):
     if not valid_brightness:
         raise ValueError("invalid RGB brightness")
 
-    command = ["set", "--color", color]
+    command = [
+        "set",
+        "--enabled",
+        str(enabled).lower(),
+    ]
+    if link_brightness is not None:
+        command.extend(["--link-brightness", str(link_brightness).lower()])
+    if max_brightness is not None:
+        command.extend(["--max-brightness", str(max_brightness)])
+    command.extend(["--color", color])
     if saturation is not None:
         command.extend(["--saturation", str(saturation)])
     command.extend(["--brightness", str(brightness)])

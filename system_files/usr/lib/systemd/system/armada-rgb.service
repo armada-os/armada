@@ -6,7 +6,7 @@ Before=display-manager.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/armada-rgb apply
+ExecStart=/usr/libexec/armada/armada-rgb-env apply
 
 [Install]
 WantedBy=multi-user.target
