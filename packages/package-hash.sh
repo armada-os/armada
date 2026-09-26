@@ -10,7 +10,7 @@ pkg="${1:?usage: package-hash.sh <package>}"
 
 paths=("${pkg}" toolchain.env Containerfile scrub-scratch.sh)
 case "${pkg}" in
-    mesa-x86|mesa-android) paths+=(mesa) ;;
+    mesa-x86|mesa-android|guestos-android) paths+=(mesa) ;;
 esac
 
 if grep -q '/src/TERRA.env' "${pkg}/build.sh" 2>/dev/null; then

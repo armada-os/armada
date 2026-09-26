@@ -229,6 +229,18 @@ FROM scratch AS out-mesa-android
 COPY --from=pkg-mesa-android /work/out/vendor/ /waydroid/vendor/
 
 
+# Same cross-build, as the image Lepton expects at /usr/share/guestos/android.
+FROM --platform=linux/amd64 ${BUILDER_IMAGE} AS pkg-guestos-android
+COPY toolchain.env scrub-scratch.sh /src/
+COPY mesa/ /src/mesa/
+COPY guestos-android/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-guestos-android
+COPY --from=pkg-guestos-android /work/out/android.erofs /guestos/android.erofs
+
+
 # x86 Turnip for the FEX guest rootfs, built in the Arch image
 # pinned to the guest rootfs snapshot. Built on an x86_64 runner.
 FROM --platform=linux/amd64 ${GUEST_BUILDER_IMAGE} AS pkg-mesa-x86

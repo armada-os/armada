@@ -20,8 +20,8 @@ phase2=()
 phase2_args=()
 
 case "${pkg}" in
-    # Both cross-build to arm64 from an x86_64 host.
-    mesa-android)
+    # These cross-build to arm64 from an x86_64 host.
+    mesa-android|guestos-android)
         platform=linux/amd64 ;;
     mesa-x86)
         platform=linux/amd64

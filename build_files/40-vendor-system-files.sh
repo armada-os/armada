@@ -10,6 +10,11 @@ update-desktop-database -q /usr/share/applications
 
 cp -a /packages/mesa-android/waydroid/vendor /usr/share/armada/waydroid/
 
+guestos_android=/usr/share/armada/guestos/android.erofs
+install -Dm0644 /packages/guestos-android/guestos/android.erofs "${guestos_android}"
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"guestos-android")' "${guestos_android}"
+mkdir -p /usr/share/guestos/android
+
 mesa_sqsh=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh
 install -Dm0644 /packages/mesa-x86/ArmadaMesa.sqsh "${mesa_sqsh}"
 # A separate rechunk component keeps Mesa-only updates from invalidating ArchLinux.sqsh.
@@ -93,6 +98,7 @@ systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
 systemctl enable armada-guestos.service
+systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service
 systemctl enable armada-rgb.service
 systemctl enable armada-fixups.service

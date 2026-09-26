@@ -65,11 +65,11 @@ jobs:
 
             echo "::notice::${pkg} changed by this PR, building it (${hash})"
             refs="${refs}${var}=localhost/armada/pkg/${pkg}:${hash}"$'\n'
-            # These two need an x86_64 host, so they cannot build on the arm64
+            # These need an x86_64 host, so they cannot build on the arm64
             # runner that builds the image.
             case "${pkg}" in
-              mesa-android|mesa-x86) target=cross ;;
-              *)                     target=native ;;
+              mesa-android|guestos-android|mesa-x86) target=cross ;;
+              *)                                     target=native ;;
             esac
             entry="$(jq -c -n --arg p "${pkg}" --arg h "${hash}" '{package:$p, hash:$h}')"
             if [ "${target}" = cross ]; then

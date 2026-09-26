@@ -1,0 +1,12 @@
+[Unit]
+Description=Mesa for Steam's Lepton Android container
+ConditionPathExists=/usr/share/armada/guestos/android.erofs
+
+[Mount]
+What=/usr/share/armada/guestos/android.erofs
+Where=/usr/share/guestos/android
+Type=erofs
+Options=ro,loop
+
+[Install]
+WantedBy=local-fs.target
