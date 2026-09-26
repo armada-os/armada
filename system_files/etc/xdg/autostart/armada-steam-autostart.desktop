@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Steam
+Exec=/usr/bin/steam -silent
+Terminal=false
+OnlyShowIn=KDE;
+NoDisplay=true
