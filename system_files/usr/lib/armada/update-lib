@@ -1,8 +1,9 @@
 #!/bin/bash
 # Shared helpers for the armada update hooks (steamos-update, steamos-select-branch).
 
-ARMADA_CANONICAL_REGISTRY="ghcr.io/armada-os/armada"
+ARMADA_CANONICAL_REGISTRY="${ARMADA_CANONICAL_REGISTRY:-ghcr.io/armada-os/armada}"
 ARMADA_LEGACY_REGISTRY="ghcr.io/virtudude/armada"
+[[ -r /etc/armada/update.conf ]] && source /etc/armada/update.conf
 ARMADA_CHANNEL_STATE="/var/lib/armada/update-channel"
 ARMADA_CHANNELS="stable beta testing"
 ARMADA_OSTREE_REPO="/ostree/repo"
