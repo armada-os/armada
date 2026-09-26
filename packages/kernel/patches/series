@@ -78,6 +78,7 @@
 1006-tty-serial-qcom-geni-mask-non-console-irq-on-suspend.patch
 1004-input-haptics-stop-zero-amplitude-immediately.patch
 1300-input-rsinput-axis-deadzone.patch
+1301-input-rsinput-decouple-trigger-reference-from-calibration.patch
 0515-input-rsinput-reassemble-uart-frames-instead-of-dropping-them.patch
 
 # ============== Audio ==============
