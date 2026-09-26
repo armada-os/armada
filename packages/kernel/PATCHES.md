@@ -185,6 +185,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0058-input-joystick-add-ayaneo-mcu-joystick.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0058-input-joystick-add-ayaneo-mcu-joystick.patch
   upstream: unknown
+  notes: Armada filters hardware-validated short R3 presses and one-frame analog-trigger spikes observed on the KONKR Pocket FIT Elite. The workaround is enabled for the KONKR Pocket FIT family via the machine compatibles `konkr,pocket-fit-elite` and `konkr,pocket-fit`; other devices using the driver retain their unfiltered input path. Complete frame transactions are serialized across IRQ and fallback polling so the stateful filters see an ordered frame stream. The defaults are a 50 ms R3 debounce and two consecutive non-zero trigger frames; releases remain immediate, and both thresholds are runtime-tunable module parameters.
 - `patches/0069-input-misc-add-konkr-sysbtn-MCU-system-buttons.patch`
   source: https://github.com/ROCKNIX/distribution/blob/024028b4f3fdd139ae1e575efb25914b8f76595d/projects/ROCKNIX/devices/SM8750/patches/linux/0069-input-misc-add-konkr-sysbtn-MCU-system-buttons.patch
   upstream: unknown
