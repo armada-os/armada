@@ -81,6 +81,7 @@ meson setup build-android \
     -Dplatform-sdk-version=${ANDROID_API} \
     -Dandroid-stub=true \
     -Dandroid-libbacktrace=disabled \
+    -Dandroid-strict=false \
     -Dgallium-drivers=freedreno,zink \
     -Dvulkan-drivers=freedreno \
     -Dfreedreno-kmds=msm \
