@@ -27,7 +27,7 @@ mkdir -p out/tree/vendor/lib64/hw out/tree/vendor/lib64/egl
 dnf -y install --setopt=install_weak_deps=False \
     meson ninja-build python3-mako python3-yaml python3-ply bison flex \
     cmake curl unzip xz patch pkgconf glslang python3-packaging \
-    gcc gcc-c++ binutils koji cpio erofs-utils
+    gcc gcc-c++ binutils koji cpio erofs-utils git
 
 cd /tmp
 curl --fail --location --retry 3 --remote-name "${NDK_URL}"
@@ -102,6 +102,23 @@ install -m 0644 $B/src/gbm/backends/dri/dri_gbm.so              /work/out/tree/v
 install -m 0644 $B/src/egl/libEGL.so                            /work/out/tree/vendor/lib64/egl/libEGL_mesa.so
 install -m 0644 $B/src/mesa/glapi/es2api/libGLESv2.so           /work/out/tree/vendor/lib64/egl/libGLESv2_mesa.so
 install -m 0644 $B/src/mesa/glapi/es1api/libGLESv1_CM.so        /work/out/tree/vendor/lib64/egl/libGLESv1_CM_mesa.so
+
+# Lepton looks up layers in vendor/vulkan_layers and aborts without Fossilize.
+git init -q /tmp/fossilize
+cd /tmp/fossilize
+git fetch -q --depth 1 https://github.com/ValveSoftware/Fossilize.git "${FOSSILIZE_COMMIT}"
+git checkout -q FETCH_HEAD
+git submodule update -q --init --depth 1 rapidjson
+cmake -S . -B build -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE=/tmp/android-ndk-${NDK_VERSION}/build/cmake/android.toolchain.cmake \
+    -DANDROID_ABI=arm64-v8a \
+    -DANDROID_PLATFORM=${ANDROID_API} \
+    -DANDROID_STL=c++_static \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DFOSSILIZE_CLI=OFF \
+    -DFOSSILIZE_TESTS=OFF
+ninja -C build
+install -Dm0644 build/layer/libVkLayer_fossilize.so /work/out/tree/vendor/vulkan_layers/libVkLayer_fossilize.so
 
 # lz4, no zstd :(
 mkfs.erofs -zlz4hc,12 -Eztailpacking /work/out/android.erofs /work/out/tree
