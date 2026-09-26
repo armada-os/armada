@@ -1,0 +1,81 @@
+diff -ruN orig/unl0kr/config.c buffybox-3.5.1/unl0kr/config.c
+--- a/unl0kr/config.c	2026-03-03 08:10:59.000000000 +0000
++++ b/unl0kr/config.c	2026-08-29 21:14:44.264393044 +0000
+@@ -55,6 +55,22 @@
+             /* Use a max ceiling of 60 minutes (3600 secs) */
+             opts->general.timeout = (uint16_t)LV_MIN(strtoul(value, (char **)NULL, 10), 3600);
+             return 1;
++        } else if (strcmp(key, "rotation") == 0) {
++            /* Quarter turns clockwise, matching buffyboard's --rotate and the
++             * values exposed in /sys/class/graphics/fbcon/rotate. */
++            if (strcmp(value, "0") == 0) {
++                opts->general.rotation = LV_DISPLAY_ROTATION_0;
++                return 1;
++            } else if (strcmp(value, "1") == 0) {
++                opts->general.rotation = LV_DISPLAY_ROTATION_270;
++                return 1;
++            } else if (strcmp(value, "2") == 0) {
++                opts->general.rotation = LV_DISPLAY_ROTATION_180;
++                return 1;
++            } else if (strcmp(value, "3") == 0) {
++                opts->general.rotation = LV_DISPLAY_ROTATION_90;
++                return 1;
++            }
+         }
+     } else if (strcmp(section, "keyboard") == 0) {
+         if (strcmp(key, "autohide") == 0) {
+@@ -162,6 +178,7 @@
+     opts->general.animations = false;
+     opts->general.backend = 0;
+     opts->general.timeout = 0;
++    opts->general.rotation = LV_DISPLAY_ROTATION_0;
+     opts->keyboard.autohide = true;
+     opts->keyboard.layout_id = SQ2LV_LAYOUT_US;
+     opts->keyboard.popovers = true;
+diff -ruN orig/unl0kr/config.h buffybox-3.5.1/unl0kr/config.h
+--- a/unl0kr/config.h	2026-03-03 08:10:59.000000000 +0000
++++ b/unl0kr/config.h	2026-08-29 21:14:44.264244819 +0000
+@@ -17,6 +17,8 @@
+ #include <stdint.h>
+ #include <xkbcommon/xkbcommon.h>
+ 
++#include "../lvgl/lvgl.h"
++
+ /**
+  * General options
+  */
+@@ -27,6 +29,8 @@
+     bbx_backends_backend_id_t backend;
+     /* Timeout (in seconds) - once elapsed, the device will shutdown. 0 (default) to disable */
+     uint16_t timeout;
++    /* Display rotation, as an LV_DISPLAY_ROTATION_* value */
++    lv_display_rotation_t rotation;
+ } ul_config_opts_general;
+ 
+ /**
+diff -ruN orig/unl0kr/main.c buffybox-3.5.1/unl0kr/main.c
+--- a/unl0kr/main.c	2026-03-03 08:10:59.000000000 +0000
++++ b/unl0kr/main.c	2026-08-29 21:14:44.264840022 +0000
+@@ -439,6 +439,10 @@
+         exit_failure();
+     }
+ 
++    /* Apply configured rotation before anything reads the resolution, so that
++     * hor_res/ver_res below describe the rotated display. */
++    lv_display_set_rotation(disp, conf_opts.general.rotation);
++
+     int fd_epoll = epoll_create1(EPOLL_CLOEXEC);
+     if (fd_epoll == -1) {
+         bbx_log(BBX_LOG_LEVEL_ERROR, "epoll_create1() is failed");
+diff -ruN orig/unl0kr/unl0kr.conf buffybox-3.5.1/unl0kr/unl0kr.conf
+--- a/unl0kr/unl0kr.conf	2026-03-03 08:10:59.000000000 +0000
++++ b/unl0kr/unl0kr.conf	2026-08-29 21:14:44.265012056 +0000
+@@ -2,6 +2,8 @@
+ animations=true
+ #backend=fbdev|drm
+ #timeout=300
++# Quarter turns clockwise: 0=normal 1=90 2=180 3=270
++#rotation=0
+ 
+ [keyboard]
+ autohide=false

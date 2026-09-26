@@ -18,6 +18,8 @@ dracut \
     --add ostree \
     --add armada-splash \
     --add armada-ostree-fallback \
+    --add armada-unl0kr \
+    --add crypt \
     "${IMG}" "${KVER}"
 
 # dracut drops modules silently: fail the build rather than ship without.
@@ -30,6 +32,7 @@ required=(
     usr/libexec/armada/device-env \
     usr/share/armada/splash/splash.asp \
     usr/libexec/armada/armada-ostree-fallback \
+    usr/libexec/armada/armada-unl0kr-config \
     usr/lib/systemd/system/ostree-prepare-root.service.d/armada-fallback.conf \
     usr/lib/ostree/ostree-prepare-root
 )

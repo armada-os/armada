@@ -167,6 +167,15 @@ FROM scratch AS out-umtp-responder
 COPY --from=pkg-umtp-responder /work/out/ /rpms/
 
 
+FROM builder-base AS pkg-unl0kr
+COPY unl0kr/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-unl0kr
+COPY --from=pkg-unl0kr /work/out/ /rpms/
+
+
 FROM builder-base AS pkg-fex-sysroot
 COPY fex/ /work/
 WORKDIR /work
