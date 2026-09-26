@@ -43,6 +43,12 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0070-arm64-dts-qcom-dpu-lutdma-reg.patch`
   source: armada
   upstream: local
+- `patches/0076-drm-msm-dpu-expose-abgr-xbgr-2101010-on-planes.patch`
+  source: armada
+  upstream: local
+- `patches/0077-drm-msm-dpu-plane-igc-3d-lut-color-pipelines.patch`
+  source: armada
+  upstream: local
 - `patches/0016-rp5-smooth-brightness-adjustment.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/patches/linux/0016-rp5-smooth-brightness-adjustment.patch
   upstream: unknown

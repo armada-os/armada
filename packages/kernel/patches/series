@@ -12,6 +12,8 @@
 0068-drm-msm-dpu-lutdma-dspp-igc-gamut.patch
 0069-dt-bindings-display-msm-dpu-lutdma-reg.patch
 0070-arm64-dts-qcom-dpu-lutdma-reg.patch
+0076-drm-msm-dpu-expose-abgr-xbgr-2101010-on-planes.patch
+0077-drm-msm-dpu-plane-igc-3d-lut-color-pipelines.patch
 0016-rp5-smooth-brightness-adjustment.patch
 0056_Xm-Plus-XM91080G-panel.patch
 0028-drm-panel-Add-panel-driver-for-Chipone-ICNA35XX-base.patch
