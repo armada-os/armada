@@ -31,6 +31,12 @@ test:
         echo "Running test: ${test_file}"
         bash "${test_file}"
     done
+    for test_file in tests/*-test.py; do
+        # A .py test with a same-named .sh wrapper already ran above.
+        [[ -e "${test_file%.py}.sh" ]] && continue
+        echo "Running test: ${test_file}"
+        python3 -B "${test_file}"
+    done
 
 [group('Just')]
 fix:
