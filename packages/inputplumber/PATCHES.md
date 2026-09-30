@@ -14,3 +14,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0004-feat-Hardware-Support-Qualcomm-SSC-sensors.patch`
   source: https://github.com/ShadowBlip/InputPlumber/pull/590
   notes: Rebased on latest InputPlumber; adds the FastRPCDevice.Id polkit action the upstream policy test requires.
+- `patches/0005-fix-ssc-scale-accelerometer-to-UHID-units-keep-SSC-libraries-loaded.patch`
+  source: https://github.com/tycosnh/InputPlumber/commit/a60b3192eb76b1758a481cbffecbc3487ca2d232
+  notes: Removed lockfile change
