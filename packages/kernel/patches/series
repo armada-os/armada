@@ -206,3 +206,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0529-ASoC-qdsp6-q6apm-fail-the-graph-open-when-the-DSP-rejects-it.patch
 0530-ASoC-qdsp6-release-AudioReach-graphs-across-system-suspend.patch
 0532-hwmon-pwm-fan-optionally-run-the-fan-while-charging-in-s2idle.patch
+# WCN7860 scan fixes must follow the hardware definition in 0039 above.
+1021-wifi-ath12k-fix-single-pdev-frequency-ranges.patch
+1022-wifi-ath12k-split-WCN7860-scans-by-firmware-ranges.patch
+1023-wifi-ath12k-protect-TX-during-associated-range-scans.patch
