@@ -1,0 +1,131 @@
+#!/usr/bin/bash
+# Lepton (Armada): Steam's Lepton with the Android services it strips restored.
+# Rebuilds its copy whenever Steam's Lepton changes, then hands the launch to it.
+set -euo pipefail
+
+# Unload Steam's LD_PRELOAD so it doesnt cause issues
+export LD_PRELOAD=
+
+SRC="${HOME}/.local/share/Steam/steamapps/common/Lepton"
+CACHE="${XDG_DATA_HOME:-${HOME}/.local/share}/lepton-armada"
+TOOL="${CACHE}/tool"
+LIB="${ARMADA_LEPTON_LIB:-/usr/lib/armada/lepton}"
+# Bump when the derived tool's contents change.
+REV=1
+CTX=headless-armada-framework
+CTR="lepton-${CTX}"
+
+log() { echo "lepton-armada: $*" >&2; }
+
+if [[ ! -x "${SRC}/lepton" ]]; then
+    log "Steam's Lepton isn't installed, asking Steam to install it"
+    /usr/bin/steam steam://install/3029110 >/dev/null 2>&1 &
+    exit 1
+fi
+
+# Builds from before this tool shipped in the image would shadow it.
+legacy="${HOME}/.local/share/Steam/compatibilitytools.d/lepton-armada"
+[[ -f "${legacy}/.armada-key" ]] && rm -rf "${legacy}"
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+build() {
+    local key="$1" new="${CACHE}/tool.new" work disp=""
+    for d in "${GAMESCOPE_WAYLAND_DISPLAY:-}" gamescope-0 "${WAYLAND_DISPLAY:-}" wayland-0; do
+        if [[ -n "${d}" && -S "${XDG_RUNTIME_DIR}/${d}" ]]; then
+            disp="${d}"
+            break
+        fi
+    done
+    [[ -n "${disp}" ]] || { log "no Wayland display to build against"; return 1; }
+
+    # Steam's launch environment (SteamAppId above all) would turn the build
+    # container into a Steam launch.
+    local clean=(env -i HOME="${HOME}" USER="${USER:-$(id -un)}" PATH=/usr/local/bin:/usr/bin:/usr/sbin
+                 XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" GAMESCOPE_WAYLAND_DISPLAY="${disp}" TERM=dumb)
+
+    rm -rf "${new}"
+    mkdir -p "${new}/images"
+    work="$(mktemp -d)"
+
+    # Scripts and the baked /data are small; the 1.1 GB rootfs is shared read-only.
+    (cd "${SRC}" && find . -mindepth 1 -maxdepth 1 ! -name images ! -name 'lepton-logs-*' -exec cp -a {} "${new}/" \;)
+    (cd "${SRC}/images" && find . -mindepth 1 -maxdepth 1 ! -name rootfs -exec cp -a {} "${new}/images/" \;)
+    ln -s "${SRC}/images/rootfs" "${new}/images/rootfs"
+
+    build_framework() {
+        local g=/data/local/tmp/armada i lepton_pid
+
+        "${clean[@]}" "${new}/lepton" kill "${CTX}" >/dev/null 2>&1 || true
+        rm -rf "${HOME}/.local/share/lepton/contexts/${CTX}"
+        "${clean[@]}" "${new}/lepton" start "${CTX}" >"${work}/lepton.log" 2>&1 &
+        lepton_pid=$!
+        for ((i = 0; i < 120; i++)); do
+            [[ "$("${clean[@]}" podman exec "${CTR}" /system/bin/getprop sys.boot_completed 2>/dev/null)" == 1 ]] && break
+            kill -0 "${lepton_pid}" 2>/dev/null || return 1
+            sleep 2
+        done
+        ((i < 120)) || return 1
+
+        local P=("${clean[@]}" podman)
+        "${P[@]}" exec "${CTR}" /system/bin/mkdir -p "${g}"
+        for f in "${LIB}/baksmali.dex.jar" "${LIB}/smali.dex.jar" "${LIB}/framework-guest.sh"; do
+            "${P[@]}" cp "${f}" "${CTR}:${g}/"
+        done
+        local smali="smali/com/android/server/SystemServer.smali"
+        "${P[@]}" exec "${CTR}" /system/bin/sh "${g}/framework-guest.sh" disassemble
+        "${P[@]}" cp "${CTR}:${g}/${smali}" "${work}/SystemServer.smali"
+        "${clean[@]}" python3 "${LIB}/restore-services.py" "${work}/SystemServer.smali"
+        "${P[@]}" cp "${work}/SystemServer.smali" "${CTR}:${g}/${smali}"
+        "${P[@]}" exec "${CTR}" /system/bin/sh "${g}/framework-guest.sh" assemble
+        "${P[@]}" cp "${CTR}:${g}/classes.new.dex" "${work}/classes.new.dex"
+        "${clean[@]}" python3 "${LIB}/repack-jar.py" "${SRC}/images/rootfs/system/framework/services.jar" \
+            "${work}/services.jar" "classes.dex=${work}/classes.new.dex" >/dev/null
+        "${P[@]}" cp "${work}/services.jar" "${CTR}:${g}/services.jar"
+        "${P[@]}" exec "${CTR}" /system/bin/sh "${g}/framework-guest.sh" compile
+        "${P[@]}" cp "${CTR}:${g}/out" "${work}/out"
+
+        "${clean[@]}" "${new}/lepton" kill "${CTX}" >/dev/null 2>&1 || true
+        wait "${lepton_pid}" 2>/dev/null || true
+        rm -rf "${HOME}/.local/share/lepton/contexts/${CTX}"
+
+        [[ "$(find "${work}/out" -type f | wc -l)" == 9 ]] || return 1
+        local fw="${new}/images/rootfs_overlay/system/framework"
+        mkdir -p "${fw}/oat/arm64"
+        cp "${work}/services.jar" "${fw}/services.jar"
+        cp "${work}/out/system/framework/oat/arm64/"* "${fw}/oat/arm64/"
+        cp "${work}/out/data/dalvik-cache/arm64/"* "${new}/sysbake/dalvik-cache/arm64/"
+    }
+
+    log "building from Lepton ${key}"
+    # bash ignores errexit inside an `if`, so check the subshell's status instead.
+    set +e
+    (set -e; build_framework)
+    local rc=$?
+    set -e
+    if ((rc != 0)); then
+        log "framework fix failed, running Valve's framework (clipboard apps crash)"
+        "${clean[@]}" "${new}/lepton" kill "${CTX}" >/dev/null 2>&1 || true
+        rm -rf "${HOME}/.local/share/lepton/contexts/${CTX}"
+        cp "${work}/lepton.log" "${new}/.armada-framework-failed" 2>/dev/null || touch "${new}/.armada-framework-failed"
+    fi
+
+    echo "${key}" >"${new}/.armada-key"
+    if [[ -e "${TOOL}" ]]; then
+        mv --exchange "${new}" "${TOOL}"
+    else
+        mv "${new}" "${TOOL}"
+    fi
+    rm -rf "${new}" "${work}"
+}
+
+key="$(cat "${SRC}/version.txt")-$(cat "${SRC}/images/version.txt")-${REV}"
+mkdir -p "${CACHE}"
+exec {lock}>"${CACHE}/.lock"
+flock "${lock}"
+if [[ "$(cat "${TOOL}/.armada-key" 2>/dev/null)" != "${key}" ]]; then
+    build "${key}" 2>&1 | tee "${CACHE}/build.log" >&2
+fi
+exec {lock}>&-
+
+exec "${TOOL}/lepton" "$@"

@@ -1,0 +1,19 @@
+#!/usr/bin/bash
+# Stand-in for the Steam Frame's `steamvr` tool. Lepton bind-mounts these
+# paths into its container and fails to start when they come back empty.
+set -euo pipefail
+
+base="${XDG_DATA_HOME:-${HOME}/.local/share}/lepton/steamvr"
+
+case "${1:-}" in
+    path) dir="${base}/runtime" ;;
+    logpath) dir="${base}/logs" ;;
+    configpath) dir="${base}/config" ;;
+    *)
+        echo "usage: steamvr path|logpath|configpath" >&2
+        exit 2
+        ;;
+esac
+
+mkdir -p "${dir}"
+printf '%s\n' "${dir}"

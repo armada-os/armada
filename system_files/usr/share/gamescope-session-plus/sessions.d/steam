@@ -32,6 +32,9 @@ export STEAM_USE_MANGOAPP=1
 
 export STEAM_USE_DYNAMIC_VRS=1
 
+# Lepton only gives its dev context a window. Steam-launched Android titles run headless without this.
+export APP_WANTS_FLATSCREEN=true
+
 # Gamescope selects Vulkan queue priority before the runtime policy is published.
 _armada_game_tweaks="${ARMADA_GAME_TWEAKS_HELPER:-/usr/libexec/armada/armada-game-tweaks}"
 _armada_vulkan_realtime="$("$_armada_game_tweaks" get global.gamescopeVulkanRealtime 2>/dev/null)"

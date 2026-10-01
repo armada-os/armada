@@ -1,0 +1,81 @@
+From: hashtagbasit <53941105+hashtagbasit@users.noreply.github.com>
+Subject: [PATCH] steamcompmgr: report xdg-shell titles to Steam, give them real touch
+
+Steam is only told about XWayland windows, so a native-Wayland title (Lepton's
+Android guest) never wins focus over Steam's own window. Report xdg windows
+with a resolved appID in GAMESCOPE_FOCUSABLE_APPS/WINDOWS, and give them touch
+passthrough behind the touch_passthrough_xdg_titles ConVar.
+
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index d90a869..b53e5a7 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -5218,7 +5218,23 @@ determine_and_apply_focus( global_focus_t *pFocus )
+ 	for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
+ 	{
+ 		if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND )
++		{
++			// Report xdg-shell windows too (Lepton's Android guest is one). Upstream reports only
++			// XWayland windows, so Steam is never told a native-Wayland title has a window: it
++			// keeps its own launch screen up and demotes the title behind 769 in
++			// GAMESCOPECTRL_BASELAYER_APPID.
++			uint32_t unXdgAppID = focusable_window->appID;
++			if ( focusable_window->type == steamcompmgr_win_type_t::XDG && unXdgAppID != 0 )
++			{
++				if ( std::find( focusable_appids.begin(), focusable_appids.end(), unXdgAppID ) == focusable_appids.end() )
++					focusable_appids.push_back( unXdgAppID );
++				// xdg ids are small serials, which no X11 window id ever is.
++				focusable_windows.push_back( focusable_window->xdg().id );
++				focusable_windows.push_back( unXdgAppID );
++				focusable_windows.push_back( focusable_window->pid );
++			}
+ 			continue;
++		}
+ 
+ 		// Exclude windows that are useless (1x1), skip taskbar + pager or override redirect windows
+ 		// from the reported focusable windows to Steam.
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 4cde46b..c11ccee 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -3825,6 +3825,22 @@ void wlserver_gesture_flush()
+ uint32_t previous_tx = 0;
+ uint32_t previous_ty = 0;
+ 
++// Android wants real touch -- scrolling, swipes, pinch -- not Steam's click emulation, which a
++// non-Steam title gets by default. Keyed on an xdg window whose appID resolved at creation.
++gamescope::ConVar<bool> cv_touch_passthrough_xdg_titles( "touch_passthrough_xdg_titles", true, "Give a native-Wayland (xdg-shell) Steam title real touch instead of Steam's click emulation." );
++
++static gamescope::TouchClickMode wlserver_touch_click_mode()
++{
++	if ( wlserver.mouse_focus_surface != NULL )
++	{
++		wlserver_wl_surface_info *info = get_wl_surface_info( wlserver.mouse_focus_surface );
++		steamcompmgr_win_t *win = ( info && info->xdg_surface ) ? info->xdg_surface->win : nullptr;
++		if ( win && cv_touch_passthrough_xdg_titles && win->appID != 0 )
++			return gamescope::TouchClickModes::Passthrough;
++	}
++	return GetBackend()->GetTouchClickMode();
++}
++
+ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor, gamescope::IBackendConnector* connector )
+ {
+ 	assert( wlserver_is_lock_held() );
+@@ -3855,7 +3871,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
+ 		trackpad_dx = tx - wlserver.mouse_surface_cursorx;
+ 		trackpad_dy = ty - wlserver.mouse_surface_cursory;
+ 
+-		gamescope::TouchClickMode eMode = GetBackend()->GetTouchClickMode();
++		gamescope::TouchClickMode eMode = wlserver_touch_click_mode();
+ 
+ 		if ( eMode == gamescope::TouchClickModes::Passthrough )
+ 		{
+@@ -3959,7 +3975,7 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
+ 		tx *= focusedWindowScaleX;
+ 		ty *= focusedWindowScaleY;
+ 
+-		gamescope::TouchClickMode eMode = GetBackend()->GetTouchClickMode();
++		gamescope::TouchClickMode eMode = wlserver_touch_click_mode();
+ 
+ 		if ( eMode == gamescope::TouchClickModes::Passthrough )
+ 		{

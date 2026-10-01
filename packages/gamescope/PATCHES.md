@@ -46,3 +46,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0022-mangoapp-keep-a-lease-client-off-the-shared-queue.patch`
   source: armada
+- `patches/0023-steamcompmgr-report-xdg-titles-to-steam.patch`
+  source: https://github.com/hashtagbasit/SteamOS-ARM-Handhelds/commit/a991581b194a532398537a141a89cfaf17f0cf7d
+  notes: Only using the xdg focus report and touch passthrough.
