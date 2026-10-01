@@ -20,3 +20,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0006-add-fastrpc-config-to-devices.patch`
   source: armada
   notes: fastrpc matcher pinned to fastrpc-adsp. Boards like the Retroid Pocket 6 also expose fastrpc-cdsp/-cdsp-secure, and an unqualified matcher spawns doomed SSC CompositeDevices on the compute DSP.
+- `patches/0007-feat-Manager-opt-in-to-FastRPC-devices.patch`
+  source: armada
+  notes: FastRPC sources stay off unless INPUTPLUMBER_FASTRPC=1; armada-control's "Enable Gyro" toggle sets it and restarts InputPlumber.

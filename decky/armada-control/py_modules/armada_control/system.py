@@ -118,6 +118,18 @@ def set_abl_auto_enabled(enabled):
     return bool(call("set_abl_auto_enabled", enabled=bool(enabled)).get("enabled"))
 
 
+def gyro_state():
+    try:
+        result = call("get_gyro")
+    except Exception:
+        return {"supported": False, "enabled": False}
+    return {"supported": bool(result.get("supported")), "enabled": bool(result.get("enabled"))}
+
+
+def set_gyro_enabled(enabled):
+    return bool(call("set_gyro_enabled", enabled=bool(enabled)).get("enabled"))
+
+
 def bottom_screen_enabled():
     try:
         return bool(call("get_bottom_screen_enabled").get("enabled"))

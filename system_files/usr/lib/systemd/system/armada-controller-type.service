@@ -10,3 +10,5 @@ ExecStart=/usr/libexec/armada/controller-type apply
 
 [Install]
 WantedBy=multi-user.target
+# Re-run whenever InputPlumber (re)starts, e.g. after the gyro toggle.
+WantedBy=inputplumber.service
