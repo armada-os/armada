@@ -121,7 +121,7 @@ if command -v kwriteconfig6 >/dev/null; then
 fi
 
 export GAMESCOPE_FALLBACK_APPID=0x41524d41
-CLIENTCMD='/usr/libexec/armada/launch-steam -gamepadui -steamos3 -steampal -steamdeck'
+CLIENTCMD='/usr/bin/steam -gamepadui -steamos3 -steampal -steamdeck'
 armada_running_from_internal || CLIENTCMD+=' -noverifyfiles'
 [[ -e /etc/armada/splash-disabled ]] || CLIENTCMD="/usr/libexec/armada/armada-splash-run ${CLIENTCMD}"
 export CLIENTCMD
