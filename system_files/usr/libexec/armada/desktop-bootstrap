@@ -3,6 +3,10 @@ set -euo pipefail
 
 [[ ${XDG_SESSION_TYPE:-} == wayland ]] || exit 0
 
+# Nested Desktop is already sized and oriented by Gamescope. Do not apply the
+# physical panel's Desktop Mode rotation or dual-screen configuration to it.
+[[ ${ARMADA_NESTED_DESKTOP:-0} != 1 ]] || exit 0
+
 activation_env=(
     DESKTOP_SESSION
     XDG_CURRENT_DESKTOP

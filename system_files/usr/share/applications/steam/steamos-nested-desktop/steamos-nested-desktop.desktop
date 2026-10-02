@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Nested Desktop
+Comment=Run the KDE Plasma desktop inside Gaming Mode
+Exec=/usr/bin/bash /usr/bin/steamos-nested-desktop
+Icon=preferences-desktop-display
+Terminal=false
+Categories=System;
+X-Steam-Controller-Template=Desktop
