@@ -16,10 +16,11 @@ INSTALL_DATA    := $(INSTALL) -Dm644
 
 all: $(TARGET)
 
-$(TARGET): src/armada-splash.c src/stb_impl.c
+$(TARGET): src/armada-splash.c src/splash-i18n.c src/stb_impl.c \
+           src/splash-i18n.h src/locales/en.h src/locales/zh-CN.h
 	@mkdir -p build
 	$(CC) -O2 -w -c src/stb_impl.c -o build/stb_impl.o
-	$(CC) $(CFLAGS) -o $@ $< build/stb_impl.o $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $< src/splash-i18n.c build/stb_impl.o $(LDFLAGS)
 	strip $@
 	rm -f build/stb_impl.o
 

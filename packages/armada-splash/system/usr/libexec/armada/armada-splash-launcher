@@ -48,8 +48,15 @@ argv0=armada-splash
 
 read -r -a extra <<<"${ARMADA_SPLASH_ARGS:-}"
 
-exec -a "$argv0" /usr/libexec/armada/armada-splash "${backend[@]}" --rotate "$rot" --keep-vt \
+# Binary/font overrides for on-device layout tuning (/etc is writable, /usr is
+# not); the language override is forwarded so ARMADA_SPLASH_LANGUAGE=auto keeps
+# working even when it is set without export.
+splash_bin="${ARMADA_SPLASH_BIN:-/usr/libexec/armada/armada-splash}"
+splash_font="${ARMADA_SPLASH_FONT:-/usr/share/armada/splash/font.ttf}"
+
+exec -a "$argv0" "$splash_bin" "${backend[@]}" --rotate "$rot" --keep-vt \
     --image /usr/share/armada/splash/splash.asp \
     --status /run/armada/splash/status \
-    --font /usr/share/armada/splash/font.ttf \
+    --font "$splash_font" \
+    --language "${ARMADA_SPLASH_LANGUAGE:-auto}" \
     "${extra[@]}"

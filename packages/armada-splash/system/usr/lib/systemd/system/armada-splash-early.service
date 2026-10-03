@@ -4,6 +4,8 @@ Description=Armada splash (early boot)
 # the boot transaction; the sddm drop-in stops this unit instead.
 DefaultDependencies=no
 Before=basic.target
+# The automatic Steam-language read needs /home mounted.
+After=local-fs.target
 Conflicts=shutdown.target
 ConditionPathExists=/usr/libexec/armada/armada-splash
 ConditionPathExists=!/etc/armada/splash-disabled
