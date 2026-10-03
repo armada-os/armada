@@ -1,6 +1,6 @@
 //! Hardware backends for RGB lighting.
 
-use crate::{rgb_saturation_helper, ColorCorrection, LightingConfig};
+use crate::{rgb_saturation, ColorCorrection, LightingConfig};
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
@@ -333,7 +333,7 @@ fn channel_value(channel: &str, [red, green, blue]: [u8; 3], maximum: u32) -> u3
 }
 
 fn corrected_rgb(config: &LightingConfig, profile: Option<&ColorCorrection>) -> [u8; 3] {
-    let rgb: [u8; 3] = rgb_saturation_helper::rgb_after_saturation(config.rgb(), config.saturation);
+    let rgb: [u8; 3] = rgb_saturation::rgb_after_saturation(config.rgb(), config.saturation);
     let correction: Option<&ColorCorrection> = config.correction.as_ref().or(profile);
     let Some(correction) = correction else {
         return rgb;
