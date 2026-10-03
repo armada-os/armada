@@ -4,16 +4,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import * as backend from "./backend";
 import { AppRow, TERMINAL_PHASES } from "./components/AppRow";
+import { useLocale } from "./hooks/useLocale";
+import { t } from "./i18n";
 import { categoryIcons } from "./icons";
 import { addToSteam, launchShortcut, removeFromSteam } from "./lib/shortcuts";
 import { styles } from "./styles";
 import type { Catalog, CatalogApp, Job, Status } from "./types";
 
 const SECTIONS = [
-  { key: "emulators", title: "Emulators" },
-  { key: "applications", title: "Applications" },
-  { key: "plugins", title: "Decky Plugins" },
-];
+  { key: "emulators", title: "categories.emulators" },
+  { key: "applications", title: "categories.applications" },
+  { key: "plugins", title: "categories.plugins" },
+] as const;
 
 // The QAM unmounts the panel whenever a menu or modal takes focus, so
 // per-render state cannot survive a drill-down.
@@ -25,6 +27,7 @@ const autoAddAttempted = new Set<string>();
 const removalInFlight = new Set<string>();
 
 export function Content() {
+  useLocale();
   const [catalog, setCatalogState] = useState<Catalog | null>(cachedCatalog);
   const [status, setStatus] = useState<Status | null>(null);
   const [updates, setUpdates] = useState<Record<string, { latest: string }>>({});
@@ -92,13 +95,13 @@ export function Content() {
       const app = catalog.apps.find((entry) => entry.id === job.appId);
       if (!app) continue;
       if (job.phase === "error") {
-        toast(app.name, job.error || "Failed");
+        toast(app.name, job.error || t("common.failed"));
       } else if (job.phase === "done") {
         if (job.action !== "uninstall") {
           installFinished = true;
-          toast(app.name, "Installed");
+          toast(app.name, t("common.installed"));
         } else {
-          toast(app.name, "Uninstalled");
+          toast(app.name, t("common.uninstalled"));
         }
       }
     }
@@ -167,7 +170,7 @@ export function Content() {
       }
       if (autoAddAttempted.has(app.id)) continue;
       autoAddAttempted.add(app.id);
-      run(addToSteamFlow(app), () => toast(app.name, "Added to Steam"));
+      run(addToSteamFlow(app), () => toast(app.name, t("notifications.addedToSteam")));
     }
   }, [status, catalog]);
 
@@ -197,10 +200,10 @@ export function Content() {
     const shortcut = status?.shortcuts?.[app.id];
     const items: ReactNode[] = [];
     if (active) {
-      items.push(<MenuItem key="cancel" onSelected={() => run(backend.cancelJob(app.id))}>Cancel</MenuItem>);
+      items.push(<MenuItem key="cancel" onSelected={() => run(backend.cancelJob(app.id))}>{t("common.cancel")}</MenuItem>);
     } else {
       if (job?.phase === "error") {
-        items.push(<MenuItem key="dismiss" onSelected={() => run(backend.dismissJob(app.id))}>Dismiss error</MenuItem>);
+        items.push(<MenuItem key="dismiss" onSelected={() => run(backend.dismissJob(app.id))}>{t("actions.dismissError")}</MenuItem>);
       }
       // A desktop-only tool must not be launched from game mode even if an
       // older install left a Steam shortcut behind.
@@ -217,14 +220,14 @@ export function Content() {
               }
             }}
           >
-            Launch
+            {t("actions.launch")}
           </MenuItem>,
         );
       }
       if (shortcut == null && app.launch && launchable) {
         items.push(
-          <MenuItem key="add-steam" onSelected={() => run(addToSteamFlow(app), () => toast(app.name, "Added to Steam"))}>
-            Add to Steam
+          <MenuItem key="add-steam" onSelected={() => run(addToSteamFlow(app), () => toast(app.name, t("notifications.addedToSteam")))}>
+            {t("actions.addToSteam")}
           </MenuItem>,
         );
       }
@@ -235,7 +238,7 @@ export function Content() {
         const kind = conflicts[0].type === "appimage" ? "AppImage" : "Flatpak";
         items.push(
           <MenuItem key="replace" onSelected={() => run(backend.replaceApp(app.id))}>
-            {`Replace ${kind} version`}
+            {t("actions.replaceVersion", { kind })}
           </MenuItem>,
         );
       } else if (!installed || update) {
@@ -243,14 +246,14 @@ export function Content() {
         // and no version is shown to compare against anyway.
         items.push(
           <MenuItem key="install" onSelected={() => run(backend.installApp(app.id))}>
-            {installed ? "Update to latest" : "Install"}
+            {installed ? t("actions.updateLatest") : t("actions.install")}
           </MenuItem>,
         );
       }
       if (app.desktopOnly && installed) {
         items.push(
           <MenuItem key="desktop" onSelected={() => run(backend.switchToDesktop())}>
-            Switch to Desktop
+            {t("actions.switchToDesktop")}
           </MenuItem>,
         );
       }
@@ -260,9 +263,9 @@ export function Content() {
         items.push(
           <MenuItem
             key="remove-steam"
-            onSelected={() => run(removeFromSteamFlow(app, shortcut), () => toast(app.name, "Removed from Steam"))}
+            onSelected={() => run(removeFromSteamFlow(app, shortcut), () => toast(app.name, t("notifications.removedFromSteam")))}
           >
-            Remove from Steam
+            {t("actions.removeFromSteam")}
           </MenuItem>,
         );
       }
@@ -271,16 +274,16 @@ export function Content() {
           <MenuItem
             key="reset-config"
             tone="destructive"
-            onSelected={() => run(backend.resetConfig(app.id), () => toast(app.name, "Configuration reset, previous kept as .bak"))}
+            onSelected={() => run(backend.resetConfig(app.id), () => toast(app.name, t("notifications.configurationReset")))}
           >
-            Reset Configuration
+            {t("actions.resetConfiguration")}
           </MenuItem>,
         );
       }
       if (installed && app.installType !== "system") {
         items.push(
           <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut))}>
-            Uninstall
+            {t("actions.uninstall")}
           </MenuItem>,
         );
       }
@@ -297,8 +300,8 @@ export function Content() {
         const path = result.realpath || result.path;
         if (!path) return;
         backend.prepareShortcut(path)
-          .then((launch) => addToSteam(launch).then(() => toast(launch.name, "Added to Steam")))
-          .catch((error) => toast("Could not add", String(error)));
+          .then((launch) => addToSteam(launch).then(() => toast(launch.name, t("notifications.addedToSteam"))))
+          .catch((error) => toast(t("notifications.couldNotAdd"), String(error)));
       })
       .catch(() => {});
   };
@@ -312,7 +315,7 @@ export function Content() {
     return (
       <PanelSection title="Armada Store">
         <PanelSectionRow>
-          <div>{message}</div>
+          <div>{message === "Loading" ? t("common.loading") : message}</div>
         </PanelSectionRow>
       </PanelSection>
     );
@@ -324,10 +327,10 @@ export function Content() {
     return (
       <>
         <style>{styles}</style>
-        <PanelSection title={section.title}>
+        <PanelSection title={t(section.title)}>
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={() => setView(null)}>
-              Back
+              {t("common.back")}
             </ButtonItem>
           </PanelSectionRow>
           {apps.map((app) => (
@@ -361,7 +364,7 @@ export function Content() {
                 <div className="armada-store-row">
                   {categoryIcons[key]}
                   <div className="armada-store-row-text">
-                    <div className="armada-store-row-name">{title}</div>
+                    <div className="armada-store-row-name">{t(title)}</div>
                   </div>
                   {state && <div className="armada-store-row-state">{state}</div>}
                 </div>
@@ -374,7 +377,7 @@ export function Content() {
             <div className="armada-store-row">
               {categoryIcons.add}
               <div className="armada-store-row-text">
-                <div className="armada-store-row-name">Add Non-Steam Game</div>
+                <div className="armada-store-row-name">{t("actions.addNonSteamGame")}</div>
               </div>
             </div>
           </ButtonItem>
