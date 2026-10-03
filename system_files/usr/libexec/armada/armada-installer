@@ -31,6 +31,7 @@ LINUX_TYPE = "0fc63daf-8483-4772-8e79-3d69d8477de4"
 BTRFS_OPTS = "noatime,compress=zstd:1,discard=async"
 SELF = "/usr/libexec/armada/armada-installer"
 BOOTIMG = "/usr/libexec/armada/armada-bootimg-update"
+LUKS_NAME = "armada-root"
 RECOVERY = ("To retry from SD, select SD as the boot source in ABL and re-run the installer. "
             "To abandon the internal installation, select UNINSTALL CFW in ABL.")
 
@@ -342,6 +343,75 @@ def require_idle(plan):
         if key in mounted or ident in swaps or any((Path("/sys/dev/block") / key / "holders").iterdir()):
             raise Error(f"{node} is in use; unmount it and disable its swap or device mappings before continuing")
 
+def prompt_passphrase():
+    import getpass
+    while True:
+        first = getpass.getpass("Passphrase for internal storage: ")
+        if not first:
+            print("The passphrase cannot be empty.", file=sys.stderr)
+            continue
+        if first != getpass.getpass("Repeat passphrase: "):
+            print("The passphrases did not match; try again.", file=sys.stderr)
+            continue
+        return first
+
+
+def require_dm_crypt():
+    """Refuse before anything is touched if the kernel cannot do dm-crypt.
+
+    cryptsetup being installed says nothing about the running kernel: luksFormat
+    succeeds entirely in userspace, and the failure only appears at `cryptsetup
+    open` -- by which point the partition table has already been rewritten.
+    """
+    result = run("dmsetup", "targets", capture=True, check=False)
+    if "crypt" not in result.stdout.split():
+        raise Error("This kernel provides no dm-crypt target; an encrypted install is not possible")
+
+
+def read_passphrase(args):
+    """Resolve the passphrase from stdin or a prompt. None means unencrypted.
+
+    Never accepted as an argument: /proc/*/cmdline is world readable. A single
+    line with the trailing newline stripped, so the key matches what
+    systemd-cryptsetup sends from the boot prompt -- cryptsetup's `--key-file -`
+    reads to EOF without treating a newline specially, so a stray \\n would be
+    baked into the key and the device would be unopenable with the chosen
+    passphrase.
+    """
+    if not args.encrypt:
+        if args.passphrase_stdin:
+            raise Error("--passphrase-stdin requires --encrypt")
+        return None
+    require_dm_crypt()
+    if args.passphrase_stdin:
+        line = sys.stdin.readline()
+        passphrase = line[:-1] if line.endswith("\n") else line
+        if not passphrase:
+            raise Error("--passphrase-stdin was given but stdin was empty")
+        return passphrase
+    if args.assume_yes:
+        raise Error("--encrypt with --assume-yes requires --passphrase-stdin")
+    return prompt_passphrase()
+
+
+def erase_luks_keyslots(plan):
+    """Destroy the keyslots of any LUKS container about to be deleted.
+
+    Removing a partition leaves its header and ciphertext on disk; erasing the
+    keyslots destroys the only copy of the volume key, which makes the data
+    unrecoverable far more cheaply than overwriting it. Not a hardware
+    guarantee -- on UFS/eMMC the flash translation layer may retain the old
+    physical pages -- but it removes the keys from the logical device.
+    """
+    for p in plan.remove:
+        node = part_node(plan.table.device, p.number)
+        probe = run("blkid", "-s", "TYPE", "-o", "value", node, capture=True, check=False)
+        if probe.stdout.strip() != "crypto_LUKS":
+            continue
+        print(f"Erasing LUKS keyslots on {node}...", flush=True)
+        if run("cryptsetup", "luksErase", "--batch-mode", node, check=False).returncode:
+            print(f"WARNING: could not erase LUKS keyslots on {node}; the header remains.",
+                  file=sys.stderr)
 
 @dataclass
 class SourceImage:
@@ -445,7 +515,7 @@ def base_kargs(directory=Path("/usr/lib/bootc/kargs.d")):
     return args
 
 
-def configure_deployment(target, source, uuids, kargs):
+def configure_deployment(target, source, uuids, kargs, luks_uuid=None):
     Gio, OSTree = ostree_api()
     sysroot = OSTree.Sysroot.new(Gio.File.new_for_path(str(target)))
     sysroot.load(None)
@@ -472,15 +542,21 @@ def configure_deployment(target, source, uuids, kargs):
     if (target / pointers[0].split("=", 1)[1].lstrip("/")).resolve(strict=True) != root.resolve():
         raise Error("Boot entry does not reference the selected deployment")
     linux, initrd = (fields[key] if fields[key].startswith("/boot/") else "/boot" + fields[key] for key in ("linux", "initrd"))
-    options = [f"root=UUID={uuids['root']}", "rw", f"boot=UUID={uuids['boot']}", *kargs,
-               f"rootflags=subvol=root,{BTRFS_OPTS}", pointers[0]]
+    options = [f"root=UUID={uuids['root']}", "rw", f"boot=UUID={uuids['boot']}"]
+    if luks_uuid:
+        options += [f"rd.luks.uuid={luks_uuid}"]
+    options += [*kargs, f"rootflags=subvol=root,{BTRFS_OPTS}", pointers[0]]
     entry.write_text(f"title Armada\nversion {fields.get('version', '1')}\noptions {' '.join(options)}\n"
                      f"linux {linux}\ninitrd {initrd}\nfdtdir {Path(linux).parent}/dtb\n")
 
 
 class Installation:
-    def __init__(self, plan):
+    def __init__(self, plan, encrypt=False, passphrase=None):
         self.plan = plan
+        self.encrypt = encrypt
+        self.passphrase = passphrase
+        self.luks_uuid = None
+        self.luks_open = False
         self.changed = False
         self.mounts = []
         self.work = None
@@ -503,6 +579,13 @@ class Installation:
             except (Error, OSError) as error:
                 failed = True
                 print(f"ERROR: cleanup: {error}", file=sys.stderr)
+        if self.luks_open and not failed:
+            try:
+                run("cryptsetup", "close", LUKS_NAME)
+                self.luks_open = False
+            except (Error, OSError) as error:
+                failed = True
+                print(f"ERROR: cleanup: {error}", file=sys.stderr)
         if self.work and not failed:
             shutil.rmtree(self.work)
         if failed:
@@ -515,6 +598,7 @@ class Installation:
             raise Error("The partition table changed after inspection; start the installer again")
         require_idle(plan)
         self.changed = True
+        erase_luks_keyslots(plan)
         plan.write()
         run("partprobe", plan.table.device)
         run("udevadm", "settle")
@@ -523,6 +607,27 @@ class Installation:
         if plan.operation != "replace":
             run("dd", "if=/dev/zero", f"of={part_node(plan.table.device, plan.userdata.number)}",
                 "bs=1M", "count=8", "conv=fsync", "status=none")
+                
+    def open_root(self, root):
+        """Return the device the btrfs goes on: the partition, or a mapper over it.
+
+        wipefs runs unconditionally so that swapping an encrypted install for an
+        unencrypted one (or the reverse) cannot leave a stale signature for blkid
+        to trip over.
+        """
+        run("wipefs", "-a", root)
+        if not self.encrypt:
+            return root
+        print("Creating the encrypted container...", flush=True)
+        run("cryptsetup", "luksFormat", "--batch-mode", "--type", "luks2",
+            "--cipher", "aes-xts-plain64", "--key-size", "512", "--pbkdf", "argon2id",
+            "--key-file", "-", root, input=self.passphrase)
+        run("cryptsetup", "open", "--key-file", "-", root, LUKS_NAME, input=self.passphrase)
+        self.luks_open = True
+        self.luks_uuid = output("cryptsetup", "luksUUID", root)
+        if not re.fullmatch(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", self.luks_uuid):
+            raise Error("Could not determine the LUKS container UUID")
+        return f"/dev/mapper/{LUKS_NAME}"
 
     def deploy(self, source, kargs):
         plan = self.plan
@@ -530,22 +635,26 @@ class Installation:
         self.work = Path(tempfile.mkdtemp(prefix="armada-install.", dir="/run"))
         target, top = self.work / "target", self.work / "top"
         print("Preparing the internal filesystems...", flush=True)
-        run("mkfs.btrfs", "-f", "-L", "root", root)
-        self.mount(root, top)
+        fs = self.open_root(root)
+        run("mkfs.btrfs", "-f", "-L", "root", fs)
+        self.mount(fs, top)
         for name in ("root", "var", "home"):
             run("btrfs", "subvolume", "create", top / name)
         run("umount", top)
         self.mounts.remove(top)
-        self.mount(root, target, BTRFS_OPTS + ",subvol=root")
-        self.mount(root, target / "var", BTRFS_OPTS + ",subvol=var")
-        self.mount(root, target / "var/home", BTRFS_OPTS + ",subvol=home")
+        self.mount(fs, target, BTRFS_OPTS + ",subvol=root")
+        self.mount(fs, target / "var", BTRFS_OPTS + ",subvol=var")
+        self.mount(fs, target / "var/home", BTRFS_OPTS + ",subvol=home")
         run("ostree", "admin", "init-fs", "--modern", target)
         run("mkfs.vfat", "-F", "16", "-S", plan.table.sector_size, "-s", 16384 // plan.table.sector_size, "-n", "ARMADA", esp)
         run("mkfs.ext4", "-F", "-L", "boot", boot)
         self.mount(boot, target / "boot")
         self.mount(esp, target / "boot/efi")
         uuids = {name: output("blkid", "-s", "UUID", "-o", "value", node)
-                 for name, node in (("root", root), ("boot", boot), ("esp", esp))}
+                 # "root" must read the FILESYSTEM, not the container: blkid on a
+                 # LUKS partition returns the LUKS UUID, which would end up in
+                 # root=UUID= and in every fstab line, and never resolve.
+                 for name, node in (("root", fs), ("boot", boot), ("esp", esp))}
         if not all(re.fullmatch(r"[A-Za-z0-9-]+", value) for value in uuids.values()):
             raise Error("Could not determine filesystem UUIDs")
         repo = target / "ostree/repo"
@@ -562,7 +671,7 @@ class Installation:
         run("ostree", "checkout", f"--repo={repo}", "--subpath=/var", source.checksum, seed)
         run("cp", "-a", f"{seed}/.", f"{target}/var/")
         shutil.rmtree(seed)
-        configure_deployment(target, source, uuids, kargs)
+        configure_deployment(target, source, uuids, kargs, self.luks_uuid)
         print("Writing the internal boot image...", flush=True)
         with tempfile.TemporaryDirectory(prefix=".armada-bootimg.", dir=target) as scratch:
             run(BOOTIMG, env=dict(os.environ, TMPDIR=scratch, ESP=str(target / "boot/efi"),
@@ -576,8 +685,8 @@ class Installation:
 
 
 @contextmanager
-def operation(plan):
-    job = Installation(plan)
+def operation(plan, encrypt=False, passphrase=None):
+    job = Installation(plan, encrypt, passphrase)
     failure = None
     try:
         yield job
@@ -617,6 +726,9 @@ def inhibit_sleep():
 def require_commands():
     needed = ["sfdisk", "lsblk", "findmnt", "partprobe", "udevadm", "dd", "systemd-inhibit", "mount"]
     needed += ["btrfs", "mkfs.btrfs", "mkfs.ext4", "mkfs.vfat", "umount", "ostree", "blkid", "cp", BOOTIMG]
+    # cryptsetup/wipefs/dmsetup are needed even for an unencrypted install: it may
+    # be replacing an encrypted one.
+    needed += ["cryptsetup", "wipefs", "dmsetup"]
     missing = [name for name in needed if not shutil.which(name)]
     if missing:
         raise Error("Missing required tools: " + ", ".join(missing))
@@ -644,6 +756,7 @@ def execute(args):
         raise Error("The target device or partition table changed after confirmation; start the installer again")
     require_commands()
     refuse_boot_disk(device)
+    passphrase = read_passphrase(args) if args.command == "install" else None
     with open("/run/armada-installer.lock", "w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -666,7 +779,7 @@ def execute(args):
         with inhibit_sleep():
             kargs = base_kargs()
             with locked_source() as source:
-                with operation(plan) as job:
+                with operation(plan, passphrase is not None, passphrase) as job:
                     job.partition()
                     job.deploy(source, kargs)
                     os.sync()
@@ -751,8 +864,37 @@ class Gui:
     def confirm(self, text, label):
         if self.dialog("question", text, "--ok-label=" + label, "--cancel-label=Cancel").returncode:
             raise Cancelled()
+            
+    def ask_encryption(self):
+        """Offer encryption and collect the passphrase. None means unencrypted.
 
-    def progress(self, command):
+        zenity has no conditional reveal, so the choice and the fields are two
+        dialogs rather than a checkbox that expands.
+        """
+        if self.dialog("question",
+                       "Encrypt internal storage?\n\n"
+                       "All of Armada's data is encrypted with a passphrase you enter each time "
+                       "the device starts. An on-screen keyboard is shown at boot for entry.\n\n"
+                       "If the passphrase is lost, the data cannot be recovered.",
+                       "--ok-label=Encrypt", "--cancel-label=Don't encrypt").returncode:
+            return None
+        while True:
+            # \x1f (unit separator) cannot collide with a passphrase the way "|" can.
+            result = run("zenity", "--forms", "--title=Armada Installer", "--width=460",
+                         "--text=Set the startup passphrase",
+                         "--add-password=Passphrase", "--add-password=Repeat passphrase",
+                         "--separator=\x1f", capture=True, check=False)
+            if result.returncode:
+                raise Cancelled()
+            first, _, second = result.stdout.rstrip("\n").partition("\x1f")
+            if not first:
+                self.dialog("error", "The passphrase cannot be empty.")
+            elif first != second:
+                self.dialog("error", "The passphrases did not match.")
+            else:
+                return first
+
+    def progress(self, command, passphrase=None):
         fd, name = tempfile.mkstemp(prefix="armada-installer.", suffix=".log",
                                     dir="/run" if os.geteuid() == 0 else f"/run/user/{os.getuid()}")
         with os.fdopen(fd, "w") as stream:
@@ -761,7 +903,9 @@ class Gui:
             try:
                 progress.stdin.write("0\n")
                 progress.stdin.flush()
-                result = run(*self.command, *command, "--assume-yes", stdout=stream, stderr=subprocess.STDOUT, check=False)
+                result = run(*self.command, *command, "--assume-yes", stdout=stream,
+                             stderr=subprocess.STDOUT, check=False,
+                             input=None if passphrase is None else passphrase + "\n")
             finally:
                 try:
                     progress.stdin.close()
@@ -796,7 +940,10 @@ class Gui:
             command = ["install"]
         else:
             raise Error("Unknown internal storage layout")
-        self.progress([*command, "--expect-table", info["table_fingerprint"]])
+        passphrase = self.ask_encryption()
+        if passphrase is not None:
+            command += ["--encrypt", "--passphrase-stdin"]
+        self.progress([*command, "--expect-table", info["table_fingerprint"]], passphrase)
         if self.dialog("question", "Operation complete. Power off and remove the SD card before booting internal storage.",
                        "--ok-label=Power off", "--cancel-label=Close").returncode == 0:
             run("sudo", "systemctl", "poweroff")
@@ -813,6 +960,10 @@ def main(argv=None):
     install.add_argument("--userdata-gib", type=int)
     install.add_argument("--expect-table", help="require the target fingerprint returned by detect")
     install.add_argument("-y", "--assume-yes", action="store_true")
+    install.add_argument("--encrypt", action="store_true",
+                         help="LUKS2-encrypt the root partition")
+    install.add_argument("--passphrase-stdin", action="store_true",
+                         help="read the LUKS passphrase from stdin (required with --encrypt -y)")
     args = parser.parse_args(argv)
 
     def interrupt(signum, _frame):

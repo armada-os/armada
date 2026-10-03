@@ -37,6 +37,7 @@ for required in \
     python-unversioned-command \
     lsb_release \
     fuse-libs \
+    cryptsetup \
     sdl2-compat; do
     rpm -q "$required" >/dev/null || { echo "ERROR: $required got removed"; exit 1; }
 done
@@ -62,7 +63,8 @@ for package in \
     powerdevil \
     protontricks \
     steamos-manager \
-    umtp-responder; do
+    umtp-responder \
+    unl0kr; do
     case "$(rpm -q --qf '%{release}' "$package" 2>/dev/null)" in
         *armada*) ;;
         *) echo "ERROR: patched .armada package not installed: $package"; exit 1 ;;
