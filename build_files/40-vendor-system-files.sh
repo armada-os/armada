@@ -85,6 +85,12 @@ systemctl enable seatd.service
 systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
+systemctl enable msm-firmware-loader.service
+systemctl enable msm-firmware-loader-unpack.service
+systemctl enable hexagonrpcd-adsp-rootpd.service
+systemctl enable hexagonrpcd-adsp-sensorspd.service
+systemctl enable hexagonrpcd-sdsp.service
+systemctl enable hexagonrpcd-resume.service
 systemctl enable armada-guestos.service
 systemctl enable armada-device-quirks.service
 systemctl enable armada-rgb.service

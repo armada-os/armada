@@ -83,6 +83,13 @@ dnf5 -y install --setopt=install_weak_deps=False \
     gstreamer1-plugins-ugly \
     gstreamer1-plugin-libav
 
+# Gyro packages
+dnf5 -y install --setopt=install_weak_deps=False \
+    make-dynpart-mappings \
+    msm-firmware-loader \
+    hexagonrpc \
+    libssc
+
 # Install the remaining plugins from Fedora; Negativo17's full -bad package
 # pulls a large soundfont payload that Armada does not need.
 rm -f /etc/yum.repos.d/negativo17-fedora-multimedia.repo
@@ -101,6 +108,9 @@ ln -sf libbz2.so.1 /usr/lib64/libbz2.so.1.0
 
 # Some AppImages link zlib's unversioned development soname.
 ln -sf libz.so.1 /usr/lib64/libz.so
+
+# InputPlumber's SSC driver links libssc's unversioned development soname.
+ln -sf libssc.so.2 /usr/lib64/libssc.so
 
 # pressure-vessel needs en_US.UTF-8; the base image ships only minimal-langpack (C.utf8).
 dnf5 -y install --setopt=install_weak_deps=False glibc-langpack-en

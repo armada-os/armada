@@ -54,6 +54,7 @@ export const en = {
   "settings.ablVersion": "ABL Version",
   "common.unknown": "unknown",
   "settings.experimental": "Experimental",
+  "settings.enableGyro": "Enable Gyro",
   "settings.diagnostics": "Diagnostics",
   "settings.sleepMode": "Sleep Mode",
   "settings.sleepLogs": "Enable Sleep Logs",
