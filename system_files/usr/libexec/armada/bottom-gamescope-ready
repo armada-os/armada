@@ -14,7 +14,7 @@ gamescope_env="/proc/$ARMADA_BOTTOM_GAMESCOPE_PID/environ"
     while IFS= read -r -d '' var; do
         printf '%s=%q\n' "${var%%=*}" "${var#*=}"
     done < <(comm -z -13 <(sort -z "$gamescope_env") <(sort -z /proc/$$/environ))
-    printf '%s\n' WAYLAND_DISPLAY=gamescope-secondary GAMESCOPE_WAYLAND_DISPLAY=gamescope-secondary
+    printf '%s\n' WAYLAND_DISPLAY=gamescope-secondary XDG_SESSION_TYPE=wayland GAMESCOPE_WAYLAND_DISPLAY=gamescope-secondary
 } >"$env_file.new"
 mv -f "$env_file.new" "$env_file"
 exec sleep infinity
