@@ -33,12 +33,7 @@ steam_link "${steam_root}/ubuntu12_64" "${HOME}/.steam/bin64"
 # Steam's own binaries find the rest through $ORIGIN; this matches Frame's RUNSTEAM.sh.
 export LD_LIBRARY_PATH="${steam_arm_dir}"
 export STEAM_RUNTIME="${steam_root}/ubuntu12_32/steam-runtime"
-fex_compat_tool="${steam_root}/steamapps/common/FEX-Emu/fex-compat-tool"
-if [[ -f "${fex_compat_tool}" ]]; then
-    STEAM_RUNTIME_LIBRARY_PATH=$("${fex_compat_tool}" run -- "${STEAM_RUNTIME}/run.sh" --print-steam-runtime-library-paths)
-else
-    STEAM_RUNTIME_LIBRARY_PATH=${STEAM_RUNTIME}/pinned_libs_32:${STEAM_RUNTIME}/pinned_libs_64:/usr/local/lib/i386-linux-gnu:/lib/i386-linux-gnu:/usr/local/lib:/usr/local/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/lib:${STEAM_RUNTIME}/lib/i386-linux-gnu:${STEAM_RUNTIME}/usr/lib/i386-linux-gnu:${STEAM_RUNTIME}/lib/x86_64-linux-gnu:${STEAM_RUNTIME}/usr/lib/x86_64-linux-gnu:${STEAM_RUNTIME}/lib:${STEAM_RUNTIME}/usr/lib
-fi
+STEAM_RUNTIME_LIBRARY_PATH=${STEAM_RUNTIME}/pinned_libs_32:${STEAM_RUNTIME}/pinned_libs_64:/usr/local/lib/i386-linux-gnu:/lib/i386-linux-gnu:/usr/local/lib:/usr/local/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/lib:${STEAM_RUNTIME}/lib/i386-linux-gnu:${STEAM_RUNTIME}/usr/lib/i386-linux-gnu:${STEAM_RUNTIME}/lib/x86_64-linux-gnu:${STEAM_RUNTIME}/usr/lib/x86_64-linux-gnu:${STEAM_RUNTIME}/lib:${STEAM_RUNTIME}/usr/lib
 export STEAM_RUNTIME_LIBRARY_PATH
 export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
 export STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1
