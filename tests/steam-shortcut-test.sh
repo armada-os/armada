@@ -25,23 +25,23 @@ if [[ -n "$mode" ]]; then
     [[ "$mode" == 100755 ]] || fail "steam shim tracked as $mode, expected 100755"
 fi
 
-# Behaviour: arguments must reach launch-steam intact, spaces included.
+# Behaviour: arguments must reach /usr/lib/steam/steam intact, spaces included.
 stub="$TEST_ROOT/launch-steam"
 cat > "$stub" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
 STUB
 chmod 0755 "$stub"
-sed "s#/usr/bin/steam#$stub#" "$SHIM" > "$TEST_ROOT/steam"
+sed "s#/usr/lib/steam/steam#$stub#" "$SHIM" > "$TEST_ROOT/steam"
 chmod 0755 "$TEST_ROOT/steam"
 
 got="$("$TEST_ROOT/steam" 'steam://rungameid/434050' 'two words')"
-expected=$'--desktop\nsteam://rungameid/434050\ntwo words'
+expected=$'steam://rungameid/434050\ntwo words'
 [[ "$got" == "$expected" ]] || fail "shim mangled arguments: $(printf '%q' "$got")"
 
-# Bare invocation, which is what a menu launch reduces to: add nothing but the flag.
+# Bare invocation, which is what a menu launch reduces to: add nothing.
 got="$("$TEST_ROOT/steam")"
-[[ "$got" == "--desktop" ]] || fail "bare shim should pass only --desktop, got: $got"
+[[ -z "$got" ]] || fail "bare shim should pass no arguments, got: $got"
 
 grep -qx 'Exec=/usr/bin/steam %U' "$ENTRY" \
     || fail "steam.desktop Exec is missing %U"
