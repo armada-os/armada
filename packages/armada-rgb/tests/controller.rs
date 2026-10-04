@@ -14,6 +14,7 @@ struct Fixture {
     root: PathBuf,
     backlight: PathBuf,
     config: PathBuf,
+    dev: PathBuf,
     leds: PathBuf,
     model: PathBuf,
     profiles: PathBuf,
@@ -40,6 +41,7 @@ impl Fixture {
         let fixture = Self {
             config: root.join("etc/rgb.json"),
             backlight,
+            dev: root.join("dev"),
             leds,
             model: root.join("model"),
             profiles: root.join("profiles.json"),
@@ -71,6 +73,13 @@ impl Fixture {
         fs::write(path.join("brightness"), "unchanged\n").unwrap();
     }
 
+    fn serial_target(&self, name: &str) -> PathBuf {
+        fs::create_dir_all(&self.dev).unwrap();
+        let path: PathBuf = self.dev.join(name);
+        fs::write(&path, b"").unwrap();
+        path
+    }
+
     fn value(&self, target: &str, attribute: &str) -> String {
         fs::read_to_string(self.leds.join(target).join(attribute))
             .unwrap()
@@ -94,12 +103,22 @@ impl Fixture {
             }],
         });
         fs::write(&self.profiles, serde_json::to_vec(&catalog).unwrap()).unwrap();
+        self.binary()
+    }
 
+    fn serial_command(&self) -> Command {
+        fs::write(&self.model, b"AYANEO Pocket MICRO 2\0").unwrap();
+        fs::write(&self.profiles, include_bytes!("../profiles.json")).unwrap();
+        self.binary()
+    }
+
+    fn binary(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_armada-rgb"));
         command
             .env("ARMADA_RGB_CONFIG_PATH", &self.config)
             .env("ARMADA_RGB_SYSFS_ROOT", &self.leds)
             .env("ARMADA_BACKLIGHT_ROOT", &self.backlight)
+            .env("ARMADA_RGB_DEV_ROOT", &self.dev)
             .env("ARMADA_RGB_MODEL_PATH", &self.model)
             .env("ARMADA_RGB_PROFILES_PATH", &self.profiles);
         command
@@ -336,6 +355,27 @@ fn air_y_pro_profile_controls_both_aw20036_rings() {
             "0"
         );
     }
+}
+
+#[test]
+fn pocket_micro2_profile_sends_static_frames_to_the_mcu() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS2");
+    let run = |args: &[&str]| fixture.serial_command().args(args).output().unwrap();
+
+    let output: std::process::Output = run(&["set", "--color", "FF8000", "--brightness", "25"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 11] = [0xF7, 0x01, 0x40, 0x20, 0x00, 0, 0, 0, 0, 0x61, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+
+    let output: std::process::Output = run(&["off"]);
+    assert!(output.status.success());
+    let frame: [u8; 11] = [0xF7, 0x01, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
 }
 
 #[test]

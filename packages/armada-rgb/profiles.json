@@ -45,6 +45,13 @@
       }
     },
     {
+      "models": ["AYANEO Pocket MICRO 2"],
+      "backend": {
+        "type": "serial",
+        "device": "ttyHS2"
+      }
+    },
+    {
       "models": ["KONKR Pocket FIT Elite"],
       "backend": {
         "type": "multicolor",
