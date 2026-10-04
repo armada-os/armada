@@ -34,8 +34,8 @@ case "${pkg}" in
         mkdir -p "${ccache_dir}"
         run_args+=(--volume "${ccache_dir}:/ccache:Z" --env CCACHE_DIR=/ccache) ;;
     # generate.sh gets no network, so its dependencies are baked into the image.
-    steam-bootstrap)
-        image=localhost/armada-steam-bootstrap-builder
+    steam)
+        image=localhost/armada-steam-builder
         podman build --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
             -t "${image}" -f "${pkg}/Containerfile" "${pkg}/"
         phase2=(bash generate.sh)

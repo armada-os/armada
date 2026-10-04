@@ -4,12 +4,11 @@ import argparse
 import json
 import pathlib
 import re
-import stat
 import sys
 import tarfile
 
 
-MANIFEST_NAME = "steam_client_steamdeck_stable_linuxarm64.installed"
+MANIFEST_NAME = ".bootstrap-manifest"
 STEAM_PREFIX = "var/home/armada/.local/share/Steam"
 
 
@@ -47,35 +46,6 @@ def report_failures(missing, mismatched, not_directories, not_symlinks):
     raise SystemExit(1)
 
 
-def verify_filesystem(manifest, steam):
-    missing = []
-    mismatched = []
-    not_directories = []
-    not_symlinks = []
-    entries = parse_manifest(manifest.read_text(errors="ignore"))
-
-    for relative_name, expected in entries:
-        if expected < -2:
-            continue
-        relative = pathlib.Path(relative_name)
-        path = steam / relative
-        try:
-            path_stat = path.lstat() if expected < 0 else path.stat()
-        except OSError as error:
-            missing.append(f"{relative}: {error.strerror}")
-            continue
-        if expected == -1 and not stat.S_ISDIR(path_stat.st_mode):
-            not_directories.append(str(relative))
-        elif expected == -2 and not stat.S_ISLNK(path_stat.st_mode):
-            not_symlinks.append(str(relative))
-        elif expected >= 0 and path_stat.st_size != expected:
-            mismatched.append(
-                f"{relative}: expected {expected}, got {path_stat.st_size}"
-            )
-
-    report_failures(missing, mismatched, not_directories, not_symlinks)
-
-
 def blob_path(layout, digest):
     algorithm, value = digest.split(":", 1)
     return layout / "blobs" / algorithm / value
@@ -87,7 +57,7 @@ def find_steam_layer(layout):
     image_manifest = json.loads(manifest_path.read_text())
     if "layers" not in image_manifest:
         raise SystemExit("OCI index does not reference an image manifest")
-    manifest_member_name = f"{STEAM_PREFIX}/package/{MANIFEST_NAME}"
+    manifest_member_name = f"{STEAM_PREFIX}/{MANIFEST_NAME}"
 
     # The Steam component xattr keeps its manifest and content in one layer.
     for layer in image_manifest["layers"]:
@@ -137,19 +107,8 @@ def verify_oci(layout):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--oci", type=pathlib.Path)
-    parser.add_argument("manifest", nargs="?", type=pathlib.Path)
-    parser.add_argument("steam", nargs="?", type=pathlib.Path)
-    args = parser.parse_args()
-
-    if args.oci:
-        if args.manifest or args.steam:
-            parser.error("--oci cannot be combined with filesystem paths")
-        verify_oci(args.oci)
-    elif args.manifest and args.steam:
-        verify_filesystem(args.manifest, args.steam)
-    else:
-        parser.error("provide --oci or MANIFEST STEAM")
+    parser.add_argument("--oci", type=pathlib.Path, required=True)
+    verify_oci(parser.parse_args().oci)
 
 
 if __name__ == "__main__":

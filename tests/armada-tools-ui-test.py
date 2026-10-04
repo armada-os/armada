@@ -47,7 +47,7 @@ def respond(dialog, response):
 def check_confirmation(dialog):
     buttons = {}
     def collect(widget):
-        if isinstance(widget, ui.Gtk.Button) and widget.get_label() in {"Cancel", "Roll Back", "Update", "Repair"}:
+        if isinstance(widget, ui.Gtk.Button) and widget.get_label() in {"Cancel", "Roll Back", "Update", "Repair", "Reset"}:
             buttons[widget.get_label()] = widget
         child = widget.get_first_child()
         while child:
@@ -192,12 +192,22 @@ with tempfile.TemporaryDirectory() as directory, \
         wait_for(lambda: window.confirmation is None)
         start.assert_not_called()
 
+    with patch.object(window.job, "start") as start:
+        window.confirm_reset()
+        check_confirmation(window.confirmation)
+        assert window.confirmation.get_heading() == "Reset Steam?"
+        assert "signed out" in window.confirmation.get_body()
+        assert window.reset_button.get_sensitive()
+        respond(window.confirmation, "cancel")
+        wait_for(lambda: window.confirmation is None)
+        start.assert_not_called()
+
     script = Path(directory) / "health-check"
     script.write_text('#!/bin/sh\necho "Verifying factory Steam"\nsleep 0.5\necho "Steam repaired"\n')
     script.chmod(0o755)
     with patch.object(ui.backend, "TOOLS", str(script)):
         window.confirm_repair()
-        respond(window.confirmation, "repair")
+        respond(window.confirmation, "confirm")
         assert window.repair_running
         assert not window.repair_button.get_sensitive()
         window.close()
@@ -236,9 +246,15 @@ with tempfile.TemporaryDirectory() as directory, \
 
     with patch.object(window, "start_repair") as start:
         window.repair_button.emit("clicked")
-        assert "factory Steam client" in window.confirmation.get_body()
-        respond(window.confirmation, "repair")
-        start.assert_called_once_with()
+        assert "packaged Steam client" in window.confirmation.get_body()
+        respond(window.confirmation, "confirm")
+        start.assert_called_once_with(False)
+        wait_for(lambda: window.confirmation is None)
+        start.reset_mock()
+        window.reset_button.emit("clicked")
+        assert "signed out" in window.confirmation.get_body()
+        respond(window.confirmation, "confirm")
+        start.assert_called_once_with(True)
 
     updates = window.updates
     for attribute in ("requesting", "loading"):

@@ -274,20 +274,20 @@ FROM scratch AS out-extest
 COPY --from=pkg-extest /work/out/libextest.so /
 
 
-FROM ${BUILDER_IMAGE} AS pkg-steam-bootstrap-builder
-COPY steam-bootstrap/install-builder-deps.sh /tmp/
+FROM ${BUILDER_IMAGE} AS pkg-steam-builder
+COPY steam/install-builder-deps.sh /tmp/
 RUN /tmp/install-builder-deps.sh
 
-FROM pkg-steam-bootstrap-builder AS pkg-steam-bootstrap
+FROM pkg-steam-builder AS pkg-steam
 COPY toolchain.env scrub-scratch.sh /src/
-COPY steam-bootstrap/ /work/
+COPY steam/ /work/
 WORKDIR /work
-RUN --mount=type=cache,id=steam-bootstrap-work,target=/work/work ./build.sh
-RUN --network=none --mount=type=cache,id=steam-bootstrap-work,target=/work/work \
+RUN --mount=type=cache,id=steam-work,target=/work/work ./build.sh
+RUN --network=none --mount=type=cache,id=steam-work,target=/work/work \
     bash generate.sh && /src/scrub-scratch.sh
 
-FROM scratch AS out-steam-bootstrap
-COPY --from=pkg-steam-bootstrap /work/out/ /steam-bootstrap/
+FROM scratch AS out-steam
+COPY --from=pkg-steam /work/out/ /steam/
 
 
 # Cross-builds an arm64 target from an x86_64 host.

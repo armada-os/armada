@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-SHIM="$ROOT/system_files/usr/bin/steam"
-ENTRY="$ROOT/system_files/usr/share/applications/steam.desktop"
+SHIM="$ROOT/packages/steam/system/usr/bin/steam"
+ENTRY="$ROOT/packages/steam/system/usr/share/applications/steam.desktop"
 MIMEAPPS="$ROOT/system_files/etc/xdg/mimeapps.list"
 VENDOR="$ROOT/build_files/40-vendor-system-files.sh"
 TEST_ROOT="$(mktemp -d)"
@@ -20,19 +20,19 @@ fail() {
 [[ -x "$SHIM" ]] || fail "steam shim is not executable: $SHIM"
 
 # A dropped +x here has broken an image build before.
-mode="$(git -C "$ROOT" ls-files -s -- system_files/usr/bin/steam 2>/dev/null | awk '{print $1}')"
+mode="$(git -C "$ROOT" ls-files -s -- packages/steam/system/usr/bin/steam 2>/dev/null | awk '{print $1}')"
 if [[ -n "$mode" ]]; then
     [[ "$mode" == 100755 ]] || fail "steam shim tracked as $mode, expected 100755"
 fi
 
-# Behaviour: arguments must reach /usr/lib/steam/steam intact, spaces included.
+# Behaviour: arguments must reach /usr/lib/steam/armada-steam-run intact, spaces included.
 stub="$TEST_ROOT/launch-steam"
 cat > "$stub" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
 STUB
 chmod 0755 "$stub"
-sed "s#/usr/lib/steam/steam#$stub#" "$SHIM" > "$TEST_ROOT/steam"
+sed "s#/usr/lib/steam/armada-steam-run#$stub#" "$SHIM" > "$TEST_ROOT/steam"
 chmod 0755 "$TEST_ROOT/steam"
 
 got="$("$TEST_ROOT/steam" 'steam://rungameid/434050' 'two words')"
@@ -45,7 +45,7 @@ got="$("$TEST_ROOT/steam")"
 
 grep -qx 'Exec=/usr/bin/steam %U' "$ENTRY" \
     || fail "steam.desktop Exec is missing %U"
-grep -qx 'MimeType=x-scheme-handler/steam;' "$ENTRY" \
+grep -Eq '^MimeType=(.*;)?x-scheme-handler/steam;' "$ENTRY" \
     || fail "steam.desktop does not advertise x-scheme-handler/steam"
 
 # Advertising the scheme does not make Steam the default; the association does.
