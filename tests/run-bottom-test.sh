@@ -311,6 +311,10 @@ grep -Fxq 'ExecStopPost=/usr/bin/rm -f %t/armada-bottom-screen-active' "$BOTTOM_
 grep -Fq '/run/user/1000/armada-bottom-screen-active' "$WAYDROID_INPUT_SETUP"
 grep -Fq 'each_gamescope gamescopectl drm_sleep_internal_screen 1' "$FAKE_SUSPEND"
 grep -Fq 'each_gamescope gamescopectl drm_sleep_internal_screen 0' "$FAKE_SUSPEND"
+grep -Fq 'timeout 5 /usr/bin/armada-rgb sleep' "$FAKE_SUSPEND"
+grep -Fq 'timeout 5 /usr/bin/armada-rgb wake' "$FAKE_SUSPEND"
+grep -A1 '^    display_off ' "$FAKE_SUSPEND" | grep -Fxq '    lights_off'
+grep -B1 -Fx '    display_on' "$FAKE_SUSPEND" | grep -Fxq '    lights_on'
 
 bash -n "$RUN_BOTTOM" "$BOTTOM_GAMESCOPE" "$BOTTOM_SESSION" "$BOTTOM_READY" "$FAKE_SUSPEND"
 printf 'bottom-screen session tests passed\n'

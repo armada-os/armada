@@ -38,6 +38,10 @@ impl LightingBackend {
         }
     }
 
+    pub(crate) fn blanks_on_sleep(&self) -> bool {
+        matches!(self, Self::Serial(_))
+    }
+
     pub(crate) fn default_correction(&self) -> Option<ColorCorrection> {
         match self {
             Self::Serial(backend) => backend.correction.clone(),

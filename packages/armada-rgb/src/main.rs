@@ -49,6 +49,10 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         interval_ms: u64,
     },
+    /// Turn MCU-driven lights off without saving.
+    Sleep,
+    /// Restore saved lighting after sleep on MCU-driven backends.
+    Wake,
 }
 
 fn main() -> Result<()> {
@@ -113,6 +117,8 @@ fn main() -> Result<()> {
                 watch_brightness(&controller, Duration::from_millis(interval_ms))?;
             }
         }
+        Command::Sleep => controller.sleep()?,
+        Command::Wake => controller.wake()?,
     }
     Ok(())
 }

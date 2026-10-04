@@ -84,4 +84,23 @@ impl Controller {
         }
         Ok(applied_config)
     }
+
+    pub fn sleep(&self) -> Result<()> {
+        if !self.backend.blanks_on_sleep() {
+            return Ok(());
+        }
+
+        let mut config: LightingConfig = self.get()?;
+        config.enabled = false;
+        self.backend.apply(&config)
+    }
+
+    pub fn wake(&self) -> Result<()> {
+        if !self.backend.blanks_on_sleep() {
+            return Ok(());
+        }
+
+        self.apply()?;
+        Ok(())
+    }
 }

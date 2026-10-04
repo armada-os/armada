@@ -379,6 +379,101 @@ fn pocket_micro2_profile_sends_static_frames_to_the_mcu() {
 }
 
 #[test]
+fn sleep_blanks_the_mcu_without_saving() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS2");
+    let run = |args: &[&str]| fixture.serial_command().args(args).output().unwrap();
+
+    let output: std::process::Output = run(&["set", "--color", "FF8000", "--brightness", "25"]);
+    assert!(output.status.success());
+    let saved: Vec<u8> = fs::read(&fixture.config).unwrap();
+
+    let output: std::process::Output = run(&["sleep"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 11] = [0xF7, 0x01, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+    assert_eq!(fs::read(&fixture.config).unwrap(), saved);
+}
+
+#[test]
+fn sleep_leaves_kernel_led_backends_alone() {
+    let fixture: Fixture = Fixture::new();
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        fixture.channel_target(target, "255");
+    }
+    let backend: ChannelBackend = ChannelBackend::new(
+        fixture.leds.clone(),
+        vec!["red=l:r1".into(), "green=l:g1".into(), "blue=l:b1".into()],
+    );
+    let controller: Controller =
+        Controller::new(fixture.config.clone(), LightingBackend::Channels(backend));
+
+    controller.sleep().unwrap();
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        assert_eq!(fixture.value(target, "brightness"), "unchanged");
+    }
+    assert!(!fixture.config.exists());
+
+    fixture.target("rgb:l1", "blue green red", "255");
+    fixture.controller(&["rgb:l1".into()]).sleep().unwrap();
+    assert_eq!(fixture.value("rgb:l1", "brightness"), "unchanged");
+    assert_eq!(fixture.value("rgb:l1", "multi_intensity"), "unchanged");
+}
+
+#[test]
+fn wake_leaves_kernel_led_backends_alone() {
+    let fixture: Fixture = Fixture::new();
+    let targets: [&str; 3] = ["red=l:r1", "green=l:g1", "blue=l:b1"];
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        fixture.channel_target(target, "255");
+    }
+
+    let output: std::process::Output = fixture
+        .command("channels", &targets, None)
+        .arg("wake")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        assert_eq!(fixture.value(target, "brightness"), "unchanged");
+        assert_eq!(fixture.value(target, "max_brightness"), "255");
+    }
+    assert!(!fixture.config.exists());
+}
+
+#[test]
+fn wake_resends_the_saved_color_to_the_mcu() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS2");
+    let run = |args: &[&str]| fixture.serial_command().args(args).output().unwrap();
+
+    let output: std::process::Output = run(&["set", "--color", "FF8000", "--brightness", "25"]);
+    assert!(output.status.success());
+    let saved: Vec<u8> = fs::read(&fixture.config).unwrap();
+    let output: std::process::Output = run(&["sleep"]);
+    assert!(output.status.success());
+
+    fs::write(&tty, b"").unwrap();
+    let output: std::process::Output = run(&["wake"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 11] = [0xF7, 0x01, 0x40, 0x20, 0x00, 0, 0, 0, 0, 0x61, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+    assert_eq!(fs::read(&fixture.config).unwrap(), saved);
+}
+
+#[test]
 fn correction_preserves_the_user_color() {
     let fixture: Fixture = Fixture::new();
     fixture.target("rgb:sticks", "red green blue", "255");
