@@ -495,6 +495,18 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/patches/linux/9999-remove-log-spam.patch
   upstream: unknown
   notes: Armada carries only the ROCKNIX device-tree change that disables CoreSight STM and omits the broader log-suppression changes from the source patch.
+- `patches/0301-drm-panel-add-ayaneo-ar18-panel.patch`
+  source: https://github.com/ROCKNIX/distribution/blob/aa418ad72e3e661b3834f46168bdf183276df2ac/projects/ROCKNIX/devices/SM8550/patches/linux/0064-gpu-drm-panel-add-ar16-4inch-panel.patch
+  upstream: not submitted
+  notes: Rewritten for the AYANEO Pocket MICRO 2 ST7123 panel on the mipi_dsi_multi_context API; timings and init sequence from the vendor device tree.
+- `patches/0302-input-touchscreen-add-sitronix-st7123.patch`
+  source: https://github.com/raspberrypi/linux/commit/6d4adb6bfea64581dff1c670a17333b63b8ba05d
+  upstream: not submitted
+  notes: Waveshare's Sitronix ST7123 driver from the Raspberry Pi kernel (rpi-6.18.y), with chip id 0x87 accepted for the AYANEO Pocket MICRO 2.
+- `patches/0303-hid-add-ayaneo-pocket-micro2-force-feedback.patch`
+  source: armada
+  upstream: local
+  notes: Rumble report format from the stock Android kernel's hid-ayaneo. Binds on every AYANEO 4001:0428 pad, rumble only on the Pocket MICRO 2.
 - `patches/0026-dt-bindings-arm-qcom-ids-Add-SoC-ID-for-CQ8725S.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0026-dt-bindings-arm-qcom-ids-Add-SoC-ID-for-CQ8725S.patch
   upstream: https://lore.kernel.org/r/20260605-cq8725s-soc-id-v1-1-bb1ef93de649@gmail.com
@@ -645,6 +657,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8650/linux/dts/qcom/sm8650-konkr-pf.dts
 - `dts/sm8250-retroidpocket-common.dtsi`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/linux/dts/qcom/sm8250-retroidpocket-common.dtsi
+- `dts/sm8250-ayaneo-pocket-micro2.dts`
+  source: armada
+  notes: Board file for the AYANEO Pocket MICRO 2; fan is left to armada-powerd (no thermal-zone include).
 - `dts/sm8250-ayn-thorlite.dts`
   source: https://github.com/ROCKNIX/distribution/blob/dbea089dd83e156babbbcabc677117cef08f1148/projects/ROCKNIX/devices/SM8250/linux/dts/qcom/sm8250-ayn-thorlite.dts
   notes: Imported verbatim from ROCKNIX; SHA-256 `62a06545c46fe052c69699c20c8c6b330c4b64a3ecdb6b5ba99420868a78597d`. Authored by Philippe Simons; retains the original BSD-3-Clause SPDX identifier and Retroid Pocket copyright notice.

@@ -358,6 +358,12 @@ check("device-env MANGMI Pocket Max profile",
       pocket_max.get("ARMADA_SOC_CLASS") == "SM8250" and
       pocket_max.get("ARMADA_PANEL_ORIENTATION") == "left" and
       pocket_max.get("ARMADA_IP_TARGETS") == "ds5")
+pocket_micro2 = run_device_env("AYANEO Pocket MICRO 2")
+check("device-env AYANEO Pocket MICRO 2 profile",
+      pocket_micro2.get("ARMADA_DEVICE_ID") == "ayaneo-pocket-micro2" and
+      pocket_micro2.get("ARMADA_SOC_CLASS") == "SM8250" and
+      pocket_micro2.get("ARMADA_PANEL_ORIENTATION") == "right" and
+      pocket_micro2.get("ARMADA_GAMESCOPE_FAKE_OUTPUT_MM") == "177x118")
 
 # --- armada-powerd: config parsing ------------------------------------------
 powerd = load_script("armada-powerd")
