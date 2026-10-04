@@ -123,15 +123,16 @@ class CommandJob:
 
 
 class SteamJob(CommandJob):
-    def start(self):
-        super().start([TOOLS, "steam", "repair", "--yes"], "steam-repair.log")
+    def start(self, reset=False):
+        action = "reset" if reset else "repair"
+        super().start([TOOLS, "steam", action, "--yes"], f"steam-{action}.log")
 
 
-def repair_steam():
+def repair_steam(reset=False):
     if os.geteuid() == 0:
         raise RuntimeError("Run armada-tools as the desktop user, without sudo")
     from armada_steam import SteamMaintenance
-    SteamMaintenance().restore()
+    SteamMaintenance().restore(reset=reset)
 
 
 def confirm(message, yes):
@@ -195,7 +196,8 @@ def main(arguments=None):
     channel = actions["update"].add_parser("channel", help="choose the channel used by subsequent OS updates")
     channel.add_argument("channel", choices=("stable", "beta", "preview"))
     for obj, action, description in (
-            ("steam", "repair", "repair Steam by reinstalling the factory client from the booted OS image; use Desktop Mode, including when running over SSH"),
+            ("steam", "repair", "repair Steam by re-applying the packaged client files over the current ones; nothing is deleted and you stay signed in; use Desktop Mode, including when running over SSH"),
+            ("steam", "reset", "reset Steam by deleting its client files and installing a fresh copy; games, saves, settings and custom Proton are kept but you are signed out; use it if repair does not help"),
             ("update", "install", "install an OS update using the selected channel"),
             ("update", "rollback", "select the previous OS version for the next restart")):
         command = actions[obj].add_parser(action, help=description, description=description)
@@ -210,8 +212,12 @@ def main(arguments=None):
         if args.object == "steam":
             if args.action == "status":
                 return print_status("Steam")
-            confirm("Reinstall the factory Steam client and clear its web cache. Your games, saves, accounts, and settings will be kept.", args.yes)
-            repair_steam()
+            if args.action == "reset":
+                confirm("Delete Steam's client files and install a fresh copy. Your games, saves, controller profiles, music, settings, and custom Proton are kept, but you will be signed out of Steam.", args.yes)
+                repair_steam(reset=True)
+            else:
+                confirm("Re-apply the packaged Steam client files over the current ones. Nothing is deleted and you stay signed in.", args.yes)
+                repair_steam()
         elif args.object == "ssh":
             action = "get" if args.action == "status" else args.action
             state = ssh_request(action + "-ssh")

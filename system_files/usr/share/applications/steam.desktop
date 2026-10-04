@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Steam
-Exec=/usr/bin/steam %U
-Icon=steam
-Terminal=false
-Categories=Game;
-MimeType=x-scheme-handler/steam;
-StartupWMClass=steam

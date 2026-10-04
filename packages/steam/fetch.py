@@ -7,11 +7,11 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-MANIFEST = "steam_client_steamdeck_stable_linuxarm64"
 CDN = "https://client-update.steamstatic.com"
 
 
 def packages(contents, version):
+    """The manifest's plain zip packages, in the order Steam applies them."""
     match = re.search(r'"version"\s+"(\d+)"', contents)
     if match is None or match.group(1) != version:
         raise ValueError("Pinned manifest version differs from BASE.env")
@@ -20,13 +20,10 @@ def packages(contents, version):
         fields = dict(re.findall(r'"([^"\n]+)"\s+"([^"\n]+)"', block))
         if "file" not in fields:
             continue
-        for name_key, hash_key in (("file", "sha2"), ("zipvz", "sha2vz")):
-            if name_key not in fields:
-                continue
-            name, digest = fields[name_key], fields.get(hash_key, "")
-            if not re.fullmatch(r'[a-zA-Z0-9_.-]+', name) or not re.fullmatch(r'[a-f0-9]{64}', digest):
-                raise ValueError(f"Invalid package name or SHA256: {name}")
-            result.append((name, digest))
+        name, digest = fields["file"], fields.get("sha2", "")
+        if not re.fullmatch(r'[a-zA-Z0-9_.-]+', name) or not re.fullmatch(r'[a-f0-9]{64}', digest):
+            raise ValueError(f"Invalid package name or SHA256: {name}")
+        result.append((name, digest))
     if not result:
         raise ValueError("Pinned manifest contains no packages")
     return result
@@ -46,27 +43,24 @@ def download(url, path, expected):
     print(f"Verified {path.name}", flush=True)
 
 
-def prepare_manifest(version, feed):
+def prepare_manifest(version, feed, channel):
+    manifest_name = f"steam_client_{channel}_linuxarm64"
     override = pathlib.Path("manifests") / version
-    manifest = feed / MANIFEST
+    manifest = feed / manifest_name
     if override.is_file():
         shutil.copyfile(override, manifest)
     else:
-        subprocess.run(["curl", "--retry", "5", "-fLsS", "-o", str(manifest), f"{CDN}/{MANIFEST}"], check=True)
+        subprocess.run(["curl", "--retry", "5", "-fLsS", "-o", str(manifest), f"{CDN}/{manifest_name}"], check=True)
     return packages(manifest.read_text(), version)
 
 
 def main():
-    version, runtime, runtime_sha256 = sys.argv[1:]
+    channel, version = sys.argv[1:]
     feed = pathlib.Path("work/feed")
     feed.mkdir(parents=True, exist_ok=True)
-    archives = prepare_manifest(version, feed)
+    archives = prepare_manifest(version, feed, channel)
     with ThreadPoolExecutor(max_workers=4) as executor:
         list(executor.map(lambda item: download(f"{CDN}/{item[0]}", feed / item[0], item[1]), archives))
-    download(
-        f"https://repo.steampowered.com/steamrt3c/images/{runtime}/steam-runtime-steamrt-arm64.tar.xz",
-        pathlib.Path("work/runtime.tar.xz"), runtime_sha256,
-    )
 
 
 if __name__ == "__main__":

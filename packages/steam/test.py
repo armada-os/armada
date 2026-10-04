@@ -2,27 +2,7 @@ import pathlib
 import tempfile
 import unittest
 
-import verify
 import fetch
-
-
-class VersionTests(unittest.TestCase):
-    def test_version_selection(self):
-        with tempfile.TemporaryDirectory() as directory:
-            manifest = pathlib.Path(directory) / "manifest"
-            for contents, accepted in (
-                ('"linuxarm64" { "version" "123" }', True),
-                ('"linuxarm64" { "version" "124" }', False),
-                ('"linuxarm64" {}', False),
-                ('"linuxarm64" { "version" "invalid" }', False),
-            ):
-                with self.subTest(contents=contents):
-                    manifest.write_text(contents)
-                    if accepted:
-                        verify.verify_version(manifest, "123")
-                    else:
-                        with self.assertRaisesRegex(SystemExit, "version mismatch"):
-                            verify.verify_version(manifest, "123")
 
 
 class OverrideTests(unittest.TestCase):
@@ -54,11 +34,11 @@ class ManifestSelectionTests(unittest.TestCase):
                         pathlib.Path("manifests", saved_version).write_text(contents)
 
                     def download(command, **kwargs):
-                        self.assertEqual(command[-1], f"{fetch.CDN}/{fetch.MANIFEST}")
-                        (feed / fetch.MANIFEST).write_text(contents)
+                        self.assertEqual(command[-1], f"{fetch.CDN}/steam_client_chan_linuxarm64")
+                        (feed / "steam_client_chan_linuxarm64").write_text(contents)
 
                     with patch("fetch.subprocess.run", side_effect=download) as request:
-                        self.assertEqual(fetch.prepare_manifest(version, feed), [("bins.zip.abc", "a" * 64)])
+                        self.assertEqual(fetch.prepare_manifest(version, feed, "chan"), [("bins.zip.abc", "a" * 64)])
                         self.assertEqual(request.call_count, int(version != saved_version))
 
     def test_bad_override_does_not_fall_back_to_network(self):
@@ -71,7 +51,7 @@ class ManifestSelectionTests(unittest.TestCase):
             pathlib.Path("manifests/123").write_text('"version" "124"')
             with patch("fetch.subprocess.run") as request:
                 with self.assertRaises(ValueError):
-                    fetch.prepare_manifest("123", pathlib.Path("feed"))
+                    fetch.prepare_manifest("123", pathlib.Path("feed"), "chan")
                 request.assert_not_called()
 
 

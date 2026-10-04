@@ -1,0 +1,74 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+# gamescope numbers its sockets by start order; this name is fixed. The first
+# gamescope to start Steam owns it, so a client of another one cannot repoint it.
+primary="${XDG_RUNTIME_DIR:-}/gamescope-primary"
+if [[ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" && -n "${XDG_RUNTIME_DIR:-}" && ! -L "${primary}" ]]; then
+    ln -s "${GAMESCOPE_WAYLAND_DISPLAY}" "${primary}"
+fi
+
+steam_root="${STEAM_ROOT:-${HOME}/.local/share/Steam}"
+steam_arm_dir="${steam_root}/steamrtarm64"
+
+# Installs the client if it is missing, was wiped, or an install was interrupted.
+STEAM_ROOT="${steam_root}" /usr/lib/steam/steam-install
+
+# bin_steam.sh finds the client through ~/.steam/steam; the rest are what Steam and
+# its native games look for. A real directory where a link belongs would break it.
+mkdir -p "${HOME}/.steam"
+steam_link() {
+    [[ -d "$2" && ! -L "$2" ]] && rm -rf "$2"
+    ln -sTfn "$1" "$2"
+}
+steam_link "${steam_root}" "${HOME}/.steam/steam"
+steam_link "${steam_root}" "${HOME}/.steam/root"
+steam_link "${steam_root}/linux32" "${HOME}/.steam/sdk32"
+steam_link "${steam_root}/linux64" "${HOME}/.steam/sdk64"
+steam_link "${steam_root}/linuxarm64" "${HOME}/.steam/sdkarm64"
+steam_link "${steam_arm_dir}" "${HOME}/.steam/binarm64"
+steam_link "${steam_root}/ubuntu12_32" "${HOME}/.steam/bin32"
+steam_link "${steam_root}/ubuntu12_64" "${HOME}/.steam/bin64"
+
+# Steam's own binaries find the rest through $ORIGIN; this matches Frame's RUNSTEAM.sh.
+export LD_LIBRARY_PATH="${steam_arm_dir}"
+export STEAM_RUNTIME="${steam_root}/ubuntu12_32/steam-runtime"
+fex_compat_tool="${steam_root}/steamapps/common/FEX-Emu/fex-compat-tool"
+if [[ -f "${fex_compat_tool}" ]]; then
+    STEAM_RUNTIME_LIBRARY_PATH=$("${fex_compat_tool}" run -- "${STEAM_RUNTIME}/run.sh" --print-steam-runtime-library-paths)
+else
+    STEAM_RUNTIME_LIBRARY_PATH=${STEAM_RUNTIME}/pinned_libs_32:${STEAM_RUNTIME}/pinned_libs_64:/usr/local/lib/i386-linux-gnu:/lib/i386-linux-gnu:/usr/local/lib:/usr/local/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/lib:${STEAM_RUNTIME}/lib/i386-linux-gnu:${STEAM_RUNTIME}/usr/lib/i386-linux-gnu:${STEAM_RUNTIME}/lib/x86_64-linux-gnu:${STEAM_RUNTIME}/usr/lib/x86_64-linux-gnu:${STEAM_RUNTIME}/lib:${STEAM_RUNTIME}/usr/lib
+fi
+export STEAM_RUNTIME_LIBRARY_PATH
+export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
+export STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1
+
+touch "${steam_root}/.cef-enable-remote-debugging"
+cd "${steam_root}"
+
+[[ " $* " == *" -steamos3 "* ]] || set -- -steamos3 "$@"
+
+# Frame counts a Steam that dies within seconds, or fails within two minutes, as a
+# failed start, and repairs the install after enough of them in a row.
+failures="${XDG_RUNTIME_DIR:-/tmp}/armada-steam-failures"
+failed_starts_before_repair=5
+
+# Steam exits 42 to ask for a restart.
+while true; do
+    started=${SECONDS}
+    rc=0
+    /usr/lib/steam/bin_steam.sh "$@" || rc=$?
+    [[ ${rc} -ne 42 ]] || { echo "Restarting Steam"; continue; }
+    ran=$((SECONDS - started))
+    if (( ran < 5 || (rc != 0 && ran < 120) )); then
+        printf x >>"${failures}"
+        if [[ $(wc -c <"${failures}") -ge ${failed_starts_before_repair} ]]; then
+            echo "Steam failed to start ${failed_starts_before_repair} times in a row; repairing" >&2
+            STEAM_ROOT="${steam_root}" /usr/lib/steam/steam-install --repair || true
+            rm -f "${failures}"
+        fi
+    else
+        rm -f "${failures}"
+    fi
+    exit "${rc}"
+done

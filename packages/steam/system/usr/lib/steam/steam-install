@@ -1,0 +1,43 @@
+#!/usr/bin/bash
+# Installs the Steam client from the booted image's copy of the tree.
+#   steam-install            only if the client is missing or an install was interrupted
+#   steam-install --repair   re-extract over the existing root
+#   steam-install --reset    delete the client files first, keeping games, saves,
+#                            controller profiles, music, config and compat tools
+set -euo pipefail
+
+root=${STEAM_ROOT:-${HOME}/.local/share/Steam}
+# The tree is read from the booted OSTree commit, so it needs no second copy in /usr.
+export_command=(pkexec --disable-internal-agent /usr/libexec/armada/armada-tools-priv export-steam)
+[[ -z ${ARMADA_STEAM_EXPORT:-} ]] || read -ra export_command <<<"${ARMADA_STEAM_EXPORT}"
+# Present while files are being replaced, so a power loss mid-copy gets repaired next launch.
+marker=.install-in-progress
+
+mode=${1:-}
+case "${mode}" in
+    ""|--repair|--reset) ;;
+    *) echo "usage: steam-install [--repair|--reset]" >&2; exit 2 ;;
+esac
+
+if [[ -z ${mode} && ! -e ${root}/${marker} && -x ${root}/steamrtarm64/steam ]]; then
+    exit 0
+fi
+
+if [[ ${mode} == --reset ]] && pgrep -u "${EUID}" -f "${root}/steamrtarm64/steam" >/dev/null; then
+    echo "Steam is running; stop it before resetting" >&2
+    exit 1
+fi
+
+mkdir -p "${root}"
+touch "${root}/${marker}"
+
+if [[ ${mode} == --reset ]]; then
+    keep=(userdata compatibilitytools.d config controller_base steamapps music "${marker}")
+    while IFS= read -r -d '' name; do
+        [[ " ${keep[*]} " == *" ${name} "* ]] || rm -rf --one-file-system -- "${root:?}/${name}"
+    done < <(find "${root}" -mindepth 1 -maxdepth 1 -printf '%f\0')
+fi
+
+"${export_command[@]}" | tar -x -C "${root}"
+/usr/lib/steam/steam-verify "${root}"
+rm -f "${root}/${marker}"
