@@ -2,7 +2,7 @@
 # Runs inside the builder container. See ../build-local.sh for the contract.
 #
 # Builds on x86_64 unlike the rest of the repo: Google ships NDK host binaries
-# for linux-x86_64 only.
+# for linux-x86_64 only. The lepton package runs this too, with its own BASE.env.
 set -euxo pipefail
 
 source ./BASE.env
@@ -82,14 +82,15 @@ meson setup build-android \
     -Dplatform-sdk-version=${ANDROID_API} \
     -Dandroid-stub=true \
     -Dandroid-libbacktrace=disabled \
-    -Dgallium-drivers=freedreno \
+    -Dgallium-drivers="${GALLIUM_DRIVERS:-freedreno}" \
     -Dvulkan-drivers=freedreno \
     -Dfreedreno-kmds=msm \
     -Degl=enabled \
     -Dgbm=enabled \
     -Dgbm-backends-path=/vendor/lib64 \
     -Dllvm=disabled \
-    -Dallow-fallback-for=libdrm
+    -Dallow-fallback-for=libdrm \
+    ${MESA_ARGS:-}
 
 ninja -C build-android
 

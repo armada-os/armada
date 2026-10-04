@@ -18,6 +18,10 @@ export async function addToSteam(launch: LaunchSpec | null): Promise<number> {
     if (launchOptions) client.SetShortcutLaunchOptions?.(appid, launchOptions);
   } catch (error) {
   }
+  if (launch.compatTool) {
+    if (!client.SpecifyCompatTool) throw new Error("Steam compatibility settings are unavailable");
+    await client.SpecifyCompatTool(appid, launch.compatTool);
+  }
   return appid;
 }
 

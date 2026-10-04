@@ -106,6 +106,17 @@ def read_text(path):
         return ""
 
 
+def swipe_gestures_enabled():
+    try:
+        return bool(call("get_swipe_gestures_enabled")["enabled"])
+    except Exception:
+        return True
+
+
+def set_swipe_gestures_enabled(enabled):
+    return bool(call("set_swipe_gestures_enabled", enabled=enabled)["enabled"])
+
+
 def set_ssh_enabled(enabled):
     return bool(call("set_ssh_enabled", enabled=bool(enabled)).get("enabled"))
 

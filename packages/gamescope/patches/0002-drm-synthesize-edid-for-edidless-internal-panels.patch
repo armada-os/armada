@@ -8,10 +8,10 @@ no HDR) and feed it through the existing parser. Physical EDIDs stay
 preferred and unchanged; the synthetic EDID is never committed to KMS.
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 9b75a255..5fc61a02 100644
+index 12b7bb07..7f40db0f 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -417,6 +417,7 @@ namespace gamescope
+@@ -418,6 +418,7 @@ namespace gamescope
  		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
  
  		std::span<const uint8_t> GetRawEDID() const override { return std::span<const uint8_t>{ m_Mutable.EdidData.begin(), m_Mutable.EdidData.end() }; }
@@ -19,7 +19,7 @@ index 9b75a255..5fc61a02 100644
  		bool HandleEdidChange()
  		{
  			bool bChanged = m_Mutable.bEdidChanged;
-@@ -549,7 +550,8 @@ namespace gamescope
+@@ -550,7 +551,8 @@ namespace gamescope
  			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
  			DRMModeGenerator fnDynamicModeGenerator;
  			std::vector<uint32_t> ValidDynamicRefreshRates{};
@@ -29,7 +29,7 @@ index 9b75a255..5fc61a02 100644
  			std::vector<BackendMode> BackendModes;
  			
  			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
-@@ -2800,20 +2802,54 @@ namespace gamescope
+@@ -3032,20 +3034,54 @@ namespace gamescope
  
  	void CDRMConnector::ParseEDID()
  	{
@@ -96,7 +96,7 @@ index 9b75a255..5fc61a02 100644
  		di_info *pInfo = di_info_parse_edid( m_Mutable.EdidData.data(), m_Mutable.EdidData.size() );
  		if ( !pInfo )
 diff --git a/src/edid.cpp b/src/edid.cpp
-index 62158293..81239da3 100644
+index 45c83cf6..fc44dde7 100644
 --- a/src/edid.cpp
 +++ b/src/edid.cpp
 @@ -4,8 +4,10 @@
@@ -110,9 +110,9 @@ index 62158293..81239da3 100644
  #include <cstring>
  #include <cstdlib>
  
-@@ -355,4 +357,109 @@ namespace gamescope
+@@ -406,4 +408,109 @@ namespace gamescope
  
-         return edid;
+         return szPath;
      }
 +
 +    std::vector<uint8_t> GenerateSimpleEdid( const EdidModeInfo &mode )
@@ -221,7 +221,7 @@ index 62158293..81239da3 100644
 +    }
  }
 diff --git a/src/edid.h b/src/edid.h
-index d0ed88f4..0cc7e74a 100644
+index 137350ca..397a089d 100644
 --- a/src/edid.h
 +++ b/src/edid.h
 @@ -9,9 +9,27 @@ namespace gamescope
@@ -249,13 +249,11 @@ index d0ed88f4..0cc7e74a 100644
      void WritePatchedEdid( std::span<const uint8_t> pEdid, const BackendConnectorHDRInfo &hdrInfo, bool bRotate );
      std::vector<uint8_t> GenerateSimpleEdid( uint32_t uWidth, uint32_t uHeight );
 +    std::vector<uint8_t> GenerateSimpleEdid( const EdidModeInfo &mode );
+     const char *EnsureVirtualEdid();
  
      std::optional<std::vector<uint8_t>> PatchEdid( std::span<const uint8_t> pEdid, const BackendConnectorHDRInfo &hdrInfo, bool bRotate );
--}
-\ No newline at end of file
-+}
 diff --git a/tests/meson.build b/tests/meson.build
-index 9f73a337..9e96bba9 100644
+index 89fca19a..4808a5c4 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -2,15 +2,15 @@ catch2_dep = dependency('catch2-with-main', required: true)
@@ -269,8 +267,8 @@ index 9f73a337..9e96bba9 100644
  
  gamescope_tests = executable(
  	'gamescope_tests',
--	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp'],
-+	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp'],
+-	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp'],
++	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp'],
  	include_directories: [srcdir, sol2_include],
 -	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, wlroots_dep],
 +	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],

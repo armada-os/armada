@@ -32,6 +32,7 @@ MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xbox-series", "xb360", "ds5"}
 INTERCEPT_MODES = {"overlay", "reset"}
+SWIPE_GESTURES_CONFIG = Path("/etc/armada/swipe-gestures.conf")
 SLEEP_CONFIG = Path("/etc/armada/sleep.conf")
 SUSPEND_MODE_KEY = "suspend_mode"
 NM_IGNORE_SLEEP = Path("/etc/NetworkManager/ignore-sleep")
@@ -444,6 +445,52 @@ def action_set_sleep_mode(request):
     return {"value": value}
 
 
+def action_get_swipe_gestures_enabled(request):
+    try:
+        lines = SWIPE_GESTURES_CONFIG.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return {"enabled": True}
+    enabled = True
+    for line in lines:
+        match = re.fullmatch(r"\s*enabled\s*=\s*([01])\s*", line)
+        if match:
+            enabled = match.group(1) == "1"
+    return {"enabled": enabled}
+
+
+def gamescope_swipe_gestures(enabled):
+    # A valueless convar call resets it; use help to check support instead.
+    for args in (("help",), ("enable_touch_gestures", str(int(enabled)))):
+        result = subprocess.run(
+            session_user_command(
+                "GAMESCOPE_WAYLAND_DISPLAY=gamescope-primary",
+                "/usr/bin/gamescopectl", *args,
+            ),
+            check=True, capture_output=True, text=True, timeout=5,
+        )
+        if args == ("help",) and not re.search(
+            r"\benable_touch_gestures:", result.stdout + result.stderr,
+        ):
+            raise RuntimeError("Gamescope does not support the swipe gesture setting")
+
+
+def action_set_swipe_gestures_enabled(request):
+    enabled = request.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("invalid swipe gestures enabled state")
+    previous = action_get_swipe_gestures_enabled({})["enabled"]
+    active = session_systemctl("is-active", "--quiet", GAME_MODE_SERVICE, check=False, timeout=5)
+    if active.returncode == 0:
+        gamescope_swipe_gestures(enabled)
+    try:
+        atomic_write(SWIPE_GESTURES_CONFIG, f"enabled={int(enabled)}\n")
+    except Exception:
+        if active.returncode == 0:
+            gamescope_swipe_gestures(previous)
+        raise
+    return {"enabled": enabled}
+
+
 def action_set_abl_auto_enabled(request):
     atomic_write(ABL_CONFIG, f"auto_update_enabled={int(bool(request.get('enabled')))}\n")
     return {"enabled": abl_auto_enabled()}
@@ -772,6 +819,8 @@ def action_restart_game_mode(request):
 
 
 ACTIONS = {
+    "get_swipe_gestures_enabled": action_get_swipe_gestures_enabled,
+    "set_swipe_gestures_enabled": action_set_swipe_gestures_enabled,
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,

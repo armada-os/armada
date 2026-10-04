@@ -3,6 +3,7 @@ export interface LaunchSpec {
   exe: string;
   startDir: string;
   launchOptions: string;
+  compatTool?: string;
 }
 
 export interface CatalogApp {

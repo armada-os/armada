@@ -16,6 +16,7 @@ export const saveCompatApplied = (appids: string[], protonDefault: string | null
   compatAppliedSaveChain = request;
   return request;
 };
+export const setSwipeGesturesEnabled = (enabled: boolean) => call<[boolean], boolean>("set_swipe_gestures_enabled", enabled);
 export const setSshEnabled = (enabled: boolean) => call<[boolean], boolean>("set_ssh_enabled", enabled);
 export const setMtpEnabled = (enabled: boolean) => call<[boolean], boolean>("set_mtp_enabled", enabled);
 export const setAblAutoEnabled = (enabled: boolean) => call<[boolean], boolean>("set_abl_auto_enabled", enabled);

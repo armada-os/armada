@@ -131,6 +131,7 @@ export interface Config {
   bottomScreenBrightness: number;
   chargingFanPwm: number;
   sshEnabled: boolean;
+  swipeGesturesEnabled: boolean;
   mtpEnabled: boolean;
   desktopMode: string;
   desktopModes: DropdownChoice[];

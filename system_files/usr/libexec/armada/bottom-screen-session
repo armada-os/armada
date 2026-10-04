@@ -27,6 +27,7 @@ fi
 
 dbus_run_session=${ARMADA_DBUS_RUN_SESSION:-/usr/bin/dbus-run-session}
 kwin_wayland=${ARMADA_KWIN_WAYLAND:-/usr/bin/kwin_wayland}
+envmanager=${ARMADA_PLASMA_MOBILE_ENVMANAGER:-/usr/bin/plasma-mobile-envmanager}
 
 export XDG_CURRENT_DESKTOP=KDE
 export XDG_CONFIG_DIRS="$HOME/.config/plasma-mobile:/etc/xdg${XDG_CONFIG_DIRS:+:$XDG_CONFIG_DIRS}"
@@ -38,9 +39,14 @@ export PLASMA_PLATFORM=phone:handset
 export DISABLE_GAMESCOPE_WSI=1
 unset GAMESCOPE_WAYLAND_DISPLAY GAMESCOPE_LIMITER_FILE
 
+# As startplasmamobile does: Plasma Mobile's KWin settings, including the on-screen keyboard.
+QT_QPA_PLATFORM=offscreen "$envmanager" --apply-settings
+
 exec "$dbus_run_session" \
     "$kwin_wayland" \
     --x11-display "$DISPLAY" \
     --fullscreen \
     --no-lockscreen \
-    --exit-with-session '/usr/bin/plasmashell -p org.kde.plasma.mobileshell'
+    --xwayland \
+    --exit-with-session '/usr/bin/plasmashell -p org.kde.plasma.mobileshell' \
+    /usr/libexec/kf6/polkit-kde-authentication-agent-1

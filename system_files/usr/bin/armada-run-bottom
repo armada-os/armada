@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+# Runs a command as a client of the bottom-screen gamescope.
+
 fail() {
     echo "armada-run-bottom: $*" >&2
     exit 1
@@ -10,25 +12,9 @@ fail() {
 shift
 (( $# > 0 )) || fail "no command specified"
 
-device_env=${ARMADA_DEVICE_ENV:-/usr/libexec/armada/device-env}
-gamescope=${ARMADA_GAMESCOPE:-gamescope}
-lease_socket=${GAMESCOPE_LEASE_SOCK:-/tmp/gamescope-lease.sock}
-
-eval "$("$device_env")"
-[[ -n "${ARMADA_SECONDARY_CONNECTOR:-}" ]] || fail "device has no secondary display"
-[[ -n "${ARMADA_SECONDARY_TOUCHSCREEN:-}" ]] || fail "device has no secondary touchscreen"
-[[ -n "${ARMADA_PANEL_ORIENTATION:-}" ]] || fail "device has no panel orientation"
-[[ -S "$lease_socket" ]] || fail "DRM lease socket is unavailable: $lease_socket"
-
-unset DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
-exec "$gamescope" \
-    --backend drm \
-    --drm-lease-client "$lease_socket" \
-    --drm-lease-yield \
-    --expose-wayland \
-    --force-windows-fullscreen \
-    --xwayland-count 1 \
-    --default-touch-mode 4 \
-    --force-orientation "$ARMADA_PANEL_ORIENTATION" \
-    --force-composition-rotation \
-    -- "$@"
+env_file="${XDG_RUNTIME_DIR:-/run/user/$UID}/armada-bottom-env"
+[[ -r "$env_file" ]] || fail "bottom screen is not running"
+set -a
+source "$env_file"
+set +a
+exec "$@"

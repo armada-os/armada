@@ -5,6 +5,7 @@ import stat
 import subprocess
 import threading
 import time
+import zipfile
 
 from . import store
 from .proc import clean_env
@@ -16,6 +17,9 @@ _flatpak_refresh = threading.Lock()
 LAUNCH_WRAPPER = "/usr/libexec/armada/armada-game-launch"
 COMMAND_TOKEN = "%command%"
 DEFAULT_LAUNCH_OPTIONS = f"{LAUNCH_WRAPPER} {COMMAND_TOKEN}"
+# Runs Android apps; shipped by the lepton package.
+ANDROID_COMPAT_TOOL = "lepton_armada"
+ANDROID_COMPAT_TOOL_DIR = "/usr/share/steam/compatibilitytools.d/lepton-armada"
 
 
 def bundled_apps():
@@ -201,9 +205,26 @@ def prepare_shortcut(path):
     path = str(path or "")
     if not path.startswith("/"):
         raise ValueError("Enter an absolute path")
-    _ensure_user_executable(path)
+    apk = _is_apk(path)
+    if apk and not os.path.isdir(ANDROID_COMPAT_TOOL_DIR):
+        raise ValueError("Android apps are not supported on this image")
+    if not apk:
+        _ensure_user_executable(path)
     base = path.rsplit("/", 1)[-1]
-    name = re.sub(r"\.(appimage|sh|bin|x86_64|aarch64|exe)$", "", base, flags=re.I)
+    name = re.sub(r"\.(appimage|sh|bin|x86_64|aarch64|exe|apk)$", "", base, flags=re.I)
     name = re.sub(r"[-_.]+", " ", name).strip() or base
-    return {"name": name, "exe": path, "startDir": path.rsplit("/", 1)[0] or "/",
+    spec = {"name": name, "exe": path, "startDir": path.rsplit("/", 1)[0] or "/",
             "launchOptions": DEFAULT_LAUNCH_OPTIONS}
+    if apk:
+        spec["compatTool"] = ANDROID_COMPAT_TOOL
+    return spec
+
+
+def _is_apk(path):
+    if not path.lower().endswith(".apk"):
+        return False
+    try:
+        with zipfile.ZipFile(path) as apk:
+            return "AndroidManifest.xml" in apk.namelist()
+    except (OSError, zipfile.BadZipFile):
+        return False

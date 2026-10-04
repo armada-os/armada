@@ -26,6 +26,7 @@ Patch3:         0003-Battery-name.patch
 Patch4:         0004-Qualcomm-battery-power-now.patch
 Patch5:         0005-RAM-name.patch
 Patch6:         0006-SM8750-Battery.patch
+Patch7:         0007-gpu_fdinfo-skip-unreadable-fdinfo.patch
 
 BuildRequires:  vulkan-headers
 BuildRequires:  appstream

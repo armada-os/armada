@@ -1,0 +1,56 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] drm/msm: map submitqueue priority onto HIGH..LOW
+
+The within-ring inversion predates the drm_sched priority enum reversal,
+so userspace priority 2 of each ring became DRM_SCHED_PRIORITY_KERNEL and
+0 became NORMAL. Since drm_sched picks the highest priority run queue
+first, Turnip's default queue (priority 8) starves freedreno GL clients
+(priority 6) on the same ring, such as a compositor's Xwayland, whenever
+a game keeps the ring busy. Map 0..2 onto HIGH..LOW in order and index
+the entity array from HIGH.
+---
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -527,12 +527,13 @@
+  * Each ring is associated with it's own scheduler instance.  However, our
+  * UABI is that lower numerical values are higher priority.  So mapping the
+  * single userspace priority level into ring_nr and sched_prio takes some
+- * care.  The userspace provided priority (when a submitqueue is created)
+- * is mapped to ring nr and scheduler priority as such:
++ * care.  enum drm_sched_priority also has lower numerical values as higher
++ * priority, so the userspace provided priority (when a submitqueue is
++ * created) is mapped to ring nr and scheduler priority as such:
+  *
+  *   ring_nr    = userspace_prio / NR_SCHED_PRIORITIES
+- *   sched_prio = NR_SCHED_PRIORITIES -
+- *                (userspace_prio % NR_SCHED_PRIORITIES) - 1
++ *   sched_prio = DRM_SCHED_PRIORITY_HIGH +
++ *                (userspace_prio % NR_SCHED_PRIORITIES)
+  *
+  * This allows generations without preemption (nr_rings==1) to have some
+  * amount of prioritization, and provides more priority levels for gens
+@@ -547,10 +548,8 @@
+ 
+ 	rn = div_u64_rem(prio, NR_SCHED_PRIORITIES, &sp);
+ 
+-	/* invert sched priority to map to higher-numeric-is-higher-
+-	 * priority convention
+-	 */
+-	sp = NR_SCHED_PRIORITIES - sp - 1;
++	/* submitqueues map onto HIGH..LOW; KERNEL stays with VM_BIND queues */
++	sp += DRM_SCHED_PRIORITY_HIGH;
+ 
+ 	if (rn >= gpu->nr_rings)
+ 		return -EINVAL;
+--- a/drivers/gpu/drm/msm/msm_submitqueue.c
++++ b/drivers/gpu/drm/msm/msm_submitqueue.c
+@@ -137,7 +137,8 @@
+ 		 unsigned ring_nr, enum drm_sched_priority sched_prio)
+ {
+ 	static DEFINE_MUTEX(entity_lock);
+-	unsigned idx = (ring_nr * NR_SCHED_PRIORITIES) + sched_prio;
++	unsigned idx = (ring_nr * NR_SCHED_PRIORITIES) +
++		       (sched_prio - DRM_SCHED_PRIORITY_HIGH);
+ 
+ 	/* We should have already validated that the requested priority is
+ 	 * valid by the time we get here.

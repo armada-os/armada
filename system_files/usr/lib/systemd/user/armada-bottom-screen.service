@@ -1,6 +1,8 @@
 [Unit]
-Description=Armada bottom-screen Plasma session
-PartOf=gamescope-session-plus@steam.service
+Description=Armada bottom-screen Plasma Mobile
+PartOf=armada-bottom-gamescope.service
+Wants=armada-bottom-gamescope.service
+After=armada-bottom-gamescope.service
 StartLimitIntervalSec=0
 
 [Service]

@@ -1,0 +1,65 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+LEPTON_APPID=3029110
+here="${BASH_SOURCE[0]%/*}"
+steam_root="${HOME}/.local/share/Steam"
+tool="${XDG_DATA_HOME:-${HOME}/.local/share}/lepton-armada/tool"
+
+find_lepton() {
+    local library libraries=("${steam_root}")
+    local vdf="${steam_root}/steamapps/libraryfolders.vdf"
+    if [[ -f "${vdf}" ]]; then
+        while IFS= read -r library; do
+            libraries+=("${library}")
+        done < <(sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${vdf}")
+    fi
+    for library in "${libraries[@]}"; do
+        library="${library}/steamapps/common/Lepton"
+        if [[ -x "${library}/lepton" && -d "${library}/images/rootfs" && -d "${library}/sysbake" ]]; then
+            printf '%s\n' "${library}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if ! lepton="$(find_lepton)"; then
+    echo "lepton-armada: Steam's Lepton (app ${LEPTON_APPID}) is not installed" >&2
+    if [[ -p "${HOME}/.steam/steam.pipe" ]]; then
+        timeout 2 bash -c 'printf "steam://install/%s\n" "$1" > "$2"' _ \
+            "${LEPTON_APPID}" "${HOME}/.steam/steam.pipe" || true
+    fi
+    exit 1
+fi
+
+# Simultaneous first launches would otherwise build the copy on top of each other.
+mkdir -p "${tool%/*}"
+exec {lock}>"${tool%/*}/.lock"
+flock "${lock}"
+
+# Only the launcher scripts are copied; the Android image stays in Steam's install.
+stamp="${lepton} $(< "${lepton}/version.txt") $(< "${lepton}/images/version.txt") $(find "${here}" -type f -exec sha256sum {} + | sort | sha256sum)"
+if [[ "$(cat "${tool}/.stamp" 2>/dev/null || true)" != "${stamp}" ]]; then
+    rm -rf "${tool}.new"
+    mkdir -p "${tool}.new/images"
+    cp -a "${lepton}/lepton" "${lepton}/liblepton" "${lepton}/version.txt" "${tool}.new/"
+    cp -a "${lepton}/images/rootfs_overlay" "${lepton}/images/version.txt" "${tool}.new/images/"
+    ln -s "${lepton}/images/rootfs" "${tool}.new/images/rootfs"
+    ln -s "${lepton}/sysbake" "${lepton}/sysbake.xattrs" "${tool}.new/"
+    cp -a "${here}/overlay/." "${tool}.new/images/rootfs_overlay/"
+    if ! patch --directory="${tool}.new" --strip=1 --fuzz=0 --no-backup-if-mismatch --quiet < "${here}/launcher.patch"; then
+        echo "lepton-armada: patches do not apply to Lepton $(< "${lepton}/version.txt")" >&2
+        exit 1
+    fi
+    printf '%s\n' "${stamp}" > "${tool}.new/.stamp"
+    rm -rf "${tool}"
+    mv "${tool}.new" "${tool}"
+fi
+exec {lock}>&-
+
+if [[ -z "${ARMADA_EXT_WAYLAND_DISPLAY+set}" && -S "${XDG_RUNTIME_DIR}/gamescope-secondary" ]]; then
+    export ARMADA_EXT_WAYLAND_DISPLAY=gamescope-secondary
+fi
+
+exec "${tool}/lepton" "$@"

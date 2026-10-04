@@ -258,6 +258,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Armada replaced ROCKNIX's global experimental Odin 3 range and deadzone defaults with a per-device `axis-deadzone` property. The Odin 3 DTS supplies its range and deadzone explicitly.
+- `patches/1301-input-rsinput-decouple-trigger-reference-from-calibration.patch`
+  source: armada
+  upstream: local
+  notes: Keeps the RSInput MCU trigger release reference independent of the calibrated evdev maximum, fixing incomplete travel and deteriorating repeated calibration on AYN devices (issue #423).
 - `patches/0059-ASoC-aw88395-lib-skip-monitor-sections-in-V1-ACF-parse.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0059-ASoC-aw88395-lib-skip-monitor-sections-in-V1-ACF-parse.patch
   upstream: unknown
@@ -369,6 +373,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1020-wifi-ath12k-send-the-computed-scan-priority-to-the-f.patch`
   source: https://github.com/ROCKNIX/distribution/blob/10b09e8df73b2b07ff04a243ded7425e41cd67fa/projects/ROCKNIX/devices/SM8550/patches/linux/1020-wifi-ath12k-send-the-computed-scan-priority-to-the-f.patch
   upstream: unknown
+- `patches/1021-wifi-ath12k-convert-scan-timeout-to-wiphy-delayed-work.patch`
+  source: https://lkml.iu.edu/2609.1/17957.html
+  upstream: https://lkml.iu.edu/2609.1/17957.html
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown
@@ -597,6 +604,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/pull/3187
   upstream: unknown
   notes: Imported unchanged from the linked ROCKNIX pull request.
+- `patches/0619-drm-msm-map-submitqueue-priority-onto-high-low.patch`
+  source: armada
+  upstream: local
 - `dts/qcs8550-ayaneo-pocketace.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/linux/dts/qcom/qcs8550-ayaneo-pocketace.dts
 - `dts/qcs8550-ayaneo-pocket-common.dtsi`
@@ -728,3 +738,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/bylaws/linux/commit/7ae989a43ae7e3cb8007ac21c28dacc24c9d8320
   upstream: unknown
   notes: Rebased patch context for Linux 7.2.3 and Armada's compat-input patch; the unaligned-atomic handler is unchanged.
+- `patches/0505a-arm64-unaligned-atomics-cover-the-load128-store-exclusive.patch`
+  source: armada
+  upstream: local

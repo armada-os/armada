@@ -66,6 +66,7 @@
 0508-input-rsinput-add-pm-resume-to-reinit-mcu-after-suspend.patch
 0504-Enable-64-bit-processes-to-use-compat-input-syscalls.patch
 0505-arm64-emulate-unaligned-atomics.patch
+0505a-arm64-unaligned-atomics-cover-the-load128-store-exclusive.patch
 0506-usbcore-add-interrupt-interval-override.patch
 
 # ============== USB boot hang fix ==============
@@ -82,6 +83,7 @@
 1007-input-rsinput-drop-the-mcu-supply-across-system-sleep.patch
 1004-input-haptics-stop-zero-amplitude-immediately.patch
 1300-input-rsinput-axis-deadzone.patch
+1301-input-rsinput-decouple-trigger-reference-from-calibration.patch
 0515-input-rsinput-reassemble-uart-frames-instead-of-dropping-them.patch
 
 # ============== Audio ==============
@@ -91,6 +93,7 @@
 0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch
 0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch
 0618-drm-msm-dp-dont-fail-audio-prepare-when-display-off.patch
+0619-drm-msm-map-submitqueue-priority-onto-high-low.patch
 
 # ============== LED / RGB ==============
 0030-leds-Add-driver-for-HEROIC-HTR3212.patch
@@ -129,6 +132,7 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 
 # ============== WiFi ==============
 1020-wifi-ath12k-send-the-computed-scan-priority-to-the-f.patch
+1021-wifi-ath12k-convert-scan-timeout-to-wiphy-delayed-work.patch
 
 # ============== System tweaks ==============
 0500-ROCKNIX-set-boot-fanspeed.patch

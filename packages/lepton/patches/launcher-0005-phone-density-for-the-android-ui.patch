@@ -1,0 +1,20 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] launcher: phone density for the Android UI
+
+Applies to the launcher Steam installs (app 3029110).
+
+Without a density the display HAL falls back to 180 dpi, which makes
+Android's own UI (pickers, dialogs, settings) half size on a 6-inch 1080p
+handheld. Games render at the surface size either way.
+
+---
+--- a/liblepton/properties.sh
++++ b/liblepton/properties.sh
+@@ -47,6 +47,7 @@
+     # Video/Rendering props
+     props_echo "debug.stagefright.ccodec=0"
+     props_echo "ro.opengles.version=196609"
++    props_echo "ro.sf.lcd_density=320"
+     props_echo "ro.hardware.camera=v4l2"
+ 
+     if [[ "${LEPTON_FORCE_SOFTWARE:-}" == "true" ]]; then

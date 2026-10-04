@@ -292,7 +292,7 @@ PY
 # Every app that changed packaging must declare the ref it displaces, or an
 # existing install is stranded with no way to remove it from the Store.
 python3 - "$STORE" <<'PY'
-import sys, pathlib, json, tempfile
+import os, sys, pathlib, json, tempfile, zipfile
 store = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(store / "py_modules"))
 from armada_store import catalog
@@ -333,6 +333,28 @@ assert catalog.wrap_launch_options(catalog.DEFAULT_LAUNCH_OPTIONS) == catalog.DE
 with tempfile.NamedTemporaryFile() as custom:
     prepared = catalog.prepare_shortcut(custom.name)
 assert prepared["launchOptions"] == catalog.DEFAULT_LAUNCH_OPTIONS, prepared
+assert "compatTool" not in prepared, prepared
+
+# APKs run through Lepton (Armada); a renamed non-APK is treated as a plain file.
+with tempfile.TemporaryDirectory() as tmp:
+    apk = pathlib.Path(tmp, "com.example.game.apk")
+    with zipfile.ZipFile(apk, "w") as z:
+        z.writestr("AndroidManifest.xml", b"")
+    fake = pathlib.Path(tmp, "notes.apk")
+    fake.write_text("not a zip")
+    catalog.ANDROID_COMPAT_TOOL_DIR = tmp
+    prepared = catalog.prepare_shortcut(str(apk))
+    assert prepared["compatTool"] == "lepton_armada", prepared
+    assert prepared["name"] == "com example game", prepared
+    assert prepared["launchOptions"] == catalog.DEFAULT_LAUNCH_OPTIONS, prepared
+    assert not os.access(apk, os.X_OK), "an APK must not be made executable"
+    assert "compatTool" not in catalog.prepare_shortcut(str(fake))
+    catalog.ANDROID_COMPAT_TOOL_DIR = str(pathlib.Path(tmp, "missing"))
+    try:
+        catalog.prepare_shortcut(str(apk))
+        raise AssertionError("APK accepted without Lepton (Armada)")
+    except ValueError:
+        pass
 
 duck = next(a for a in apps if a["id"] == "duckstation")
 assert catalog.present_conflicts(duck, set()) == [], "conflict reported while absent"

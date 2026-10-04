@@ -38,10 +38,10 @@ index cf8fbd18..de31d9b5 100644
  	'color-management-v1.xml',
  
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 89bde8ad..dea45a96 100644
+index b9881477..7f0a7e61 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -172,6 +172,8 @@ struct drm_t {
+@@ -173,6 +173,8 @@ struct drm_t {
  	std::unordered_set< uint32_t > leasedPlaneIds;
  	uint32_t uLeaseId = 0;
  	int nLeaseFd = -1;
@@ -50,7 +50,7 @@ index 89bde8ad..dea45a96 100644
  	int nLeaseSocketFd = -1;
  	std::atomic<bool> bLeaseThreadRunning = { false };
  	std::string sLeaseSocketPath;
-@@ -1417,7 +1419,11 @@ static void lease_socket_thread_run( struct drm_t *drm )
+@@ -1642,7 +1644,11 @@ static void lease_socket_thread_run( struct drm_t *drm )
  			{
  				close( clientFds[ i ] );
  				clientFds.erase( clientFds.begin() + i );
@@ -63,7 +63,7 @@ index 89bde8ad..dea45a96 100644
  				drm_log.infof( "lease-connector: companion app disconnected (%d still connected)", nRemaining );
  			}
  		}
-@@ -1429,6 +1435,16 @@ static void lease_socket_thread_run( struct drm_t *drm )
+@@ -1654,6 +1660,16 @@ static void lease_socket_thread_run( struct drm_t *drm )
  		if ( nClientFd < 0 )
  			continue;
  
@@ -80,7 +80,7 @@ index 89bde8ad..dea45a96 100644
  		// Send the DRM lease fd via SCM_RIGHTS
  		union {
  			char buf[ CMSG_SPACE( sizeof(int) ) ];
-@@ -1456,6 +1472,7 @@ static void lease_socket_thread_run( struct drm_t *drm )
+@@ -1681,6 +1697,7 @@ static void lease_socket_thread_run( struct drm_t *drm )
  		ssize_t nSent = sendmsg( nClientFd, &msg, 0 );
  		if ( nSent < 0 )
  		{
@@ -88,7 +88,7 @@ index 89bde8ad..dea45a96 100644
  			drm_log.errorf( "lease-connector: sendmsg failed: %s", strerror( errno ) );
  			close( nClientFd );
  		}
-@@ -1466,6 +1483,7 @@ static void lease_socket_thread_run( struct drm_t *drm )
+@@ -1691,6 +1708,7 @@ static void lease_socket_thread_run( struct drm_t *drm )
  			// us that it's gone and touch events should flow to wlserver again.
  			clientFds.push_back( nClientFd );
  			int nNow = g_nActiveLeaseClients.fetch_add( 1 ) + 1;
@@ -96,7 +96,7 @@ index 89bde8ad..dea45a96 100644
  			drm_log.infof( "lease-connector: sent lease fd to companion app (%d connected)", nNow );
  		}
  	}
-@@ -1473,7 +1491,10 @@ static void lease_socket_thread_run( struct drm_t *drm )
+@@ -1698,7 +1716,10 @@ static void lease_socket_thread_run( struct drm_t *drm )
  	for ( int cfd : clientFds )
  		close( cfd );
  	if ( !clientFds.empty() )
@@ -107,7 +107,7 @@ index 89bde8ad..dea45a96 100644
  }
  
  bool init_drm(struct drm_t *drm, int width, int height, int refresh)
-@@ -1733,6 +1754,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+@@ -1958,6 +1979,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
  					drm->leasedPlaneIds.insert( uPlaneId );
  					drm->uLeaseId = uLeaseId;
  					drm->nLeaseFd = nLeaseFd;
@@ -116,7 +116,7 @@ index 89bde8ad..dea45a96 100644
  
  					drm_log.infof( "lease-connector: leased '%s' (connector=%u, crtc=%u, plane=%u) -> fd=%d, lessee=%u",
  						g_sLeaseConnectorName, uConnectorId, uCRTCId, uPlaneId, nLeaseFd, uLeaseId );
-@@ -4129,6 +4152,49 @@ const char *drm_get_device_name(struct drm_t *drm)
+@@ -4381,6 +4404,49 @@ const char *drm_get_device_name(struct drm_t *drm)
  	return drm->device_name;
  }
  
@@ -167,7 +167,7 @@ index 89bde8ad..dea45a96 100644
  {
  	if ( !drm->pConnector )
 diff --git a/src/main.cpp b/src/main.cpp
-index 323c615c..00f0757a 100644
+index c56696a3..2aec4c7a 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -786,6 +786,8 @@ const char *g_sOutputName = nullptr;
@@ -180,7 +180,7 @@ index 323c615c..00f0757a 100644
  bool g_bForceDisableColorMgmt = false;
  bool g_bRt = false;
 diff --git a/src/main.hpp b/src/main.hpp
-index 3170bd64..8d5b2fdd 100644
+index c80832fa..98d77cb6 100644
 --- a/src/main.hpp
 +++ b/src/main.hpp
 @@ -3,6 +3,7 @@
@@ -188,9 +188,9 @@ index 3170bd64..8d5b2fdd 100644
  
  #include <atomic>
 +#include <mutex>
+ #include <vector>
  #include <optional>
  #include <string_view>
- #include <utility>
 @@ -50,6 +51,19 @@ extern std::vector<uint32_t> g_customRefreshRates;
  // normally so the bottom touchscreen works in the Plasma session.
  extern std::atomic<int> g_nActiveLeaseClients;
@@ -212,7 +212,7 @@ index 3170bd64..8d5b2fdd 100644
  {
      LINEAR = 0,
 diff --git a/src/wlserver.cpp b/src/wlserver.cpp
-index 8899b747..52997bff 100644
+index be1baf29..ad4f8069 100644
 --- a/src/wlserver.cpp
 +++ b/src/wlserver.cpp
 @@ -52,6 +52,7 @@
@@ -223,7 +223,7 @@ index 8899b747..52997bff 100644
  #include "gamescope-private-protocol.h"
  #include "gamescope-swapchain-protocol.h"
  #include "presentation-time-protocol.h"
-@@ -1619,6 +1620,195 @@ static void create_gamescope_control( void )
+@@ -1620,6 +1621,195 @@ static void create_gamescope_control( void )
  	wl_global_create( wlserver.display, &gamescope_control_interface, gamescope_control_interface.version, NULL, gamescope_control_bind );
  }
  
@@ -419,7 +419,7 @@ index 8899b747..52997bff 100644
  ////////////////////////
  // gamescope_private
  ////////////////////////
-@@ -2365,6 +2555,8 @@ bool wlserver_init( void ) {
+@@ -2366,6 +2556,8 @@ bool wlserver_init( void ) {
  
  	create_gamescope_control();
  
