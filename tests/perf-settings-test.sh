@@ -51,13 +51,40 @@ printf '{"global":{}}\n' > "$TWEAKS_FIXTURE"
     exit 1
 }
 
+PRIV_WRITE="$WORK/steamos-priv-write"
+PRIV_WRITE_CALLS="$WORK/armada-power-calls"
+cat > "$WORK/armada-power" <<'EOF'
+#!/usr/bin/bash
+if [[ "$1" == status ]]; then
+    printf 'manual_gpu_clock_min=305\nmanual_gpu_clock_max=441\n'
+else
+    printf '%s\n' "$*" >> "$ARMADA_POWER_CALLS"
+fi
+EOF
+chmod +x "$WORK/armada-power"
+sed -e "s|/usr/bin/armada-power|$WORK/armada-power|g" -e 's|\$EUID -ne 0|1 -eq 0|' \
+    -e 's|systemd-cat -t armada-steamos-priv-write -p info|cat >/dev/null|' \
+    "$ROOT/system_files/usr/bin/steamos-polkit-helpers/steamos-priv-write" > "$PRIV_WRITE"
+for level in high manual low; do
+    ARMADA_POWER_CALLS="$PRIV_WRITE_CALLS" bash "$PRIV_WRITE" \
+        /sys/class/drm/card0/device/power_dpm_force_performance_level "$level"
+done
+[[ "$(cat "$PRIV_WRITE_CALLS")" == $'gpu-manual 0\ngpu-manual 0\ngpu-manual 305' ]] || {
+    printf 'FAIL: steamos-priv-write high/manual must request the profile cap, low the floor\n' >&2
+    exit 1
+}
+
 python3 - "$ROOT" "$WORK" <<'PYEOF'
+import configparser
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import pathlib
 import selectors
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -517,6 +544,16 @@ check("device-env AYANEO Pocket MICRO 2 profile",
       pocket_micro2.get("ARMADA_SOC_CLASS") == "SM8250" and
       pocket_micro2.get("ARMADA_PANEL_ORIENTATION") == "right" and
       pocket_micro2.get("ARMADA_GAMESCOPE_FAKE_OUTPUT_MM") == "177x118")
+check("device-env PM2 stock GPU max", pocket_micro2.get("ARMADA_GPU_STOCK_MAX_MHZ") == "587")
+check("device-env RP5 stock GPU max", pocket5.get("ARMADA_GPU_STOCK_MAX_MHZ") == "587")
+check("device-env SM8750 stock GPU max empty", odin3.get("ARMADA_GPU_STOCK_MAX_MHZ") == "''")
+override_devices = os.path.join(WORK, "devices")
+shutil.copytree(devices_dir, override_devices)
+with open(os.path.join(override_devices, "ayaneo-pocket-micro2.conf"), "a") as f:
+    f.write("ARMADA_GPU_STOCK_MAX_MHZ=670\n")
+pocket_micro2_override = run_device_env("AYANEO Pocket MICRO 2", {"ARMADA_DEVICE_DIR": override_devices})
+check("device-env device conf overrides stock GPU max",
+      pocket_micro2_override.get("ARMADA_GPU_STOCK_MAX_MHZ") == "670")
 
 # --- armada-powerd: config parsing ------------------------------------------
 powerd = load_script("armada-powerd")
@@ -547,6 +584,296 @@ full_mask = sum(1 << c for c in ALL)
 check("irq auto empty = all", power.irq_mask() == full_mask)
 power.system_config = {"irq_cores": "garbage!"}
 check("irq bad falls back to all", power.irq_mask() == full_mask)
+
+factory_parser = configparser.ConfigParser()
+factory_parser.read(factory)
+check("factory profiles carry no _mhz keys",
+      not any(factory_parser.has_option(section, key)
+              for section in factory_parser.sections()
+              for key in ("gpu_max_mhz", "gpu_min_mhz", "cpu_max_mhz")))
+check("factory profiles carry no cpu_max_policy keys",
+      not any(key.startswith("cpu_max_policy")
+              for section in factory_parser.sections() if section.startswith("profile.")
+              for key in factory_parser.options(section)))
+
+sysfs = os.path.join(WORK, "sys")
+fake_gpu = os.path.join(sysfs, "class/devfreq/3d00000.gpu")
+os.makedirs(fake_gpu)
+with open(os.path.join(fake_gpu, "available_frequencies"), "w") as f:
+    f.write("305000000 400000000 441600000 490000000 525000000 587000000 650000000 670000000 "
+            "700000000 725000000 750000000 800000000 855000000 905000000 925000000\n")
+with open(os.path.join(fake_gpu, "governor"), "w") as f:
+    f.write("simple_ondemand\n")
+fake_cpufreq = os.path.join(sysfs, "devices/system/cpu/cpufreq")
+ladder0 = "300000 1075200 1171200 1420800 1612800 1804800"
+ladder4 = "710400 1497600 1612800 1804800 2419200"
+ladder7 = "844800 1670400 1785600 2841600"
+
+
+def write_policies(cpufreq, policies):
+    for policy, freqs, related in policies:
+        os.makedirs(os.path.join(cpufreq, policy))
+        with open(os.path.join(cpufreq, policy, "scaling_available_frequencies"), "w") as f:
+            f.write(freqs + "\n")
+        if related is not None:
+            with open(os.path.join(cpufreq, policy, "related_cpus"), "w") as f:
+                f.write(related + "\n")
+
+
+write_policies(fake_cpufreq, (("policy0", ladder0, "0 1 2 3"),
+                              ("policy4", ladder4, "4 5 6"),
+                              ("policy7", ladder7, "7")))
+sys8550 = os.path.join(WORK, "sys8550")
+fake_cpufreq8550 = os.path.join(sys8550, "devices/system/cpu/cpufreq")
+write_policies(fake_cpufreq8550, (("policy0", ladder0, "0 1 2"),
+                                  ("policy3", ladder4, "3 4 5 6"),
+                                  ("policy7", ladder7, None)))
+
+
+def use_tree(path):
+    power.cpu_policies = sorted(powerd.Path(path, "devices/system/cpu/cpufreq").glob("policy*"))
+
+
+power.gpu = powerd.Path(fake_gpu)
+use_tree(sysfs)
+limits_etc = os.path.join(WORK, "etc-limits.conf")
+
+
+def load_limits(etc_text="", env=None):
+    with open(limits_etc, "w") as f:
+        f.write(etc_text)
+    powerd.CONFIG_FILE = powerd.Path(limits_etc)
+    parsed_limits = power.parse_config()
+    power.underclock_config = parsed_limits[1]
+    power.profile_config = parsed_limits[3]
+    power.env = env or {"ARMADA_SOC_CLASS": "SM8250", "ARMADA_GPU_STOCK_MAX_MHZ": "587"}
+    power.profile = "balanced"
+    power.apply_underclock_refs()
+    return power.profile_config
+
+
+def gpu_limits(profile):
+    power.profile = profile
+    return power.resolved_gpu_auto_limits()
+
+
+def cpu_caps(profile):
+    power.profile = profile
+    return power.resolved_cpu_caps()
+
+
+mhz_profiles = load_limits("[profile.eco]\ngpu_max_mhz=490\n")
+check("gpu_max_mhz parsed", mhz_profiles["eco"].get("gpu_max_mhz") == 490)
+check("absent _mhz parses as None",
+      "gpu_max_mhz" in mhz_profiles["balanced"] and mhz_profiles["balanced"]["gpu_max_mhz"] is None)
+load_limits()
+eco_target = gpu_limits("eco")
+for bad in ("abc", "0", "-5", "nan", "inf"):
+    bad_log = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(bad_log):
+            bad_profiles = load_limits(f"[profile.eco]\ngpu_max_mhz={bad}\n")
+        check(f"gpu_max_mhz={bad} parses as None", bad_profiles["eco"]["gpu_max_mhz"] is None)
+        check(f"gpu_max_mhz={bad} falls back to gpu_max ratio", gpu_limits("eco") == eco_target)
+        check(f"gpu_max_mhz={bad} logs a warning", f"gpu_max_mhz={bad}" in bad_log.getvalue())
+    except ValueError as exc:
+        check(f"gpu_max_mhz={bad} falls back to gpu_max ratio ({exc})", False)
+
+fallback_etc = os.path.join(WORK, "etc-fallback.conf")
+with open(fallback_etc, "w") as f:
+    f.write("[profile.eco]\ngpu_max_mhz=abc\n")
+powerd.CONFIG_FILE = powerd.Path(fallback_etc)
+with contextlib.redirect_stderr(io.StringIO()):
+    power.load_config()
+check("powerd invalid gpu_max_mhz keeps /etc", os.path.exists(fallback_etc))
+
+load_limits()
+check("SM8250 balanced GPU max is stock", gpu_limits("balanced")[1] == 587000000)
+check("SM8250 eco GPU max is ratio of stock", gpu_limits("eco")[1] == 441600000)
+check("SM8250 performance GPU min clamped to stock", gpu_limits("performance") == (587000000, 587000000))
+load_limits("[profile.eco]\ngpu_max_mhz=700\n")
+check("gpu_max_mhz above stock", gpu_limits("eco")[1] == 700000000)
+load_limits("[profile.eco]\ngpu_max_mhz=441\n")
+check("gpu_max_mhz floor semantics", gpu_limits("eco")[1] == 441600000)
+load_limits(env={"ARMADA_SOC_CLASS": "SM8250", "ARMADA_GPU_STOCK_MAX_MHZ": ""})
+check("empty stock GPU max uses ladder top", gpu_limits("balanced")[1] == 925000000)
+check("empty stock GPU max eco ratio of top", gpu_limits("eco")[1] == 725000000)
+check("empty stock GPU max performance uses ladder top", gpu_limits("performance") == (925000000, 925000000))
+
+load_limits("[profile.eco]\ngpu_min_mhz=490\ngpu_max_mhz=587\n")
+check("gpu_min_mhz parsed", power.profile_config["eco"].get("gpu_min_mhz") == 490)
+check("gpu_min_mhz sets the GPU floor", gpu_limits("eco") == (490000000, 587000000))
+load_limits("[profile.eco]\ngpu_min_mhz=490\n")
+check("gpu_min_mhz clamped to GPU max", gpu_limits("eco") == (441600000, 441600000))
+check("absent gpu_min_mhz parses as None",
+      "gpu_min_mhz" in power.profile_config["balanced"] and power.profile_config["balanced"]["gpu_min_mhz"] is None)
+try:
+    with contextlib.redirect_stderr(io.StringIO()):
+        load_limits("[profile.eco]\ngpu_min_mhz=0\n")
+    check("gpu_min_mhz=0 parses as None", power.profile_config["eco"]["gpu_min_mhz"] is None)
+    check("gpu_min_mhz=0 falls back to gpu_min ratio", gpu_limits("eco")[0] == 305000000)
+except ValueError as exc:
+    check(f"gpu_min_mhz=0 parses as None ({exc})", False)
+
+load_limits()
+check("SM8250 eco cpu_max ratio caps",
+      cpu_caps("eco") == {"policy0": 1171200, "policy4": 1497600, "policy7": 1785600})
+load_limits("[profile.eco]\ncpu_max_policy7=1670400\n")
+check("SM8250 explicit cpu_max_policy7 applies",
+      cpu_caps("eco") == {"policy0": 1171200, "policy4": 1497600, "policy7": 1670400})
+load_limits()
+check("SM8250 performance caps are tops",
+      cpu_caps("performance") == {"policy0": 1804800, "policy4": 2419200, "policy7": 2841600})
+
+use_tree(sys8550)
+sm8550_env = {"ARMADA_SOC_CLASS": "SM8550"}
+load_limits(env=sm8550_env)
+check("SM8550 eco large caps",
+      cpu_caps("eco") == {"policy0": 1420800, "policy3": 1612800, "policy7": 1785600})
+check("SM8550 balanced medium caps",
+      cpu_caps("balanced") == {"policy0": 1420800, "policy3": 1804800, "policy7": 1785600})
+check("SM8550 performance caps are tops",
+      cpu_caps("performance") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+load_limits("[profile.eco]\ncpu_underclock=none\n", env=sm8550_env)
+check("SM8550 eco none ignores cpu_max ratio",
+      cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+load_limits("[profile.eco]\ncpu_underclock=custom\ncpu_max_policy0=1171200\n"
+            "cpu_max_policy3=1497600\ncpu_max_policy7=1670400\n", env=sm8550_env)
+check("SM8550 custom uses explicit keys",
+      cpu_caps("eco") == {"policy0": 1171200, "policy3": 1497600, "policy7": 1670400})
+load_limits("[profile.eco]\ncpu_underclock=custom\n", env=sm8550_env)
+check("SM8550 custom without keys is tops",
+      cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+load_limits("[profile.eco]\ncpu_underclock=large\ncpu_max_policy7=1670400\n", env=sm8550_env)
+check("SM8550 partial keys merge with the table",
+      cpu_caps("eco") == {"policy0": 1420800, "policy3": 1612800, "policy7": 1670400})
+load_limits("[underclock.SM8550.custom]\ncpu_max_policy0=1171200\ncpu_max_policy3=1497600\n"
+            "cpu_max_policy7=1670400\n[profile.eco]\ncpu_underclock=custom\n", env=sm8550_env)
+check("SM8550 custom ignores an underclock custom table",
+      cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+try:
+    load_limits("[profile.eco]\ncpu_underclock=bogus\n", env=sm8550_env)
+    check("SM8550 unknown underclock level is tops",
+          cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+except Exception as exc:
+    check(f"SM8550 unknown underclock level loads ({exc})", False)
+use_tree(sysfs)
+load_limits()
+
+
+class FakeVariant:
+    def __init__(self, signature, value):
+        self.signature = signature
+        self.value = value
+
+    def unpack(self):
+        return self.value
+
+    def get_uint32(self):
+        return self.value
+
+    def get_string(self):
+        return self.value
+
+
+powerd.GLib = type("FakeGLib", (), {"Variant": FakeVariant})
+powerd.STATE_FILE = powerd.Path(os.path.join(WORK, "powerd-state"))
+emitted = []
+power.emit_properties = lambda changed: emitted.append({k: v.unpack() for k, v in changed.items()})
+power.gpu_manual_shown = {}
+power.gpu_clamp_logged = set()
+
+
+def gpu_prop(prop):
+    return power.get_property(prop).unpack()
+
+
+def gpu_file(name):
+    with open(os.path.join(fake_gpu, name)) as f:
+        return f.read().strip()
+
+
+def gpu_pinned():
+    return (gpu_file("governor"), int(gpu_file("min_freq")), int(gpu_file("max_freq")))
+
+
+def manual_max(profile):
+    power.profile = profile
+    return gpu_prop("ManualGpuClockMax")
+
+
+def switch_profile(profile):
+    power.profile = profile
+    power.apply_profile()
+
+
+load_limits()
+power.gpu_level = "auto"
+power.manual_gpu_clock = 0
+power.connection = None
+check("manual GPU max is balanced stock", manual_max("balanced") == 587)
+check("manual GPU max follows eco", manual_max("eco") == 441)
+check("manual GPU min is ladder floor", gpu_prop("ManualGpuClockMin") == 305)
+load_limits("[profile.eco]\ngpu_max_mhz=700\n")
+check("manual GPU max follows gpu_max_mhz", manual_max("eco") == 700)
+
+clamp_log = io.StringIO()
+with contextlib.redirect_stderr(clamp_log):
+    load_limits()
+    power.set_property("GpuPerformanceLevel", FakeVariant("s", "manual"))
+    power.set_property("ManualGpuClock", FakeVariant("u", 900))
+    check("manual 900 pinned to balanced cap", gpu_pinned() == ("userspace", 587000000, 587000000))
+    check("manual 900 reads back as cap", gpu_prop("ManualGpuClock") == 587)
+    check("manual request kept raw", power.manual_gpu_clock == 900)
+
+    power.connection = object()
+    emitted.clear()
+    switch_profile("eco")
+    check("manual clamped on eco switch", gpu_pinned() == ("userspace", 441600000, 441600000))
+    check("eco switch emits clamped manual props",
+          emitted and emitted[-1].get("ManualGpuClockMax") == 441 and emitted[-1].get("ManualGpuClock") == 441)
+    emitted.clear()
+    switch_profile("eco")
+    check("unchanged profile emits nothing", not emitted)
+    load_limits("[profile.eco]\ngpu_max_mhz=700\n")
+    switch_profile("eco")
+    check("manual request survives clamps", gpu_pinned() == ("userspace", 700000000, 700000000))
+
+    load_limits()
+    switch_profile("eco")
+    power.set_property("ManualGpuClock", FakeVariant("u", 442))
+    check("manual 442 pinned to eco OPP", gpu_pinned() == ("userspace", 441600000, 441600000))
+clamp_lines = clamp_log.getvalue().splitlines()
+for request, effective, profile in ((900, 587, "balanced"), (900, 441, "eco"), (900, 700, "eco")):
+    line = f"armada-powerd: manual GPU clock {request} MHz clamped to {effective} MHz by {profile} GPU max"
+    check(f"clamp {request} to {effective} logged once", clamp_lines.count(line) == 1)
+check("clamp log has no other lines", len(clamp_lines) == 3)
+
+load_limits()
+power.connection = None
+power.set_property("ManualGpuClock", FakeVariant("u", 490))
+check("manual 490 pinned", gpu_pinned() == ("userspace", 490000000, 490000000))
+check("manual 490 reads back", gpu_prop("ManualGpuClock") == 490)
+switch_profile("performance")
+check("manual 490 kept on performance", gpu_pinned() == ("userspace", 490000000, 490000000))
+switch_profile("balanced")
+check("manual 490 kept on balanced", gpu_pinned() == ("userspace", 490000000, 490000000))
+
+load_limits(env={"ARMADA_SOC_CLASS": "SM8250", "ARMADA_GPU_STOCK_MAX_MHZ": ""})
+check("manual GPU max without stock is ladder top", gpu_prop("ManualGpuClockMax") == 925)
+power.set_property("ManualGpuClock", FakeVariant("u", 900))
+check("manual 900 without stock picks closest", gpu_pinned() == ("userspace", 905000000, 905000000))
+
+load_limits()
+power.manual_gpu_clock = 0
+power.set_property("GpuPerformanceLevel", FakeVariant("s", "auto"))
+power.set_property("GpuPerformanceLevel", FakeVariant("s", "manual"))
+check("manual without request applies cap", gpu_pinned() == ("userspace", 587000000, 587000000))
+check("manual without request reads back cap", gpu_prop("ManualGpuClock") == 587)
+power.set_property("ManualGpuClock", FakeVariant("u", 640))
+check("manual 640 never rounds above cap", gpu_pinned() == ("userspace", 587000000, 587000000))
+power.set_property("GpuPerformanceLevel", FakeVariant("s", "auto"))
+check("auto restores ondemand", gpu_pinned() == ("simple_ondemand", 305000000, 587000000))
 
 # --- armada-control: PerfManager lifecycle ----------------------------------
 control = load_script("armada-control")
