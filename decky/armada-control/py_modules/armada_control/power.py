@@ -133,6 +133,10 @@ def ratio(value):
     return min(max(float(value), 0.0), 1.0)
 
 
+def ratio_text(value):
+    return f"{float(value):.2f}"
+
+
 def policy_key(policy):
     return f"cpu_max_policy{policy['id']}"
 
@@ -185,8 +189,10 @@ def profile_overrides(profile, limits):
     out = {}
     for key in EDITABLE_KEYS:
         out[key] = str(profile[key])
-    for mhz_key, _ in LIMIT_KEYS:
+    out["cpu_max"] = ratio_text(profile["cpu_max"])
+    for mhz_key, ratio_key in LIMIT_KEYS:
         out[mhz_key] = parse_mhz(profile.get(mhz_key))
+        out[ratio_key] = ratio_text(profile[ratio_key])
     for policy in limits["cpuPolicies"]:
         khz = parse_khz(profile.get(policy_key(policy)))
         out[policy_key(policy)] = None if khz is None else at_most(policy["khz"], khz)
@@ -240,19 +246,33 @@ def render_power(data, factory, limits, device_class):
         for key in EDITABLE_KEYS:
             set_or_clear(parser, section, key, overrides[key], edited)
         if not edited:
-            for key in limit_keys:
+            for key in ("cpu_max", *cpu_keys, *(key for pair in LIMIT_KEYS for key in pair)):
                 set_or_clear(parser, section, key, "", False)
             continue
-        for mhz_key, _ in LIMIT_KEYS:
+        for mhz_key, ratio_key in LIMIT_KEYS:
             value = overrides[mhz_key]
             if derived[mhz_key] is None:
                 continue
             if value != derived[mhz_key] or in_etc[mhz_key]:
                 set_or_clear(parser, section, mhz_key, str(value), True)
+                set_or_clear(parser, section, ratio_key, "", False)
             else:
                 set_or_clear(parser, section, mhz_key, "", False)
+                set_or_clear(parser, section, ratio_key, overrides[ratio_key],
+                             overrides[ratio_key] != factory_overrides[ratio_key])
         for key in cpu_keys:
             set_or_clear(parser, section, key, str(int(overrides[key])), cpu_write)
+        if not preset_class:
+            set_or_clear(parser, section, "cpu_max", overrides["cpu_max"],
+                         not cpu_write and overrides["cpu_max"] != factory_overrides["cpu_max"])
+        shadowed = [ratio_key for mhz_key, ratio_key in LIMIT_KEYS
+                    if derived[mhz_key] is None
+                    and parse_mhz(parser.get(section, mhz_key, fallback=None)) is not None]
+        if ((preset_class or not cpu_keys) and parser.has_section(section)
+                and parse_policy_caps(parser, section)):
+            shadowed.append("cpu_max")
+        for key in shadowed:
+            set_or_clear(parser, section, key, "", False)
 
     for section in ("general", *(f"profile.{name}" for name in PROFILES)):
         if parser.has_section(section) and not parser.options(section):

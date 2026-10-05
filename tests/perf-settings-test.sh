@@ -666,26 +666,37 @@ mhz_profiles = load_limits("[profile.eco]\ngpu_max_mhz=490\n")
 check("gpu_max_mhz parsed", mhz_profiles["eco"].get("gpu_max_mhz") == 490)
 check("absent _mhz parses as None",
       "gpu_max_mhz" in mhz_profiles["balanced"] and mhz_profiles["balanced"]["gpu_max_mhz"] is None)
-load_limits()
-eco_target = gpu_limits("eco")
+ratio_half = load_limits("[profile.eco]\ngpu_max=0.5\n")
+ratio_half_target = gpu_limits("eco")
 for bad in ("abc", "0", "-5", "nan", "inf"):
     bad_log = io.StringIO()
     try:
         with contextlib.redirect_stderr(bad_log):
-            bad_profiles = load_limits(f"[profile.eco]\ngpu_max_mhz={bad}\n")
+            bad_profiles = load_limits(f"[profile.eco]\ngpu_max_mhz={bad}\ngpu_max=0.5\n")
         check(f"gpu_max_mhz={bad} parses as None", bad_profiles["eco"]["gpu_max_mhz"] is None)
-        check(f"gpu_max_mhz={bad} falls back to gpu_max ratio", gpu_limits("eco") == eco_target)
+        check(f"gpu_max_mhz={bad} falls back to gpu_max ratio", gpu_limits("eco") == ratio_half_target)
         check(f"gpu_max_mhz={bad} logs a warning", f"gpu_max_mhz={bad}" in bad_log.getvalue())
     except ValueError as exc:
         check(f"gpu_max_mhz={bad} falls back to gpu_max ratio ({exc})", False)
 
 fallback_etc = os.path.join(WORK, "etc-fallback.conf")
 with open(fallback_etc, "w") as f:
-    f.write("[profile.eco]\ngpu_max_mhz=abc\n")
+    f.write("[profile.eco]\ngpu_max_mhz=abc\ngpu_max=0.5\n")
 powerd.CONFIG_FILE = powerd.Path(fallback_etc)
 with contextlib.redirect_stderr(io.StringIO()):
     power.load_config()
 check("powerd invalid gpu_max_mhz keeps /etc", os.path.exists(fallback_etc))
+check("powerd invalid gpu_max_mhz keeps gpu_max ratio", power.profile_config["eco"]["gpu_max"] == 0.5)
+
+with open(fallback_etc, "w") as f:
+    f.write("[profile.eco]\ngpu_max=nan\n")
+with contextlib.redirect_stderr(io.StringIO()):
+    power.load_config()
+factory_gpu_max = power.parse_config(include_user=False)[3]["eco"]["gpu_max"]
+check("powerd non finite ratio restores factory", power.profile_config["eco"]["gpu_max"] == factory_gpu_max)
+check("powerd non finite ratio removes /etc", not os.path.exists(fallback_etc))
+check("powerd non finite ratio keeps a backup",
+      any(powerd.Path(WORK).glob("etc-fallback.conf.invalid-*")))
 
 load_limits()
 check("SM8250 balanced GPU max is stock", gpu_limits("balanced")[1] == 587000000)
@@ -705,6 +716,10 @@ check("gpu_min_mhz parsed", power.profile_config["eco"].get("gpu_min_mhz") == 49
 check("gpu_min_mhz sets the GPU floor", gpu_limits("eco") == (490000000, 587000000))
 load_limits("[profile.eco]\ngpu_min_mhz=490\n")
 check("gpu_min_mhz clamped to GPU max", gpu_limits("eco") == (441600000, 441600000))
+load_limits("[profile.eco]\ngpu_min=0.5\n")
+check("gpu_min ratio of stock GPU max", gpu_limits("eco")[0] == 305000000)
+load_limits("[profile.balanced]\ngpu_min=0.8\n")
+check("gpu_min ratio floor semantics", gpu_limits("balanced")[0] == 441600000)
 check("absent gpu_min_mhz parses as None",
       "gpu_min_mhz" in power.profile_config["balanced"] and power.profile_config["balanced"]["gpu_min_mhz"] is None)
 try:
@@ -718,6 +733,9 @@ except ValueError as exc:
 load_limits()
 check("SM8250 eco cpu_max ratio caps",
       cpu_caps("eco") == {"policy0": 1171200, "policy4": 1497600, "policy7": 1785600})
+load_limits("[profile.eco]\ncpu_max=0.64\n")
+check("SM8250 eco cpu_max 0.64 differs on silver only",
+      cpu_caps("eco") == {"policy0": 1075200, "policy4": 1497600, "policy7": 1785600})
 load_limits("[profile.eco]\ncpu_max_policy7=1670400\n")
 check("SM8250 explicit cpu_max_policy7 applies",
       cpu_caps("eco") == {"policy0": 1171200, "policy4": 1497600, "policy7": 1670400})
@@ -1353,8 +1371,18 @@ out = plugin_render("", [("eco", "gpu_max_mhz", 700)])
 check("plugin moved GPU max writes MHz", out.get("profile.eco", "gpu_max_mhz", fallback=None) == "700")
 check("plugin moved GPU max drops ratio", not out.has_option("profile.eco", "gpu_max"))
 
-out = plugin_render("", [("balanced", "gpu_max_mhz", 441)])
+out = plugin_render("[profile.eco]\ncpu_max=0.64\n", [("balanced", "gpu_max_mhz", 441)])
+check("plugin keeps unmoved legacy cpu_max", out.get("profile.eco", "cpu_max", fallback=None) == "0.64")
+check("plugin legacy cpu_max gains no policy keys", not has_policy_keys(out, "profile.eco"))
 check("plugin other profile GPU max written", out.get("profile.balanced", "gpu_max_mhz", fallback=None) == "441")
+
+out = plugin_render("[profile.balanced]\ngpu_max=0.80\n")
+check("plugin keeps unmoved legacy gpu_max", out.get("profile.balanced", "gpu_max", fallback=None) == "0.80")
+check("plugin legacy gpu_max gains no MHz", not out.has_option("profile.balanced", "gpu_max_mhz"))
+out = plugin_render("[profile.balanced]\ngpu_max=0.80\n", [("balanced", "gpu_max_mhz", 587)])
+check("plugin moved legacy GPU max writes MHz",
+      out.get("profile.balanced", "gpu_max_mhz", fallback=None) == "587")
+check("plugin moved legacy GPU max drops ratio", not out.has_option("profile.balanced", "gpu_max"))
 
 check("plugin resolves performance GPU min to stock", factory_data["profiles"]["performance"]["gpu_min_mhz"] == 587)
 check("plugin resolves eco GPU min to ladder floor", factory_data["profiles"]["eco"]["gpu_min_mhz"] == 305)
@@ -1365,6 +1393,10 @@ resolved["profiles"]["eco"]["gpu_min_mhz"] = 490
 rendered = plugin_power.render_power(resolved, factory_data, plugin_limits, "SM8250")
 check("plugin moved GPU min writes MHz", "gpu_min_mhz = 490" in rendered)
 check("plugin moved GPU min drops ratio", "gpu_min =" not in rendered)
+
+out = plugin_render("[profile.eco]\ngpu_min=0.50\n", [("balanced", "gpu_max_mhz", 441)])
+check("plugin keeps unmoved legacy gpu_min", out.get("profile.eco", "gpu_min", fallback=None) == "0.50")
+check("plugin legacy gpu_min gains no MHz", not out.has_option("profile.eco", "gpu_min_mhz"))
 
 reset_eco = dict(factory_data["profiles"]["eco"], gpu_max_mhz=None, gpu_min_mhz=None,
                  cpu_max_policy0=None, cpu_max_policy4=None, cpu_max_policy7=None)
@@ -1377,12 +1409,34 @@ out = plugin_render("[profile.eco]\ngpu_max_mhz=700\n", [("eco", key, value) for
 check("plugin reset clears explicit MHz profile", not out.has_section("profile.eco"))
 plugin_power.POWER_CONFIG.unlink()
 
+plugin_power.POWER_CONFIG.write_text("[profile.eco]\ngpu_max=abc\n")
+invalid_data = plugin_power.parse_power()
+check("plugin invalid legacy ratio restores factory",
+      invalid_data["profiles"]["eco"]["gpu_max"] == factory_data["profiles"]["eco"]["gpu_max"])
+check("plugin invalid legacy ratio removes /etc", not plugin_power.POWER_CONFIG.exists())
+check("plugin invalid legacy ratio keeps a backup",
+      any(plugin_power.POWER_CONFIG.parent.glob(plugin_power.POWER_CONFIG.name + ".invalid-*")))
+
+for backup in plugin_power.POWER_CONFIG.parent.glob(plugin_power.POWER_CONFIG.name + ".invalid-*"):
+    backup.unlink()
+plugin_power.POWER_CONFIG.write_text("[profile.eco]\ngpu_max=nan\n")
+invalid_data = plugin_power.parse_power()
+check("plugin non finite ratio restores factory",
+      invalid_data["profiles"]["eco"]["gpu_max"] == factory_data["profiles"]["eco"]["gpu_max"])
+check("plugin non finite ratio keeps a backup",
+      any(plugin_power.POWER_CONFIG.parent.glob(plugin_power.POWER_CONFIG.name + ".invalid-*")))
+check("plugin and powerd agree on non finite ratio",
+      invalid_data["profiles"]["eco"]["gpu_max"] == factory_data["profiles"]["eco"]["gpu_max"]
+      and float(invalid_data["profiles"]["eco"]["gpu_max"]) == factory_gpu_max)
+
+plugin_power.POWER_CONFIG.write_text("[profile.eco]\ngpu_max=0.5\n")
+half_data = plugin_power.resolve_limits(plugin_power.parse_power(), plugin_limits, "SM8250")
 for bad in ("abc", "0", "-5", "nan", "inf"):
-    plugin_power.POWER_CONFIG.write_text(f"[profile.eco]\ngpu_max_mhz={bad}\n")
+    plugin_power.POWER_CONFIG.write_text(f"[profile.eco]\ngpu_max_mhz={bad}\ngpu_max=0.5\n")
     try:
         bad_data = plugin_power.resolve_limits(plugin_power.parse_power(), plugin_limits, "SM8250")
         check(f"plugin gpu_max_mhz={bad} falls back to gpu_max ratio",
-              bad_data["profiles"]["eco"]["gpu_max_mhz"] == factory_data["profiles"]["eco"]["gpu_max_mhz"])
+              bad_data["profiles"]["eco"]["gpu_max_mhz"] == half_data["profiles"]["eco"]["gpu_max_mhz"])
         check(f"plugin gpu_max_mhz={bad} keeps /etc", plugin_power.POWER_CONFIG.exists())
     except ValueError as exc:
         check(f"plugin gpu_max_mhz={bad} falls back to gpu_max ratio ({exc})", False)
@@ -1392,11 +1446,16 @@ write_policies(os.path.join(sys_nogpu, "devices/system/cpu/cpufreq"), (("policy0
 limits_nogpu = plugin_system.freq_limits(env={}, sysfs=plugin_system.Path(sys_nogpu))
 factory_nogpu = plugin_power.resolve_limits(
     plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), limits_nogpu, "SM8250")
-out = plugin_render("[profile.eco]\ngpu_max_mhz=700\n", [("eco", "cpu_governor", "performance")],
+out = plugin_render("[profile.eco]\ngpu_max_mhz=700\ngpu_max=0.30\n", [("eco", "cpu_governor", "performance")],
                     lim=limits_nogpu, fac=factory_nogpu)
 check("plugin explicit gpu_max_mhz keeps MHz", out.get("profile.eco", "gpu_max_mhz", fallback=None) == "700")
-out = render8550("", [("eco", "cpu_max_policy7", 1670400)])
+check("plugin explicit gpu_max_mhz drops shadowed ratio", not out.has_option("profile.eco", "gpu_max"))
+out = plugin_render("[profile.eco]\ngpu_max_mhz=abc\ngpu_max=0.5\n", [("eco", "cpu_governor", "performance")],
+                    lim=limits_nogpu, fac=factory_nogpu)
+check("plugin invalid gpu_max_mhz keeps shadowed ratio", out.get("profile.eco", "gpu_max", fallback=None) == "0.5")
+out = render8550("[profile.eco]\ncpu_max=0.50\n", [("eco", "cpu_max_policy7", 1670400)])
 check("plugin policy keys written", has_policy_keys(out, "profile.eco"))
+check("plugin policy keys drop shadowed cpu_max", not out.has_option("profile.eco", "cpu_max"))
 
 sys_nocpu = os.path.join(WORK, "sys-nocpu")
 shutil.copytree(os.path.join(sysfs, "class"), os.path.join(sys_nocpu, "class"))
@@ -1409,6 +1468,9 @@ out = plugin_render("[profile.eco]\ncpu_max_policy7=1670400\n", [("eco", "cpu_go
                     lim=limits_nocpu, fac=factory_nocpu)
 check("plugin no CPU policies keeps existing policy keys",
       out.get("profile.eco", "cpu_max_policy7", fallback=None) == "1670400")
+out = plugin_render("[profile.eco]\ncpu_max_policy7=abc\ncpu_max=0.7\n", [("eco", "cpu_governor", "performance")],
+                    lim=limits_nocpu, fac=factory_nocpu)
+check("plugin invalid policy key keeps shadowed cpu_max", out.get("profile.eco", "cpu_max", fallback=None) == "0.70")
 plugin_power.POWER_CONFIG.unlink()
 
 if failures:
