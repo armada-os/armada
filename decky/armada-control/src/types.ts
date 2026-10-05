@@ -4,8 +4,24 @@ export interface PowerProfile {
   cpu_max: string;
   cpu_underclock: string;
   gpu_max: string;
+  gpu_max_mhz: number | null;
   gpu_min: string;
+  gpu_min_mhz: number | null;
   fan_curve: string;
+  [key: `cpu_max_policy${number}`]: number | null;
+}
+
+export interface CpuPolicy {
+  id: number;
+  cpus: string;
+  khz: number[];
+  mhz: number[];
+}
+
+export interface FreqLimits {
+  gpuMhz: number[];
+  gpuStockMaxMhz: number;
+  cpuPolicies: CpuPolicy[];
 }
 
 export interface FanCurve {
@@ -135,6 +151,7 @@ export interface PerfInfo {
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
+  freqLimits: FreqLimits;
   tweaks: Tweaks;
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
