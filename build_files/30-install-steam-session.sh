@@ -4,6 +4,10 @@ set -euxo pipefail
 # Patched Turnip includes the Mesa #14656 VM_BIND fix.
 dnf5 -y install --setopt=install_weak_deps=False /packages/mesa/mesa-*.fc44.armada.*.rpm
 
+# Side Turnip with the autotune calibration patches, used only by armada-autotune-report.
+install -D -m 0755 /packages/mesa/autotune/libvulkan_freedreno.so /usr/lib64/armada/autotune/libvulkan_freedreno.so
+install -D -m 0644 /packages/mesa/autotune/freedreno_icd.json /usr/lib64/armada/autotune/freedreno_icd.json
+
 # Patched mangohud: Adreno GPU load/clock/temp for mainline drm/msm (msm_dpu).
 dnf5 -y install --setopt=install_weak_deps=False /packages/mangohud/mangohud-*.fc44.armada.*.rpm
 

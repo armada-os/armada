@@ -1,0 +1,55 @@
+#!/usr/bin/bash
+# Measures the GPU with the calibration-only Turnip and saves a report to send back.
+set -uo pipefail
+
+session_user=${ARMADA_SESSION_USER:-armada}
+if ((EUID == 0)); then
+    home=$(getent passwd "$session_user" | cut -d: -f6)
+    [[ -n $home ]] || { echo "No user $session_user" >&2; exit 1; }
+    exec runuser -u "$session_user" -- env HOME="$home" "$0" "$@"
+fi
+
+if pgrep -f 'reaper SteamLaunch AppId=' >/dev/null; then
+    echo "Close the running game first" >&2
+    exit 1
+fi
+
+report_dir=${ARMADA_AUTOTUNE_REPORT_DIR:-$HOME/Documents/autotune}
+model=$(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)
+report=$report_dir/autotune-${model// /-}-$(date +%Y%m%d-%H%M%S).txt
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+mkdir -p "$report_dir" || exit 1
+
+{
+    echo "armada = $(cat /usr/lib/armada/version 2>/dev/null)"
+    echo "model = $model"
+    echo "kernel = $(uname -r)"
+    echo "mesa = $(rpm -q --qf '%{VERSION}-%{RELEASE}' mesa-vulkan-drivers 2>/dev/null)"
+    echo "tu_debug = ${TU_DEBUG:-}"
+    for gpu in /sys/class/devfreq/*.gpu; do
+        [[ -d $gpu ]] || continue
+        echo "gpu_governor = $(cat "$gpu/governor")"
+        echo "gpu_max_freq = $(cat "$gpu/max_freq")"
+    done
+
+    # three runs to show run-to-run noise
+    for run in 1 2 3; do
+        VK_DRIVER_FILES=/usr/lib64/armada/autotune/freedreno_icd.json \
+            TU_AUTOTUNE_CALIB="force,dump,export=$tmp/calib-$run.txt" \
+            timeout 120 vulkaninfo --summary >"$tmp/log-$run.txt" 2>&1
+        echo
+        echo "# run $run"
+        if [[ -f $tmp/calib-$run.txt ]]; then
+            cat "$tmp/calib-$run.txt"
+            grep "autotune calib" "$tmp/log-$run.txt"
+        else
+            tail -n 50 "$tmp/log-$run.txt"
+        fi
+    done
+} >"$report"
+
+status=$(grep -m1 '^status = ' "$report")
+echo "${status:-status = no calibration written}"
+echo "report = $report"

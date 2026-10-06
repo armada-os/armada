@@ -15,3 +15,15 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0003-ir3-disable-bindless-ubo-const-lowering.patch`
   source: https://github.com/ROCKNIX/distribution/blob/0adbe00f1745512609b289ef9435df897c28b780/projects/ROCKNIX/packages/graphics/mesa/patches/SM8550/0001-freedreno-ir3-vulkan-disable-bindless-ubo-const-lowering.patch
   notes: offsets updated for Mesa 26.2.0
+
+`patches/autotune/` only goes into the side Turnip build used by
+`armada-autotune-report`, never into the shipped driver.
+
+- `patches/autotune/0001-tu-autotune-track-binning-pass-for-rp-duration.patch`
+  source: https://github.com/sunshineinabox/distribution/blob/ba1dad96c1007edd661341b70bf7d9811a825231/projects/ROCKNIX/packages/graphics/mesa/patches/0001-tu-autotune-Track-binning-pass-for-RP-duration.patch
+  upstream: https://gitlab.freedesktop.org/mesa/mesa/-/commit/79e16e72329bc871cee6ea23489cfa3b25779ac7
+- `patches/autotune/0002-tu-autotune-stabilize-rp-hash-for-replays.patch`
+  source: https://github.com/sunshineinabox/distribution/blob/ba1dad96c1007edd661341b70bf7d9811a825231/projects/ROCKNIX/packages/graphics/mesa/patches/0002-tu-autotune-Stabilize-RP-hash-for-replays.patch
+  upstream: https://gitlab.freedesktop.org/mesa/mesa/-/commit/af16b1ceb1e60f8b1718bbb7522c105a2b5698b1
+- `patches/autotune/0003-tu-autotune-calibrate-bandwidth-model.patch`
+  source: https://github.com/sunshineinabox/distribution/blob/ba1dad96c1007edd661341b70bf7d9811a825231/projects/ROCKNIX/packages/graphics/mesa/patches/0003-tu-autotune-calibrate-the-bandwidth-model-and-adapt-it-at-runtime.patch

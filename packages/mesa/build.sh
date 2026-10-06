@@ -77,3 +77,22 @@ ccache -s
 for p in ${SUBPKGS}; do
     cp $HOME/rpmbuild/RPMS/*/${p}-${MESA_VER}-*${DIST}.*.rpm /work/out/
 done
+
+# Calibration-only Turnip for armada-autotune-report. Not in icd.d, so games never load it.
+AUTOTUNE_DIR=/usr/lib64/armada/autotune
+mkdir -p /tmp/autotune
+tar xf "$HOME/rpmbuild/SOURCES/${SOURCE_TARBALL:-mesa-${MESA_VER}.tar.xz}" -C /tmp/autotune --strip-components=1
+cd /tmp/autotune
+for patch in /work/patches/*.patch /work/patches/autotune/*.patch; do
+    patch -p1 <"$patch"
+done
+CFLAGS="-O2 ${ARMADA_MARCH}" CXXFLAGS="-O2 ${ARMADA_MARCH}" \
+    meson setup build --buildtype release --prefix /usr --libdir "${AUTOTUNE_DIR#/usr/}" \
+    -Dgallium-drivers= -Dvulkan-drivers=freedreno -Dfreedreno-kmds=msm \
+    -Dplatforms= -Dglx=disabled -Degl=disabled -Dgbm=disabled \
+    -Dopengl=false -Dllvm=disabled
+ninja -C build
+mkdir -p /work/out/autotune
+install -m 0755 build/src/freedreno/vulkan/libvulkan_freedreno.so /work/out/autotune/
+install -m 0644 build/src/freedreno/vulkan/freedreno_icd.aarch64.json /work/out/autotune/freedreno_icd.json
+grep -q "\"${AUTOTUNE_DIR}/libvulkan_freedreno.so\"" /work/out/autotune/freedreno_icd.json
