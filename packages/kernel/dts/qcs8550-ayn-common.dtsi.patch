@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and rumble, fix PCIe WAKE# polarity, codec rail sleep modes and gamepad MCU supply
+Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and rumble, fix PCIe WAKE# polarity, codec rail sleep modes and gamepad MCU supply, and drop the dead thermal-zone overrides
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
@@ -11,7 +11,150 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		};
  	};
  
-@@ -467,7 +466,6 @@
+@@ -203,142 +202,6 @@
+ 		};
+ 	};
+ 
+-	thermal-zones {
+-		cpuss0-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				cpuss0_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss0_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss0_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss0_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss0_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss0_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss0_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		cpuss1-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				cpuss1_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss1_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss1_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss1_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss1_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss1_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss1_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		cpuss2-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				cpuss2_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss2_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss2_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss2_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss2_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss2_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss2_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		cpuss3-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				cpuss3_fan0: trip-point2 { temperature = <50000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss3_fan1: trip-point3 { temperature = <55000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss3_fan2: trip-point4 { temperature = <60000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss3_fan3: trip-point5 { temperature = <65000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss3_fan4: trip-point6 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss3_fan5: trip-point7 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				cpuss3_fan6: trip-point8 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		cpu7-top-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				cpu7_top_fan0: trip-point2 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				cpu7_top_fan1: trip-point3 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				cpu7_top_fan2: trip-point4 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-0-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss0_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss0_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss0_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-1-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss1_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss1_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss1_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-2-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss2_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss2_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss2_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-3-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss3_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss3_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss3_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-4-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss4_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss4_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss4_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-5-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss5_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss5_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss5_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-6-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss6_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss6_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss6_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-		gpuss-7-thermal {
+-			polling-delay = <200>;
+-			trips {
+-				gpuss7_fan0: trip-point3 { temperature = <70000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss7_fan1: trip-point4 { temperature = <75000>; hysteresis = <3000>; type = "passive"; };
+-				gpuss7_fan2: trip-point5 { temperature = <80000>; hysteresis = <3000>; type = "passive"; };
+-			};
+-
+-		};
+-	};
+-
+ 	sound {
+ 		compatible = "qcom,sm8550-sndcard", "qcom,sm8450-sndcard";
+ 		pinctrl-0 = <&lpi_i2s3_active>;
+@@ -467,7 +330,6 @@
  		startup-delay-us = <10000>;
  
  		gpio = <&tlmm 99 GPIO_ACTIVE_HIGH>;
@@ -19,7 +162,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		regulator-boot-on;
  		enable-active-high;
  	};
-@@ -1096,7 +1094,7 @@
+@@ -1096,7 +958,7 @@
  };
  
  &pcieport0 {
@@ -28,7 +171,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
  
  	wifi@0 {
-@@ -1462,7 +1460,6 @@
+@@ -1462,7 +1324,6 @@
  	no-mmc;
  
  	qcom,dll-config = <0x0007442c>;
@@ -36,7 +179,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  	status = "okay";
  };
-@@ -1700,6 +1697,7 @@
+@@ -1700,6 +1561,7 @@
  
  	gamepad: gamepad {
  		compatible = "gamepad,rsinput";
@@ -44,7 +187,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  		gamepad-name = "AYN Odin2 Gamepad";
  		gamepad-bus = <0x0003>;
-@@ -1707,7 +1705,7 @@
+@@ -1707,7 +1569,7 @@
  		gamepad-pid = <0x3001>;
  		gamepad-rev = <0x0001>;
  
@@ -53,7 +196,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		enable-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
  		pinctrl-0 = <&mcu_en_active>;
  		pinctrl-names = "default";
-@@ -1765,3 +1763,18 @@
+@@ -1765,3 +1627,18 @@
  &xo_board {
  	clock-frequency = <76800000>;
  };
