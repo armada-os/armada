@@ -2,23 +2,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import logging
 import os
-import subprocess
-import time
 from pathlib import Path
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib  # noqa: E402
 
 LOG = logging.getLogger("armada-steam-charging-eta")
 ROOT = Path("/run/vpower")
-UP = [
-    "busctl", "--system", "get-property", "org.freedesktop.UPower",
-    "/org/freedesktop/UPower/devices/DisplayDevice",
-    "org.freedesktop.UPower.Device",
-]
-ROOT_UP = [*UP[:4], "/org/freedesktop/UPower", "org.freedesktop.UPower"]
-
-
-def upower(name, root=False):
-    output = subprocess.check_output([*(ROOT_UP if root else UP), name], text=True, timeout=2)
-    return output.split(maxsplit=1)[1].strip()
+UPOWER = "org.freedesktop.UPower"
+DISPLAY_PATH = "/org/freedesktop/UPower/devices/DisplayDevice"
+DEVICE_IFACE = "org.freedesktop.UPower.Device"
+ROOT_PATH = "/org/freedesktop/UPower"
+ROOT_IFACE = "org.freedesktop.UPower"
+PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
+DEVICE_PROPS = ("State", "Percentage", "TimeToFull", "TimeToEmpty")
 
 
 def write(name, value):
@@ -27,12 +26,11 @@ def write(name, value):
     os.replace(temporary, ROOT / name)
 
 
-def publish():
-    state = int(upower("State"))
-    on_battery = upower("OnBattery", root=True) == "true"
-    percent = float(upower("Percentage"))
-    time_to_full = int(upower("TimeToFull"))
-    time_to_empty = int(upower("TimeToEmpty"))
+def vpower_values(device, on_battery):
+    state = int(device["State"])
+    percent = float(device["Percentage"])
+    time_to_full = int(device["TimeToFull"])
+    time_to_empty = int(device["TimeToEmpty"])
 
     charging = state == 1
     discharging = state in (2, 3, 6)
@@ -44,29 +42,106 @@ def publish():
     secs_until_full = time_to_full if charging and time_to_full > 0 else -1
     secs_until_shutdown = time_to_empty if discharging and time_to_empty > 0 else -1
 
-    values = {
+    return {
         "ac_status": "Disconnected" if on_battery else "Connected",
         "battery_percent": f"{percent:.2f}",
         "battery_status": status,
         "secs_until_battery_full": secs_until_full,
         "secs_until_shutdown_request": secs_until_shutdown,
     }
-    for name, value in values.items():
-        write(name, value)
+
+
+class Publisher:
+    """Mirrors UPower's display device into /run/vpower, driven by its signals."""
+
+    def __init__(self, bus):
+        self.bus = bus
+        self.device = {}
+        self.on_battery = None
+        self.written = {}
+        self.last_error = None
+
+    def warn(self, error):
+        if str(error) != self.last_error:
+            LOG.warning("vpower update unavailable: %s", error)
+            self.last_error = str(error)
+
+    def get_all(self, path, iface):
+        reply = self.bus.call_sync(
+            UPOWER, path, PROPERTIES_IFACE, "GetAll",
+            GLib.Variant("(s)", (iface,)), None,
+            Gio.DBusCallFlags.NONE, 2000, None)
+        return reply.unpack()[0]
+
+    def refresh(self, *_args):
+        try:
+            device = self.get_all(DISPLAY_PATH, DEVICE_IFACE)
+            self.device = {name: device[name] for name in DEVICE_PROPS}
+            self.on_battery = bool(self.get_all(ROOT_PATH, ROOT_IFACE)["OnBattery"])
+        except (GLib.Error, KeyError) as error:
+            self.warn(error)
+            return
+        self.written = {}
+        self.publish()
+
+    def publish(self):
+        if len(self.device) != len(DEVICE_PROPS) or self.on_battery is None:
+            return
+        try:
+            for name, value in vpower_values(self.device, self.on_battery).items():
+                if self.written.get(name) != value:
+                    write(name, value)
+                    self.written[name] = value
+            self.last_error = None
+        except (OSError, ValueError) as error:
+            self.warn(error)
+
+    def properties_changed(self, _connection, _sender, path, _iface, _signal, params):
+        iface, changed, invalidated = params.unpack()
+        if path == DISPLAY_PATH and iface == DEVICE_IFACE:
+            if any(name in DEVICE_PROPS for name in invalidated):
+                self.refresh()
+                return
+            self.device.update({name: changed[name] for name in DEVICE_PROPS if name in changed})
+        elif path == ROOT_PATH and iface == ROOT_IFACE:
+            if "OnBattery" in invalidated:
+                self.refresh()
+                return
+            if "OnBattery" not in changed:
+                return
+            self.on_battery = bool(changed["OnBattery"])
+        else:
+            return
+        self.publish()
+
+    def name_owner_changed(self, _connection, _sender, _path, _iface, _signal, params):
+        _name, _old, new = params.unpack()
+        if new:
+            self.refresh()
+
+    def prepare_for_sleep(self, _connection, _sender, _path, _iface, _signal, params):
+        if not params.unpack()[0]:
+            self.refresh()
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    last_error = None
-    while True:
-        try:
-            publish()
-            last_error = None
-        except Exception as error:
-            if str(error) != last_error:
-                LOG.warning("vpower update unavailable: %s", error)
-                last_error = str(error)
-        time.sleep(2)
+    bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+    publisher = Publisher(bus)
+    for path in (DISPLAY_PATH, ROOT_PATH):
+        bus.signal_subscribe(
+            UPOWER, PROPERTIES_IFACE, "PropertiesChanged", path, None,
+            Gio.DBusSignalFlags.NONE, publisher.properties_changed)
+    bus.signal_subscribe(
+        "org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
+        "/org/freedesktop/DBus", UPOWER, Gio.DBusSignalFlags.NONE,
+        publisher.name_owner_changed)
+    bus.signal_subscribe(
+        "org.freedesktop.login1", "org.freedesktop.login1.Manager", "PrepareForSleep",
+        "/org/freedesktop/login1", None, Gio.DBusSignalFlags.NONE,
+        publisher.prepare_for_sleep)
+    publisher.refresh()
+    GLib.MainLoop().run()
 
 
 if __name__ == "__main__":
