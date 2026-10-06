@@ -101,7 +101,30 @@ def resolve_fex_config(settings, profiles):
     return profiles["default"]["config"]
 
 
-def apply_fex(settings, game_id, profiles, env):
+def game_fex_choice(tweaks, game_id):
+    if not game_id:
+        return False
+    game = (tweaks.get("games") or {}).get(str(game_id))
+    return (isinstance(game, dict) and game.get("enabled") is not False
+            and ("fexProfile" in game or "fexConfig" in game))
+
+
+def steam_fex_overrides(env):
+    # FEX_APP_CONFIG hides these from Proton; same precedence as its generate_fex_app_config()
+    overrides = {}
+    for variable, key in (("STEAM_FEX_TSOENABLED", "TSOEnabled"),
+                          ("STEAM_FEX_MULTIBLOCK", "Multiblock")):
+        value = str(env.get(variable, "")).strip()
+        if value.isdigit():
+            overrides[key] = "0" if int(value) == 0 else "1"
+    steam_ui = env.get("STEAM_COMPAT_FEX_CONFIG")
+    if steam_ui:
+        overrides["TSOEnabled"] = "1" if "TSOEnabled:1" in steam_ui else "0"
+        overrides["Multiblock"] = "1" if "Multiblock:1" in steam_ui else "0"
+    return overrides
+
+
+def apply_fex(settings, game_id, profiles, env, game_choice=False):
     with BASE_FEX_CONFIG.open(encoding="utf-8") as f:
         config = json.load(f)
 
@@ -113,6 +136,8 @@ def apply_fex(settings, game_id, profiles, env):
     allowed = set().union(*(profile["config"].keys() for profile in profiles.values()))
     fex_config = resolve_fex_config(settings, profiles)
     config.setdefault("Config", {}).update({k: v for k, v in fex_config.items() if k in allowed})
+    if not game_choice:
+        config["Config"].update(steam_fex_overrides(env))
     config["ThunksDB"] = thunk_settings(settings, config.get("ThunksDB", {}).keys())
 
     config_dir = fex_config_dir()
@@ -256,9 +281,10 @@ def main():
     settings = {}
     try:
         contract = load_fex_contract()
-        settings = armada_game_tweaks.merged_settings(
-            armada_game_tweaks.load(), game_id)
-        apply_fex(settings, game_id, contract["profiles"], os.environ)
+        tweaks = armada_game_tweaks.load()
+        settings = armada_game_tweaks.merged_settings(tweaks, game_id)
+        apply_fex(settings, game_id, contract["profiles"], os.environ,
+                  game_fex_choice(tweaks, game_id))
     except Exception as exc:
         print(f"armada-game-launch: failed to apply settings: {exc}", file=sys.stderr)
 
