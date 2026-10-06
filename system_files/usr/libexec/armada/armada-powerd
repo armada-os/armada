@@ -30,6 +30,8 @@ STATE_FILE = Path("/var/lib/armada/powerd.state")
 FACTORY_CONFIG_FILE = Path("/usr/share/armada/power-profiles.conf")
 CONFIG_FILE = Path("/etc/armada/power-profiles.conf")
 FAN_SAFE_PWM = 128
+GPU_DEVFREQ_DEBUGFS = Path("/sys/kernel/debug/dri")
+GPU_DEVFREQ_KNOBS = ("upthreshold", "downdifferential")
 
 
 def normalize_profile(profile):
@@ -196,6 +198,18 @@ def require_ratio(parser, section, key):
     return clamp(parser.getfloat(section, key), 0.0, 1.0)
 
 
+def gpu_devfreq_tuning(parser, section):
+    up = parser.getint(section, "gpu_upthreshold", fallback=0)
+    down = parser.getint(section, "gpu_downdifferential", fallback=0)
+    if not up and not down:
+        return {}
+    if not 0 < up <= 100 or not 0 < down < up:
+        print(f"armada-powerd: ignoring [{section}] gpu_upthreshold={up} "
+              f"gpu_downdifferential={down}", file=sys.stderr)
+        return {}
+    return {"upthreshold": up, "downdifferential": down}
+
+
 def fan_enable_mode(hwmon):
     # pwm-fan mode 3 also cuts the fan supply at duty 0 and in suspend; other
     # hwmon drivers treat 2 and up as automatic control, so keep manual 1.
@@ -244,6 +258,7 @@ class ArmadaPower:
         self.profile = ""
         self.gpu_level = "auto"
         self.manual_gpu_clock = 0
+        self.gpu_devfreq_defaults = {}
         self.smoothed_temp = 0.0
         self.last_pwm = 0
         self.suspended = False
@@ -353,6 +368,7 @@ class ArmadaPower:
                 "cpu_underclock": parser.get(section, "cpu_underclock").strip().lower(),
                 "gpu_max": require_ratio(parser, section, "gpu_max"),
                 "gpu_min": require_ratio(parser, section, "gpu_min"),
+                "gpu_devfreq": gpu_devfreq_tuning(parser, section),
                 "fan_curve": fan_curve,
                 "cpu_max_policy": {},
             }
@@ -755,12 +771,34 @@ class ArmadaPower:
             return
         settings = settings or self.profile_settings()
         write_text(self.gpu / "governor", "simple_ondemand")
+        self.apply_gpu_devfreq_tuning(settings.get("gpu_devfreq") or {})
         max_freq = self.choose_at_most(freqs, int(freqs[-1] * settings["gpu_max"]))
         min_target = int(freqs[-1] * settings["gpu_min"])
         min_freq = self.choose_at_least(freqs, min_target) if min_target else freqs[0]
         write_text(self.gpu / "min_freq", freqs[0])
         write_text(self.gpu / "max_freq", max_freq)
         write_text(self.gpu / "min_freq", min(min_freq, max_freq))
+
+    def apply_gpu_devfreq_tuning(self, tuning):
+        for directory in GPU_DEVFREQ_DEBUGFS.glob("*/devfreq"):
+            current = {knob: read_text(directory / knob) for knob in GPU_DEVFREQ_KNOBS}
+            if not all(value.isdigit() for value in current.values()):
+                continue
+            current = {knob: int(value) for knob, value in current.items()}
+            if tuning:
+                self.gpu_devfreq_defaults.setdefault(directory, dict(current))
+                wanted = tuning
+            elif directory in self.gpu_devfreq_defaults:
+                wanted = self.gpu_devfreq_defaults[directory]
+            else:
+                continue
+            # keep upthreshold above downdifferential after every write
+            order = GPU_DEVFREQ_KNOBS
+            if wanted["upthreshold"] <= current["downdifferential"]:
+                order = tuple(reversed(GPU_DEVFREQ_KNOBS))
+            for knob in order:
+                if current[knob] != wanted[knob]:
+                    write_text(directory / knob, wanted[knob])
 
     def set_gpu_manual_clock(self, mhz):
         freqs = self.gpu_freqs()
