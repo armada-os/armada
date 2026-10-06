@@ -88,8 +88,7 @@ case "${ARMADA_SOC_CLASS:-}" in
         : "${ARMADA_LITTLE_CORES=0-2}"
         : "${ARMADA_BIG_CORES=3-7}"
         : "${ARMADA_PRIME_CORES=7}"
-        # The A740 GMU wedges if a GPU interrupt wakes CPU 0-2 out of power collapse
-        : "${ARMADA_IRQ_CORES=3-7}"
+        : "${ARMADA_IRQ_CORES=0-2}"
         ;;
     SM8650)
         : "${ARMADA_LITTLE_CORES=0-1}"
