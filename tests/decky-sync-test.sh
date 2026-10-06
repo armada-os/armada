@@ -20,6 +20,7 @@ sed \
     -e "s|homebrew=\"/var/home/\${user_name}/homebrew\"|homebrew=\"$WORK/homebrew\"|" \
     -e "s|loader_src=/usr/share/decky-loader/PluginLoader|loader_src=$WORK/bundled/PluginLoader|" \
     -e "s|loader_version_src=/usr/share/decky-loader/.loader.version|loader_version_src=$WORK/bundled/.loader.version|" \
+    -e "s|loader_native_marker=/usr/share/decky-loader/.native|loader_native_marker=$WORK/bundled/.native|" \
     -e "s|src=/usr/share/decky-plugins|src=$WORK/plugins|" \
     "$SYNC" > "$WORK/sync"
 chmod +x "$WORK/sync"
@@ -53,5 +54,25 @@ run_case newer-prerelease-replaces-final v3.2.8 v3.2.9-pre1 v3.2.9-pre1
 run_case older-release-does-not-replace-newer v3.2.9 v3.2.8 v3.2.9
 run_case newer-prerelease-replaces-older v3.2.8-pre1 v3.2.8-pre2 v3.2.8-pre2
 run_case equal-version-preserves-loader v3.2.8 v3.2.8 v3.2.8
+
+# A native loader replaces any installed loader, whatever its version.
+touch "$WORK/bundled/.native"
+printf 'v3.2.10' > "$WORK/bundled/.loader.version"
+printf 'native launcher' > "$WORK/bundled/PluginLoader"
+chmod +x "$WORK/bundled/PluginLoader"
+for installed in v3.2.10 v3.2.11; do
+    printf '%s' "$installed" > "$WORK/homebrew/services/.loader.version"
+    printf 'x86-64 binary %s' "$installed" > "$WORK/homebrew/services/PluginLoader"
+    chmod +x "$WORK/homebrew/services/PluginLoader"
+    PATH="$WORK/bin:$PATH" "$WORK/sync"
+    cmp -s "$WORK/bundled/PluginLoader" "$WORK/homebrew/services/PluginLoader" ||
+        fail "native-replaces-x86-$installed: launcher not replaced"
+    [[ "$(<"$WORK/homebrew/services/.loader.version")" == v3.2.10 ]] ||
+        fail "native-replaces-x86-$installed: version not seeded"
+done
+PATH="$WORK/bin:$PATH" "$WORK/sync"
+cmp -s "$WORK/bundled/PluginLoader" "$WORK/homebrew/services/PluginLoader" ||
+    fail "native-equal-preserves-launcher"
+rm -f "$WORK/bundled/.native"
 
 printf 'decky sync tests passed\n'

@@ -5,10 +5,22 @@ user_name=armada
 homebrew="/var/home/${user_name}/homebrew"
 loader_src=/usr/share/decky-loader/PluginLoader
 loader_version_src=/usr/share/decky-loader/.loader.version
+loader_native_marker=/usr/share/decky-loader/.native
 src=/usr/share/decky-plugins
+
+same_file() {
+    [[ -f "$1" && -f "$2" ]] || return 1
+    [[ "$(sha256sum <"$1")" == "$(sha256sum <"$2")" ]]
+}
 
 loader_needs_seed() {
     [[ ! -x "${homebrew}/services/PluginLoader" ]] && return 0
+    # The native loader updates with the image, so mirror it exactly.
+    if [[ -f "${loader_native_marker}" ]]; then
+        ! same_file "${loader_src}" "${homebrew}/services/PluginLoader" ||
+            ! same_file "${loader_version_src}" "${homebrew}/services/.loader.version"
+        return
+    fi
     [[ -f "${loader_version_src}" ]] || return 1
     [[ -f "${homebrew}/services/.loader.version" ]] || return 0
 

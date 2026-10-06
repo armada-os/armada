@@ -26,6 +26,14 @@ dnf5 -y install --setopt=install_weak_deps=False \
     gtk4 \
     libadwaita \
     python3-websocket-client \
+    python3-aiohttp \
+    python3-aiohttp-cors \
+    python3-certifi \
+    python3-jinja2 \
+    python3-multidict \
+    python3-packaging \
+    python3-setproctitle \
+    python3-watchdog \
     polkit \
     upower \
     sudo \

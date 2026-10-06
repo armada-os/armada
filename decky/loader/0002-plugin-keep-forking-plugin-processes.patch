@@ -1,0 +1,31 @@
+From: ouroboros420 <ouroboros420@users.noreply.github.com>
+Subject: [PATCH] plugin: keep forking plugin processes on Python 3.14
+
+Plugin processes are started with multiprocessing's default start method and
+inherit the sandboxed plugin object and its socket. Python 3.14 changed the
+Linux default from fork to forkserver, which would try to pickle them. The
+release binaries bundle an older Python, so this only shows up when the
+loader runs on a 3.14 system interpreter. Ask for the fork context
+explicitly.
+---
+--- a/decky_loader/plugin/plugin.py
++++ b/decky_loader/plugin/plugin.py
+@@ -2,7 +2,7 @@
+ from json import dumps, load, loads
+ from logging import getLogger
+ from os import path
+-from multiprocessing import Process
++from multiprocessing import Process, get_context
+ from time import time
+ from traceback import format_exc
+ 
+@@ -139,7 +139,8 @@
+     def start(self):
+         if self.passive:
+             return self
+-        self.proc = Process(target=self.sandboxed_plugin.initialize, args=[self._socket])
++        # Plugins inherit the sandbox and its socket; Python 3.14 defaults to forkserver.
++        self.proc = get_context("fork").Process(target=self.sandboxed_plugin.initialize, args=[self._socket])
+         self.proc.start()
+         self._listener_task = create_task(self._response_listener())
+         return self

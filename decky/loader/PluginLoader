@@ -1,0 +1,13 @@
+#!/bin/sh
+# Run Decky Loader natively; fall back to the upstream x86-64 binary if a module is missing.
+backend=/usr/share/decky-loader/backend
+
+if PYTHONPATH="${backend}" /usr/bin/python3 -c \
+    'import aiohttp, aiohttp_cors, aiohttp_jinja2, certifi, multidict, packaging, setproctitle, watchdog' \
+    2>/dev/null; then
+    export DECKY_OS_MANAGED_UPDATES=1
+    exec /usr/bin/python3 "${backend}/main.py" "$@"
+fi
+
+echo "PluginLoader: native backend unavailable, running the upstream x86-64 binary" >&2
+exec /usr/share/decky-loader/PluginLoader.x86_64 "$@"

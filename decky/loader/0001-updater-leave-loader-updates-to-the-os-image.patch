@@ -1,0 +1,59 @@
+From: ouroboros420 <ouroboros420@users.noreply.github.com>
+Subject: [PATCH] updater: leave loader updates to the OS image when it ships the loader
+
+Armada runs the loader natively from the OS image. A self-update would put
+the upstream x86-64 release binary back in its place, so when
+DECKY_OS_MANAGED_UPDATES is set the updater reports the loader as not
+updatable, skips the periodic release check and ignores update and testing
+build requests. Loader updates arrive with OS updates instead.
+---
+--- a/decky_loader/updater.py
++++ b/decky_loader/updater.py
+@@ -15,6 +15,9 @@
+ 
+ from . import helpers
+ from .settings import SettingsManager
++
++# Set when the OS image ships the loader; a self-update would replace it.
++OS_MANAGED_UPDATES = bool(os.environ.get("DECKY_OS_MANAGED_UPDATES"))
+ if TYPE_CHECKING:
+     from .main import PluginManager
+ 
+@@ -96,7 +99,7 @@
+             "current": self.localVer,
+             "remote": self.remoteVer,
+             "all": self.allRemoteVers,
+-            "updatable": self.localVer != "unknown" and self.localVer != "dev"
++            "updatable": self.localVer != "unknown" and self.localVer != "dev" and not OS_MANAGED_UPDATES
+         }
+ 
+     async def check_for_updates(self):
+@@ -130,6 +133,8 @@
+         return await self.get_version_info()
+ 
+     async def version_reloader(self):
++        if OS_MANAGED_UPDATES:
++            return
+         await sleep(30)
+         while True:
+             try:
+@@ -186,6 +191,9 @@
+         await self.do_restart()
+ 
+     async def do_update(self):
++        if OS_MANAGED_UPDATES:
++            logger.info("Decky Loader updates come with OS updates; ignoring the update request.")
++            return
+         logger.debug("Starting update.")
+         try:
+             assert self.remoteVer
+@@ -262,6 +270,9 @@
+         return result
+ 
+     async def download_testing_version(self, pr_id: int, sha_id: str):
++        if OS_MANAGED_UPDATES:
++            logger.info("Decky Loader updates come with OS updates; ignoring the testing version request.")
++            return
+         down_id = ''
+         #Get all the associated workflow run for the given sha_id code hash
+         async with ClientSession() as web:
