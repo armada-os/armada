@@ -115,6 +115,7 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0533-scsi-ufs-ufs-qcom-enable-only-lane-clocks-in-lane-clock-apis.patch
 0535-scsi-ufs-core-fast-abort-unsupported-query-idns.patch
 0536-scsi-ufs-core-dynamically-disable-timestamp-on-unsupported-devices.patch
+0537-mmc-sdhci-msm-mask-controller-irqs-while-runtime-suspended.patch
 0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch
 0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch
 0522-PCI-host-common-let-only-endpoints-veto-d3cold.patch
