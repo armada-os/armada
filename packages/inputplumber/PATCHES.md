@@ -13,3 +13,5 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   notes: AYN Thor Lite support
 - `patches/0004-fix-AyaneoHaptics-sleep-between-polls.patch`
   source: armada
+- `patches/0005-perf-wait-for-input-instead-of-polling.patch`
+  source: armada
