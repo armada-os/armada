@@ -142,6 +142,7 @@ export interface Config {
   chargingFanPwm: number;
   sshEnabled: boolean;
   swipeGesturesEnabled: boolean;
+  nativeResolution?: [number, number] | null;
   mtpEnabled: boolean;
   desktopMode: string;
   desktopModes: DropdownChoice[];
