@@ -22,6 +22,13 @@ dnf5 -y install --setopt=install_weak_deps=False \
     openal-soft \
     xorg-x11-server-Xwayland
 
+# Fedora's IBus + pinyin engine (ibus-pinyin, not libpinyin) with the android
+# pyzy DB for the gaming-mode on-screen keyboard; DNF resolves the rest.
+dnf5 -y install --setopt=install_weak_deps=False \
+    ibus \
+    ibus-pinyin \
+    pyzy-db-android
+
 # Patched InputPlumber: dpad signed-axis fix
 dnf5 -y install --setopt=install_weak_deps=False /packages/inputplumber/inputplumber-*.rpm
 
