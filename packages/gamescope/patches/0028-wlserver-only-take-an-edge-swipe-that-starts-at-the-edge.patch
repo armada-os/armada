@@ -1,0 +1,157 @@
+From: enij90 <226572015+enij90@users.noreply.github.com>
+Subject: [PATCH] wlserver: only take an edge swipe that starts at the edge
+
+The touch gestures (enable_touch_gestures) open the Steam menu or the quick
+access menu by accident, and close them again since the shortcut toggles,
+typically while scrolling the quick access menu. The detector compares
+positions as unsigned integers, so any motion toward an edge inside the
+edge band underflows past the threshold and arms a gesture; the armed state
+and the previous position are shared by every touch and never reset, so a
+later, unrelated touch moving inward near an edge fires it.
+
+Track each touch from where it goes down instead: a swipe needs a touch
+that starts near the left or right edge (touch_gesture_edge_zone, 7% of
+the width) and moves inward (touch_gesture_travel, 8% of the width),
+mostly horizontally, and fires at most once. Lifting the finger forgets it.
+Both are convars, so they can be tuned for a case or controller that
+covers the edge of the screen.
+
+---
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 484c5c0..ae6de17 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -3822,9 +3822,52 @@ void wlserver_gesture_flush()
+ 	pending_gesture_y = false;
+ }
+ 
+-// Variables to track the direction of the touch motion
+-uint32_t previous_tx = 0;
+-uint32_t previous_ty = 0;
++// Edge swipes: a touch that goes down near the left or right edge and moves
++// inward opens the Steam menu or the quick access menu, once per touch.
++gamescope::ConVar<float> cv_touch_gesture_edge_zone( "touch_gesture_edge_zone", 0.07f, "Edge swipes start within this fraction of the width from the left or right edge" );
++gamescope::ConVar<float> cv_touch_gesture_travel( "touch_gesture_travel", 0.08f, "Edge swipes fire after moving inward by this fraction of the width" );
++struct EdgeSwipe_t
++{
++	int nSide; // -1 left, 1 right
++	double flStartX;
++	double flStartY;
++	bool bDone;
++};
++static std::unordered_map<int, EdgeSwipe_t> g_EdgeSwipes;
++
++static void wlserver_edge_swipe_down( int touch_id, double tx, double ty )
++{
++	g_EdgeSwipes.erase( touch_id );
++	if ( !cv_touch_gestures )
++		return;
++
++	double flZone = g_nOutputWidth * cv_touch_gesture_edge_zone;
++	int nSide = 0;
++	if ( tx < flZone )
++		nSide = -1;
++	else if ( tx >= g_nOutputWidth - flZone )
++		nSide = 1;
++	if ( nSide )
++		g_EdgeSwipes[ touch_id ] = { nSide, tx, ty, false };
++}
++
++static void wlserver_edge_swipe_motion( int touch_id, double tx, double ty )
++{
++	auto it = g_EdgeSwipes.find( touch_id );
++	if ( it == g_EdgeSwipes.end() || it->second.bDone )
++		return;
++
++	EdgeSwipe_t &swipe = it->second;
++	double flInward = ( tx - swipe.flStartX ) * -swipe.nSide;
++	double flAcross = fabs( ty - swipe.flStartY );
++	if ( flInward < g_nOutputWidth * cv_touch_gesture_travel )
++		return;
++
++	// Mostly horizontal: a scroll that starts near an edge is not a swipe.
++	swipe.bDone = true;
++	if ( flInward > flAcross * 2.0 )
++		wlserver_open_steam_menu( swipe.nSide > 0 );
++}
+ 
+ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor, gamescope::IBackendConnector* connector )
+ {
+@@ -3869,58 +3912,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
+ 			if ( bAlwaysWarpCursor )
+ 				wlserver_mousewarp( tx, ty, time, false );
+ 
+-			if ( cv_touch_gestures )
+-			{
+-				uint32_t rounded_tx = static_cast<int>(std::round(tx));
+-				uint32_t rounded_ty = static_cast<int>(std::round(ty));
+-				uint32_t edge_range_x = static_cast<uint32_t>(g_nOutputWidth * 0.05);
+-				uint32_t edge_range_y = static_cast<uint32_t>(g_nOutputWidth * 0.05);
+-				uint32_t gesture_limits_x = edge_range_x * 2;
+-				uint32_t gesture_limits_y = edge_range_y * 2;
+-				uint32_t threshold_distance_x = gesture_limits_x;
+-				uint32_t threshold_distance_y = gesture_limits_y;
+-
+-				// Left to Right and Right to Left
+-				if (!pending_gesture_x && ((rounded_tx >= 1 && rounded_tx < edge_range_x) || (rounded_tx >= g_nOutputWidth - edge_range_x))) {
+-					// Check if the distance moved is greater than the threshold
+-					if (rounded_tx - previous_tx > threshold_distance_x) {
+-						pending_gesture_x = true;
+-					}
+-				}
+-
+-				// Top to Bottom and Bottom to Top
+-				if (!pending_gesture_y && ((rounded_ty >= 1 && rounded_ty < edge_range_y) || (rounded_ty >= g_nOutputHeight - edge_range_y))) {
+-					// Check if the distance moved is greater than the threshold
+-					if (rounded_ty - previous_ty > threshold_distance_y) {
+-						pending_gesture_y = true;
+-					}
+-				}
+-
+-				//left
+-				if (pending_gesture_x && previous_tx < rounded_tx && rounded_tx >= edge_range_x && rounded_tx < gesture_limits_x) {
+-					wlserver_open_steam_menu(0);
+-					wlserver_gesture_flush();
+-				}
+-				//right
+-				if (pending_gesture_x && previous_tx > rounded_tx && rounded_tx <= g_nOutputWidth - edge_range_x && rounded_tx > g_nOutputWidth - gesture_limits_x) {
+-					wlserver_open_steam_menu(1);
+-					wlserver_gesture_flush();
+-				}
+-
+-				// Top
+-				if (pending_gesture_y && previous_ty < rounded_ty && rounded_ty >= edge_range_y && rounded_ty < gesture_limits_y) {
+-					wlserver_gesture_flush();
+-					// Top to Bottom function to add
+-				}
+-				// Bottom
+-				if (pending_gesture_y && previous_ty > rounded_ty && !pending_osk && rounded_ty <= g_nOutputWidth - edge_range_y && rounded_ty > g_nOutputHeight - gesture_limits_y) {
+-					wlserver_gesture_flush();
+-					pending_osk = true;
+-					//wlserver_open_steam_osk(1);
+-				}
+-				previous_tx = rounded_tx;
+-				previous_ty = rounded_ty;
+-			}
++			wlserver_edge_swipe_motion( touch_id, tx, ty );
+ 		}
+ 		else if ( eMode == gamescope::TouchClickModes::Disabled )
+ 		{
+@@ -3962,6 +3954,8 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
+ 		tx *= focusedWindowScaleX;
+ 		ty *= focusedWindowScaleY;
+ 
++		wlserver_edge_swipe_down( touch_id, tx, ty );
++
+ 		gamescope::TouchClickMode eMode = GetBackend()->GetTouchClickMode();
+ 
+ 		// Steam emulates a pointer for X11 windows; an xdg-shell window reads wl_touch itself.
+@@ -4009,6 +4003,8 @@ void wlserver_touchup( int touch_id, uint32_t time )
+ {
+ 	assert( wlserver_is_lock_held() );
+ 
++	g_EdgeSwipes.erase( touch_id );
++
+ 	// Release whatever the touch pressed even if its surface is gone, or the seat keeps the button down.
+ 	bool bReleasedAny = false;
+ 	for ( int i = 0; i < WLSERVER_BUTTON_COUNT; i++ )
