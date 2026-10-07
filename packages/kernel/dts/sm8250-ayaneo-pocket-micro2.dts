@@ -429,45 +429,9 @@
 	};
 };
 
-&cluster_pd {
-	/delete-property/ domain-idle-states;
-};
-
 &cpu7_opp_table {
 	/delete-node/ opp-2745600000;
 	/delete-node/ opp-2841600000;
-};
-
-&cpu_pd0 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd1 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd2 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd3 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd4 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd5 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd6 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd7 {
-	/delete-property/ domain-idle-states;
 };
 
 &gmu {
