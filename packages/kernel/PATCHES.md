@@ -12,6 +12,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740.patch
   upstream: unknown
+  notes: Not applied. With it the GMU can collapse GX 300 us after the GPU idles, before a late a6xx_irq() acknowledges the interrupt (irq_poll_fence() waits 100 us, a CPU leaving deep idle needs 750 us or more), and the A740 wedges at idle. Mainline does not enable IFPC on the A740.
 - `patches/0010-msm-resource-cleanup.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/packages/linux/patches/7.0/0010-msm-resource-cleanup.patch
   upstream: unknown

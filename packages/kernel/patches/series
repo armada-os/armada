@@ -3,7 +3,7 @@
 
 # ============== Display / DRM ==============
 0002-qcom-dispcc-sm8550-Fix-disp_cc_mdss_mdp_clk_src.patch
-0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740.patch
+#0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740.patch    # disabled: GMU wedge on a740
 0010-msm-resource-cleanup.patch
 0048-drm-msm-dsi-reparent-byte-pixel-src-to-xo-on-disable.patch
 0048a-drm-msm-dsi-round-byte-clock-rate-after-reparenting-to-PLL.patch
