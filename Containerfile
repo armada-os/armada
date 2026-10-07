@@ -74,6 +74,9 @@ FROM ${EXTEST_REF} AS extest
 ARG ARMADA_SPLASH_REF
 FROM ${ARMADA_SPLASH_REF} AS armada-splash
 
+ARG ARMADA_LOGOS_REF
+FROM ${ARMADA_LOGOS_REF} AS armada-logos
+
 ARG ARMADA_RGB_REF
 FROM ${ARMADA_RGB_REF} AS armada-rgb
 
@@ -126,6 +129,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=mesa-x86,source=/,target=/packages/mesa-x86 \
     --mount=type=bind,from=extest,source=/,target=/packages/extest \
     --mount=type=bind,from=armada-splash,source=/rpms,target=/packages/armada-splash \
+    --mount=type=bind,from=armada-logos,source=/rpms,target=/packages/armada-logos \
     --mount=type=bind,from=armada-rgb,source=/rpms,target=/packages/armada-rgb \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \

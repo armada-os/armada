@@ -141,6 +141,10 @@ dnf5 -y install --setopt=install_weak_deps=False \
 # feedbackd's role-routing sinks can wedge Steam audio during session startup.
 rm -f /usr/share/wireplumber/wireplumber.conf.d/media-role-nodes.conf
 
+# Replace Fedora styling with Armada styling
+dnf5 -y install --setopt=install_weak_deps=False \
+    /packages/armada-logos/*.rpm
+
 # Patched KWin lets devices pin Plasma's virtual keyboard to a configured output.
 dnf5 -y install --setopt=install_weak_deps=False \
     /packages/kwin/kwin-[0-9]*.rpm \
