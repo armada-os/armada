@@ -34,7 +34,8 @@ cp fex-emu.spec ~/rpmbuild/SPECS/
 sed -i "/^%build$/i %global build_cflags %{build_cflags} ${ARMADA_MARCH}" ~/rpmbuild/SPECS/fex-emu.spec
 sed -i "/^%build$/i %global build_cxxflags %{build_cxxflags} ${ARMADA_MARCH}" ~/rpmbuild/SPECS/fex-emu.spec
 cp toolchain_x86_32.cmake toolchain_x86_64.cmake \
-   build-fex-sysroot.sh "${SYSROOT_TARBALL}" ~/rpmbuild/SOURCES/
+   build-fex-sysroot.sh "${SYSROOT_TARBALL}" Config.json \
+   ~/rpmbuild/SOURCES/
 spectool -g -R --define "commit ${COMMIT}" --define "date ${DATE}" --define "base_version ${BASE_VERSION}" ~/rpmbuild/SPECS/fex-emu.spec
 rpmbuild -bb --define "commit ${COMMIT}" --define "date ${DATE}" --define "base_version ${BASE_VERSION}" ~/rpmbuild/SPECS/fex-emu.spec
 cp ~/rpmbuild/RPMS/aarch64/*.rpm /work/out/

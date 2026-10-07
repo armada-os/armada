@@ -49,6 +49,7 @@ RUN ./build.sh && /src/scrub-scratch.sh
 FROM scratch AS out-gamescope-session
 COPY --from=pkg-gamescope-session /work/out/ /rpms/
 
+
 FROM builder-base AS pkg-gamescope-session-steam
 COPY TERRA.env /src/
 COPY gamescope-session-steam/ /work/
@@ -149,6 +150,13 @@ RUN ./build.sh && /src/scrub-scratch.sh
 FROM scratch AS out-powerdevil
 COPY --from=pkg-powerdevil /work/out/ /rpms/
 
+FROM builder-base AS pkg-proton-cachyos
+COPY proton-cachyos/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-proton-cachyos
+COPY --from=pkg-proton-cachyos /work/out/ /
 
 FROM builder-base AS pkg-protontricks
 COPY protontricks/ /work/
@@ -190,6 +198,14 @@ RUN ./build.sh && /src/scrub-scratch.sh
 
 FROM scratch AS out-fex
 COPY --from=pkg-fex /work/out/ /rpms/
+
+FROM builder-base AS pkg-fex-rootfs-archlinux
+COPY fex-rootfs-archlinux/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-fex-rootfs-archlinux
+COPY --from=pkg-fex-rootfs-archlinux /work/out/ /rpms/
 
 
 FROM builder-base AS pkg-kernel

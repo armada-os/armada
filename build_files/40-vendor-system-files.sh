@@ -2,18 +2,19 @@
 set -euxo pipefail
 
 cp -a /ctx/system_files/. /
-install -Dpm 0755 /packages/extest/libextest.so /usr/lib/extest/libextest.so
+
+# feedbackd's role-routing sinks can wedge Steam audio during session startup.
+rm -f /usr/share/wireplumber/wireplumber.conf.d/media-role-nodes.conf
+
+# CachyOS Proton's ARM64 GStreamer asks for Arch's libbz2 soname.
+ln -sf libbz2.so.1 /usr/lib64/libbz2.so.1.0
+
+# Some AppImages link zlib's unversioned development soname.
+ln -sf libz.so.1 /usr/lib64/libz.so
 
 # The vendored entries land after the RPM scriptlets ran, so mimeinfo.cache
 # would not otherwise list them.
 update-desktop-database -q /usr/share/applications
-
-cp -a /packages/mesa-android/waydroid/vendor /usr/share/armada/waydroid/
-
-mesa_sqsh=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh
-install -Dm0644 /packages/mesa-x86/ArmadaMesa.sqsh "${mesa_sqsh}"
-# A separate rechunk component keeps Mesa-only updates from invalidating ArchLinux.sqsh.
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-mesa")' "${mesa_sqsh}"
 
 # Status text font for armada-splash (falls back to its embedded bitmap font
 # if this link dangles). Static face: stb_truetype renders a VF's default

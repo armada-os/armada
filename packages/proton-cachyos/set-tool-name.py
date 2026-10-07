@@ -32,11 +32,11 @@ def set_compat_tool_name(compatibilitytool_path, tool_name):
 
 
 def main():
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: set-steam-default-compat.py STEAM_HOME TOOL_NAME COMPAT_DIR")
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: set-steam-default-compat.py TOOL_NAME COMPAT_DIR")
 
-    tool_name = sys.argv[2]
-    tool_dir = pathlib.Path(sys.argv[3]) / tool_name
+    tool_name = sys.argv[1]
+    tool_dir = pathlib.Path(sys.argv[2]) / tool_name
 
     compatibilitytool_path = tool_dir / "compatibilitytool.vdf"
     set_compat_tool_name(compatibilitytool_path, tool_name)
