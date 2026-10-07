@@ -56,3 +56,5 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0027-steamcompmgr-elapsed-time-fps-limiter.patch`
   source: armada
+- `patches/0029-ime-type-any-single-character-on-its-real-key.patch`
+  source: armada
