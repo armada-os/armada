@@ -10,13 +10,3 @@ python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"steam")' \
 
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"proton")' \
     "/usr/share/steam/compatibilitytools.d/proton-cachyos-11.0-arm64"
-
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-rootfs")' \
-    /usr/share/fex-emu/RootFS/ArchLinux.sqsh
-
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"lepton")' \
-    /usr/share/armada/lepton/guestos-android.erofs
-
-# A separate rechunk component keeps Mesa-only updates from invalidating ArchLinux.sqsh.
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-mesa")' \
-    "/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh"
