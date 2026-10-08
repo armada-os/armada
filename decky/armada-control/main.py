@@ -26,6 +26,7 @@ from armada_control.system import (
     set_sleep_logs_enabled,
     set_ssh_enabled,
     set_swipe_gestures_enabled,
+    suspend_swipe_gestures,
 )
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
 from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves, save_charging_pwm
@@ -59,6 +60,9 @@ class Plugin:
 
     async def set_swipe_gestures_enabled(self, enabled):
         return await asyncio.to_thread(set_swipe_gestures_enabled, enabled)
+
+    async def suspend_swipe_gestures(self, suspended):
+        return await asyncio.to_thread(suspend_swipe_gestures, suspended)
 
     async def set_ssh_enabled(self, enabled):
         return await asyncio.to_thread(set_ssh_enabled, enabled)

@@ -117,6 +117,10 @@ def set_swipe_gestures_enabled(enabled):
     return bool(call("set_swipe_gestures_enabled", enabled=enabled)["enabled"])
 
 
+def suspend_swipe_gestures(suspended):
+    return bool(call("suspend_swipe_gestures", suspended=suspended)["suspended"])
+
+
 def set_ssh_enabled(enabled):
     return bool(call("set_ssh_enabled", enabled=bool(enabled)).get("enabled"))
 
