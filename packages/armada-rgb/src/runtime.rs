@@ -1,4 +1,7 @@
-use crate::{ChannelBackend, ColorCorrection, LightingBackend, MulticolorBackend, SerialBackend};
+use crate::{
+    ChannelBackend, ColorCorrection, LightingBackend, MulticolorBackend, SerialBackend,
+    SerialProtocol,
+};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -32,9 +35,25 @@ struct DeviceProfile {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum BackendProfile {
-    Serial { device: String },
-    Channels { targets: Vec<String> },
-    Multicolor { targets: Vec<String> },
+    Serial {
+        device: String,
+        #[serde(default)]
+        protocol: ProfileSerialProtocol,
+    },
+    Channels {
+        targets: Vec<String>,
+    },
+    Multicolor {
+        targets: Vec<String>,
+    },
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ProfileSerialProtocol {
+    #[default]
+    Micro2,
+    PocketS2,
 }
 
 pub(crate) fn from_env() -> (PathBuf, LightingBackend) {
@@ -88,8 +107,13 @@ fn load_backend(
         .transpose()?;
 
     match profile.backend {
-        BackendProfile::Serial { device } => Ok(LightingBackend::Serial(
-            SerialBackend::new(dev_root, device).with_correction(profile.correction),
+        BackendProfile::Serial { device, protocol } => Ok(LightingBackend::Serial(
+            SerialBackend::new(dev_root, device)
+                .with_protocol(match protocol {
+                    ProfileSerialProtocol::Micro2 => SerialProtocol::Micro2,
+                    ProfileSerialProtocol::PocketS2 => SerialProtocol::PocketS2,
+                })
+                .with_correction(profile.correction),
         )),
         BackendProfile::Channels { targets } if !targets.is_empty() => {
             Ok(LightingBackend::Channels(
@@ -139,6 +163,7 @@ mod tests {
         let catalog: ProfileCatalog = parse_catalog(include_str!("../profiles.json")).unwrap();
         for model in [
             "AYANEO Pocket MICRO 2",
+            "AYANEO Pocket S2",
             "AYN Odin 2",
             "AYN Odin 2 Portal",
             "AYN Thor",

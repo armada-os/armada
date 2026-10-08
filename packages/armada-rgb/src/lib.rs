@@ -10,7 +10,9 @@ mod runtime;
 mod state;
 mod watcher;
 
-pub use backend::{ChannelBackend, LightingBackend, MulticolorBackend, SerialBackend};
+pub use backend::{
+    ChannelBackend, LightingBackend, MulticolorBackend, SerialBackend, SerialProtocol,
+};
 pub use controller::Controller;
 pub use correction::ColorCorrection;
 pub use state::LightingConfig;

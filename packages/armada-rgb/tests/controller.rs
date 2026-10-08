@@ -107,7 +107,11 @@ impl Fixture {
     }
 
     fn serial_command(&self) -> Command {
-        fs::write(&self.model, b"AYANEO Pocket MICRO 2\0").unwrap();
+        self.serial_command_for("AYANEO Pocket MICRO 2")
+    }
+
+    fn serial_command_for(&self, model: &str) -> Command {
+        fs::write(&self.model, format!("{model}\0")).unwrap();
         fs::write(&self.profiles, include_bytes!("../profiles.json")).unwrap();
         self.binary()
     }
@@ -375,6 +379,39 @@ fn pocket_micro2_profile_sends_static_frames_to_the_mcu() {
     let output: std::process::Output = run(&["off"]);
     assert!(output.status.success());
     let frame: [u8; 11] = [0xF7, 0x01, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+}
+
+#[test]
+fn pocket_s2_profile_sends_stick_ring_frames_to_the_mcu() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS0");
+    let run = |args: &[&str]| {
+        fixture
+            .serial_command_for("AYANEO Pocket S2")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let output: std::process::Output = run(&["set", "--color", "FF0000", "--brightness", "100"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 27] = [
+        0xF7, 0x00, 0x1C, 0x20, 0x01, 0x80, 0x00, 0x81, 0x00, 0x8B, 0x0F, 0x88, 0xFF, 0x89, 0x00,
+        0x8A, 0x00, 0x86, 0xFF, 0x87, 0xFF, 0x58, 0x08, 0x45, 0x00, 0x22, 0xED,
+    ];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+
+    let output: std::process::Output = run(&["off"]);
+    assert!(output.status.success());
+    let frame: [u8; 27] = [
+        0xF7, 0x00, 0x1C, 0x20, 0x01, 0x80, 0x00, 0x81, 0x00, 0x8B, 0x0F, 0x88, 0x00, 0x89, 0x00,
+        0x8A, 0x00, 0x86, 0x00, 0x87, 0x00, 0x58, 0x08, 0x45, 0x00, 0x25, 0xED,
+    ];
     assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
 }
 
