@@ -336,6 +336,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0536-scsi-ufs-core-dynamically-disable-timestamp-on-unsupported-devices.patch`
   source: https://git.kernel.org/pub/scm/linux/kernel/git/mkp/scsi.git/commit/?id=00eec343c7306be7f1103f5002abd77496937ff9
   upstream: https://git.kernel.org/pub/scm/linux/kernel/git/mkp/scsi.git/commit/?id=00eec343c7306be7f1103f5002abd77496937ff9
+- `patches/0537-mmc-sdhci-msm-mask-controller-irqs-while-runtime-suspended.patch`
+  source: https://github.com/drewano/armada/blob/944e07d16918937b11f92a2e0a1d2b9ebae12b9e/packages/kernel/patches/0521-mmc-sdhci-msm-mask-controller-irqs-while-runtime-suspended.patch
+  upstream: unknown
 - `patches/0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch`
   source: armada
   upstream: local
