@@ -12,6 +12,14 @@ ARG GUEST_BUILDER_IMAGE
 FROM ${BUILDER_IMAGE} AS builder-base
 COPY toolchain.env scrub-scratch.sh /src/
 
+FROM builder-base AS pkg-armada-aurora
+COPY armada-aurora/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-armada-aurora
+COPY --from=pkg-armada-aurora /work/out/ /rpms/
+
 FROM builder-base AS pkg-armada-rgb
 COPY armada-rgb/ /work/
 WORKDIR /work

@@ -71,6 +71,9 @@ FROM ${MESA_X86_REF} AS mesa-x86
 ARG EXTEST_REF
 FROM ${EXTEST_REF} AS extest
 
+ARG ARMADA_AURORA_REF
+FROM ${ARMADA_AURORA_REF} AS armada-aurora
+
 ARG ARMADA_SPLASH_REF
 FROM ${ARMADA_SPLASH_REF} AS armada-splash
 
@@ -130,6 +133,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \
+    --mount=type=bind,from=armada-aurora,source=/rpms,target=/packages/armada-aurora \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \

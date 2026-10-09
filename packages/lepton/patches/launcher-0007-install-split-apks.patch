@@ -1,0 +1,134 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] launcher: install complete APK sets and track split changes
+
+--- a/liblepton/app_metadata.sh
++++ b/liblepton/app_metadata.sh
+@@ -6,9 +6,31 @@
+ function get_apk_path()
+ {
+     if [[ -z "${APP_PATH}" ]]; then
+-        APP_PATH="$(compgen -G "${APP_DIR}/*.apk")"
++        if [[ -f "${APP_DIR}/base.apk" ]]; then
++            APP_PATH="${APP_DIR}/base.apk"
++        else
++            APP_PATH="$(compgen -G "${APP_DIR}/*.apk")"
++        fi
+     fi
+     print "${APP_PATH}"
++}
++
++function get_app_apks()
++{
++    local APK_PATH="${1:-$(get_apk_path)}"
++    local APK_DIR="$(dirname "${APK_PATH}")"
++    if [[ "$(basename "${APK_PATH}")" != base.apk || ! -f "${APK_DIR}/.armada-apks" ]]; then
++        printf '%s\n' "${APK_PATH}"
++        return
++    fi
++    local NAMES=() FILES=() NAME
++    mapfile -t NAMES < "${APK_DIR}/.armada-apks"
++    [[ "${NAMES[0]:-}" == base.apk ]] || return 1
++    for NAME in "${NAMES[@]}"; do
++        [[ "${NAME}" =~ ^[A-Za-z0-9_.-]+\.apk$ && -f "${APK_DIR}/${NAME}" ]] || return 1
++        FILES+=("${APK_DIR}/${NAME}")
++    done
++    printf '%s\n' "${FILES[@]}"
+ }
+
+ function is_app()
+@@ -70,7 +92,14 @@
+
+ function extract_app_hash()
+ {
+-    sha256sum "${1:-$(get_apk_path)}" | awk '{print $1}'
++    local APKS=()
++    mapfile -t APKS < <(get_app_apks "${1:-$(get_apk_path)}")
++    [[ "${#APKS[@]}" -gt 0 ]] || return 1
++    if [[ "${#APKS[@]}" == 1 ]]; then
++        sha256sum "${APKS[0]}" | awk '{print $1}'
++    else
++        sha256sum "${APKS[@]}" | sha256sum | awk '{print $1}'
++    fi
+ }
+
+ APP_ACTIVITY=""
+--- a/liblepton/mounting.sh
++++ b/liblepton/mounting.sh
+@@ -43,17 +43,7 @@
+     if is_app; then
+         BASE_APK=base.apk
+         APP_APK_DIR="$(dirname "$(get_apk_path)")"
+-        if [[ -n "${APP_APK_DIR}" ]]; then
+-            # Annoyingly, we need to rename our `.apk` to `base.apk`, since Appdome expects that.
+-            # Android always does this, but Android is also totally okay with loading a random
+-            # `.apk` name.
+-            mapfile -t APKS < <(compgen -G "${APP_APK_DIR}/*.apk" || true)
+-            for APK in "${APKS[@]}"; do
+-                if [[ "$(extract_app_id "${APK}")" == "${APP_ID}" ]]; then
+-                    BASE_APK="$(lepton_basename ${APK})"
+-                fi
+-            done
+-        fi
++        BASE_APK="$(lepton_basename "$(get_apk_path)")"
+     else
+         APP_APK_DIR="$(get_baked_app_data_dir)/app_lowerdir"
+         mkdir -p "${APP_APK_DIR}"
+--- a/liblepton/liblepton.sh
++++ b/liblepton/liblepton.sh
+@@ -490,7 +490,14 @@
+                 fi
+             fi
+         fi
+-        if ! "$ADB" -P "${TEMP_PORT}" -s localhost:"${ADB_PORT}" install -g "${APK_PATH}"; then
++        local APKS=() INSTALL=install
++        mapfile -t APKS < <(get_app_apks "${APK_PATH}")
++        if [[ "${#APKS[@]}" == 0 ]]; then
++            "$ADB" -P "${TEMP_PORT}" kill-server 2>/dev/null
++            return 1
++        fi
++        [[ "${#APKS[@]}" == 1 ]] || INSTALL=install-multiple
++        if ! "$ADB" -P "${TEMP_PORT}" -s localhost:"${ADB_PORT}" "${INSTALL}" -g "${APKS[@]}"; then
+             println "App installation failed!"
+             # We dump logcat if the container exits in less than <30s but just to
+             # be safe (in case the startup took longer for some reason), we set
+--- a/images/rootfs_overlay/system/bin/cmd
++++ b/images/rootfs_overlay/system/bin/cmd
+@@ -11,5 +11,5 @@
+         package=$(echo "$package_line" | cut -d' ' -f1 | cut -d: -f2)
+         for vulkan_layer in /vendor/enabled_vulkan_layers/*.so; do
+-            APP_PATH=$(pm path "$package")
++            APP_PATH=$(pm path "$package" | grep "/base.apk$" | head -n 1)
+             APP_PATH="${APP_PATH#package:}"
+             APP_PATH="${APP_PATH%/base.apk}"
+@@ -29,5 +29,5 @@
+         package=$(echo "$package_line" | cut -d' ' -f1 | cut -d: -f2)
+         for vulkan_layer in /vendor/enabled_vulkan_layers/*.so; do
+-            APP_PATH=$(pm path "$package")
++            APP_PATH=$(pm path "$package" | grep "/base.apk$" | head -n 1)
+             APP_PATH="${APP_PATH#package:}"
+             APP_PATH="${APP_PATH%/base.apk}"
+@@ -122,5 +122,5 @@
+     mkdir -p /data/media/0/Android/obb
+
+-    APP_PATH="$(cmd_real package path ${APP_ID})"
++    APP_PATH="$(cmd_real package path ${APP_ID} | grep "/base.apk$" | head -n 1)"
+     APP_PATH="${APP_PATH#package:}"
+     APP_PATH="${APP_PATH%/base.apk}"
+@@ -139,6 +139,8 @@
+     fi
+
+     # Move everything to our overlay.
++    # Installed splits have new names; hide the originals before moving their copies.
++    find /data/steam_app -maxdepth 1 -type f -name '*.apk' -delete
+     mv "${APP_PATH}"/* /data/steam_app/
+
+     # Now that we know the pm path after installing the package, we can mount
+--- a/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh
++++ b/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh
+@@ -3,5 +3,5 @@
+ APP_ID=$1
+
+-APP_PATH="$(pm path ${APP_ID} | sed "s/^package://g" | sed "s/\/base.apk$//g")";
++APP_PATH="$(pm path ${APP_ID} | grep "/base.apk$" | head -n 1 | sed "s/^package://g" | sed "s/\/base.apk$//g")";
+
+ local OBB_INNER_PATH="${APP_PATH}"

@@ -38,6 +38,8 @@ dnf5 -y install --setopt=install_weak_deps=False /packages/armada-splash/*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False /packages/armada-rgb/*.rpm
 
+dnf5 -y install --setopt=install_weak_deps=False /packages/armada-aurora/*.rpm
+
 dnf5 -y install --setopt=install_weak_deps=False /packages/jupiter-hw-support/*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False /packages/lepton/lepton-{guestos,armada}-[0-9]*.rpm

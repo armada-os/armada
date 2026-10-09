@@ -18,6 +18,8 @@ to its `android_hardware_waydroid`, 0002 to `hardware/interfaces` and 0003 to
   source: armada
 - `patches/launcher-0006-keep-the-baked-app-after-an-early-exit.patch`
   source: armada
+- `patches/launcher-0007-install-split-apks.patch`
+  source: armada
 - `patches/android-0001-hwcomposer-add-an-external-display.patch`
   source: armada
 - `patches/android-0002-hwc2on1adapter-set-displays-the-client-has-not-revalidated.patch`

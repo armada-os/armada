@@ -1,17 +1,19 @@
 import { FileSelectionType, openFilePicker, toaster } from "@decky/api";
-import { ButtonItem, Menu, MenuItem, PanelSection, PanelSectionRow, showContextMenu } from "@decky/ui";
+import { Button, ButtonItem, Focusable, GamepadButton, Menu, MenuItem, PanelSection, PanelSectionRow, TextField, showContextMenu } from "@decky/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import * as backend from "./backend";
 import { AppRow, TERMINAL_PHASES } from "./components/AppRow";
-import { categoryIcons } from "./icons";
+import { categoryIcons, searchIcon } from "./icons";
 import { addToSteam, launchShortcut, removeFromSteam } from "./lib/shortcuts";
+import { AndroidPages } from "./lib/android";
 import { styles } from "./styles";
 import type { Catalog, CatalogApp, Job, Status } from "./types";
 
 const SECTIONS = [
   { key: "emulators", title: "Emulators" },
   { key: "applications", title: "Applications" },
+  { key: "android", title: "Android Apps" },
   { key: "plugins", title: "Decky Plugins" },
 ];
 
@@ -23,6 +25,20 @@ let cachedCatalog: Catalog | null = null;
 // before a failure, so a retry would duplicate. Removal is safe to repeat.
 const autoAddAttempted = new Set<string>();
 const removalInFlight = new Set<string>();
+const shortcutAdds = new Map<string, Promise<void>>();
+const createdShortcuts = new Map<string, number>();
+let androidText = "";
+let androidScreen: "home" | "category" | "search" = "home";
+const androidFeeds = [
+  { data: "APPLICATION", label: "Popular" },
+  { data: "GAME", label: "Games" },
+  { data: "TOOLS", label: "Tools" },
+  { data: "VIDEO_PLAYERS", label: "Media" },
+  { data: "COMMUNICATION", label: "Communication" },
+  { data: "added", label: "Installed Apps" },
+];
+const androidCache = new Map<string, AndroidPages>();
+let androidSearch = { query: "", category: "APPLICATION", pager: new AndroidPages(), loaded: false, busy: false, message: "" };
 
 export function Content() {
   const [catalog, setCatalogState] = useState<Catalog | null>(cachedCatalog);
@@ -30,6 +46,8 @@ export function Content() {
   const [updates, setUpdates] = useState<Record<string, { latest: string }>>({});
   const [view, setViewState] = useState<string | null>(rememberedView);
   const [message, setMessage] = useState("Loading");
+  const [searchText, setSearchText] = useState(androidText);
+  const [, redrawAndroid] = useState(0);
   const setCatalog = useCallback((next: Catalog | null) => {
     cachedCatalog = next;
     setCatalogState(next);
@@ -41,6 +59,11 @@ export function Content() {
   const prevJobs = useRef(new Map<string, Job>());
   const unmounted = useRef(false);
   const statusInFlight = useRef(false);
+  const refreshCatalog = useCallback(async () => {
+    const next = await backend.getCatalog();
+    cachedCatalog = next;
+    if (!unmounted.current) setCatalog(next);
+  }, [setCatalog]);
 
   const refreshStatus = useCallback(async () => {
     if (statusInFlight.current) return;
@@ -104,6 +127,7 @@ export function Content() {
     }
     prevJobs.current = new Map(status.jobs.map((job) => [job.appId, job]));
     if (installFinished) {
+      refreshCatalog().catch(() => {});
       // Latest tags stay cached; only the installed-version comparison reruns,
       // so a just-applied update clears its badge immediately.
       backend.checkUpdates()
@@ -130,8 +154,19 @@ export function Content() {
   }, [refreshStatus, toast]);
 
   const addToSteamFlow = async (app: CatalogApp) => {
-    const appid = await addToSteam(app.launch);
-    await backend.recordShortcut(app.id, appid);
+    const pending = shortcutAdds.get(app.id);
+    if (pending) return pending;
+    const work = (async () => {
+      const appid = await addToSteam(app.launch, status?.shortcuts?.[app.id] ?? createdShortcuts.get(app.id),
+        (id) => createdShortcuts.set(app.id, id));
+      await backend.recordShortcut(app.id, appid);
+    })();
+    shortcutAdds.set(app.id, work);
+    try {
+      await work;
+    } finally {
+      shortcutAdds.delete(app.id);
+    }
   };
 
   // A replacement queues while its old shortcut still exists. Dropping that one
@@ -139,6 +174,7 @@ export function Content() {
   const dropOldShortcut = async (appId: string, previous: number) => {
     try {
       removeFromSteam(previous);
+      createdShortcuts.delete(appId);
       await backend.clearShortcutRecord(appId, true, previous);
     } finally {
       removalInFlight.delete(appId);
@@ -150,6 +186,9 @@ export function Content() {
   useEffect(() => {
     if (!status || !catalog) return;
     const pending = status.pending || [];
+    if (pending.some((id) => !catalog.apps.some((app) => app.id === id))) {
+      refreshCatalog().catch(() => {});
+    }
     for (const appId of autoAddAttempted) {
       // Off the queue: a later install or replacement gets a fresh attempt.
       if (!pending.includes(appId)) autoAddAttempted.delete(appId);
@@ -173,6 +212,7 @@ export function Content() {
 
   const removeFromSteamFlow = async (app: CatalogApp, appid: number) => {
     removeFromSteam(appid);
+    createdShortcuts.delete(app.id);
     await backend.clearShortcutRecord(app.id);
   };
 
@@ -182,6 +222,7 @@ export function Content() {
     if (shortcut != null) {
       try {
         removeFromSteam(shortcut);
+        createdShortcuts.delete(app.id);
         await backend.clearShortcutRecord(app.id);
       } catch (error) {
       }
@@ -238,7 +279,7 @@ export function Content() {
             {`Replace ${kind} version`}
           </MenuItem>,
         );
-      } else if (!installed || update) {
+      } else if ((!installed || update) && app.canInstall !== false) {
         // Not the resolved tag: half of them are "nightly" or a commit hash,
         // and no version is shown to compare against anyway.
         items.push(
@@ -246,6 +287,9 @@ export function Content() {
             {installed ? "Update to latest" : "Install"}
           </MenuItem>,
         );
+      }
+      if (!installed && app.canInstall === false && app.note) {
+        items.push(<MenuItem key="unavailable" disabled>{app.note}</MenuItem>);
       }
       if (app.desktopOnly && installed) {
         items.push(
@@ -279,8 +323,8 @@ export function Content() {
       }
       if (installed && app.installType !== "system") {
         items.push(
-          <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut))}>
-            Uninstall
+          <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut), () => { refreshCatalog().catch(() => {}); })}>
+            {app.installType === "android" ? "Remove from store" : "Uninstall"}
           </MenuItem>,
         );
       }
@@ -303,8 +347,81 @@ export function Content() {
       .catch(() => {});
   };
 
+  const searchAndroid = async (next = false, category = "") => {
+    if (androidSearch.busy || (!next && !category && !searchText.trim())) return;
+    if (!next) {
+      androidScreen = category ? "category" : "search";
+      if (category) {
+        androidText = "";
+        setSearchText("");
+      }
+    }
+    if (category === "added") {
+      androidSearch = { ...androidSearch, category, loaded: true, message: "" };
+      redrawAndroid((value) => value + 1);
+      return;
+    }
+    if (next && androidSearch.pager.next()) {
+      androidSearch.message = "";
+      redrawAndroid((value) => value + 1);
+      return;
+    }
+    const query = next ? androidSearch.query : category ? "" : searchText.trim();
+    if (!category && !query) return;
+    const cached = !next && category ? androidCache.get(category) : undefined;
+    if (cached) {
+      cached.index = 0;
+      androidSearch = { ...androidSearch, category, query, pager: cached, loaded: true, message: "" };
+      redrawAndroid((value) => value + 1);
+      return;
+    }
+    const page = next ? androidSearch.pager.cursors[0] : undefined;
+    if (next && !page) return;
+    androidSearch = { ...androidSearch, category, query, pager: next ? androidSearch.pager : new AndroidPages(),
+      loaded: false, busy: true, message: category ? "Loading…" : "Searching…" };
+    redrawAndroid((value) => value + 1);
+    try {
+      const result = await backend.searchAndroid(query, page, category || undefined);
+      const pager = next ? androidSearch.pager : new AndroidPages();
+      const previousLength = pager.pages.length;
+      pager.append(result.ids, result.pages, page);
+      if (next && pager.pages.length > previousLength) pager.index = previousLength;
+      androidSearch = { ...androidSearch, category, query, pager, loaded: true,
+        message: result.ids.length ? "" : "No matching apps" };
+      if (category) androidCache.set(category, pager);
+      await refreshCatalog();
+    } catch (error) {
+      androidSearch.loaded = true;
+      androidSearch.message = String(error);
+    } finally {
+      androidSearch.busy = false;
+      redrawAndroid((value) => value + 1);
+    }
+  };
+
+  const androidBack = () => {
+    if (androidScreen === "home") setView(null);
+    else {
+      androidScreen = "home";
+      androidText = "";
+      setSearchText("");
+      redrawAndroid((value) => value + 1);
+    }
+  };
+
+  const addLocalApk = () => {
+    openFilePicker(FileSelectionType.FILE, catalog?.home || "/var/home/armada", true, true)
+      .then((result) => {
+        const path = result.realpath || result.path;
+        if (path) run(backend.importAndroid(path).then(async () => {
+          await refreshCatalog();
+          searchAndroid(false, "added");
+        }));
+      }).catch(() => {});
+  };
+
   const categoryApps = (key: string) =>
-    (catalog?.apps || [])
+    (cachedCatalog?.apps || catalog?.apps || [])
       .filter((app) => app.category === key)
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
@@ -320,27 +437,83 @@ export function Content() {
 
   const section = SECTIONS.find((entry) => entry.key === view);
   if (section) {
-    const apps = categoryApps(section.key);
+    const androidApps = (cachedCatalog?.apps || catalog.apps).filter((app) => app.category === "android");
+    const filtering = androidScreen === "category" && !!searchText.trim();
+    const androidIds = filtering ? androidSearch.pager.pages.flat() : androidSearch.pager.ids;
+    const apps = section.key !== "android" ? categoryApps(section.key)
+      : androidScreen === "home" ? []
+      : (androidSearch.category === "added" ? androidApps.filter((app) => status?.installed?.[app.id]?.installed || status?.shortcuts?.[app.id] != null)
+        : androidIds.map((id) => androidApps.find((app) => app.id === id)).filter((app): app is CatalogApp => !!app))
+        .filter((app) => !filtering || app.name.toLocaleLowerCase().includes(searchText.trim().toLocaleLowerCase()));
+    const androidTitle = androidScreen === "home" ? section.title : androidScreen === "search" ? "Search results"
+      : androidFeeds.find((feed) => feed.data === androidSearch.category)?.label;
     return (
       <>
         <style>{styles}</style>
-        <PanelSection title={section.title}>
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={() => setView(null)}>
-              Back
-            </ButtonItem>
-          </PanelSectionRow>
-          {apps.map((app) => (
-            <AppRow
-              key={app.id}
-              app={app}
-              job={jobs.get(app.id) || null}
-              info={status?.installed?.[app.id] || null}
-              updateAvailable={updates[app.id] != null}
-              onMenu={() => openMenu(app)}
-            />
-          ))}
-        </PanelSection>
+        <Focusable onButtonDown={(event) => {
+          if (section.key === "android" && event.detail.button === GamepadButton.BUMPER_LEFT) {
+            event.stopPropagation();
+            if (!event.detail.is_repeat) androidBack();
+          }
+        }} actionDescriptionMap={section.key === "android" ? { [GamepadButton.BUMPER_LEFT]: "Back" } : undefined}>
+          {section.key === "android" && <PanelSection>
+            <PanelSectionRow><ButtonItem layout="below" onClick={androidBack}>Back</ButtonItem></PanelSectionRow>
+          </PanelSection>}
+          <PanelSection title={section.key === "android" ? androidTitle : section.title}>
+            {section.key !== "android" && <PanelSectionRow>
+              <ButtonItem layout="below" onClick={() => setView(null)}>Back</ButtonItem>
+            </PanelSectionRow>}
+            {section.key === "android" && <>
+              <PanelSectionRow>
+                <div className="armada-store-search">
+                  <span aria-hidden="true">{searchIcon}</span>
+                  <TextField {...{ placeholder: "Search" }}
+                    aria-label={androidScreen === "category" ? "Filter this list" : "Search apps"}
+                    value={searchText} onChange={(event) => {
+                      androidText = event.target.value;
+                      setSearchText(androidText);
+                    }} onKeyDown={(event) => {
+                      if (event.key === "Enter" && androidScreen !== "category") searchAndroid(false);
+                    }} />
+                </div>
+              </PanelSectionRow>
+              {androidScreen === "home" ? <PanelSectionRow>
+                <ButtonItem layout="below" disabled={androidSearch.busy}
+                  onClick={addLocalApk}>+ Add local .apk</ButtonItem>
+              </PanelSectionRow> : androidSearch.message && <PanelSectionRow><div>{androidSearch.message}</div></PanelSectionRow>}
+              {filtering && !apps.length && <PanelSectionRow><div>No matching apps in this list</div></PanelSectionRow>}
+              {filtering && <PanelSectionRow>
+                <ButtonItem layout="below" disabled={androidSearch.busy}
+                  onClick={() => searchAndroid(false)}>Search all apps</ButtonItem>
+              </PanelSectionRow>}
+            </>}
+            {apps.map((app) => (
+              <AppRow
+                key={app.id}
+                app={app}
+                job={jobs.get(app.id) || null}
+                info={status?.installed?.[app.id] || null}
+                updateAvailable={updates[app.id] != null}
+                onMenu={() => openMenu(app)}
+              />
+            ))}
+            {section.key === "android" && androidScreen !== "home" && !filtering && androidSearch.category !== "added" && androidSearch.loaded &&
+              <PanelSectionRow><Focusable style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <Button style={{ flex: 1 }} disabled={androidSearch.busy || androidSearch.pager.index === 0}
+                  onClick={() => { androidSearch.pager.previous(); androidSearch.message = ""; redrawAndroid((value) => value + 1); }}>Previous</Button>
+                <span>Page {androidSearch.pager.index + 1}</span>
+                <Button style={{ flex: 1 }} disabled={androidSearch.busy || !androidSearch.pager.canNext}
+                  onClick={() => searchAndroid(true, androidSearch.category)}>Next</Button>
+              </Focusable></PanelSectionRow>}
+          </PanelSection>
+          {section.key === "android" && androidScreen === "home" && <PanelSection title="Categories">
+            <PanelSectionRow><div style={{ opacity: 0.65 }}>Browse per category</div></PanelSectionRow>
+            {androidFeeds.map((feed) => <PanelSectionRow key={feed.data}>
+              <ButtonItem layout="below" disabled={androidSearch.busy}
+                onClick={() => searchAndroid(false, feed.data)}>{feed.label}</ButtonItem>
+            </PanelSectionRow>)}
+          </PanelSection>}
+        </Focusable>
       </>
     );
   }
@@ -359,7 +532,7 @@ export function Content() {
             <PanelSectionRow key={key}>
               <ButtonItem layout="below" onClick={() => setView(key)}>
                 <div className="armada-store-row">
-                  {categoryIcons[key]}
+                  {categoryIcons[key] || categoryIcons.applications}
                   <div className="armada-store-row-text">
                     <div className="armada-store-row-name">{title}</div>
                   </div>

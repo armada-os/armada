@@ -7,7 +7,7 @@ import threading
 import time
 import zipfile
 
-from . import store
+from . import android, store
 from .proc import clean_env
 from .paths import apps_dir, plugin_dir, plugins_dir, user_home, user_ids
 
@@ -32,7 +32,7 @@ def bundled_apps():
 
 
 def all_apps():
-    return bundled_apps()
+    return bundled_apps() + android.apps()
 
 
 def find_app(app_id):
@@ -94,6 +94,8 @@ def installed_info(app, state, refs):
         if installed and record.get("tag"):
             info["version"] = record["tag"]
         return info
+    if kind == "android":
+        return {"installed": android.apk_path(app).is_file(), "version": app.get("version", "")}
     return {"installed": False}
 
 
@@ -152,6 +154,10 @@ def _launch_command(app):
     home = str(user_home())
     name = app.get("name") or app.get("id") or "App"
     extra = (install.get("launchOptions") or "").strip()
+    if kind == "android":
+        path = android.apk_path(app)
+        return {"name": name, "exe": str(path), "startDir": str(path.parent),
+                "launchOptions": DEFAULT_LAUNCH_OPTIONS, "compatTool": ANDROID_COMPAT_TOOL}
     if kind == "flatpak" and install.get("ref"):
         options = " ".join(filter(None, ("run " + install["ref"], extra)))
         return {"name": name, "exe": "/usr/bin/flatpak", "startDir": home,
@@ -200,6 +206,7 @@ def catalog_payload():
             "icon": app.get("icon") or "",
             "note": app.get("note") or "",
             "installType": install.get("type") or "",
+            "canInstall": app.get("canInstall", True),
             "desktopOnly": bool(app.get("desktopOnly")),
             "hasConfig": bool(app.get("config")),
             "launch": launch_spec(app),
