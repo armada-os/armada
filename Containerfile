@@ -91,6 +91,19 @@ COPY decky/armada-store/package.json decky/armada-store/package-lock.json ./
 RUN npm ci
 COPY decky/armada-store/ ./
 RUN npm run build
+# Decky Loader frontend for the native loader backend
+WORKDIR /build
+COPY decky/loader/loader.env ./decky-loader.env
+RUN . ./decky-loader.env && \
+    node -e 'fetch(process.argv[1]).then((r) => { if (!r.ok) throw new Error(`${r.status} ${r.url}`); return r.arrayBuffer(); }).then((b) => require("fs").writeFileSync("decky-loader.tar.gz", Buffer.from(b)))' \
+        "https://github.com/SteamDeckHomebrew/decky-loader/archive/refs/tags/${DECKY_LOADER_VERSION}.tar.gz" && \
+    tar -xzf decky-loader.tar.gz && \
+    mv "decky-loader-${DECKY_LOADER_VERSION#v}" decky-loader && \
+    cd decky-loader/frontend && \
+    npm i -g pnpm@10 && \
+    pnpm i --frozen-lockfile && \
+    pnpm run build && \
+    test -s ../backend/decky_loader/static/index.js
 
 FROM scratch AS ctx
 COPY abl /abl/
@@ -130,6 +143,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \
+    --mount=type=bind,from=decky-build,source=/build/decky-loader/backend,target=/packages/decky-loader-backend \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
