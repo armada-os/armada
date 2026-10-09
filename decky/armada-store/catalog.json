@@ -416,6 +416,18 @@
         "releases": "https://api.github.com/repos/justradical/decky-optiscaler-arm64ec/releases/394141296",
         "asset": "^OptiScaler\\.zip$"
       }
+    },
+    {
+      "id": "gleipnir",
+      "name": "Gleipnir",
+      "summary": "80% battery charge ceiling for the AYN Thor (watch-only until its safety test passes)",
+      "category": "plugins",
+      "icon": "",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/venatrix-ritz/Gleipnir/releases",
+        "asset": "^Gleipnir\\.zip$"
+      }
     }
   ]
 }
