@@ -1,0 +1,16 @@
+[Unit]
+Description=Generate unl0kr config for this device (initrd)
+DefaultDependencies=no
+ConditionPathExists=/etc/initrd-release
+Before=unl0kr-agent.path unl0kr-agent.service
+Before=cryptsetup-pre.target cryptsetup.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/armada/armada-unl0kr-config
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=initrd.target

@@ -1,0 +1,145 @@
+--- a/unl0kr/main.c
++++ b/unl0kr/main.c
+@@ -24,6 +24,7 @@
+ 
+ #include <sys/epoll.h>
+ #include <sys/reboot.h>
++#include <sys/signalfd.h>
+ #include <errno.h>
+ #include <signal.h>
+ #include <stdio.h>
+@@ -50,6 +51,8 @@
+ static int32_t content_pad_bottom_with_kb;
+ static int32_t content_pad_bottom_without_kb;
+ 
++static int fd_signal = -1;
++
+ /**
+  * Static prototypes
+  */
+@@ -189,11 +192,14 @@
+ static void shutdown(void);
+ 
+ /**
+- * Handle termination signals sent to the process.
+- *
+- * @param signum the signal's number
++ * Cover the whole display in black, restore the terminal and exit.
++ */
++static void clear_screen_and_exit(void);
++
++/**
++ * Handle a termination signal (SIGINT or SIGTERM) read from the signalfd.
+  */
+-static void sigaction_handler(int signum);
++static void signal_event_cb(void);
+ 
+ /**
+  * Restore the terminal and exit from the program with EXIT_FAILURE.
+@@ -357,17 +363,7 @@
+     /* Print the password to STDOUT */
+     printf(cli_opts.newline? "%s\n" : "%s", lv_textarea_get_text(textarea));
+ 
+-    /* Clear the screen so that when the password field was unobscured, it cannot
+-     * leak via stale display buffers after we've exited */
+-    lv_obj_t *rect = lv_obj_create(lv_screen_active());
+-    lv_obj_set_size(rect, LV_PCT(100), LV_PCT(100));
+-    lv_obj_set_pos(rect, 0, 0);
+-    lv_obj_set_style_bg_opa(rect, LV_OPA_COVER, LV_PART_MAIN);
+-    lv_obj_set_style_bg_color(rect , lv_color_hex(get_theme(is_alternate_theme)->window.bg_color), LV_PART_MAIN);
+-    lv_refr_now(lv_display_get_default()); /* Force the screen to be drawn */
+-
+-    /* Trigger SIGTERM to exit */
+-    sigaction_handler(SIGTERM);
++    clear_screen_and_exit();
+ }
+ 
+ static void shutdown(void) {
+@@ -375,12 +371,41 @@
+     reboot(RB_POWER_OFF);
+ }
+ 
+-static void sigaction_handler(int signum) {
+-    LV_UNUSED(signum);
++static void clear_screen_and_exit(void) {
++    /* Clear the screen so that when the password field was unobscured, it cannot
++     * leak via stale display buffers after we've exited.
++     *
++     * The cover goes on the system layer, above everything else. As a child of
++     * the active screen, the screen's flex layout would ignore its position and
++     * stack it after the other widgets, entirely off-screen.
++     *
++     * Black rather than the theme background: the kernel can show this frame
++     * again after we exit (fbdev emulation re-commits it to every output when
++     * the next instance unblanks the display), and black reads as "off". */
++    lv_display_t *disp = lv_display_get_default();
++    if (disp) {
++        lv_obj_t *cover = lv_obj_create(lv_display_get_layer_sys(disp));
++        lv_obj_remove_style_all(cover);
++        lv_obj_set_size(cover, LV_PCT(100), LV_PCT(100));
++        lv_obj_set_style_bg_opa(cover, LV_OPA_COVER, LV_PART_MAIN);
++        lv_obj_set_style_bg_color(cover, lv_color_black(), LV_PART_MAIN);
++        lv_refr_now(disp); /* Force the screen to be drawn */
++    }
++
+     bbx_terminal_reset_current_terminal();
+     exit(0);
+ }
+ 
++static void signal_event_cb(void) {
++    struct signalfd_siginfo info;
++    if (read(fd_signal, &info, sizeof(info)) != sizeof(info)) {
++        return;
++    }
++
++    bbx_log(BBX_LOG_LEVEL_VERBOSE, "Received signal %u, exiting", info.ssi_signo);
++    clear_screen_and_exit();
++}
++
+ static void exit_failure() {
+     bbx_terminal_reset_current_terminal();
+     exit(EXIT_FAILURE);
+@@ -413,11 +438,23 @@
+ 
+     /* Prepare current TTY and clean up on termination */
+     bbx_terminal_prepare_current_terminal(!conf_opts.quirks.terminal_prevent_graphics_mode, !conf_opts.quirks.terminal_allow_keyboard_input);
+-    struct sigaction action;
+-    memset(&action, 0, sizeof(action));
+-    action.sa_handler = sigaction_handler;
+-    sigaction(SIGINT, &action, NULL);
+-    sigaction(SIGTERM, &action, NULL);
++
++    /* Take SIGINT and SIGTERM through a signalfd in the main loop instead of an
++     * asynchronous handler, so the screen can be cleared with LVGL before exiting.
++     * Signals arriving before the main loop starts stay pending until then. */
++    sigset_t termination_signals;
++    sigemptyset(&termination_signals);
++    sigaddset(&termination_signals, SIGINT);
++    sigaddset(&termination_signals, SIGTERM);
++    if (sigprocmask(SIG_BLOCK, &termination_signals, NULL) == -1) {
++        bbx_log(BBX_LOG_LEVEL_ERROR, "sigprocmask() is failed");
++        exit_failure();
++    }
++    fd_signal = signalfd(-1, &termination_signals, SFD_NONBLOCK | SFD_CLOEXEC);
++    if (fd_signal == -1) {
++        bbx_log(BBX_LOG_LEVEL_ERROR, "signalfd() is failed");
++        exit_failure();
++    }
+ 
+     /* Initialise LVGL and set up logging callback */
+     lv_init();
+@@ -449,6 +486,14 @@
+         exit_failure();
+     }
+ 
++    struct epoll_event signal_event;
++    signal_event.events = EPOLLIN;
++    signal_event.data.ptr = __extension__ (void*) signal_event_cb;
++    if (epoll_ctl(fd_epoll, EPOLL_CTL_ADD, fd_signal, &signal_event) == -1) {
++        bbx_log(BBX_LOG_LEVEL_ERROR, "epoll_ctl() is failed");
++        exit_failure();
++    }
++
+     /* Attach input devices and start monitoring for new ones */
+     struct bbx_indev_opts input_config = {
+         .keymap = &conf_opts.hw_keyboard,
