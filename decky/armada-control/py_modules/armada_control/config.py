@@ -14,7 +14,6 @@ from .system import (
     perf_info,
     desktop_mode,
     desktop_modes,
-    gyro_state,
     sleep_modes,
     ssh_enabled,
     swipe_gestures_enabled,
@@ -33,7 +32,6 @@ def build_config(include_games=True):
     env = device_env()
     secondary_brightness = bottom_screen_brightness()
     power = parse_power()
-    gyro = gyro_state()
     return {
         "power": power,
         "powerDefaults": factory_power_defaults(),
@@ -53,8 +51,6 @@ def build_config(include_games=True):
         "osVersion": os_version(),
         "ablVersion": abl_version(),
         "ablAutoEnabled": abl_auto_enabled(),
-        "gyroSupported": gyro["supported"],
-        "gyroEnabled": gyro["enabled"],
         "bottomScreenSupported": bool(
             env.get("ARMADA_SECONDARY_CONNECTOR") and env.get("ARMADA_SECONDARY_TOUCHSCREEN")
         ),

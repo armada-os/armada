@@ -23,8 +23,6 @@ SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
 ABL_VERSION_TOOL = "/usr/lib/armada/abl-version"
 RGB_TOOL = "/usr/bin/armada-rgb"
 ABL_CONFIG = Path("/etc/armada/abl.conf")
-GYRO_CONFIG = Path("/etc/armada/gyro.conf")
-FASTRPC_ADSP = Path("/dev/fastrpc-adsp")
 ABL_MANIFEST = Path("/usr/lib/armada/abl/manifest")
 ABL_PARTITIONS = (
     ("A", "/dev/disk/by-partlabel/abl_a"),
@@ -510,41 +508,6 @@ def action_get_abl_auto_enabled(request):
     return {"enabled": abl_auto_enabled()}
 
 
-def gyro_enabled():
-    try:
-        lines = GYRO_CONFIG.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return False
-    return any(line.strip() == "INPUTPLUMBER_FASTRPC=1" for line in lines)
-
-
-def action_get_gyro(request):
-    return {"supported": FASTRPC_ADSP.exists(), "enabled": gyro_enabled()}
-
-
-def action_set_gyro_enabled(request):
-    enabled = bool(request.get("enabled"))
-    previous = gyro_enabled()
-
-    if enabled == previous:
-        return {"enabled": previous}
-
-    atomic_write(GYRO_CONFIG, f"INPUTPLUMBER_FASTRPC={int(enabled)}\n")
-    try:
-        run(
-            ["/usr/bin/systemctl", "restart", "inputplumber.service"],
-            timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        atomic_write(
-            GYRO_CONFIG,
-            f"INPUTPLUMBER_FASTRPC={int(previous)}\n",
-        )
-        raise
-
-    return {"enabled": enabled}
-
-
 def action_get_device_env(request):
     return {"env": device_env()}
 
@@ -916,8 +879,6 @@ ACTIONS = {
     "get_rgb": action_get_rgb,
     "set_rgb": action_set_rgb,
     "get_abl_auto_enabled": action_get_abl_auto_enabled,
-    "get_gyro": action_get_gyro,
-    "set_gyro_enabled": action_set_gyro_enabled,
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,

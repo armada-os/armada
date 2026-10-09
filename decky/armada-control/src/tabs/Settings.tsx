@@ -13,7 +13,6 @@ import {
   setControllerType as applyControllerType,
   setMtpEnabled as applyMtpEnabled,
   setDesktopMode as applyDesktopMode,
-  setGyroEnabled as applyGyroEnabled,
   setSleepMode as applySleepMode,
   setSleepLogsEnabled as applySleepLogsEnabled,
   setSshEnabled as applySshEnabled,
@@ -141,18 +140,6 @@ export function Settings({ config, setConfig }: {
       setSwipeGesturesSaving(false);
     }
   };
-  const setGyroEnabled = async (enabled: boolean) => {
-    if (enabled === !!config.gyroEnabled) {
-      return;
-    }
-    setConfig((current) => (current ? { ...current, gyroEnabled: enabled } : current));
-    try {
-      const applied = await applyGyroEnabled(enabled);
-      setConfig((current) => (current ? { ...current, gyroEnabled: applied } : current));
-    } catch (error) {
-      setConfig((current) => (current ? { ...current, gyroEnabled: !enabled } : current));
-    }
-  };
   const setBottomScreenEnabled = async (enabled: boolean) => {
     if (enabled === !!config.bottomScreenEnabled) {
       return;
@@ -231,9 +218,6 @@ export function Settings({ config, setConfig }: {
         <Field label={t("settings.ablVersion")} description={config.ablVersion || t("common.unknown")} />
       </PanelSection>
       <PanelSection title={t("settings.experimental")}>
-        {config.gyroSupported && (
-          <ToggleRow label={t("settings.enableGyro")} value={!!config.gyroEnabled} onChange={setGyroEnabled} />
-        )}
         {config.bottomScreenSupported && (
           <>
             <ToggleRow

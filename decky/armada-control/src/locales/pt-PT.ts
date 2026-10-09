@@ -59,7 +59,6 @@ export const ptPT = {
   "settings.ablVersion": "Versão do ABL",
   "common.unknown": "desconhecido",
   "settings.experimental": "Experimental",
-  "settings.enableGyro": "Enable Gyro",
   "settings.diagnostics": "Diagnósticos",
   "settings.sleepMode": "Modo de suspensão",
   "settings.sleepLogs": "Ativar registos de suspensão",
