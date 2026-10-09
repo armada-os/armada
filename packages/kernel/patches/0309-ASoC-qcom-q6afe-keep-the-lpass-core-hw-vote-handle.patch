@@ -1,0 +1,48 @@
+From: seilent <github@seilent.net>
+Subject: [PATCH] ASoC: qcom: q6afe: keep the LPASS core HW vote handle on Pocket MICRO 2
+
+The vote response carries the client handle the DSP assigned, but
+q6afe_vote_lpass_core_hw() never stored it, so every devote went out
+with handle 0, the DSP rejected it and the LPASS core HW vote stayed
+held. Store the handle on the AYANEO Pocket MICRO 2, and stop logging
+the devote response as an unknown command.
+
+---
+diff --git a/sound/soc/qcom/qdsp6/q6afe.c b/sound/soc/qcom/qdsp6/q6afe.c
+index 40237267f..4160478dd 100644
+--- a/sound/soc/qcom/qdsp6/q6afe.c
++++ b/sound/soc/qcom/qdsp6/q6afe.c
+@@ -382,6 +382,7 @@ struct q6afe {
+ 	wait_queue_head_t wait;
+ 	struct list_head port_list;
+ 	spinlock_t port_list_lock;
++	uint32_t hw_vote_handle;
+ };
+ 
+ struct afe_port_cmd_device_start {
+@@ -994,6 +995,8 @@ static int q6afe_callback(struct apr_device *adev, const struct apr_resp_pkt *da
+ 				wake_up(&afe->wait);
+ 			}
+ 			break;
++		case AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST:
++			break;
+ 		default:
+ 			dev_err(afe->dev, "Unknown cmd 0x%x\n",	res->opcode);
+ 			break;
+@@ -1001,6 +1004,7 @@ static int q6afe_callback(struct apr_device *adev, const struct apr_resp_pkt *da
+ 	}
+ 		break;
+ 	case AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST:
++		afe->hw_vote_handle = *(const uint32_t *)data->payload;
+ 		afe->result.opcode = hdr->opcode;
+ 		afe->result.status = res->status;
+ 		wake_up(&afe->wait);
+@@ -1899,6 +1903,8 @@ int q6afe_vote_lpass_core_hw(struct device *dev, uint32_t hw_block_id,
+ 			       AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST);
+ 	if (ret)
+ 		dev_err(afe->dev, "AFE failed to vote (%d)\n", hw_block_id);
++	else if (of_machine_is_compatible("ayaneo,pocket-micro2"))
++		*client_handle = afe->hw_vote_handle;
+ 
+ 	return ret;
+ }

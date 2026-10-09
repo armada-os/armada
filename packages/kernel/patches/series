@@ -187,6 +187,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0301-drm-panel-add-ayaneo-ar18-panel.patch
 0302-input-touchscreen-add-sitronix-st7123.patch
 0303-hid-add-ayaneo-pocket-micro2-force-feedback.patch
+0309-ASoC-qcom-q6afe-keep-the-lpass-core-hw-vote-handle.patch
 0304-ASoC-wcd938x-treat-failed-zdet-ramp-as-floating.patch
 0305-backlight-qcom-wled-always-disable-ovp-irq-at-probe.patch
 
