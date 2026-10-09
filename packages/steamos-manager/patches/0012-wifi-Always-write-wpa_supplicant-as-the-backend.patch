@@ -1,0 +1,60 @@
+From b904686fc1df43ba2b3aef59a2253c21c3688c6c Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Wed, 23 Sep 2026 12:25:01 +0200
+Subject: [PATCH] wifi: Always write wpa_supplicant as the backend
+
+Steam asks for iwd on every launch and nothing in the config can refuse it,
+and iwd is not a backend Armada supports or tests.
+---
+ steamos-manager/src/wifi.rs | 30 ++++++++++++++++++++++++++++--
+ 1 file changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/steamos-manager/src/wifi.rs b/steamos-manager/src/wifi.rs
+index 1b7dce1..e98918c 100644
+--- a/steamos-manager/src/wifi.rs
++++ b/steamos-manager/src/wifi.rs
+@@ -379,9 +379,14 @@ pub(crate) async fn get_wifi_backend() -> Result<WifiBackend> {
+     Ok(get_nm_settings().await?.backend)
+ }
+ 
+-pub(crate) async fn set_wifi_backend(backend: WifiBackend, connection: &Connection) -> Result<()> {
++pub(crate) async fn set_wifi_backend(_backend: WifiBackend, connection: &Connection) -> Result<()> {
++    // Steam asks for iwd on every launch and nothing in the config can refuse it, so
++    // pin the backend. Returning early keeps that from bouncing NetworkManager.
+     let mut settings = get_nm_settings().await?;
+-    settings.backend = backend;
++    if settings.backend == WifiBackend::WPASupplicant {
++        return Ok(());
++    }
++    settings.backend = WifiBackend::WPASupplicant;
+     set_nm_settings(settings, true, connection).await
+ }
+ 
+@@ -624,6 +629,27 @@ mod test {
+         );
+     }
+ 
++    #[tokio::test]
++    async fn test_set_wifi_backend_pins_wpa_supplicant() {
++        let mut h = testing::start();
++        let connection = h.new_dbus().await.expect("dbus");
++
++        create_dir_all(path(WIFI_BACKEND_PATHS.last().unwrap()))
++            .await
++            .expect("create_dir_all");
++
++        // No systemd mocks are registered, so a NetworkManager restart would fail the test.
++        set_wifi_backend(WifiBackend::Iwd, &connection)
++            .await
++            .expect("set_wifi_backend");
++
++        assert!(!try_exists(path(WIFI_BACKEND_FILE)).await.unwrap());
++        assert_eq!(
++            get_nm_settings().await.unwrap().backend,
++            WifiBackend::WPASupplicant
++        );
++    }
++
+     #[tokio::test]
+     async fn test_set_nm_settings_no_restart() {
+         let mut h = testing::start();

@@ -1,0 +1,38 @@
+From: virtudude <virtudude@protonmail.com>
+Date: Mon, 10 Aug 2026 00:00:00 +0000
+Subject: [PATCH] soc: qcom: ice: unwind clocks on resume failure
+
+qcom_ice_resume() leaves the core clock enabled when the iface clock
+fails to enable, and leaves both clocks enabled when the BIST status
+check fails. A later suspend then unbalances the clock refcounts.
+Disable whatever was enabled before returning the error.
+
+---
+ drivers/soc/qcom/ice.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+--- a/drivers/soc/qcom/ice.c
++++ b/drivers/soc/qcom/ice.c
+@@ -324,10 +324,20 @@
+ 	err = clk_prepare_enable(ice->iface_clk);
+ 	if (err) {
+ 		dev_err(dev, "Failed to enable iface clock: %d\n", err);
+-		return err;
++		goto disable_core_clk;
+ 	}
+ 	qcom_ice_hwkm_init(ice);
+-	return qcom_ice_wait_bist_status(ice);
++	err = qcom_ice_wait_bist_status(ice);
++	if (err)
++		goto disable_iface_clk;
++
++	return 0;
++
++disable_iface_clk:
++	clk_disable_unprepare(ice->iface_clk);
++disable_core_clk:
++	clk_disable_unprepare(ice->core_clk);
++	return err;
+ }
+ EXPORT_SYMBOL_GPL(qcom_ice_resume);
+

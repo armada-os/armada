@@ -1,4 +1,4 @@
-name: Label device from issue template
+name: Label issues by device
 
 on:
   issues:
@@ -70,7 +70,7 @@ jobs:
           echo "Selected device: '$device' -> '$label'"
           echo "label=$label" >> "$GITHUB_OUTPUT"
 
-      - name: Apply label
+      - name: Apply device label
         env:
           num: ${{ github.event.issue.number }}
           GITHUB_TOKEN: ${{ github.token }}

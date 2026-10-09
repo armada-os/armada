@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "models": [
+        "AYN Odin 2 Portal",
+        "AYN Thor",
+        "AYN Thor Lite",
+        "Retroid Pocket 5",
+        "Retroid Pocket 5 Visionox",
+        "Retroid Pocket Flip2",
+        "Retroid Pocket Flip2 Visionox",
+        "Retroid Pocket Mini",
+        "Retroid Pocket Mini V2",
+        "Retroid Pocket 6",
+        "Retroid Pocket 6 TOP-DPAD",
+        "Retroid Pocket Nova"
+      ],
+      "backend": {
+        "type": "multicolor",
+        "targets": [
+          "rgb:l1",
+          "rgb:l2",
+          "rgb:l3",
+          "rgb:l4",
+          "rgb:r1",
+          "rgb:r2",
+          "rgb:r3",
+          "rgb:r4"
+        ]
+      }
+    },
+    {
+      "models": [
+        "AYN Odin 2"
+      ],
+      "backend": {
+        "type": "multicolor",
+        "targets": [
+          "left-joystick",
+          "left-side",
+          "right-joystick",
+          "right-side"
+        ]
+      }
+    },
+    {
+      "models": ["AYANEO Pocket MICRO 2"],
+      "backend": {
+        "type": "serial",
+        "device": "ttyHS2"
+      }
+    },
+    {
+      "models": ["KONKR Pocket FIT Elite"],
+      "backend": {
+        "type": "multicolor",
+        "targets": ["konkr:rgb:joysticks"]
+      },
+      "correction": {
+        "trigger": "red",
+        "red": 0,
+        "green": 20,
+        "blue": 20
+      }
+    },
+    {
+      "models": ["MANGMI Air Y Pro", "MANGMI Pocket Max"],
+      "backend": {
+        "type": "channels",
+        "targets": [
+          "red=red:indicator-0",
+          "red=red:indicator-1",
+          "red=red:indicator-2",
+          "red=red:indicator-3",
+          "red=red:indicator-4",
+          "red=red:indicator-5",
+          "red=red:indicator-6",
+          "red=red:indicator-7",
+          "red=red:indicator-8",
+          "red=red:indicator-9",
+          "red=red:indicator-10",
+          "red=red:indicator-11",
+          "red=red:indicator-12",
+          "red=red:indicator-13",
+          "red=red:indicator-14",
+          "red=red:indicator-15",
+          "green=green:indicator-0",
+          "green=green:indicator-1",
+          "green=green:indicator-2",
+          "green=green:indicator-3",
+          "green=green:indicator-4",
+          "green=green:indicator-5",
+          "green=green:indicator-6",
+          "green=green:indicator-7",
+          "green=green:indicator-8",
+          "green=green:indicator-9",
+          "green=green:indicator-10",
+          "green=green:indicator-11",
+          "green=green:indicator-12",
+          "green=green:indicator-13",
+          "green=green:indicator-14",
+          "green=green:indicator-15",
+          "blue=blue:indicator-0",
+          "blue=blue:indicator-1",
+          "blue=blue:indicator-2",
+          "blue=blue:indicator-3",
+          "blue=blue:indicator-4",
+          "blue=blue:indicator-5",
+          "blue=blue:indicator-6",
+          "blue=blue:indicator-7",
+          "blue=blue:indicator-8",
+          "blue=blue:indicator-9",
+          "blue=blue:indicator-10",
+          "blue=blue:indicator-11",
+          "blue=blue:indicator-12",
+          "blue=blue:indicator-13",
+          "blue=blue:indicator-14",
+          "blue=blue:indicator-15"
+        ]
+      }
+    },
+    {
+      "models": ["AYN Odin 3"],
+      "backend": {
+        "type": "channels",
+        "targets": [
+          "red=l:r1",
+          "red=l:r2",
+          "red=l:r3",
+          "red=l:r4",
+          "red=r:r1",
+          "red=r:r2",
+          "red=r:r3",
+          "red=r:r4",
+          "green=l:g1",
+          "green=l:g2",
+          "green=l:g3",
+          "green=l:g4",
+          "green=r:g1",
+          "green=r:g2",
+          "green=r:g3",
+          "green=r:g4",
+          "blue=l:b1",
+          "blue=l:b2",
+          "blue=l:b3",
+          "blue=l:b4",
+          "blue=r:b1",
+          "blue=r:b2",
+          "blue=r:b3",
+          "blue=r:b4"
+        ]
+      }
+    }
+  ]
+}

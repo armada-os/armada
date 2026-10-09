@@ -1,0 +1,26 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] regulator: core: log missing suspend configuration at debug level
+
+With rpmh-regulator implementing set_suspend_mode, every rail without a
+regulator-state-mem node logs "No configuration" at each system suspend.
+That is the normal case for most rails, so log it at debug level.
+---
+--- a/drivers/regulator/core.c
++++ b/drivers/regulator/core.c
+@@ -596,14 +596,14 @@
+ 		return NULL;
+ 
+ 	/* If we have no suspend mode configuration don't set anything;
+-	 * only warn if the driver implements set_suspend_voltage or
++	 * only log if the driver implements set_suspend_voltage or
+ 	 * set_suspend_mode callback.
+ 	 */
+ 	if (rstate->enabled != ENABLE_IN_SUSPEND &&
+ 	    rstate->enabled != DISABLE_IN_SUSPEND) {
+ 		if (rdev->desc->ops->set_suspend_voltage ||
+ 		    rdev->desc->ops->set_suspend_mode)
+-			rdev_warn(rdev, "No configuration\n");
++			rdev_dbg(rdev, "No configuration\n");
+ 		return NULL;
+ 	}
+ 

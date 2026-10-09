@@ -1,0 +1,41 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] wlserver: pass touch through to native Wayland windows
+
+Steam sets one touch click mode for the whole session and turns touch
+into pointer input unless a game is known to support touch. That suits
+X11 windows, but an xdg-shell window handles wl_touch itself, and pointer
+input changes how it behaves: Android under Lepton treats a tap as a
+mouse click, which selects a file in the picker instead of opening it.
+
+Pass a touch through when it goes down on an xdg-shell window; X11
+windows keep the mode Steam sets. A touch keeps its mode until it ends,
+so a focus change in the middle does not split it between the two.
+
+---
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 35b6864..484c5c0 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -3856,7 +3856,9 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
+ 		trackpad_dx = tx - wlserver.mouse_surface_cursorx;
+ 		trackpad_dy = ty - wlserver.mouse_surface_cursory;
+ 
+-		gamescope::TouchClickMode eMode = GetBackend()->GetTouchClickMode();
++		// A touch keeps the mode it went down with.
++		gamescope::TouchClickMode eMode = wlserver.touch_down_ids.count( touch_id ) ?
++			gamescope::TouchClickModes::Passthrough : GetBackend()->GetTouchClickMode();
+ 
+ 		if ( eMode == gamescope::TouchClickModes::Passthrough )
+ 		{
+@@ -3962,6 +3964,11 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
+ 
+ 		gamescope::TouchClickMode eMode = GetBackend()->GetTouchClickMode();
+ 
++		// Steam emulates a pointer for X11 windows; an xdg-shell window reads wl_touch itself.
++		if ( eMode != gamescope::TouchClickModes::Disabled &&
++		     get_wl_surface_info( wlserver.mouse_focus_surface )->xdg_surface )
++			eMode = gamescope::TouchClickModes::Passthrough;
++
+ 		if ( eMode == gamescope::TouchClickModes::Passthrough )
+ 		{
+ 			double sx = tx, sy = ty;

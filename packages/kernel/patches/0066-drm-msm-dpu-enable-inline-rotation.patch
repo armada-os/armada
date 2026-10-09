@@ -1,0 +1,282 @@
+From f3e1d1400feb3a4f597a4ab586e76d050481c14e Mon Sep 17 00:00:00 2001
+From: tiopex <tiopxyz@gmail.com>
+Date: Fri, 11 Sep 2026 18:10:19 -0400
+Subject: [PATCH] drm/msm/dpu: enable true inline rotation on SM8550, SM8650
+ and SM8750
+
+DPU 9.0, 10.0 and 12.0 have the SSPP true inline rotator v2.0.1 (max
+pre-rotation height 1088). Expose 90/270 on the VIG pipes and program
+ROT90.
+
+Require UBWC for inline rotation of both RGB and YUV. Include
+XRGB2101010 which gamescope prefers for scanout.
+
+Keep QSEED enabled for 1:1 RGB when rotating; the rotator output
+feeds the scaler (SDE does the same). DRM rotation is CCW, DPU
+inline rotator is CW: XOR REFLECT_X|Y on rot90. Check pre-rotated
+source height, not width. Reserve rot90 pipes with test_bit.
+
+Merged from the three per-SoC ROCKNIX patches for a combined kernel:
+one shared feature mask and rotation config, one rot_v2 sblk per
+QSEED revision.
+
+Signed-off-by: tiopex <tiopxyz@gmail.com>
+---
+ .../msm/disp/dpu1/catalog/dpu_10_0_sm8650.h   | 16 ++++----
+ .../msm/disp/dpu1/catalog/dpu_12_0_sm8750.h   | 16 ++++----
+ .../msm/disp/dpu1/catalog/dpu_9_0_sm8550.h    | 16 ++++----
+ .../gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c    | 38 +++++++++++++++++++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c     |  9 +++--
+ drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c        |  2 +-
+ 6 files changed, 69 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h
+index 2eef5f6..6ed1ebc 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h
+@@ -58,29 +58,29 @@ static const struct dpu_sspp_cfg sm8650_sspp[] = {
+ 	{
+ 		.name = "sspp_0", .id = SSPP_VIG0,
+ 		.base = 0x4000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_3,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_3_rot_v2,
+ 		.xin_id = 0,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_1", .id = SSPP_VIG1,
+ 		.base = 0x6000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_3,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_3_rot_v2,
+ 		.xin_id = 4,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_2", .id = SSPP_VIG2,
+ 		.base = 0x8000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_3,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_3_rot_v2,
+ 		.xin_id = 8,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_3", .id = SSPP_VIG3,
+ 		.base = 0xa000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_3,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_3_rot_v2,
+ 		.xin_id = 12,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
+index 3889eb8..d5c3fb0 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
+@@ -59,29 +59,29 @@ static const struct dpu_sspp_cfg sm8750_sspp[] = {
+ 	{
+ 		.name = "sspp_0", .id = SSPP_VIG0,
+ 		.base = 0x4000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_4,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_4_rot_v2,
+ 		.xin_id = 0,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_1", .id = SSPP_VIG1,
+ 		.base = 0x6000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_4,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_4_rot_v2,
+ 		.xin_id = 4,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_2", .id = SSPP_VIG2,
+ 		.base = 0x8000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_4,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_4_rot_v2,
+ 		.xin_id = 8,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_3", .id = SSPP_VIG3,
+ 		.base = 0xa000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_4,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_4_rot_v2,
+ 		.xin_id = 12,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h
+index b3d0f22..166a1bf 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h
+@@ -58,29 +58,29 @@ static const struct dpu_sspp_cfg sm8550_sspp[] = {
+ 	{
+ 		.name = "sspp_0", .id = SSPP_VIG0,
+ 		.base = 0x4000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_2,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_2_rot_v2,
+ 		.xin_id = 0,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_1", .id = SSPP_VIG1,
+ 		.base = 0x6000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_2,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_2_rot_v2,
+ 		.xin_id = 4,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_2", .id = SSPP_VIG2,
+ 		.base = 0x8000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_2,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_2_rot_v2,
+ 		.xin_id = 8,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+ 		.name = "sspp_3", .id = SSPP_VIG3,
+ 		.base = 0xa000, .len = 0x344,
+-		.features = VIG_SDM845_MASK_SDMA,
+-		.sblk = &dpu_vig_sblk_qseed3_3_2,
++		.features = VIG_ROT_V201_MASK_SDMA,
++		.sblk = &dpu_vig_sblk_qseed3_3_2_rot_v2,
+ 		.xin_id = 12,
+ 		.type = SSPP_TYPE_VIG,
+ 	}, {
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+index 2e10add..3083f6a 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+@@ -59,6 +59,9 @@
+ #define VIG_SC7280_MASK_SDMA \
+ 	(VIG_SC7280_MASK | BIT(DPU_SSPP_SMART_DMA_V2))
+ 
++#define VIG_ROT_V201_MASK_SDMA \
++	(VIG_SDM845_MASK_SDMA | BIT(DPU_SSPP_INLINE_ROTATION))
++
+ #define DMA_SDM845_MASK_NO_SDMA \
+ 	(BIT(DPU_SSPP_QOS) | \
+ 	BIT(DPU_SSPP_TS_PREFILL) | BIT(DPU_SSPP_TS_PREFILL_REC1) |\
+@@ -190,6 +193,23 @@ static const u32 rotation_v2_formats[] = {
+ 	/* TODO add formats after validation */
+ };
+ 
++static const u32 rotation_v201_formats[] = {
++	DRM_FORMAT_NV12,
++	DRM_FORMAT_P010,
++	DRM_FORMAT_ARGB8888,
++	DRM_FORMAT_ABGR8888,
++	DRM_FORMAT_RGBA8888,
++	DRM_FORMAT_BGRA8888,
++	DRM_FORMAT_XRGB8888,
++	DRM_FORMAT_XBGR8888,
++	DRM_FORMAT_RGBX8888,
++	DRM_FORMAT_BGRX8888,
++	DRM_FORMAT_ARGB2101010,
++	DRM_FORMAT_ABGR2101010,
++	DRM_FORMAT_XRGB2101010,
++	DRM_FORMAT_XBGR2101010,
++};
++
+ static const u32 wb2_formats_rgb_yuv[] = {
+ 	DRM_FORMAT_RGB565,
+ 	DRM_FORMAT_BGR565,
+@@ -309,6 +329,12 @@ static const struct dpu_rotation_cfg dpu_rot_sc7280_cfg_v2 = {
+ 	.rot_format_list = rotation_v2_formats,
+ };
+ 
++static const struct dpu_rotation_cfg dpu_rot_v201_cfg = {
++	.rot_maxheight = 1088,
++	.rot_num_formats = ARRAY_SIZE(rotation_v201_formats),
++	.rot_format_list = rotation_v201_formats,
++};
++
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed2 =
+ 				_VIG_SBLK_QSEED2();
+ 
+@@ -340,12 +366,24 @@ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_1 =
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_2 =
+ 				_VIG_SBLK(SSPP_SCALER_VER(3, 2));
+ 
++static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_2_rot_v2 =
++			_VIG_SBLK_ROT(SSPP_SCALER_VER(3, 2),
++				      &dpu_rot_v201_cfg);
++
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_3 =
+ 				_VIG_SBLK(SSPP_SCALER_VER(3, 3));
+ 
++static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_3_rot_v2 =
++			_VIG_SBLK_ROT(SSPP_SCALER_VER(3, 3),
++				      &dpu_rot_v201_cfg);
++
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_4 =
+ 				_VIG_SBLK(SSPP_SCALER_VER(3, 4));
+ 
++static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_4_rot_v2 =
++			_VIG_SBLK_ROT(SSPP_SCALER_VER(3, 4),
++				      &dpu_rot_v201_cfg);
++
+ static const struct dpu_sspp_sub_blks dpu_vig_sblk_qseed3_3_5 =
+ 				_VIG_SBLK_REC0_REC1(SSPP_SCALER_VER(3, 5));
+ 
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+index 7b92082..261fabf 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -476,7 +476,7 @@ static void _dpu_plane_setup_scaler3(struct dpu_hw_sspp *pipe_hw,
+ 		}
+ 	}
+ 	if (!(MSM_FORMAT_IS_YUV(fmt)) && (src_h == dst_h)
+-		&& (src_w == dst_w))
++		&& (src_w == dst_w) && !inline_rotation)
+ 		return;
+ 
+ 	scale_cfg->dst_width = dst_w;
+@@ -704,9 +704,9 @@ static int dpu_plane_check_inline_rotation(struct dpu_plane *pdpu,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (drm_rect_width(&src) > sblk->rotation_cfg->rot_maxheight) {
++	if (drm_rect_height(&src) > sblk->rotation_cfg->rot_maxheight) {
+ 		DPU_DEBUG_PLANE(pdpu, "invalid height for inline rot:%d max:%d\n",
+-				src.y2, sblk->rotation_cfg->rot_maxheight);
++				drm_rect_height(&src), sblk->rotation_cfg->rot_maxheight);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -758,6 +758,9 @@ static int dpu_plane_atomic_check_pipe(struct dpu_plane *pdpu,
+ 	pipe_cfg->rotation = drm_rotation_simplify(new_plane_state->rotation,
+ 						   supported_rotations);
+ 
++	if (pipe_cfg->rotation & DRM_MODE_ROTATE_90)
++		pipe_cfg->rotation ^= DRM_MODE_REFLECT_X | DRM_MODE_REFLECT_Y;
++
+ 	min_src_size = MSM_FORMAT_IS_YUV(fmt) ? 2 : 1;
+ 
+ 	if (MSM_FORMAT_IS_YUV(fmt) &&
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+index 7e77d88..b9960da 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+@@ -817,7 +817,7 @@ static struct dpu_hw_sspp *dpu_rm_try_sspp(struct dpu_rm *rm,
+ 		if (reqs->yuv && !hw_sspp->cap->sblk->csc_blk.len)
+ 			continue;
+ 
+-		if (reqs->rot90 && !(hw_sspp->cap->features & DPU_SSPP_INLINE_ROTATION))
++		if (reqs->rot90 && !test_bit(DPU_SSPP_INLINE_ROTATION, &hw_sspp->cap->features))
+ 			continue;
+ 
+ 		global_state->sspp_to_crtc_id[i] = crtc_id;

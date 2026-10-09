@@ -1,0 +1,74 @@
+From: Based on work by Gianni Spadoni <me@gio.blue>
+Subject: [PATCH] input: rsinput: add a scoped haptics force-feedback bridge
+
+Rebase ROCKNIX's SM8750 force-feedback bridge onto the current shared
+RSInput driver. ROCKNIX's patch was generated against a different driver
+revision and contains a malformed final hunk.
+
+Only advertise and initialize force feedback when the device node has the
+rumble-haptics property. Armada combines the SM8550 and SM8750 device
+stacks, so a patch imported from one SoC must not make the capability
+unconditional for every future RSInput device.
+
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -17,9 +17,13 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/serdev.h>
+ #include <linux/slab.h>
++#include <linux/soc/qcom/qcom_hv_haptics.h>
+ #include <uapi/linux/sched/types.h>
+ 
+ static int update_params=0;
++static bool rumble_enable = true;
++
++module_param(rumble_enable, bool, 0660);
+ 
+ static int trigger_left_max=0x610;
+ static int trigger_left_deadzone=0x0;
+@@ -402,6 +406,24 @@
+     .receive_buf = rsinput_rx,
+ };
+ 
++static int rsinput_rumble_upload(struct input_dev *dev,
++                                 struct ff_effect *effect,
++                                 struct ff_effect *old)
++{
++    if (!rumble_enable)
++        return 0;
++
++    return qcom_spmi_haptics_global_upload(effect);
++}
++
++static int rsinput_rumble_play(struct input_dev *dev, int effect_id, int val)
++{
++    if (!rumble_enable)
++        return 0;
++
++    return qcom_spmi_haptics_global_playback(effect_id, val);
++}
++
+ static int rsinput_probe(struct serdev_device *serdev) {
+     struct rsinput_driver *drv;
+     u32 gamepad_bus = 0;
+@@ -542,6 +564,20 @@
+     input_set_abs_params(drv->input, ABS_Z, 0, trigger_left_max - trigger_left_antideadzone, 0, 30);
+     input_set_abs_params(drv->input, ABS_RZ, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
+ 
++    if (device_property_present(&serdev->dev, "rumble-haptics")) {
++        input_set_capability(drv->input, EV_FF, FF_PERIODIC);
++
++        error = input_ff_create(drv->input, 1);
++        if (error) {
++            dev_err(&serdev->dev,
++                    "Unable to create force feedback device: %d\n", error);
++            return error;
++        }
++
++        drv->input->ff->upload = rsinput_rumble_upload;
++        drv->input->ff->playback = rsinput_rumble_play;
++    }
++
+     error = input_register_device(drv->input);
+     if (error)
+         return error;

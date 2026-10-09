@@ -1,7 +1,6 @@
 import fcntl
 import json
 import os
-import pty
 import re
 import select
 import ssl
@@ -152,7 +151,7 @@ def _clean_output(raw):
 def _run_flatpak(args, cancel, on_percent):
     # flatpak renders progress only on a sized tty with TERM set, and
     # --noninteractive suppresses it entirely; -y alone keeps this unattended.
-    master, slave = pty.openpty()
+    master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     env = clean_env({"LC_ALL": "C.UTF-8", "TERM": "xterm"})
     proc = subprocess.Popen(["flatpak", *args], stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True)

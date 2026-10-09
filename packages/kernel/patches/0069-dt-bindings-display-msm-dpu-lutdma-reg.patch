@@ -1,0 +1,53 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] dt-bindings: display/msm: dpu: add the optional LUTDMA register set
+
+The DPU's LUTDMA engine loads the DSPP and SSPP LUT blocks over the LUT
+bus from a command buffer. It sits in the MDSS register space outside
+the "mdp" range, so let the DPU node name it as a third, optional reg
+entry "lutdma".
+
+---
+diff -ruN a/Documentation/devicetree/bindings/display/msm/qcom,sc7280-dpu.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sc7280-dpu.yaml
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sc7280-dpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sc7280-dpu.yaml
+@@ -25,14 +25,18 @@
+       - qcom,sm8550-dpu
+ 
+   reg:
++    minItems: 2
+     items:
+       - description: Address offset and size for mdp register set
+       - description: Address offset and size for vbif register set
++      - description: Address offset and size for the LUTDMA engine register set
+ 
+   reg-names:
++    minItems: 2
+     items:
+       - const: mdp
+       - const: vbif
++      - const: lutdma
+ 
+   clocks:
+     items:
+diff -ruN a/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sm8650-dpu.yaml
+@@ -29,14 +29,18 @@
+           - const: qcom,sa8775p-dpu
+ 
+   reg:
++    minItems: 2
+     items:
+       - description: Address offset and size for mdp register set
+       - description: Address offset and size for vbif register set
++      - description: Address offset and size for the LUTDMA engine register set
+ 
+   reg-names:
++    minItems: 2
+     items:
+       - const: mdp
+       - const: vbif
++      - const: lutdma
+ 
+   clocks:
+     items:

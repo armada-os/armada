@@ -1,0 +1,26 @@
+From 4727f0d3f075d89edebd02370eff9db2616cae27 Mon Sep 17 00:00:00 2001
+From: JPyke3 <github@pyk.ee>
+Date: Tue, 8 Sep 2026 20:49:14 +1000
+Subject: [PATCH] This commit adds device quirks for: Retroid Pocket 5 Visionox
+ Retroid Pocket Flip2 Visionox
+
+---
+ usr/share/gamescope-session-plus/device-quirks | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/usr/share/gamescope-session-plus/device-quirks b/usr/share/gamescope-session-plus/device-quirks
+index f0be2e5..17f55ad 100644
+--- a/usr/share/gamescope-session-plus/device-quirks
++++ b/usr/share/gamescope-session-plus/device-quirks
+@@ -345,7 +345,7 @@ if [[ ":Retroid Pocket 5:Retroid Pocket Flip2:" =~ ":$SYS_ID:" ]]; then
+   export STEAM_DISPLAY_REFRESH_LIMITS=60
+ fi
+ 
+-if [[ ":Retroid Pocket 6:Retroid Pocket 6 TOP-DPAD:" =~ ":$SYS_ID:" ]]; then
++if [[ ":Retroid Pocket 6:Retroid Pocket 6 TOP-DPAD:Retroid Pocket Flip2 Visionox:Retroid Pocket 5 Visionox:" =~ ":$SYS_ID:" ]]; then
+   ORIENTATION=left
+   CUSTOM_REFRESH_RATES=60,120
+   OUTPUT_CONNECTOR='*,DSI-1'
+-- 
+2.55.0
+

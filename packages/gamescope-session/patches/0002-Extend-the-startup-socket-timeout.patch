@@ -1,0 +1,25 @@
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 30 Jul 2026 12:02:00 -0400
+Subject: [PATCH 2/3] Extend the startup socket timeout
+
+The first Gamescope launch can take longer than five seconds when Armada boots
+from an SD card. Allow fifteen seconds before treating startup as failed.
+---
+ usr/share/gamescope-session-plus/gamescope-session-plus | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/usr/share/gamescope-session-plus/gamescope-session-plus b/usr/share/gamescope-session-plus/gamescope-session-plus
+index d2ec3e9..cc05043 100755
+--- a/usr/share/gamescope-session-plus/gamescope-session-plus
++++ b/usr/share/gamescope-session-plus/gamescope-session-plus
+@@ -288,7 +288,7 @@ fi
+ $GAMESCOPECMD &
+ gamescope_pid="$!"
+ 
+-if read -r -t 5 response_x_display response_wl_display <>"$socket"; then
++if read -r -t 15 response_x_display response_wl_display <>"$socket"; then
+ 	export DISPLAY="$response_x_display"
+ 	export GAMESCOPE_WAYLAND_DISPLAY="$response_wl_display"
+ 	# We're done!
+-- 
+2.55.0

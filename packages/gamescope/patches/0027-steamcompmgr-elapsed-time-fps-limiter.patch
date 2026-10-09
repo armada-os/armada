@@ -1,0 +1,47 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] steamcompmgr: clock-anchored FPS limiter for fixed-refresh panels
+
+The non-VRR limiter gates on a vblank-count divisor, so a late frame slips a
+full divisor period. Gate on a clock-anchored schedule from the last latch
+instead. Setting the limiter_use_elapsed_time ConVar (default on) to 0 restores
+the divisor gate.
+
+---
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 4f91e5f..cabd639 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -6902,6 +6902,8 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
+ 
+ static std::optional<uint64_t> s_oLowestFPSLimitScheduleVRR;
+ 
++gamescope::ConVar<bool> cv_limiter_use_elapsed_time( "limiter_use_elapsed_time", true, "Release limited frames by elapsed time instead of a vblank-count divisor on fixed-refresh displays." );
++
+ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vblank_idx, steamcompmgr_win_t *w = nullptr, uint64_t now = 0 )
+ {
+ 	bool bSendCallback = true;
+@@ -6933,10 +6935,21 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
+ 	{
+ 		if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nRefreshHz > nTargetFPS )
+ 		{
+-			int nVblankDivisor = nRefreshHz / nTargetFPS;
++			if ( cv_limiter_use_elapsed_time && w )
++			{
++				uint64_t schedule = w->last_commit_first_latch_time + g_SteamCompMgrLimitedAppRefreshCycle;
++				uint64_t fudge = g_SteamCompMgrAppRefreshCycle / 2;
+ 
+-			if ( vblank_idx % nVblankDivisor != 0 )
+-				bSendCallback = false;
++				if ( now + fudge < schedule )
++					bSendCallback = false;
++			}
++			else
++			{
++				int nVblankDivisor = nRefreshHz / nTargetFPS;
++
++				if ( vblank_idx % nVblankDivisor != 0 )
++					bSendCallback = false;
++			}
+ 		}
+ 	}
+ 

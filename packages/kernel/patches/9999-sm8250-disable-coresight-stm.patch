@@ -1,0 +1,12 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -3150,6 +3150,8 @@
+ 			clocks = <&aoss_qmp>;
+ 			clock-names = "apb_pclk";
+ 
++			status = "disabled";
++
+ 			out-ports {
+ 				port {
+ 					stm_out: endpoint {

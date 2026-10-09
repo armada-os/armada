@@ -1,0 +1,261 @@
+diff --git a/src/inotify.c b/src/inotify.c
+index 8f56637..80abefc 100644
+--- a/src/inotify.c
++++ b/src/inotify.c
+@@ -97,7 +97,8 @@ static void *inotify_gotsig(int sig, siginfo_t *info, void *ucontext)
+ static void* inotify_thread(void* arg)
+ {
+ 	mtp_ctx * ctx;
+-	int i, length;
++	int i, j, length;
++	int event_count;
+ 	int send_event_flag;
+ 	fs_entry * entry;
+ 	fs_entry * deleted_entry;
+@@ -106,6 +107,7 @@ static void* inotify_thread(void* arg)
+ 	fs_entry * old_entry;
+ 	filefoundinfo fileinfo;
+ 	uint32_t handle[3];
++	uint32_t event_handles[MAX_STORAGE_NB];
+ 	char inotify_buffer[INOTIFY_RD_BUF_SIZE] __attribute__ ((aligned(__alignof__(struct inotify_event))));
+ 	const struct inotify_event *event;
+ 	struct sigaction sa;
+@@ -148,16 +150,16 @@ static void* inotify_thread(void* arg)
+ 					if ( ( event->mask & IN_CREATE ) || ( event->mask & IN_MOVED_TO ) )
+ 					{
+ 						entry = NULL;
++						event_count = 0;
++						if ( pthread_mutex_lock( &ctx->inotify_mutex ) )
++						{
++							PRINT_ERROR( "inotify_thread - pthread_mutex_lock failure !");
++							return NULL;
++						}
+ 						do
+ 						{
+ 							send_event_flag = 0;
+ 
+-							if ( pthread_mutex_lock( &ctx->inotify_mutex ) )
+-							{
+-								PRINT_ERROR( "inotify_thread - pthread_mutex_lock failure !");
+-								return NULL;
+-							}
+-
+ 							entry = get_entry_by_wd( ctx->fs_db, event->wd, entry );
+ 							if ( get_file_info( ctx, event, entry, &fileinfo, 0 ) )
+ 							{
+@@ -194,34 +196,36 @@ static void* inotify_thread(void* arg)
+ 								entry = entry->next;
+ 							}
+ 
+-							if ( pthread_mutex_unlock( &ctx->inotify_mutex ) )
+-							{
+-								PRINT_ERROR( "inotify_thread - pthread_mutex_unlock failure !");
+-								return NULL;
+-							}
+-
+ 							if( send_event_flag )
+ 							{
+-								mtp_push_event( ctx, MTP_EVENT_OBJECT_ADDED, 1, (uint32_t *)&handle );
++								if( event_count < MAX_STORAGE_NB )
++									event_handles[event_count++] = handle[0];
+ 							}
+ 
+ 						}while(entry);
++						if ( pthread_mutex_unlock( &ctx->inotify_mutex ) )
++						{
++							PRINT_ERROR( "inotify_thread - pthread_mutex_unlock failure !");
++							return NULL;
++						}
++						for( j = 0; j < event_count; j++ )
++							mtp_push_event( ctx, MTP_EVENT_OBJECT_ADDED, 1, &event_handles[j] );
+ 					}
+ 
+ 					if ( event->mask & IN_MODIFY )
+ 					{
+ 						entry = NULL;
++						event_count = 0;
++						if ( pthread_mutex_lock( &ctx->inotify_mutex ) )
++						{
++							PRINT_ERROR( "inotify_thread - pthread_mutex_lock failure !");
++							return NULL;
++						}
+ 
+ 						do
+ 						{
+ 							send_event_flag = 0;
+ 
+-							if ( pthread_mutex_lock( &ctx->inotify_mutex ) )
+-							{
+-								PRINT_ERROR( "inotify_thread - pthread_mutex_lock failure !");
+-								return NULL;
+-							}
+-
+ 							entry = get_entry_by_wd( ctx->fs_db, event->wd, entry );
+ 							if ( get_file_info( ctx, event, entry, &fileinfo, 1 ) )
+ 							{
+@@ -245,34 +249,36 @@ static void* inotify_thread(void* arg)
+ 								entry = entry->next;
+ 							}
+ 
+-							if ( pthread_mutex_unlock( &ctx->inotify_mutex ) )
+-							{
+-								PRINT_ERROR( "inotify_thread - pthread_mutex_unlock failure !");
+-								return NULL;
+-							}
+-
+ 							if( send_event_flag )
+ 							{
+-								mtp_push_event( ctx, MTP_EVENT_OBJECT_INFO_CHANGED, 1, (uint32_t *)&handle );
++								if( event_count < MAX_STORAGE_NB )
++									event_handles[event_count++] = handle[0];
+ 							}
+ 
+ 						}while(entry);
++						if ( pthread_mutex_unlock( &ctx->inotify_mutex ) )
++						{
++							PRINT_ERROR( "inotify_thread - pthread_mutex_unlock failure !");
++							return NULL;
++						}
++						for( j = 0; j < event_count; j++ )
++							mtp_push_event( ctx, MTP_EVENT_OBJECT_INFO_CHANGED, 1, &event_handles[j] );
+ 					}
+ 
+ 					if ( ( event->mask & IN_DELETE ) || ( event->mask & IN_MOVED_FROM ) )
+ 					{
+ 						entry = NULL;
++						event_count = 0;
++						if ( pthread_mutex_lock( &ctx->inotify_mutex ) )
++						{
++							PRINT_ERROR( "inotify_thread - pthread_mutex_lock failure !");
++							return NULL;
++						}
+ 
+ 						do
+ 						{
+ 							send_event_flag = 0;
+ 
+-							if ( pthread_mutex_lock( &ctx->inotify_mutex ) )
+-							{
+-								PRINT_ERROR( "inotify_thread - pthread_mutex_lock failure !");
+-								return NULL;
+-							}
+-
+ 							entry = get_entry_by_wd( ctx->fs_db, event->wd, entry );
+ 							if ( get_file_info( ctx, event, entry, &fileinfo, 1 ) )
+ 							{
+@@ -303,17 +309,19 @@ static void* inotify_thread(void* arg)
+ 								entry = entry->next;
+ 							}
+ 
+-							if ( pthread_mutex_unlock( &ctx->inotify_mutex ) )
+-							{
+-								PRINT_ERROR( "inotify_thread - pthread_mutex_unlock failure !");
+-								return NULL;
+-							}
+-
+ 							if( send_event_flag )
+ 							{
+-								mtp_push_event( ctx, MTP_EVENT_OBJECT_REMOVED, 1, (uint32_t *)&handle );
++								if( event_count < MAX_STORAGE_NB )
++									event_handles[event_count++] = handle[0];
+ 							}
+ 						}while(entry);
++						if ( pthread_mutex_unlock( &ctx->inotify_mutex ) )
++						{
++							PRINT_ERROR( "inotify_thread - pthread_mutex_unlock failure !");
++							return NULL;
++						}
++						for( j = 0; j < event_count; j++ )
++							mtp_push_event( ctx, MTP_EVENT_OBJECT_REMOVED, 1, &event_handles[j] );
+ 					}
+ 				}
+ 
+diff --git a/src/mtp_operations/mtp_op_closesession.c b/src/mtp_operations/mtp_op_closesession.c
+index cb11c81..d0c90d5 100644
+--- a/src/mtp_operations/mtp_op_closesession.c
++++ b/src/mtp_operations/mtp_op_closesession.c
+@@ -37,12 +37,19 @@
+ 
+ uint32_t mtp_op_CloseSession(mtp_ctx * ctx,MTP_PACKET_HEADER * mtp_packet_hdr, int * size,uint32_t * ret_params, int * ret_params_size)
+ {
++	if( pthread_mutex_lock( &ctx->inotify_mutex ) )
++		return MTP_RESPONSE_GENERAL_ERROR;
++
+ 	if(!ctx->fs_db)
++	{
++		pthread_mutex_unlock( &ctx->inotify_mutex );
+ 		return MTP_RESPONSE_SESSION_NOT_OPEN;
++	}
+ 
+ 	deinit_fs_db(ctx->fs_db);
+-
+ 	ctx->fs_db = 0;
+ 
++	pthread_mutex_unlock( &ctx->inotify_mutex );
++
+ 	return MTP_RESPONSE_OK;
+ }
+diff --git a/src/mtp_operations/mtp_op_opensession.c b/src/mtp_operations/mtp_op_opensession.c
+index 97e3514..775095f 100644
+--- a/src/mtp_operations/mtp_op_opensession.c
++++ b/src/mtp_operations/mtp_op_opensession.c
+@@ -47,10 +47,14 @@ uint32_t mtp_op_OpenSession(mtp_ctx * ctx,MTP_PACKET_HEADER * mtp_packet_hdr, in
+ 		return MTP_RESPONSE_INVALID_PARAMETER;
+ 	}
+ 
++	if( pthread_mutex_lock( &ctx->inotify_mutex ) )
++		return MTP_RESPONSE_GENERAL_ERROR;
++
+ 	if(ctx->fs_db)
+ 	{
+ 		ret_params[0] = ctx->session_id;
+ 		*ret_params_size = sizeof(uint32_t);
++		pthread_mutex_unlock( &ctx->inotify_mutex );
+ 		return MTP_RESPONSE_SESSION_ALREADY_OPEN;
+ 	}
+ 
+@@ -60,22 +64,19 @@ uint32_t mtp_op_OpenSession(mtp_ctx * ctx,MTP_PACKET_HEADER * mtp_packet_hdr, in
+ 	if( !ctx->fs_db )
+ 	{
+ 		PRINT_DEBUG("Open session - init fs db failure");
++		pthread_mutex_unlock( &ctx->inotify_mutex );
+ 		return MTP_RESPONSE_GENERAL_ERROR;
+ 	}
+ 
+ 	i = 0;
+ 	while( (i < MAX_STORAGE_NB) && ctx->storages[i].root_path)
+ 	{
+-		if( pthread_mutex_lock( &ctx->inotify_mutex ) )
+-			return MTP_RESPONSE_GENERAL_ERROR;
+-
+ 		alloc_root_entry(ctx->fs_db, ctx->storages[i].storage_id);
+-
+-		pthread_mutex_unlock( &ctx->inotify_mutex );
+-
+ 		i++;
+ 	}
+ 
++	pthread_mutex_unlock( &ctx->inotify_mutex );
++
+ 	PRINT_DEBUG("Open session - ID 0x%.8x",ctx->session_id);
+ 
+ 	return MTP_RESPONSE_OK;
+diff --git a/src/umtprd.c b/src/umtprd.c
+index 93fb167..fe6f465 100644
+--- a/src/umtprd.c
++++ b/src/umtprd.c
+@@ -132,8 +132,12 @@ static int main_thread(const char *conffile)
+ 
+ 		if(mtp_context->fs_db)
+ 		{
+-			deinit_fs_db(mtp_context->fs_db);
+-			mtp_context->fs_db = 0;
++			if( !pthread_mutex_lock( &mtp_context->inotify_mutex ) )
++			{
++				deinit_fs_db(mtp_context->fs_db);
++				mtp_context->fs_db = 0;
++				pthread_mutex_unlock( &mtp_context->inotify_mutex );
++			}
+ 		}
+ 	}while(loop_continue && !shutdown_requested);
+ 

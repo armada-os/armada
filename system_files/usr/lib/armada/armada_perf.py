@@ -13,7 +13,6 @@ DEVICE_ENV_HELPER = "/usr/libexec/armada/device-env"
 CORE_PRESETS = ("all", "big", "prime", "little")
 SCHEDULERS = ("eevdf", "cosmos", "lavd")
 GAMESCOPE_COMMS = ("gamescope", "gamescope-wl")
-RR_PRIORITY = os.sched_get_priority_min(os.SCHED_RR)
 NICE_MIN, NICE_MAX = -20, 19
 GAMESCOPE_NICE_MIN, GAMESCOPE_NICE_MAX = -20, 19
 
@@ -122,8 +121,6 @@ def sanitize_perf(settings, env=None):
     if isinstance(settings.get("gamescopeNice"), int):
         clean["gamescopeNice"] = clamp(
             settings["gamescopeNice"], GAMESCOPE_NICE_MIN, GAMESCOPE_NICE_MAX)
-    if isinstance(settings.get("gamescopeRr"), bool):
-        clean["gamescopeRr"] = settings["gamescopeRr"]
     if "gamescopeCores" in settings:
         try:
             gs_cores = resolve_cores(settings.get("gamescopeCores"), env)
@@ -164,7 +161,6 @@ def write_state(state):
 def effective_state(state):
     values = {
         "gamescopeNice": 0,
-        "gamescopeRr": False,
         "gamescopeCores": None,
         "scheduler": "eevdf",
         "schedulerDomain": None,
@@ -230,10 +226,8 @@ def _policy(tid):
 
 
 def apply_gamescope(values):
-    # Idempotent per-tick enforcement. RESET_ON_FORK covers RR/negative nice
-    # in children but NOT affinity, hence the direct-child reset below.
+    # RESET_ON_FORK covers negative nice in children but not affinity.
     nice = clamp(values.get("gamescopeNice", 0), GAMESCOPE_NICE_MIN, GAMESCOPE_NICE_MAX)
-    want_rr = bool(values.get("gamescopeRr"))
     cores = values.get("gamescopeCores") or None
     all_cpus = set(online_cpus())
     mask = set(cores) & all_cpus if cores else all_cpus
@@ -243,18 +237,6 @@ def apply_gamescope(values):
         for tid in process_tids(pid):
             policy = _policy(tid)
             try:
-                # nice block must see the post-promotion policy, or RR +
-                # negative nice would promote then demote every tick
-                if want_rr and policy == os.SCHED_OTHER:
-                    os.sched_setscheduler(
-                        tid, os.SCHED_RR | os.SCHED_RESET_ON_FORK,
-                        os.sched_param(RR_PRIORITY))
-                    policy = os.SCHED_RR
-                elif not want_rr and policy == os.SCHED_RR:
-                    os.sched_setscheduler(
-                        tid, os.SCHED_OTHER | os.SCHED_RESET_ON_FORK,
-                        os.sched_param(0))
-                    policy = os.SCHED_OTHER
                 if policy in (os.SCHED_OTHER, os.SCHED_BATCH):
                     if nice < 0 and policy == os.SCHED_OTHER:
                         os.sched_setscheduler(

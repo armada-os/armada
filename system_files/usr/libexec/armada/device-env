@@ -16,9 +16,12 @@ case "$model" in
     "AYN Odin 2 Portal") profile=ayn-odin-2-portal ;;
     "AYN Thor") profile=ayn-thor ;;
     "AYN Thor Lite") profile=ayn-thor-lite ;;
+    "MANGMI Air Y Pro") profile=mangmi-air-y-pro ;;
+    "MANGMI Pocket Max") profile=mangmi-pocket-max ;;
     "AYANEO Pocket ACE") profile=ayaneo-pocket-ace ;;
     "AYANEO Pocket DMG") profile=ayaneo-pocket-dmg ;;
     "AYANEO Pocket DS") profile=ayaneo-pocket-ds ;;
+    "AYANEO Pocket MICRO 2") profile=ayaneo-pocket-micro2 ;;
     "AYANEO Pocket S 1K") profile=ayaneo-pocket-s1k ;;
     "AYANEO Pocket S 2K") profile=ayaneo-pocket-s2k ;;
     "AYANEO Pocket S2") profile=ayaneo-pocket-s2 ;;
@@ -26,9 +29,9 @@ case "$model" in
     "KONKR Pocket FIT Elite") profile=konkr-pocket-fit-elite ;;
     "AYN Odin 3") profile=ayn-odin-3 ;;
     "Retroid Pocket 5") profile=retroid-pocket-5 ;;
-    "Retroid Pocket 5 Visionox") profile=retroid-pocket-5 ;;
+    "Retroid Pocket 5 Visionox") profile=retroid-pocket-5-visionox ;;
     "Retroid Pocket Flip2") profile=retroid-pocket-flip2 ;;
-    "Retroid Pocket Flip2 Visionox") profile=retroid-pocket-flip2 ;;
+    "Retroid Pocket Flip2 Visionox") profile=retroid-pocket-flip2-visionox ;;
     "Retroid Pocket Mini") profile=retroid-pocket-mini ;;
     "Retroid Pocket Mini V2") profile=retroid-pocket-mini-v2 ;;
     "Retroid Pocket 6") profile=retroid-pocket-6 ;;
@@ -85,8 +88,7 @@ case "${ARMADA_SOC_CLASS:-}" in
         : "${ARMADA_LITTLE_CORES=0-2}"
         : "${ARMADA_BIG_CORES=3-7}"
         : "${ARMADA_PRIME_CORES=7}"
-        # The A740 GMU wedges if a GPU interrupt wakes CPU 0-2 out of power collapse
-        : "${ARMADA_IRQ_CORES=3-7}"
+        : "${ARMADA_IRQ_CORES=0-2}"
         ;;
     SM8650)
         : "${ARMADA_LITTLE_CORES=0-1}"
@@ -119,6 +121,7 @@ vars=(
     ARMADA_PANEL_TYPE
     ARMADA_PANEL_ORIENTATION
     ARMADA_GAMESCOPE_USE_ROTATION_SHADER
+    ARMADA_GAMESCOPE_FAKE_OUTPUT_MM
     ARMADA_HDR_NITS
     ARMADA_GAMEPAD_QUIRK
     ARMADA_IP_TARGETS

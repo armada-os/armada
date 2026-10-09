@@ -1,0 +1,19 @@
+[Unit]
+Description=Armada splash (initramfs)
+DefaultDependencies=no
+ConditionPathExists=/usr/libexec/armada/armada-splash
+# Ordered into the running boot chain: a bare WantedBy=initrd.target start
+# job is cancelled by switch-root before it ever runs.
+After=dracut-pre-mount.service
+
+[Service]
+Type=simple
+# The drawer outlives the initrd (argv[0] '@' + KillMode=none) so the sail
+# runs uninterrupted from first paint until the session takes the display.
+KillMode=none
+ExecStartPre=/bin/sh -c 'mkdir -p /run/armada/splash; printf "Preparing Armada\n" > /run/armada/splash/status'
+ExecStart=/usr/libexec/armada/armada-splash-launcher
+SuccessExitStatus=TERM KILL INT
+
+[Install]
+WantedBy=initrd.target

@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Copyright (c) 2025, Teguh Sobirin.
+ * Copyright (c) 2025, ROCKNIX (https://github.com/ROCKNIX)
+ */
+
+/dts-v1/;
+
+#include "qcs8550-ayaneo-pocket-common.dtsi"
+
+/ {
+	model = "AYANEO Pocket EVO";
+	qcom,board-id = <0x1000b 0x01>;
+	qcom,msm-id = <0x258 0x20000>, <0x259 0x20000>;
+	compatible = "ayaneo,pocketevo", "qcom,qcs8550", "qcom,sm8550";
+	rocknix-u-boot-dt-id = "u-boot-pocket-evo";
+
+	/*
+	 * AYA SPACE, =, LC and RC hang off SoC GPIOs rather than the
+	 * controller MCU. Kept separate from the gpio-keys node in the
+	 * common dtsi because InputPlumber grabs the source devices it
+	 * manages, and sharing that node would swallow volume up.
+	 *
+	 * F13-F16 rather than the vendor's KEY_A/KEY_EQUAL/KEY_LEFT/
+	 * KEY_RIGHTSHIFT: those type real characters, so they would leak
+	 * into whatever has focus whenever InputPlumber is not grabbing
+	 * the node. The label is what InputPlumber matches on.
+	 */
+	aya-keys {
+		compatible = "gpio-keys";
+		label = "aya-keys";
+
+		pinctrl-0 = <&aya_keys_default>;
+		pinctrl-names = "default";
+
+		key-aya-space {
+			label = "AYA Space";
+			debounce-interval = <15>;
+			gpios = <&tlmm 85 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_F13>;
+			wakeup-source;
+		};
+
+		key-menu {
+			label = "Menu";
+			debounce-interval = <15>;
+			gpios = <&tlmm 169 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_F14>;
+			wakeup-source;
+		};
+
+		/* Silkscreen LC; the vendor device tree calls this rc2_key. */
+		key-lc {
+			label = "LC";
+			debounce-interval = <15>;
+			gpios = <&tlmm 170 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_F15>;
+			wakeup-source;
+		};
+
+		/* Silkscreen RC; the vendor device tree calls this lc_key. */
+		key-rc {
+			label = "RC";
+			debounce-interval = <15>;
+			gpios = <&tlmm 91 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_F16>;
+			wakeup-source;
+		};
+	};
+};
+
+&tlmm {
+	/*
+	 * The buttons short to ground, so without the pull-up these read low
+	 * pressed and unpressed alike and no press is detectable.
+	 */
+	aya_keys_default: aya-keys-default-state {
+		pins = "gpio85", "gpio91", "gpio169", "gpio170";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	panel_pwr_active: panel-pwr-active-state {
+		pins = "gpio152", "gpio153";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+		output-high;
+	};
+
+	ts_reset_active: ts-reset-active-state {
+		pins = "gpio24";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	ts_reset_suspend: ts-reset-suspend-state {
+		pins = "gpio24";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	ts_int_active: ts-int-default-state {
+		pins = "gpio25";
+		function = "gpio";
+		bias-pull-up;
+		drive-strength = <8>;
+	};
+
+	ts_int_suspend: ts-int-sleep-state {
+		pins = "gpio25";
+		function = "gpio";
+		bias-pull-down;
+		drive-strength = <2>;
+	};
+};
+
+&i2c0 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+};
+
+&i2c4 {
+	clock-frequency = <400000>;
+	status = "okay";
+	touchscreen: touchscreen@38 {
+		compatible = "focaltech,ft5426";
+		reg = <0x38>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <25 IRQ_TYPE_EDGE_FALLING>;
+
+		reset-gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
+
+		vcc-supply = <&vreg_l14b_3p2>;
+		iovcc-supply = <&vreg_l12b_1p8>;
+
+		pinctrl-0 = <&ts_int_active &ts_reset_active>;
+		pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
+		pinctrl-names = "default", "sleep";
+
+		touchscreen-size-x = <1080>;
+		touchscreen-size-y = <1920>;
+	};
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&panel0_in>;
+	data-lanes = <0 1 2 3>;
+};
+
+&display_panel {
+	compatible = "chipone,icna3512";
+
+	vci-supply = <&vreg_l13b_3p0>;
+	vddio-supply = <&vreg_l12b_1p8>;
+
+	reset-gpios = <&tlmm 133 GPIO_ACTIVE_LOW>;
+
+	rotation = <270>;
+
+	port {
+		panel0_in: endpoint {
+			remote-endpoint = <&mdss_dsi0_out>;
+		};
+	};
+};

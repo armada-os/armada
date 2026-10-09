@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Armada</vendor>
+  <vendor_url>https://github.com/virtudude/armada</vendor_url>
+
+  <action id="org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-format-sdcard">
+    <description>Format the SD card</description>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/steamos-polkit-helpers/steamos-format-sdcard</annotate>
+  </action>
+
+  <action id="org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-format-device">
+    <description>Format a storage device</description>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/steamos-polkit-helpers/steamos-format-device</annotate>
+  </action>
+
+  <action id="org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-set-hostname">
+    <description>Set the hostname</description>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/steamos-polkit-helpers/steamos-set-hostname</annotate>
+  </action>
+
+  <action id="org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-enable-sshd">
+    <description>Enable the SSH server</description>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>no</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/steamos-polkit-helpers/steamos-enable-sshd</annotate>
+  </action>
+</policyconfig>

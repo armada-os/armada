@@ -1,0 +1,33 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] launcher: second display
+
+Applies to the launcher Steam installs (app 3029110).
+
+Mount a second compositor socket and name it to the display HAL when the
+host provides one.
+
+---
+--- a/liblepton/mounting.sh
++++ b/liblepton/mounting.sh
+@@ -554,6 +554,9 @@
+
+     # Next, mounts for things like pulse, wayland, etc...
+     podman_mount_entry "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" "/waydroid/xdg/wayland-0" rw,U
++    if [[ -n "${ARMADA_EXT_WAYLAND_DISPLAY:-}" && -e "${XDG_RUNTIME_DIR}/${ARMADA_EXT_WAYLAND_DISPLAY}" ]]; then
++        podman_mount_entry "${XDG_RUNTIME_DIR}/${ARMADA_EXT_WAYLAND_DISPLAY}" "/waydroid/xdg/wayland-1" rw,U
++    fi
+     if ! is_sysbake; then
+         podman_mount_entry "${PULSE_RUNTIME_PATH}/native" "/waydroid/xdg/pulse/native" rw,U
+     fi
+--- a/liblepton/properties.sh
++++ b/liblepton/properties.sh
+@@ -130,6 +130,9 @@
+     # Only show the 2d screen if we're not baking and our app requests it.
+     if ! is_sysbake && app_wants_flatscreen; then
+         props_echo "waydroid.wayland_display=wayland-0"
++        if [[ -n "${ARMADA_EXT_WAYLAND_DISPLAY:-}" && -e "${XDG_RUNTIME_DIR}/${ARMADA_EXT_WAYLAND_DISPLAY}" ]]; then
++            props_echo "waydroid.wayland_display_ext=wayland-1"
++        fi
+         props_echo "waydroid.background_start=false"
+         props_echo "lepton.headless=false"
+     else

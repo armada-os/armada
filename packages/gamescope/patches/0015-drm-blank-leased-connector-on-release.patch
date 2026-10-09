@@ -1,0 +1,155 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] drm: blank the leased connector when a lease is returned
+
+Closing a lease does not change what the leased panel shows: the kernel
+keeps the CRTC scanning out the last framebuffer, and gamescope excludes
+the connector from its own outputs, so a client that exits without
+disabling the CRTC leaves its last frame frozen on the panel. The
+compositor owns the connector between leases, so when the last holder on
+either frontend goes away it now zeroes the leased connector, CRTC and
+plane properties with one atomic commit on the master fd, using ids
+captured at lease creation. The lessor keeps access to leased objects,
+and atomic sidesteps the SETCRTC requirement that the leased plane be the
+CRTC's legacy primary, which fails with EACCES.
+
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index ce6885c..2711cbd 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -12,6 +12,7 @@
+ #include <sys/socket.h>
+ #include <sys/un.h>
+ 
++#include <array>
+ #include <atomic>
+ #include <cassert>
+ #include <cinttypes>
+@@ -172,6 +173,7 @@ struct drm_t {
+ 	int nLeaseFd = -1;
+ 	uint32_t uLeasedConnectorId = 0;
+ 	std::string sLeasedConnectorName;
++	std::array< std::pair< uint32_t, uint32_t >, 5 > leaseBlankProperties = {};
+ 	int nLeaseSocketFd = -1;
+ 	std::atomic<bool> bLeaseThreadRunning = { false };
+ 	std::string sLeaseSocketPath;
+@@ -1417,7 +1419,8 @@ static void lease_disconnect_client( int &nClientFd )
+ 	nClientFd = -1;
+ 	{
+ 		std::scoped_lock grantLock( g_LeaseGrantMutex );
+-		g_nActiveLeaseClients.fetch_sub( 1 );
++		if ( g_nActiveLeaseClients.fetch_sub( 1 ) == 1 )
++			drm_lease_blank();
+ 	}
+ 	drm_log.infof( "lease-connector: companion app disconnected" );
+ }
+@@ -1777,6 +1780,13 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 					drm->nLeaseFd = nLeaseFd;
+ 					drm->uLeasedConnectorId = uConnectorId;
+ 					drm->sLeasedConnectorName = pLeaseConnector->GetName();
++					drm->leaseBlankProperties = {{
++						{ uConnectorId, pLeaseConnector->GetProperties().CRTC_ID->GetPropertyId() },
++						{ uCRTCId, pLeaseCRTC->GetProperties().ACTIVE->GetPropertyId() },
++						{ uCRTCId, pLeaseCRTC->GetProperties().MODE_ID->GetPropertyId() },
++						{ uPlaneId, pLeasePlane->GetProperties().FB_ID->GetPropertyId() },
++						{ uPlaneId, pLeasePlane->GetProperties().CRTC_ID->GetPropertyId() },
++					}};
+ 
+ 					drm_log.infof( "lease-connector: leased '%s' (connector=%u, crtc=%u, plane=%u) -> fd=%d, lessee=%u",
+ 						g_sLeaseConnectorName, uConnectorId, uCRTCId, uPlaneId, nLeaseFd, uLeaseId );
+@@ -1992,19 +2002,23 @@ void finish_drm(struct drm_t *drm)
+ 	}
+ 
+ 	// Revoke any active DRM lease before cleaning up
+-	if ( drm->uLeaseId != 0 )
+ 	{
+-		drmModeRevokeLease( drm->fd, drm->uLeaseId );
+-		drm->uLeaseId = 0;
+-	}
+-	if ( drm->nLeaseFd >= 0 )
+-	{
+-		close( drm->nLeaseFd );
+-		drm->nLeaseFd = -1;
++		// A release on either frontend may still be blanking the leased objects.
++		std::scoped_lock grantLock( g_LeaseGrantMutex );
++		if ( drm->uLeaseId != 0 )
++		{
++			drmModeRevokeLease( drm->fd, drm->uLeaseId );
++			drm->uLeaseId = 0;
++		}
++		if ( drm->nLeaseFd >= 0 )
++		{
++			close( drm->nLeaseFd );
++			drm->nLeaseFd = -1;
++		}
++		drm->leasedConnectorIds.clear();
++		drm->leasedCRTCIds.clear();
++		drm->leasedPlaneIds.clear();
+ 	}
+-	drm->leasedConnectorIds.clear();
+-	drm->leasedCRTCIds.clear();
+-	drm->leasedPlaneIds.clear();
+ 
+ 	// Disable all connectors, CRTCs and planes. This is necessary to leave a
+ 	// clean KMS state behind. Some other KMS clients might not support all of
+@@ -4222,6 +4236,35 @@ const char *drm_lease_connector_name()
+ 	return g_DRM.sLeasedConnectorName.c_str();
+ }
+ 
++// Caller holds g_LeaseGrantMutex.
++void drm_lease_blank()
++{
++	if ( g_DRM.nLeaseFd < 0 )
++		return;
++
++	drmModeAtomicReq *pRequest = drmModeAtomicAlloc();
++	if ( !pRequest )
++		return;
++	defer( drmModeAtomicFree( pRequest ) );
++
++	for ( const auto &[ uObjectId, uPropertyId ] : g_DRM.leaseBlankProperties )
++	{
++		if ( drmModeAtomicAddProperty( pRequest, uObjectId, uPropertyId, 0 ) < 0 )
++		{
++			drm_log.errorf( "lease-connector: failed to build blank request for '%s'", g_DRM.sLeasedConnectorName.c_str() );
++			return;
++		}
++	}
++
++	if ( drmModeAtomicCommit( g_DRM.fd, pRequest, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr ) != 0 )
++	{
++		drm_log.errorf_errno( "lease-connector: failed to blank '%s'", g_DRM.sLeasedConnectorName.c_str() );
++		return;
++	}
++
++	drm_log.infof( "lease-connector: blanked '%s'", g_DRM.sLeasedConnectorName.c_str() );
++}
++
+ uint32_t drm_lease_connector_id()
+ {
+ 	return g_DRM.uLeasedConnectorId;
+diff --git a/src/main.hpp b/src/main.hpp
+index 5d7fc97..0c64eee 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -59,6 +59,7 @@ int drm_lease_dup_fd();
+ int drm_lease_open_enum_fd();
+ const char *drm_lease_connector_name();
+ uint32_t drm_lease_connector_id();
++void drm_lease_blank();
+ 
+ enum class DrmLeaseEventType : uint32_t
+ {
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index b10b2b2..e223e4d 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -1594,6 +1594,8 @@ static void drm_lease_resource_destroyed( struct wl_resource *resource )
+ 	{
+ 		g_nProtocolLeaseHolders.fetch_sub( 1 );
+ 		int nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
++		if ( nRemaining == 0 )
++			drm_lease_blank();
+ 		grantLock.unlock();
+ 		wl_log.infof( "drm-lease: protocol lease released (%d holders remain)", nRemaining );
+ 	}

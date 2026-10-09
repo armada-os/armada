@@ -1,0 +1,21 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] upscale: use SGSR for FSR requests on SDR RGB input
+
+Resolve FSR requests to SGSR where the existing SGSR input check allows it.
+This covers Steam scaling controls and explicit FSR selections through the
+shared resolver used by painting, pre-emptive upscaling and active-filter
+reporting. HDR and YCbCr input retain their existing filter behavior.
+
+---
+diff --git a/src/main.hpp b/src/main.hpp
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -128,6 +128,8 @@
+ // Sharp ran FSR before SGSR existed, so HDR keeps that rather than losing the sharpening. Neither pre-pass reads the YCbCr slot.
+ static constexpr GamescopeUpscaleFilter ResolveUpscaleFilter( GamescopeUpscaleFilter eFilter, GamescopeAppTextureColorspace eColorspace, bool bYcbcr )
+ {
++    if ( eFilter == GamescopeUpscaleFilter::FSR && SgsrSupportsInput( eColorspace, bYcbcr ) )
++        return GamescopeUpscaleFilter::SGSR;
+     if ( eFilter != GamescopeUpscaleFilter::SGSR || SgsrSupportsInput( eColorspace, bYcbcr ) )
+         return eFilter;
+     return bYcbcr ? GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;

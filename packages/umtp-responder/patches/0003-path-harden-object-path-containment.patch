@@ -1,0 +1,31 @@
+diff --git a/src/fs_handles_db.c b/src/fs_handles_db.c
+index 02b1608..8058c65 100644
+--- a/src/fs_handles_db.c
++++ b/src/fs_handles_db.c
+@@ -643,6 +643,12 @@ char * build_full_path(fs_handles_db * db,char * root_path,fs_entry * entry)
+ 		{
+ 			if( errno == ENOENT)
+ 			{
++				if (!entry->name)
++				{
++					free(full_path);
++					return NULL;
++				}
++
+ 				// The final object probably doesn't exist yet...
+ 				// Check the parent entry and concatenate the sanitized object name...
+ 				int idx=strlen(full_path) - last_entry_len;
+@@ -693,7 +699,12 @@ char * build_full_path(fs_handles_db * db,char * root_path,fs_entry * entry)
+ 
+ 		free(full_path);
+ 
+-		if( strncmp(root_path, retpath, root_path_len ) )
++		if (!retpath)
++			return NULL;
++
++		if( strncmp(root_path, retpath, root_path_len ) ||
++		    (root_path_len > 1 && retpath[root_path_len] != 0 &&
++		     retpath[root_path_len] != '/') )
+ 		{
+ 			// Different Storage root path ! System path traversal attempt ?
+ 			PRINT_ERROR("build_full_path : Storage root folder mismatch !");

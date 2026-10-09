@@ -1,0 +1,42 @@
+From c02ac14361022d79960de96afcbab08a6511267b Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Wed, 5 Aug 2026 18:36:55 +0200
+Subject: [PATCH] add drm lease functions
+
+---
+ .../gamescope-session-plus/gamescope-session-plus    | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/usr/share/gamescope-session-plus/gamescope-session-plus b/usr/share/gamescope-session-plus/gamescope-session-plus
+index 8a89c01..41843df 100755
+--- a/usr/share/gamescope-session-plus/gamescope-session-plus
++++ b/usr/share/gamescope-session-plus/gamescope-session-plus
+@@ -237,6 +237,16 @@ if [ -z "$GAMESCOPECMD" ]; then
+ 		TOUCH_GESTURES_OPTION="--touch-gestures"
+ 	fi
+ 
++	LEASE_CONNECTOR_OPTION=""
++	if [ -n "$ARMADA_SECONDARY_CONNECTOR" ] && gamescope_has_option "--lease-connector"; then
++		LEASE_CONNECTOR_OPTION="--lease-connector $ARMADA_SECONDARY_CONNECTOR"
++	fi
++
++	IGNORE_TOUCH_DEVICE_OPTION=""
++	if [ -n "$ARMADA_SECONDARY_TOUCHSCREEN" ] && gamescope_has_option "--ignore-touch-device"; then
++		IGNORE_TOUCH_DEVICE_OPTION="--ignore-touch-device $ARMADA_SECONDARY_TOUCHSCREEN"
++	fi
++
+ 	HDR_OPTIONS=""
+ 	if [ "$ENABLE_GAMESCOPE_HDR" == "1" ] && [ "$ENABLE_GAMESCOPE_WSI" == "1" ] && gamescope_has_option "--hdr-enabled" && gamescope_has_option "--hdr-itm-enable"; then
+ 		HDR_OPTIONS="--hdr-enabled --hdr-itm-enable"
+@@ -263,6 +273,8 @@ if [ -z "$GAMESCOPECMD" ]; then
+ 		$MAX_SCALE_OPTION \
+ 		$FAKE_OUTPUT_MM_OPTION \
+ 		$TOUCH_GESTURES_OPTION \
++		$LEASE_CONNECTOR_OPTION \
++		$IGNORE_TOUCH_DEVICE_OPTION \
+ 		--prefer-output $OUTPUT_CONNECTOR \
+ 		--xwayland-count $XWAYLAND_COUNT \
+ 		--default-touch-mode $TOUCH_MODE \
+-- 
+2.55.0
+

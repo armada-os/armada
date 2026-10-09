@@ -1,0 +1,34 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] steamcompmgr: recover the virtual white y on ARM64
+
+Steam's color temperature slider sets GAMESCOPE_DISPLAY_VIRTUAL_WHITE
+to a white point (x, y). The ARM64 client passes the two floats as one
+64-bit property element, so gamescope reads x and a zero y, and a white
+point with y = 0 is ignored: the slider did nothing on ARM64. The same
+packing fault is behind the night mode workaround.
+
+Steam derives the pair from the CIE daylight locus (its 6500 K x is
+D65's), so when y is missing recover it from x with the locus quadratic,
+within 0.002 of the true value across the slider's range; outside that
+range the point is left invalid as before.
+
+---
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index e54194b..4131467 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -6940,6 +6940,14 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 		{
+ 			g_ColorMgmt.pending.outputVirtualWhite.x = santitize_float( bit_cast<float>( user_vec[0] ) );
+ 			g_ColorMgmt.pending.outputVirtualWhite.y = santitize_float( bit_cast<float>( user_vec[1] ) );
++#if defined(__aarch64__)
++			// The ARM64 Steam client packs the pair as one 64-bit element, so only x arrives;
++			// Steam derives the pair from the CIE daylight locus, so y follows from x.
++			// Drop once the client sends both floats (y arrives non-zero).
++			float x = g_ColorMgmt.pending.outputVirtualWhite.x;
++			if ( x >= 0.25f && x <= 0.55f && g_ColorMgmt.pending.outputVirtualWhite.y <= 0.01f )
++				g_ColorMgmt.pending.outputVirtualWhite.y = -3.0f * x * x + 2.87f * x - 0.275f;
++#endif
+ 		}
+ 		else
+ 		{

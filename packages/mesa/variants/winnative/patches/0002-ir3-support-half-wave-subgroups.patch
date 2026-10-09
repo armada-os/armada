@@ -1,0 +1,473 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MaxsTechReview <maxjividen@gmail.com>
+Date: Sun, 27 Sep 2026 03:08:53 -0400
+Subject: [PATCH] tu,ir3: Support a required subgroup size of half a wave
+
+A8XX only runs 64-wide waves, so the smallest subgroup size was 64 and
+vkd3d-proton rejected every compute shader declaring WaveSize(32).
+
+Report a minimum subgroup size of 32 and lower such shaders onto single
+waves, each half of a wave acting as one subgroup. The lowering stays free
+of divergent control flow: the scan macros lose invocations when placed in
+both sides of a divergent branch.
+---
+diff --git a/src/freedreno/ir3/ir3_lower_subgroups.c b/src/freedreno/ir3/ir3_lower_subgroups.c
+index c354289..cb9ad27 100644
+--- a/src/freedreno/ir3/ir3_lower_subgroups.c
++++ b/src/freedreno/ir3/ir3_lower_subgroups.c
+@@ -876,3 +876,293 @@ ir3_nir_lower_shuffle(nir_shader *nir, struct ir3_shader *shader)
+    return nir_shader_lower_instructions(nir, filter_shuffle, lower_shuffle,
+                                         NULL);
+ }
++
++/* Subgroups of half a wave: each half of a 64-wide wave is its own subgroup.
++ * Operations that depend on the subgroup size or span the subgroup are
++ * confined to the half of the invocation, leaving only whole-wave operations
++ * for the rest of the backend.
++ */
++#define HALF_SUBGROUP_SIZE 32
++
++static nir_def *
++half_index(nir_builder *b)
++{
++   return nir_ushr_imm(b, nir_load_subgroup_invocation(b),
++                       util_logbase2(HALF_SUBGROUP_SIZE));
++}
++
++static nir_def *
++half_invocation(nir_builder *b)
++{
++   return nir_iand_imm(b, nir_load_subgroup_invocation(b),
++                       HALF_SUBGROUP_SIZE - 1);
++}
++
++/* Ballot of the invocations in the half of the current invocation. */
++static nir_def *
++half_ballot(nir_builder *b, nir_def *cond)
++{
++   nir_def *ballot = nir_ballot(b, 2, 32, cond);
++   return nir_vector_extract(b, ballot, half_index(b));
++}
++
++static nir_def *
++to_ballot_type(nir_builder *b, nir_def *mask, const nir_def *def)
++{
++   return nir_pad_vector_imm_int(b, nir_u2uN(b, mask, def->bit_size), 0,
++                                 def->num_components);
++}
++
++static nir_def *
++from_ballot_type(nir_builder *b, nir_def *value)
++{
++   return nir_u2u32(b, nir_channel(b, value, 0));
++}
++
++static nir_def *
++build_half_mask(nir_builder *b, nir_intrinsic_op op)
++{
++   nir_def *id = half_invocation(b);
++
++   switch (op) {
++   case nir_intrinsic_load_subgroup_eq_mask:
++      return nir_ishl(b, nir_imm_int(b, 1), id);
++   case nir_intrinsic_load_subgroup_ge_mask:
++      return nir_ishl(b, nir_imm_int(b, ~0), id);
++   case nir_intrinsic_load_subgroup_gt_mask:
++      return nir_ishl(b, nir_imm_int(b, ~1), id);
++   case nir_intrinsic_load_subgroup_le_mask:
++      return nir_inot(b, nir_ishl(b, nir_imm_int(b, ~1), id));
++   case nir_intrinsic_load_subgroup_lt_mask:
++      return nir_inot(b, nir_ishl(b, nir_imm_int(b, ~0), id));
++   default:
++      UNREACHABLE("not a subgroup mask");
++   }
++}
++
++/* Reads a value from one invocation of each half. The indices are uniform
++ * across the wave, so no half has to run on its own.
++ */
++static nir_def *
++build_half_read(nir_builder *b, nir_def *val, nir_def *index[2])
++{
++   nir_def *lo = nir_read_invocation(b, val, index[0]);
++   nir_def *hi = nir_read_invocation(b, val, index[1]);
++   return nir_bcsel(b, nir_ieq_imm(b, half_index(b), 0), lo, hi);
++}
++
++static void
++build_half_first(nir_builder *b, nir_def *first[2])
++{
++   nir_def *ballot = nir_ballot(b, 2, 32, nir_imm_true(b));
++   for (unsigned i = 0; i < 2; i++) {
++      nir_def *lsb = nir_find_lsb(b, nir_channel(b, ballot, i));
++      first[i] = nir_iadd_imm(b, nir_iand_imm(b, lsb, HALF_SUBGROUP_SIZE - 1),
++                              i * HALF_SUBGROUP_SIZE);
++   }
++}
++
++static nir_def *
++build_half_read_first(nir_builder *b, nir_def *val)
++{
++   nir_def *first[2];
++   build_half_first(b, first);
++   return build_half_read(b, val, first);
++}
++
++static nir_def *
++build_half_read_invocation(nir_builder *b, nir_def *val, nir_def *index)
++{
++   nir_def *first[2], *indices[2];
++   build_half_first(b, first);
++   for (unsigned i = 0; i < 2; i++) {
++      nir_def *id = nir_read_invocation(b, index, first[i]);
++      indices[i] = nir_iadd_imm(b, nir_iand_imm(b, id, HALF_SUBGROUP_SIZE - 1),
++                                i * HALF_SUBGROUP_SIZE);
++   }
++   return build_half_read(b, val, indices);
++}
++
++/* The upper half scans with the lower half replaced by the identity, which
++ * leaves the lower half's own scan unchanged.
++ */
++static nir_def *
++build_half_scan(nir_builder *b, nir_intrinsic_instr *intr)
++{
++   nir_op op = nir_intrinsic_reduction_op(intr);
++   nir_def *val = intr->src[0].ssa;
++   nir_const_value identity = nir_alu_binop_identity(op, val->bit_size);
++   nir_def *identity_def =
++      nir_replicate(b, nir_build_imm(b, 1, val->bit_size, &identity),
++                    val->num_components);
++   nir_def *upper = nir_ine_imm(b, half_index(b), 0);
++   nir_def *upper_val = nir_bcsel(b, upper, val, identity_def);
++
++   nir_def *lo, *hi;
++   if (intr->intrinsic == nir_intrinsic_inclusive_scan) {
++      lo = nir_inclusive_scan(b, val, .reduction_op = op);
++      hi = nir_inclusive_scan(b, upper_val, .reduction_op = op);
++   } else {
++      lo = nir_exclusive_scan(b, val, .reduction_op = op);
++      hi = nir_exclusive_scan(b, upper_val, .reduction_op = op);
++   }
++   return nir_bcsel(b, upper, hi, lo);
++}
++
++static nir_def *
++build_num_half_subgroups(nir_builder *b)
++{
++   nir_def *count;
++
++   if (b->shader->info.workgroup_size_variable) {
++      nir_def *size = nir_load_workgroup_size(b);
++      count = nir_imul(b, nir_imul(b, nir_channel(b, size, 0),
++                                   nir_channel(b, size, 1)),
++                       nir_channel(b, size, 2));
++   } else {
++      count = nir_imm_int(b, nir_static_workgroup_size(b->shader));
++   }
++
++   return nir_udiv_imm(b, nir_iadd_imm(b, count, HALF_SUBGROUP_SIZE - 1),
++                       HALF_SUBGROUP_SIZE);
++}
++
++static nir_def *
++build_half_vote_eq(nir_builder *b, nir_intrinsic_instr *intr)
++{
++   nir_def *val = intr->src[0].ssa;
++   nir_def *first = build_half_read_first(b, val);
++   nir_def *differs = nir_imm_false(b);
++
++   for (unsigned i = 0; i < val->num_components; i++) {
++      nir_def *x = nir_channel(b, val, i);
++      nir_def *y = nir_channel(b, first, i);
++      differs = nir_ior(b, differs, intr->intrinsic == nir_intrinsic_vote_feq
++                                       ? nir_fneu(b, x, y)
++                                       : nir_ine(b, x, y));
++   }
++
++   return nir_ieq_imm(b, half_ballot(b, differs), 0);
++}
++
++static bool
++lower_half_subgroup_intrinsic(nir_builder *b, nir_intrinsic_instr *intr,
++                              void *data)
++{
++   b->cursor = nir_before_instr(&intr->instr);
++
++   nir_def *res;
++   switch (intr->intrinsic) {
++   case nir_intrinsic_load_subgroup_size:
++      res = nir_imm_int(b, HALF_SUBGROUP_SIZE);
++      break;
++   case nir_intrinsic_load_subgroup_invocation:
++      res = half_invocation(b);
++      break;
++   case nir_intrinsic_load_subgroup_id:
++      res = nir_iadd(b, nir_imul_imm(b, nir_load_subgroup_id(b), 2),
++                     half_index(b));
++      break;
++   case nir_intrinsic_load_num_subgroups:
++      res = build_num_half_subgroups(b);
++      break;
++   case nir_intrinsic_load_subgroup_eq_mask:
++   case nir_intrinsic_load_subgroup_ge_mask:
++   case nir_intrinsic_load_subgroup_gt_mask:
++   case nir_intrinsic_load_subgroup_le_mask:
++   case nir_intrinsic_load_subgroup_lt_mask:
++      res = to_ballot_type(b, build_half_mask(b, intr->intrinsic), &intr->def);
++      break;
++   case nir_intrinsic_ballot:
++      res = to_ballot_type(b, half_ballot(b, intr->src[0].ssa), &intr->def);
++      break;
++   case nir_intrinsic_inverse_ballot:
++      res = nir_test_mask(b, nir_ushr(b, from_ballot_type(b, intr->src[0].ssa),
++                                      half_invocation(b)), 1);
++      break;
++   case nir_intrinsic_ballot_bitfield_extract:
++      res = nir_test_mask(b, nir_ushr(b, from_ballot_type(b, intr->src[0].ssa),
++                                      intr->src[1].ssa), 1);
++      break;
++   case nir_intrinsic_ballot_bit_count_reduce:
++      res = nir_bit_count(b, from_ballot_type(b, intr->src[0].ssa));
++      break;
++   case nir_intrinsic_ballot_bit_count_inclusive:
++   case nir_intrinsic_ballot_bit_count_exclusive: {
++      nir_intrinsic_op mask =
++         intr->intrinsic == nir_intrinsic_ballot_bit_count_inclusive
++            ? nir_intrinsic_load_subgroup_le_mask
++            : nir_intrinsic_load_subgroup_lt_mask;
++      res = nir_bit_count(b, nir_iand(b, from_ballot_type(b, intr->src[0].ssa),
++                                      build_half_mask(b, mask)));
++      break;
++   }
++   case nir_intrinsic_ballot_find_lsb:
++      res = nir_find_lsb(b, from_ballot_type(b, intr->src[0].ssa));
++      break;
++   case nir_intrinsic_ballot_find_msb:
++      res = nir_ufind_msb(b, from_ballot_type(b, intr->src[0].ssa));
++      break;
++   case nir_intrinsic_vote_any:
++      res = nir_ine_imm(b, half_ballot(b, intr->src[0].ssa), 0);
++      break;
++   case nir_intrinsic_vote_all:
++      res = nir_ieq_imm(b, half_ballot(b, nir_inot(b, intr->src[0].ssa)), 0);
++      break;
++   case nir_intrinsic_vote_ieq:
++   case nir_intrinsic_vote_feq:
++      res = build_half_vote_eq(b, intr);
++      break;
++   case nir_intrinsic_elect:
++      res = nir_ieq(b, half_invocation(b),
++                    nir_find_lsb(b, half_ballot(b, nir_imm_true(b))));
++      break;
++   case nir_intrinsic_read_first_invocation:
++      res = build_half_read_first(b, intr->src[0].ssa);
++      break;
++   case nir_intrinsic_read_invocation:
++      res = build_half_read_invocation(b, intr->src[0].ssa, intr->src[1].ssa);
++      break;
++   case nir_intrinsic_inclusive_scan:
++   case nir_intrinsic_exclusive_scan:
++      res = build_half_scan(b, intr);
++      break;
++   case nir_intrinsic_shuffle: {
++      nir_def *base = nir_iand_imm(b, nir_load_subgroup_invocation(b),
++                                   ~(HALF_SUBGROUP_SIZE - 1));
++      nir_def *id = nir_iand_imm(b, intr->src[1].ssa, HALF_SUBGROUP_SIZE - 1);
++      res = nir_shuffle(b, intr->src[0].ssa, nir_ior(b, base, id));
++      break;
++   }
++   case nir_intrinsic_reduce:
++   case nir_intrinsic_rotate: {
++      unsigned cluster_size = nir_intrinsic_cluster_size(intr);
++      if (cluster_size && cluster_size <= HALF_SUBGROUP_SIZE)
++         return false;
++      nir_intrinsic_set_cluster_size(intr, HALF_SUBGROUP_SIZE);
++      return true;
++   }
++   default:
++      /* Relative shuffles and quad operations never leave the half for
++       * defined results.
++       */
++      return false;
++   }
++
++   nir_def_replace(&intr->def, res);
++   return true;
++}
++
++bool
++ir3_nir_lower_half_subgroups(nir_shader *nir)
++{
++   bool progress = nir_shader_intrinsics_pass(nir, lower_half_subgroup_intrinsic,
++                                              nir_metadata_control_flow, NULL);
++
++   /* Subgroup intrinsics now refer to the whole wave. */
++   nir->info.api_subgroup_size = 2 * HALF_SUBGROUP_SIZE;
++   nir->info.max_subgroup_size = 2 * HALF_SUBGROUP_SIZE;
++   nir->info.min_subgroup_size = 2 * HALF_SUBGROUP_SIZE;
++
++   return progress;
++}
+diff --git a/src/freedreno/ir3/ir3_nir.c b/src/freedreno/ir3/ir3_nir.c
+index 4e1961f..df8e07b 100644
+--- a/src/freedreno/ir3/ir3_nir.c
++++ b/src/freedreno/ir3/ir3_nir.c
+@@ -1058,6 +1058,9 @@ ir3_nir_post_finalize(struct ir3_shader *shader)
+        * it here. Beyond this point nir_intrinsic_load_subgroup_size will return
+        * the "real" subgroup size.
+        */
++      if (shader->options.api_wavesize == IR3_HALF_ONLY)
++         OPT(s, ir3_nir_lower_half_subgroups);
++
+       unsigned subgroup_size = 0, max_subgroup_size = 0;
+       ir3_shader_get_subgroup_size(compiler, &shader->options, s->info.stage,
+                                    &subgroup_size, &max_subgroup_size);
+diff --git a/src/freedreno/ir3/ir3_nir.h b/src/freedreno/ir3/ir3_nir.h
+index 4e9cff9..5e35cd1 100644
+--- a/src/freedreno/ir3/ir3_nir.h
++++ b/src/freedreno/ir3/ir3_nir.h
+@@ -119,6 +119,7 @@ nir_def *ir3_nir_try_propagate_bit_shift(nir_builder *b,
+ bool ir3_nir_lower_subgroups_filter(const nir_intrinsic_instr *intrin, const void *data);
+ bool ir3_nir_lower_shuffle(nir_shader *nir, struct ir3_shader *shader);
+ bool ir3_nir_opt_subgroups(nir_shader *nir, struct ir3_shader_variant *v);
++bool ir3_nir_lower_half_subgroups(nir_shader *nir);
+ 
+ nir_def *ir3_get_shared_driver_ubo(nir_builder *b,
+                                    const struct ir3_driver_ubo *ubo);
+diff --git a/src/freedreno/ir3/ir3_shader.c b/src/freedreno/ir3/ir3_shader.c
+index eff9791..ef4e606 100644
+--- a/src/freedreno/ir3/ir3_shader.c
++++ b/src/freedreno/ir3/ir3_shader.c
+@@ -1391,6 +1391,12 @@ ir3_shader_get_subgroup_size(const struct ir3_compiler *compiler,
+    case IR3_DOUBLE_ONLY:
+       *subgroup_size = *max_subgroup_size = compiler->info->threadsize_base * 2;
+       break;
++   case IR3_HALF_ONLY:
++      /* Half-wave subgroups are lowered onto single waves before anything
++       * else looks at the subgroup size.
++       */
++      *subgroup_size = *max_subgroup_size = compiler->info->threadsize_base;
++      break;
+    case IR3_SINGLE_OR_DOUBLE:
+       /* For vertex stages, we know the wavesize will never be doubled.
+        * Lower subgroup_size here, to avoid having to deal with it when
+diff --git a/src/freedreno/ir3/ir3_shader.h b/src/freedreno/ir3/ir3_shader.h
+index 70bdda3..9656b52 100644
+--- a/src/freedreno/ir3/ir3_shader.h
++++ b/src/freedreno/ir3/ir3_shader.h
+@@ -144,6 +144,8 @@ enum ir3_wavesize_option {
+    IR3_SINGLE_ONLY,
+    IR3_SINGLE_OR_DOUBLE,
+    IR3_DOUBLE_ONLY,
++   /* Subgroups of half a single wave, emulated on single waves. */
++   IR3_HALF_ONLY,
+ };
+ 
+ /**
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index d088eac..4cfd5ab 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -211,6 +211,16 @@ tu_subgroup_size(const struct tu_physical_device *device)
+           (device->expose_double_threadsize ? 2 : 1);
+ }
+ 
++/* Subgroups of half a wave are emulated on top of the hardware subgroup
++ * operations.
++ */
++static uint32_t
++tu_min_subgroup_size(const struct tu_physical_device *device)
++{
++   return device->info->threadsize_base /
++          (device->info->props.has_getfiberid ? 2 : 1);
++}
++
+ static void
+ get_device_extensions(const struct tu_physical_device *device,
+                       struct vk_device_extension_table *ext)
+@@ -1129,16 +1139,16 @@ static void
+ tu_get_physical_device_properties_1_3(struct tu_physical_device *pdevice,
+                                       struct vk_properties *p)
+ {
+-   p->minSubgroupSize = pdevice->info->threadsize_base;
++   p->minSubgroupSize = tu_min_subgroup_size(pdevice);
+    p->maxSubgroupSize = tu_subgroup_size(pdevice);
+-   p->maxComputeWorkgroupSubgroups = pdevice->info->max_waves;
++   p->maxComputeWorkgroupSubgroups = pdevice->info->max_waves *
++      pdevice->info->threadsize_base / p->minSubgroupSize;
+    /* Only compute and fragment shaders can run with a doubled wave size, the
+-    * geometry stages always run at threadsize_base.  So when we expose more
+-    * than one possible subgroup size we can't honor a required subgroup size
+-    * in those stages.
++    * geometry stages always run at threadsize_base.  So when we expose the
++    * doubled size we can't honor a required subgroup size in those stages.
+     */
+    p->requiredSubgroupSizeStages =
+-      p->minSubgroupSize == p->maxSubgroupSize
++      !pdevice->expose_double_threadsize
+          ? VK_SHADER_STAGE_ALL
+          : (VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+             VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT);
+diff --git a/src/freedreno/vulkan/tu_pipeline.cc b/src/freedreno/vulkan/tu_pipeline.cc
+index 569bf61..d314496 100644
+--- a/src/freedreno/vulkan/tu_pipeline.cc
++++ b/src/freedreno/vulkan/tu_pipeline.cc
+@@ -1525,6 +1525,10 @@ tu_append_executable(struct tu_pipeline *pipeline,
+    struct tu_pipeline_executable exe = {
+       .stage = variant->type,
+       .stats = variant->info,
++      .subgroup_size =
++         variant->shader_options.api_wavesize == IR3_HALF_ONLY
++            ? variant->compiler->info->threadsize_base / 2
++            : variant->info.subgroup_size,
+       .is_binning = variant->binning_pass,
+       .nir_from_spirv = nir_from_spirv,
+       .nir_final = ralloc_strdup(pipeline->executables_mem_ctx, variant->disasm_info.nir),
+@@ -5202,7 +5206,6 @@ tu_GetPipelineExecutablePropertiesKHR(
+       uint32_t* pExecutableCount,
+       VkPipelineExecutablePropertiesKHR* pProperties)
+ {
+-   VK_FROM_HANDLE(tu_device, dev, _device);
+    VK_FROM_HANDLE(tu_pipeline, pipeline, pPipelineInfo->pipeline);
+    VK_OUTARRAY_MAKE_TYPED(VkPipelineExecutablePropertiesKHR, out,
+                           pProperties, pExecutableCount);
+@@ -5219,8 +5222,7 @@ tu_GetPipelineExecutablePropertiesKHR(
+ 
+          VK_COPY_STR(props->description, _mesa_shader_stage_to_string(stage));
+ 
+-         props->subgroupSize =
+-            dev->compiler->info->threadsize_base * (exe->stats.double_threadsize ? 2 : 1);
++         props->subgroupSize = exe->subgroup_size;
+       }
+    }
+ 
+diff --git a/src/freedreno/vulkan/tu_pipeline.h b/src/freedreno/vulkan/tu_pipeline.h
+index 31bf5c4..b3a9305 100644
+--- a/src/freedreno/vulkan/tu_pipeline.h
++++ b/src/freedreno/vulkan/tu_pipeline.h
+@@ -163,6 +163,7 @@ struct tu_pipeline_executable {
+    mesa_shader_stage stage;
+ 
+    struct ir3_info stats;
++   uint32_t subgroup_size;
+    bool is_binning;
+ 
+    char *nir_from_spirv;
+diff --git a/src/freedreno/vulkan/tu_shader.cc b/src/freedreno/vulkan/tu_shader.cc
+index 5757f26..515616b 100644
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -4129,7 +4129,11 @@ tu_shader_key_subgroup_size(struct tu_shader_key *key,
+                             struct tu_device *dev)
+ {
+    enum ir3_wavesize_option api_wavesize, real_wavesize;
+-   if (!dev->physical_device->expose_double_threadsize) {
++   if (subgroup_info &&
++       subgroup_info->requiredSubgroupSize < dev->compiler->info->threadsize_base) {
++      api_wavesize = IR3_HALF_ONLY;
++      real_wavesize = IR3_SINGLE_ONLY;
++   } else if (!dev->physical_device->expose_double_threadsize) {
+       api_wavesize = IR3_SINGLE_ONLY;
+       real_wavesize = IR3_SINGLE_ONLY;
+    } else {

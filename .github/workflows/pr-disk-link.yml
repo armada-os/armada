@@ -1,0 +1,72 @@
+---
+name: PR disk image link
+
+# Publishes the disk image produced by PRs as a comment for quick validation testing.
+on:
+  workflow_run:
+    workflows: ["PR"]
+    types: [completed]
+
+permissions:
+  pull-requests: write
+  actions: read
+
+jobs:
+  comment:
+    name: Link disk image
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: pr-disk-link-${{ github.event.workflow_run.id }}
+      cancel-in-progress: true
+    steps:
+      - name: Post the link
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          MARKER: "<!-- armada-disk-image -->"
+        run: |
+          set -euo pipefail
+          # workflow_run.pull_requests is empty for fork PRs, so take the number
+          # from the artifact name, which carries it already.
+          entry=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?per_page=100" |
+            jq -r '.artifacts[] | select(.expired | not)
+                   | select(.name | test("^armada-disk-pr[0-9]+$"))
+                   | "\(.id) \(.name)"' | head -1)
+          if [ -z "${entry}" ]; then
+            echo "No disk image artifact on run ${RUN_ID}, nothing to link."
+            exit 0
+          fi
+          id="${entry%% *}"
+          name="${entry##* }"
+          pr="${name#armada-disk-pr}"
+
+          # A PR controls its own workflow, so the number in the artifact name is
+          # untrusted: it must match the commit this run actually built.
+          head=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '.head.sha' 2>/dev/null || true)
+          if [ "${head}" != "${HEAD_SHA}" ]; then
+            echo "PR #${pr} is at ${head:-unknown}, this run built ${HEAD_SHA}. Not commenting."
+            exit 0
+          fi
+
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts/${id}"
+          body="${MARKER}
+          ### Disk image
+
+          [\`${name}\`](${url}), built from ${HEAD_SHA}
+
+          Downloads as a zip holding \`armada-*.img.gz\` and its \`.sha256\`.
+          GitHub requires you to be signed in to download run artifacts."
+
+          # Update this PR's existing comment rather than adding one per push.
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${pr}/comments?per_page=100" |
+            jq -r --arg m "${MARKER}" '.[] | select(.body | startswith($m)) | .id' | head -1)
+          payload=$(jq -n --arg b "${body}" '{body: $b}')
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" --input - <<<"${payload}"
+            echo "Updated comment ${existing} on PR #${pr}."
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${pr}/comments" --input - <<<"${payload}"
+            echo "Commented on PR #${pr}."
+          fi

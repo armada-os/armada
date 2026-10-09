@@ -1,0 +1,41 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] wlserver: always swallow the ignored touch device
+
+The --ignore-touch-device digitizer belongs to whoever leases its panel.
+Dropping it only while a lease is held lets touches on the otherwise dark
+panel land in Steam whenever nothing holds the lease. Swallow it always;
+a companion that asked for touch still receives it over the lease socket.
+---
+ src/wlserver.cpp | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -525,7 +525,7 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+ 	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
+ 	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
+ 
+-	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Down, event->x, event->y, event->touch_id, event->time_msec );
+ 		return;
+@@ -540,7 +540,7 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+ 	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
+ 	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
+ 
+-	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Up, 0.0, 0.0, event->touch_id, event->time_msec );
+ 		return;
+@@ -554,7 +554,7 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *data)
+ 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
+ 	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
+ 
+-	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	if ( touch->bIgnoreWhileLeased )
+ 	{
+ 		drm_lease_send_touch( DrmLeaseEventType::Motion, event->x, event->y, event->touch_id, event->time_msec );
+ 		return;

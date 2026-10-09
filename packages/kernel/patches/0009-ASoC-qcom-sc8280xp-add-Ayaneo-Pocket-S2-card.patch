@@ -1,0 +1,97 @@
+From: Neil Armstrong <neil.armstrong@linaro.org>
+Date: Tue, 28 Jul 2026 10:46:45 +0200
+Subject: [PATCH 3/3] ASoC: qcom: sc8280xp: add Ayaneo Pocket S2 card with special WSA channel mapping
+
+The WSA speakers are connected on the WSA2 interface, but WSA and WSA2
+are handled as a single DAI and DSP interface. Set the Pocket S2 channel
+map to WSA2 so playback does not fail with DSP errors.
+
+Backport the accepted change to Armada's pre-refactor 7.1 machine driver
+by storing the board opt-in in sc8280xp_snd_data. The channel map and its
+WSA_CODEC_DMA_RX_0 and stereo constraints are unchanged.
+
+Reviewed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+---
+ sound/soc/qcom/sc8280xp.c | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -13,6 +13,7 @@
+ #include <sound/jack.h>
+ #include <linux/input-event-codes.h>
+ #include "qdsp6/q6afe.h"
++#include "qdsp6/q6dsp-common.h"
+ #include "common.h"
+ #include "sdw.h"
+ 
+@@ -23,6 +24,7 @@
+ 	struct snd_soc_jack dp_jack[8];
+ 	struct clk *i2s_clk;
+ 	bool jack_setup;
++	bool wsa2_only;
+ };
+ 
+ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+@@ -137,11 +139,43 @@
+ 	return 0;
+ }
+ 
++/* WSA2 channels occupy bits 2 and 3 in the combined WSA/WSA2 map. */
++static const unsigned int ayaneo_ps2_channels_mapping[] = {
++	0,
++	0,
++	PCM_CHANNEL_FL,
++	PCM_CHANNEL_FR,
++};
++
++static int ayaneo_ps2_snd_prepare(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	unsigned int channels = substream->runtime->channels;
++
++	if (cpu_dai->id != WSA_CODEC_DMA_RX_0)
++		return 0;
++
++	if (channels != 2)
++		return -EINVAL;
++
++	return snd_soc_dai_set_channel_map(cpu_dai, 0, NULL,
++					   ARRAY_SIZE(ayaneo_ps2_channels_mapping),
++					   ayaneo_ps2_channels_mapping);
++}
++
+ static int sc8280xp_snd_prepare(struct snd_pcm_substream *substream)
+ {
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 	struct sc8280xp_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
++	int ret;
++
++	if (data->wsa2_only) {
++		ret = ayaneo_ps2_snd_prepare(substream);
++		if (ret)
++			return ret;
++	}
+ 
+ 	return qcom_snd_sdw_prepare(substream, &data->stream_prepared[cpu_dai->id]);
+ }
+@@ -203,13 +237,16 @@
+ 	if (IS_ERR(data->i2s_clk))
+ 		return dev_err_probe(dev, PTR_ERR(data->i2s_clk), "unable to get i2s clock\n");
+ 
++	data->wsa2_only = of_device_is_compatible(dev->of_node,
++						  "ayaneo,pocket-s2-sndcard");
+ 	card->driver_name = of_device_get_match_data(dev);
+ 	sc8280xp_add_be_ops(card);
+ 	return devm_snd_soc_register_card(dev, card);
+ }
+ 
+ static const struct of_device_id snd_sc8280xp_dt_match[] = {
++	{.compatible = "ayaneo,pocket-s2-sndcard", "ayaneo-ps2"},
+ 	{.compatible = "qcom,eliza-sndcard", "eliza"},
+ 	{.compatible = "qcom,kaanapali-sndcard", "kaanapali"},
+ 	{.compatible = "qcom,qcm6490-idp-sndcard", "qcm6490"},
+ 	{.compatible = "qcom,qcs615-sndcard", "qcs615"},

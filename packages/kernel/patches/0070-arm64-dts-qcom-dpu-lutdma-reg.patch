@@ -1,0 +1,58 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: sm8550/sm8650/sm8750: add the DPU LUTDMA register set
+
+The LUTDMA engine that loads the DSPP and SSPP LUT blocks lives at
+0xaeac000 (0x800) on SM8550 and 0xaf80000 (0x7000) on SM8650 and
+SM8750, the same ranges the downstream driver maps. Name it "lutdma" so
+the DPU driver can use it.
+
+---
+diff -ruN a/arch/arm64/boot/dts/qcom/sm8550.dtsi b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8550.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+@@ -4106,8 +4106,9 @@
+ 			mdss_mdp: display-controller@ae01000 {
+ 				compatible = "qcom,sm8550-dpu";
+ 				reg = <0 0x0ae01000 0 0x8f000>,
+-				      <0 0x0aeb0000 0 0x3000>;
+-				reg-names = "mdp", "vbif";
++				      <0 0x0aeb0000 0 0x3000>,
++				      <0 0x0aeac000 0 0x800>;
++				reg-names = "mdp", "vbif", "lutdma";
+ 
+ 				interrupt-parent = <&mdss>;
+ 				interrupts = <0>;
+diff -ruN a/arch/arm64/boot/dts/qcom/sm8650.dtsi b/arch/arm64/boot/dts/qcom/sm8650.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8650.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8650.dtsi
+@@ -5673,9 +5673,11 @@
+ 			mdss_mdp: display-controller@ae01000 {
+ 				compatible = "qcom,sm8650-dpu";
+ 				reg = <0 0x0ae01000 0 0x8f000>,
+-				      <0 0x0aeb0000 0 0x3000>;
++				      <0 0x0aeb0000 0 0x3000>,
++				      <0 0x0af80000 0 0x7000>;
+ 				reg-names = "mdp",
+-					    "vbif";
++					    "vbif",
++					    "lutdma";
+ 
+ 				interrupts-extended = <&mdss 0>;
+ 
+diff -ruN a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -3105,9 +3105,11 @@
+ 			mdss_mdp: display-controller@ae01000 {
+ 				compatible = "qcom,sm8750-dpu";
+ 				reg = <0x0 0x0ae01000 0x0 0x93000>,
+-				      <0x0 0x0aeb0000 0x0 0x2008>;
++				      <0x0 0x0aeb0000 0x0 0x2008>,
++				      <0x0 0x0af80000 0x0 0x7000>;
+ 				reg-names = "mdp",
+-					    "vbif";
++					    "vbif",
++					    "lutdma";
+ 
+ 				interrupts-extended = <&mdss 0>;
+ 

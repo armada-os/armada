@@ -1,0 +1,28 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: rsinput: add a per-device axis deadzone
+
+Allow a device tree to set the same deadzone for all four joystick axes.
+Keep the driver's existing defaults for devices without the property.
+
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -458,6 +458,19 @@ static int rsinput_probe(struct serdev_device *serdev) {
+         }
+     }
+ 
++    {
++        u32 deadzone;
++
++        if (!device_property_read_u32(&serdev->dev, "axis-deadzone", &deadzone)) {
++            axis_leftx_deadzone = deadzone;
++            axis_lefty_deadzone = deadzone;
++            axis_rightx_deadzone = deadzone;
++            axis_righty_deadzone = deadzone;
++
++            dev_info(&serdev->dev, "DT axis-deadzone override applied: %u\n", deadzone);
++        }
++    }
++
+     {
+         u32 deadzone;
+ 

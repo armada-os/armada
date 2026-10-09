@@ -1,0 +1,48 @@
+--- a/src/core/nm-power-monitor.c
++++ b/src/core/nm-power-monitor.c
+@@ -43,6 +43,10 @@
+ 
+ #endif
+ 
++/* When this file exists, keep managed devices active across system suspend
++ * instead of deactivating them. Checked per event, so it toggles at runtime. */
++#define NM_IGNORE_SLEEP_FLAG "/etc/NetworkManager/ignore-sleep"
++
+ /*****************************************************************************/
+ 
+ enum {
+@@ -62,6 +66,7 @@
+     GCancellable *cancellable;
+ 
+     int     inhibit_fd;
++    bool    sleep_ignored;
+     GSList *handles_active;
+     GSList *handles_stale;
+ 
+@@ -184,10 +189,23 @@
+     if (!is_about_to_suspend)
+         take_inhibitor(self);
+ 
+-    g_signal_emit(self, signals[SLEEPING], 0, is_about_to_suspend);
+-
+-    if (is_about_to_suspend)
++    /* Keep devices active across suspend when the flag is set: still release the
++     * logind inhibitor so the suspend proceeds, but skip the SLEEPING transition
++     * that deactivates devices. sleep_ignored mirrors it onto the matching resume. */
++    if (is_about_to_suspend) {
++        self->sleep_ignored = g_file_test(NM_IGNORE_SLEEP_FLAG, G_FILE_TEST_EXISTS);
++        if (self->sleep_ignored)
++            _LOGD("sleep: %s present, keeping devices active across suspend",
++                  NM_IGNORE_SLEEP_FLAG);
++        else
++            g_signal_emit(self, signals[SLEEPING], 0, TRUE);
+         drop_inhibitor(self, FALSE);
++    } else {
++        if (self->sleep_ignored)
++            self->sleep_ignored = FALSE;
++        else
++            g_signal_emit(self, signals[SLEEPING], 0, FALSE);
++    }
+ }
+ 
+ static void

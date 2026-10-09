@@ -1,0 +1,32 @@
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 30 Jul 2026 12:03:00 -0400
+Subject: [PATCH 3/3] Add an independent HDR ITM target option
+
+Let a session configure the panel's inverse-tone-mapping ceiling without using
+ENABLE_GAMESCOPE_HDR, which also forces HDR output and ITM on at startup.
+Steam can then own the active HDR state through Gamescope runtime properties.
+---
+ usr/share/gamescope-session-plus/gamescope-session-plus | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/usr/share/gamescope-session-plus/gamescope-session-plus b/usr/share/gamescope-session-plus/gamescope-session-plus
+index cc05043..11a8f9d 100755
+--- a/usr/share/gamescope-session-plus/gamescope-session-plus
++++ b/usr/share/gamescope-session-plus/gamescope-session-plus
+@@ -237,6 +237,14 @@ if [ -z "$GAMESCOPECMD" ]; then
+ 		HDR_OPTIONS="$HDR_OPTIONS --hdr-itm-sdr-nits $GAMESCOPE_HDR_NITS --hdr-sdr-content-nits $GAMESCOPE_HDR_NITS"
+ 	fi
+ 
++	# The device id lets gamescope match a panel profile for EDID-less internal displays.
++	export GAMESCOPE_INTERNAL_DEVICE_ID="${ARMADA_DEVICE_ID:-}"
++
++	if [ ${ARMADA_HDR_NITS:-0} -ne 0 ]; then
++		HDR_OPTIONS="$HDR_OPTIONS --hdr-itm-target-nits $ARMADA_HDR_NITS"
++		export GAMESCOPE_EXPOSE_CLIENT_SAMPLEABLE_FORMATS=1
++	fi
++
+ 	GAMESCOPECMD="$(get_gamescope_binary) \
+ 		$CURSOR \
+ 		$RESOLUTION \
+-- 
+2.55.0

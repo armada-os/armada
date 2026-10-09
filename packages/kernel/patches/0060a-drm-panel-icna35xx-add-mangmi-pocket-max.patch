@@ -1,0 +1,221 @@
+Subject: [PATCH] drm/panel: icna35xx: add MANGMI Pocket Max panel
+
+Port the tested ROCKNIX Pocket Max init sequence, vendor modes and
+per-panel shutdown delays onto Armada's Linux 7.2 ICNA35xx driver.
+
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -55,0 +56,2 @@
++	unsigned int display_off_ms;
++	unsigned int enter_sleep_ms;
+@@ -249,0 +252,111 @@
++static int mangmi_pocket_max_init_sequence(struct panel_info *pinfo)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
++	struct drm_dsc_picture_parameter_set pps;
++	u16 cached = pinfo->backlight ? pinfo->backlight->props.brightness : 0;
++	u16 brightness = drm_panel_bl_levels_map(&pinfo->bl_levels, cached);
++	int cur_mode = icna35xx_get_current_mode(pinfo);
++	int vrefresh = drm_mode_vrefresh(&pinfo->desc->modes[cur_mode]);
++
++	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9c, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfd, 0x5a, 0x5a);
++	if (vrefresh >= 90)
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x48, 0x30);
++	else
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9f, 0x0f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xce, 0x22);
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 255);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9f, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xdf, 0xc5, 0x86);
++
++	switch (vrefresh) {
++	case 144:
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb3, 0x00, 0xe0, 0xa0,
++					     0x10, 0xc8, 0x00, 0x02, 0x83, 0x00,
++					     0x10, 0x14, 0x00, 0x00, 0xc3, 0x00,
++					     0x10, 0x14, 0x00, 0x00, 0xe0, 0x00,
++					     0x10, 0x14, 0x00, 0x00, 0xe0, 0xa0,
++					     0x10, 0xc8, 0x22, 0x18, 0x18, 0x18,
++					     0x18, 0x18);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9f, 0x07);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x04, 0x0a, 0x08,
++					     0x0a, 0x04, 0x00, 0xc4);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd9, 0x66, 0xe4, 0xe4,
++					     0x66, 0xe4, 0xe4, 0x00, 0xc4, 0x00,
++					     0x00, 0x00, 0x00, 0x00, 0x00,
++					     0x00);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xce, 0x01, 0x01, 0x01,
++					     0x01, 0x04, 0x07, 0xa4);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x48, 0x30);
++		break;
++	case 120:
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb3, 0x00, 0xe0, 0xa0,
++					     0x10, 0xc8, 0x00, 0x02, 0x83, 0x00,
++					     0x10, 0x14, 0x00, 0x00, 0xc3, 0x00,
++					     0x10, 0x14, 0x00, 0x00, 0xe0, 0x10,
++					     0x10, 0x9c, 0x00, 0x00, 0xe0, 0xa0,
++					     0x10, 0xc8, 0x22, 0x18, 0x18, 0x18,
++					     0x18, 0x18);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9f, 0x07);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x04, 0x0c, 0x08,
++					     0x0c, 0x04, 0x00, 0xc4);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd9, 0x88, 0x40, 0x40,
++					     0x88, 0x40, 0x40, 0x00, 0xeb, 0x00,
++					     0x00, 0x00, 0x00, 0x00, 0x00,
++					     0x00);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xce, 0x01, 0x01, 0x01,
++					     0x01, 0x04, 0x09, 0x2c);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x48, 0x30);
++		break;
++	case 90:
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb3, 0x00, 0xe0, 0x40,
++					     0x10, 0xa8, 0x00);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9f, 0x07);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb2, 0x04, 0x10, 0x08,
++					     0x0c, 0x04, 0x00, 0xc4);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd3, 0x55, 0x80, 0x80,
++					     0x55, 0x80, 0x80, 0x00, 0x9c, 0x00,
++					     0x00, 0x00, 0x00, 0x00, 0x00,
++					     0x00);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcb, 0x01, 0x01, 0x01,
++					     0x01, 0x04, 0x06, 0x1c);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++		break;
++	default: /* 60 Hz */
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb3, 0x00, 0xe0, 0xa0,
++					     0x10, 0xc8, 0x00);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9f, 0x07);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb2, 0x04, 0x18, 0x08,
++					     0x0c, 0x02, 0x00, 0xc4);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd3, 0x88, 0x4a, 0x4a,
++					     0x88, 0x4a, 0x4a, 0x00, 0xeb, 0x00,
++					     0x00, 0x00, 0x00, 0x00, 0x00,
++					     0x00);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcb, 0x01, 0x01, 0x01,
++					     0x01, 0x04, 0x09, 0x2c);
++		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x48, 0x00);
++		break;
++	}
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9f, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbe, 0x04, 0x00, 0x10, 0x10,
++				     0x00, 0x03, 0x02, 0x07, 0xa4, 0x01, 0x00,
++				     0x00, 0x40, 0x20, 0x00, 0x00);
++	mipi_dsi_dcs_set_display_brightness_multi(&dsi_ctx, brightness);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
++				     0xe0);
++	mipi_dsi_dcs_set_tear_on_multi(&dsi_ctx,
++				       MIPI_DSI_DCS_TEAR_MODE_VBLANK);
++
++	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
++	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 50);
++
++	return dsi_ctx.accum_err;
++}
++
+@@ -303,0 +417,51 @@
++static const struct drm_display_mode mangmi_pocket_max_modes[] = {
++	{
++		.clock = (1080 + 156 + 1 + 23) * (1920 + 20 + 1 + 15) * 60 /
++			 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 156,
++		.hsync_end = 1080 + 156 + 1,
++		.htotal = 1080 + 156 + 1 + 23,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 20,
++		.vsync_end = 1920 + 20 + 1,
++		.vtotal = 1920 + 20 + 1 + 15,
++	},
++	{
++		.clock = (1080 + 156 + 1 + 23) * (1920 + 20 + 1 + 15) * 90 /
++			 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 156,
++		.hsync_end = 1080 + 156 + 1,
++		.htotal = 1080 + 156 + 1 + 23,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 20,
++		.vsync_end = 1920 + 20 + 1,
++		.vtotal = 1920 + 20 + 1 + 15,
++	},
++	{
++		.clock = (1080 + 156 + 1 + 23) * (1920 + 20 + 1 + 15) * 120 /
++			 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 156,
++		.hsync_end = 1080 + 156 + 1,
++		.htotal = 1080 + 156 + 1 + 23,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 20,
++		.vsync_end = 1920 + 20 + 1,
++		.vtotal = 1920 + 20 + 1 + 15,
++	},
++	{
++		.clock = (1080 + 156 + 1 + 23) * (1920 + 20 + 1 + 15) * 144 /
++			 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 156,
++		.hsync_end = 1080 + 156 + 1,
++		.htotal = 1080 + 156 + 1 + 23,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 20,
++		.vsync_end = 1920 + 20 + 1,
++		.vtotal = 1920 + 20 + 1 + 15,
++	},
++};
++
+@@ -316,0 +481,2 @@
++	.display_off_ms = 50,
++	.enter_sleep_ms = 120,
+@@ -341,0 +508,2 @@
++	.display_off_ms = 50,
++	.enter_sleep_ms = 120,
+@@ -353,0 +522,27 @@
++static struct panel_desc mangmi_pocket_max_desc = {
++	.modes = mangmi_pocket_max_modes,
++	.num_modes = ARRAY_SIZE(mangmi_pocket_max_modes),
++	.width_mm = 87,
++	.height_mm = 155,
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = mangmi_pocket_max_init_sequence,
++	.bl_levels = icna35xx_bl_levels,
++	.num_bl_levels = ARRAY_SIZE(icna35xx_bl_levels),
++	.bl_num_interp = 32,
++	.display_off_ms = 120,
++	.enter_sleep_ms = 10,
++	.dsc = {
++		.dsc_version_major = 0x1,
++		.dsc_version_minor = 0x1,
++		.slice_height = 20,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++};
++
+@@ -397 +592 @@
+-	mipi_dsi_msleep(&dsi_ctx, 50);
++	mipi_dsi_msleep(&dsi_ctx, pinfo->desc->display_off_ms);
+@@ -399 +594 @@
+-	mipi_dsi_msleep(&dsi_ctx, 120);
++	mipi_dsi_msleep(&dsi_ctx, pinfo->desc->enter_sleep_ms);
+@@ -605,0 +801,2 @@
++	{ .compatible = "mangmi,pocket-max-panel",
++	  .data = &mangmi_pocket_max_desc },
+@@ -622 +819 @@
+-MODULE_LICENSE("GPL");
+\ No newline at end of file
++MODULE_LICENSE("GPL");

@@ -1,0 +1,55 @@
+#!/usr/bin/bash
+# Splash launcher (KMS, fbdev fallback) for the boot and shutdown screens.
+set -u
+
+# On-device layout tuning (ARMADA_SPLASH_ARGS): /usr is sealed, /etc is not.
+# shellcheck source=/dev/null
+[[ -r /etc/armada/splash.conf ]] && source /etc/armada/splash.conf
+
+# Hide the VT cursor and clear buffered console text (e.g. a wall broadcast):
+# a later fbcon repaint must draw blank, not text over the sail.
+printf '\033[?25l\033[H\033[2J\033[3J' > /dev/tty0 2>/dev/null || true
+
+eval "$(/usr/libexec/armada/device-env)" 2>/dev/null || true
+
+# 75% from first light: matches Steam's default (no step at session start);
+# systemd-backlight's stale near-dark restore is masked in the image.
+bl="${ARMADA_PRIMARY_BACKLIGHT:+/sys/class/backlight/${ARMADA_PRIMARY_BACKLIGHT}}"
+if [[ -z "$bl" ]]; then
+    bls=(/sys/class/backlight/*)
+    (( ${#bls[@]} == 1 )) && [[ -d "${bls[0]}" ]] && bl="${bls[0]}"
+fi
+if [[ -n "$bl" && -r "$bl/max_brightness" && -w "$bl/brightness" ]]; then
+    printf '%s' "$(( $(cat "$bl/max_brightness") * 3 / 4 ))" > "$bl/brightness" 2>/dev/null || true
+fi
+
+case "${ARMADA_PANEL_ORIENTATION:-normal}" in
+    right) rot=90 ;;
+    left) rot=270 ;;
+    upsidedown) rot=180 ;;
+    *) rot=0 ;;
+esac
+
+# fb0 exists only once the DPU binds (~3s into boot).
+for ((i = 0; i < 100; i++)); do
+    [[ "$(cat /sys/class/graphics/fb0/name 2>/dev/null)" == msmdrmfb ]] && break
+    sleep 0.1
+done
+
+# KMS on the primary connector: panel-native geometry, other panels off; the
+# binary falls back to fbdev when drm is unavailable.
+backend=(--backend fbdev)
+[[ -n "${ARMADA_PRIMARY_CONNECTOR:-}" ]] && backend=(--backend drm --connector "$ARMADA_PRIMARY_CONNECTOR")
+
+# In the initramfs, survive switch-root (argv[0] '@' storage-daemon
+# convention): one drawer owns the sail from first paint to session takeover.
+argv0=armada-splash
+[[ -e /etc/initrd-release ]] && { argv0=@armada-splash; exec 2>>/run/armada/drawer.log; }
+
+read -r -a extra <<<"${ARMADA_SPLASH_ARGS:-}"
+
+exec -a "$argv0" /usr/libexec/armada/armada-splash "${backend[@]}" --rotate "$rot" --keep-vt \
+    --image /usr/share/armada/splash/splash.asp \
+    --status /run/armada/splash/status \
+    --font /usr/share/armada/splash/font.ttf \
+    "${extra[@]}"

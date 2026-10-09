@@ -1,0 +1,33 @@
+From 5d34fd9d6f7796c17fb582254b8e542444c44ad1 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Sun, 26 Jul 2026 23:30:00 -0400
+Subject: [PATCH] Keep internal displays visible at minimum brightness
+
+KWin's brightness backend considers zero a safe minimum, allowing Plasma's
+slider and brightness shortcuts to make an internal panel completely black.
+Reserve the lowest 5% of KWin's brightness range for internal panels. The
+PowerDevil D-Bus adapter subtracts this internal minimum from its public
+range, so users still see a normal slider from 0% to 100%.
+
+External displays retain the upstream zero minimum.
+---
+ daemon/controllers/kwinbrightness.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/daemon/controllers/kwinbrightness.cpp b/daemon/controllers/kwinbrightness.cpp
+index d3136ab..f48fb07 100644
+--- a/daemon/controllers/kwinbrightness.cpp
++++ b/daemon/controllers/kwinbrightness.cpp
+@@ -151,7 +151,8 @@ QString KWinDisplayBrightness::label() const
+ 
+ int KWinDisplayBrightness::knownSafeMinBrightness() const
+ {
+-    return 0;
++    // KWin uses a 0-10,000 scale; keep handheld panels visible at 5%.
++    return isInternal() ? maxBrightness() / 20 : 0;
+ }
+ 
+ int KWinDisplayBrightness::maxBrightness() const
+-- 
+2.50.1
+

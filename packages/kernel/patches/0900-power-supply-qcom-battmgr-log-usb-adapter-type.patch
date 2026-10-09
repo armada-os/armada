@@ -1,0 +1,77 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] power: supply: qcom_battmgr: log USB adapter type
+
+Qualcomm's battery manager firmware exposes both USB_TYPE and
+USB_ADAP_TYPE. Keep reporting USB_TYPE through the existing power supply
+interface, but query USB_ADAP_TYPE as a best-effort diagnostic whenever
+USB_TYPE is read.
+
+Log the raw pair at info level when it changes. A failed adapter-type
+query is rate-limited and does not fail the existing USB_TYPE read.
+
+---
+ drivers/power/supply/qcom_battmgr.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -291,12 +291,16 @@
+ 
+ struct qcom_battmgr_usb {
+ 	bool online;
++	bool type_pair_reported;
+ 	unsigned int voltage_now;
+ 	unsigned int voltage_max;
+ 	unsigned int current_now;
+ 	unsigned int current_max;
+ 	unsigned int current_limit;
+ 	unsigned int usb_type;
++	unsigned int adapter_type;
++	unsigned int reported_usb_type;
++	unsigned int reported_adapter_type;
+ };
+ 
+ struct qcom_battmgr_wireless {
+@@ -981,6 +985,7 @@
+ 					  enum power_supply_property psp)
+ {
+ 	unsigned int prop;
++	int adapter_ret;
+ 	int ret;
+ 
+ 	if (psp >= ARRAY_SIZE(sm8350_usb_prop_map))
+@@ -990,6 +995,24 @@
+ 
+ 	mutex_lock(&battmgr->lock);
+ 	ret = qcom_battmgr_request_property(battmgr, BATTMGR_USB_PROPERTY_GET, prop, 0);
++	if (!ret && psp == POWER_SUPPLY_PROP_USB_TYPE) {
++		adapter_ret = qcom_battmgr_request_property(battmgr,
++						       BATTMGR_USB_PROPERTY_GET,
++						       USB_ADAP_TYPE, 0);
++		if (adapter_ret) {
++			dev_warn_ratelimited(battmgr->dev,
++					     "failed to read USB adapter type: %d\n",
++					     adapter_ret);
++		} else if (!battmgr->usb.type_pair_reported ||
++			   battmgr->usb.usb_type != battmgr->usb.reported_usb_type ||
++			   battmgr->usb.adapter_type != battmgr->usb.reported_adapter_type) {
++			dev_info(battmgr->dev, "USB protocol type %u, adapter type %u\n",
++				 battmgr->usb.usb_type, battmgr->usb.adapter_type);
++			battmgr->usb.reported_usb_type = battmgr->usb.usb_type;
++			battmgr->usb.reported_adapter_type = battmgr->usb.adapter_type;
++			battmgr->usb.type_pair_reported = true;
++		}
++	}
+ 	mutex_unlock(&battmgr->lock);
+ 
+ 	return ret;
+@@ -1512,6 +1535,9 @@
+ 		case USB_INPUT_CURR_LIMIT:
+ 			battmgr->usb.current_limit = le32_to_cpu(resp->intval.value);
+ 			break;
++		case USB_ADAP_TYPE:
++			battmgr->usb.adapter_type = le32_to_cpu(resp->intval.value);
++			break;
+ 		case USB_TYPE:
+ 			battmgr->usb.usb_type = le32_to_cpu(resp->intval.value);
+ 			break;

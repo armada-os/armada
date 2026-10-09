@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+# Surface the running systemd job ("Waiting for <unit>") when the splash
+# status stalls during boot; exits once the session owns the splash.
+set -u
+
+STATUS="${ARMADA_SPLASH_STATUS:-/run/armada/splash/status}"
+STALL="${ARMADA_SPLASH_STALL_SECS:-20}"     # secs of no progress before reporting
+CEF_PORT="${ARMADA_SPLASH_CEF_PORT:-8080}"
+MAXWAIT="${ARMADA_SPLASH_STALL_MAX:-600}"
+SESSION_UNIT="${ARMADA_SPLASH_SESSION_UNIT:-gamescope-session-plus@steam.service}"
+
+running_job() {
+    # list-jobs --plain --no-legend columns: JOB UNIT TYPE STATE
+    systemctl list-jobs --plain --no-legend 2>/dev/null \
+        | awk '$4 == "running" { print $2; exit }'
+}
+session_up() {
+    (exec 3<>"/dev/tcp/127.0.0.1/${CEF_PORT}") 2>/dev/null && return 0
+    systemctl is-active --quiet "$SESSION_UNIT" 2>/dev/null
+}
+
+last_mtime=0; still=0; waited=0
+while (( waited < MAXWAIT )); do
+    session_up && exit 0        # session/Steam phase owns the splash now
+    m="$(stat -c %Y "$STATUS" 2>/dev/null || echo 0)"
+    if [[ "$m" == "$last_mtime" ]]; then still=$((still + 1)); else last_mtime="$m"; still=0; fi
+    if (( still >= STALL )); then
+        job="$(running_job)"
+        [[ -n "$job" ]] && /usr/libexec/armada/armada-splash-progress "Waiting for ${job}"
+        still=0
+    fi
+    sleep 1; waited=$((waited + 1))
+done

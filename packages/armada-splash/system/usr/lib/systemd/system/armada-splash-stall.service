@@ -1,0 +1,13 @@
+[Unit]
+Description=Armada splash stall detector (report the stuck systemd job)
+After=basic.target
+ConditionPathExists=/usr/libexec/armada/armada-splash-stall
+ConditionPathExists=!/etc/armada/splash-disabled
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/armada-splash-stall
+TimeoutStopSec=5
+
+[Install]
+WantedBy=graphical.target

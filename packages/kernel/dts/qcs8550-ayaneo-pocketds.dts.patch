@@ -1,0 +1,100 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocketds: ST7703 lower panel, expander rail supplies
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketds.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketds.dts
+@@ -37,6 +37,25 @@
+ 		regulator-max-microvolt = <3300000>;
+ 		gpio = <&tca6408 1 GPIO_ACTIVE_HIGH>;
+ 		enable-active-high;
++		/* pca953x suspend disables its own VCC; without the vin link
++		 * that cuts this rail while the GT911 still holds it enabled. */
++		vin-supply = <&tca6424_vcc>;
++	};
++
++	/*
++	 * The lower panel's ST7703 IOVCC rail is switched by an expander
++	 * GPIO; the panel driver models it as a plain iovcc supply, so wrap
++	 * the enable line in a fixed regulator. The level is the ST7703
++	 * IOVCC nominal and wants confirming against the board.
++	 */
++	vreg_panel1_iovcc: regulator-panel1-iovcc {
++		compatible = "regulator-fixed";
++		regulator-name = "panel1-iovcc";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		gpio = <&tca6408 0 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		vin-supply = <&tca6424_vcc>;
+ 	};
+ 
+ };
+@@ -161,6 +180,7 @@
+ 
+ 		touchscreen-size-x = <768>;
+ 		touchscreen-size-y = <1024>;
++		label = "bottom_touchscreen";
+ 
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&ts2_reset>, <&ts2_irq>;
+@@ -219,13 +239,13 @@
+ 	status = "okay";
+ 
+ 	panel@0 {
+-		compatible = "ayaneo,pocket-ds-secondary-panel";
++		compatible = "ayaneo,pocket-ds-lower-panel";
+ 		reg = <0>;
+ 		pinctrl-0 = <&sde_dsi1_active>;
+ 		pinctrl-1 = <&sde_dsi1_suspend>;
+ 		pinctrl-names = "default", "sleep";
+-		avdd-supply = <&sgm3804>;
+-		enable-gpio = <&tca6408 0 GPIO_ACTIVE_HIGH>;
++		vcc-supply = <&sgm3804>;
++		iovcc-supply = <&vreg_panel1_iovcc>;
+ 		reset-gpios = <&tca6408 2 GPIO_ACTIVE_LOW>;
+ 		rotation = <270>;
+ 		backlight = <&backlight>;
+
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocketds: add hall lid switch
+
+Stock Android reads the hinge hall sensor (ROHM BU52053NVx) through the
+SLPI sensor HAL as a custom qti.sensor.hall_effect sensor rather than
+any Linux input driver, so it has no devicetree node of its own to
+copy. Its GPIO (TLMM 166) came from dri_irq_num in the vendor's
+/vendor/etc/sensors/config/kailua_bu52053nvx_0.json on-device; polarity
+and pull config were confirmed live via /sys/kernel/debug/gpio while
+toggling the lid (reads high open / low closed, no internal pull
+needed).
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketds.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketds.dts
+@@ -6,6 +6,7 @@
+
+ /dts-v1/;
+
++#include <dt-bindings/input/gpio-keys.h>
+ #include "qcs8550-ayaneo-pocket-common.dtsi"
+
+ / {
+@@ -15,6 +16,20 @@
+ 	compatible = "ayaneo,pocketds", "qcom,qcs8550", "qcom,sm8550";
+ 	rocknix-u-boot-dt-id = "u-boot-pocket-ds";
+
++	gpio-keys-lid {
++		compatible = "gpio-keys";
++
++		hall-lid-sensor {
++			label = "Hall Lid Sensor";
++			gpios = <&tlmm 166 GPIO_ACTIVE_LOW>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_LID>;
++			linux,can-disable;
++			wakeup-event-action = <EV_ACT_DEASSERTED>;
++			wakeup-source;
++		};
++	};
++
+ 	tca6424_vcc: regulator-tca6424-vcc {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "tca6424_vcc";

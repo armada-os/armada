@@ -1,0 +1,60 @@
+From 59d260eec19c4ed8720aad3dbafb88b610432444 Mon Sep 17 00:00:00 2001
+From: Vignesh Raman <vignesh.raman@collabora.com>
+Date: Tue, 4 Aug 2026 11:48:43 +0530
+Subject: [PATCH 2/2] wpa_supplicant: don't force rescan for restricted scans
+
+The 6 GHz coverage check forces a rescan whenever a scan doesn't
+cover 6 GHz, even when the scan was deliberately restricted to one
+channel. This reintroduced a redundant rescan.
+
+Skip forcing the rescan when the last scan was explicitly restricted.
+
+Signed-off-by: Vignesh Raman <vignesh.raman@collabora.com>
+---
+ wpa_supplicant/events.c           | 10 ++++++++--
+ wpa_supplicant/wpa_supplicant_i.h |  1 +
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/wpa_supplicant/events.c b/wpa_supplicant/events.c
+index c2839e7bd..2e489c0ed 100644
+--- a/wpa_supplicant/events.c
++++ b/wpa_supplicant/events.c
+@@ -5276,8 +5276,12 @@ void wpa_supplicant_update_channel_list(struct wpa_supplicant *wpa_s,
+ 			wpa_dbg(ifs, MSG_INFO,
+ 				"Channel list changed: 6 GHz was enabled");
+ 
+-			/* Only force a rescan if the 6 GHz band has not been scanned yet. */
+-			if (!ifs->last_scan_covered_6ghz)
++			/*
++			 * Only force a rescan if the 6 GHz band has not been scanned yet,
++			 * and the last scan was not explicitly restricted to specific channels
++			 * by the caller.
++			 */
++			if (!ifs->last_scan_covered_6ghz && !ifs->last_scan_was_restricted)
+ 				ifs->crossed_6ghz_dom = true;
+ 		}
+ 	}
+@@ -6135,6 +6139,8 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
+ 					}
+ 				}
+ 			}
++
++			wpa_s->last_scan_was_restricted = !wpa_s->last_scan_all_chan;
+ 		}
+ 
+ 		if (!(data && data->scan_info.external_scan) &&
+diff --git a/wpa_supplicant/wpa_supplicant_i.h b/wpa_supplicant/wpa_supplicant_i.h
+index f59868363..8808c82ac 100644
+--- a/wpa_supplicant/wpa_supplicant_i.h
++++ b/wpa_supplicant/wpa_supplicant_i.h
+@@ -1590,6 +1590,7 @@ struct wpa_supplicant {
+ 	bool is_6ghz_enabled;
+ 	bool crossed_6ghz_dom;
+ 	bool last_scan_covered_6ghz;
++	bool last_scan_was_restricted;
+ 	bool last_scan_all_chan;
+ 	bool last_scan_non_coloc_6ghz;
+ 	bool support_6ghz;
+-- 
+2.47.3
+

@@ -1,0 +1,4 @@
+ARG BUILDER_IMAGE
+FROM ${BUILDER_IMAGE}
+COPY install-builder-deps.sh /tmp/
+RUN /tmp/install-builder-deps.sh

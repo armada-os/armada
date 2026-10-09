@@ -1,0 +1,259 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Udit Tiwari <udit.tiwari@oss.qualcomm.com>
+Date: Wed, 29 Jul 2026 16:34:55 +0530
+Subject: [PATCH v9] crypto: qce - Add runtime PM and interconnect bandwidth scaling support
+
+
+The Qualcomm Crypto Engine (QCE) driver currently lacks support for
+runtime power management (PM) and interconnect bandwidth control.
+As a result, the hardware remains fully powered and clocks stay
+enabled even when the device is idle. Additionally, static
+interconnect bandwidth votes are held indefinitely, preventing the
+system from reclaiming unused bandwidth.
+
+Address this by enabling runtime PM and dynamic interconnect
+bandwidth scaling to allow the system to suspend the device when idle
+and scale interconnect usage based on actual demand. Improve overall
+system efficiency by reducing power usage and optimizing interconnect
+resource allocation.
+
+Signed-off-by: Udit Tiwari <udit.tiwari@oss.qualcomm.com>
+Tested-by: Pankaj Patil <pankaj.patil@oss.qualcomm.com>
+Signed-off-by: Kuldeep Singh <kuldeep.singh@oss.qualcomm.com>
+---
+I am taking care of follow-up of this patch from the original author,
+with their consent, while preserving the original authorship.
+
+Changes in v9:
+- Rebase to latest linux-next/master(tag: next-20260728).
+- Link to v8:
+  https://lore.kernel.org/linux-arm-msm/20260517105233.807935-1-udit.tiwari@oss.qualcomm.com/
+
+Changes in v8:
+- Drop pm_clk framework (devm_pm_clk_create/pm_clk_add/pm_clk_suspend/
+  pm_clk_resume); use devm_clk_get_optional() and direct
+  clk_prepare_enable()/clk_disable_unprepare() in runtime PM callbacks.
+  This removes the CONFIG_PM_CLK dependency and the build error reported
+  by the kernel test robot.
+- Replace icc_disable() with icc_set_bw(path, 0, 0) in runtime suspend
+  to avoid corrupting the internal 'enabled' flag, which would cause
+  subsequent icc_set_bw() calls in resume to be silently skipped during
+  aggregation.
+- Fix ICC vote ordering: cast bandwidth vote before enabling clocks in
+  resume; disable clocks before dropping ICC vote in suspend.
+- Use PM_RUNTIME_ACQUIRE_AUTOSUSPEND()/PM_RUNTIME_ACQUIRE_ERR() wrapper
+  macros instead of raw ACQUIRE() in both qce_handle_queue() and probe.
+- Drop __maybe_unused from runtime PM callbacks; use RUNTIME_PM_OPS /
+  SYSTEM_SLEEP_PM_OPS (non-SET_ prefix) and pm_ptr(&qce_crypto_pm_ops).
+- Drop unnecessary ret = 0 initializations in qce_handle_queue() and
+  qce_runtime_resume().
+- Extend probe comment to explain ICC + clock ordering rationale.
+- Link to v7:
+  https://lore.kernel.org/lkml/20260220072818.2921517-1-quic_utiwari@quicinc.com/
+
+Changes in v7:
+- Use ACQUIRE guard in probe to simplify runtime PM management and error
+  paths.
+- Drop redundant icc_enable() call in runtime resume path.
+- Explicitly call pm_clk_suspend(dev) and pm_clk_resume(dev) within the
+  custom runtime PM callbacks. Since custom callbacks are provided to
+  handle interconnect scaling, the standard PM clock helpers must be
+  invoked manually to ensure clocks are gated/ungated.
+- Link to v6:
+ https://lore.kernel.org/lkml/20260210061437.2293654-1-quic_utiwari@quicinc.com/
+
+Changes in v6:
+- Adopt ACQUIRE(pm_runtime_active_try, ...) for scoped runtime PM
+  management in qce_handle_queue(). This removes the need for manual
+  put calls and goto labels in the error paths, as suggested by Konrad.
+- Link to v5:
+  https://lore.kernel.org/lkml/20251120062443.2016084-1-quic_utiwari@quicinc.com/
+
+Changes in v5:
+- Drop Reported-by and Closes tags for kernel test robot W=1 warnings,
+  as the issue was fixed within the same patch series.
+- Fix a minor comment indentation/style issue.
+- Link to v4:
+  https://lore.kernel.org/lkml/20251117062737.3946074-1-quic_utiwari@quicinc.com/
+
+Changes in v4:
+- Annotate runtime PM callbacks with __maybe_unused to silence W=1
+  warnings.
+- Add Reported-by and Closes tags for kernel test robot warning.
+- Link to v3:
+  https://lore.kernel.org/lkml/20251115084851.2750446-1-quic_utiwari@quicinc.com/
+
+Changes in v3:
+- Switch from manual clock management to PM clock helpers
+  (devm_pm_clk_create() + pm_clk_add()); no direct clk_* enable/disable
+  in runtime callbacks.
+- Replace pm_runtime_get_sync() with pm_runtime_resume_and_get(); remove
+  pm_runtime_put_noidle() on error.
+- Define PM ops using helper macros and reuse runtime callbacks for
+  system sleep via pm_runtime_force_suspend()/pm_runtime_force_resume().
+- Link to v2:
+  https://lore.kernel.org/lkml/20250826110917.3383061-1-quic_utiwari@quicinc.com/
+
+Changes in v2:
+- Extend suspend/resume support to include runtime PM and ICC scaling.
+- Register dev_pm_ops and implement runtime_suspend/resume callbacks.
+- Link to v1:
+  https://lore.kernel.org/lkml/20250606105808.2119280-1-quic_utiwari@quicinc.com/
+---
+ drivers/crypto/qce/core.c | 99 ++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 92 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/crypto/qce/core.c b/drivers/crypto/qce/core.c
+index ac74f69914d6..b6edca5f1663 100644
+--- a/drivers/crypto/qce/core.c
++++ b/drivers/crypto/qce/core.c
+@@ -11,6 +11,8 @@
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
++#include <linux/pm.h>
++#include <linux/pm_runtime.h>
+ #include <linux/types.h>
+ #include <crypto/algapi.h>
+ #include <crypto/internal/hash.h>
+@@ -87,7 +89,12 @@ static int qce_handle_queue(struct qce_device *qce,
+ 			    struct crypto_async_request *req)
+ {
+ 	struct crypto_async_request *async_req, *backlog;
+-	int ret = 0, err;
++	int ret, err;
++
++	PM_RUNTIME_ACQUIRE_AUTOSUSPEND(qce->dev, pm);
++	ret = PM_RUNTIME_ACQUIRE_ERR(&pm);
++	if (ret)
++		return ret;
+ 
+ 	scoped_guard(mutex, &qce->lock) {
+ 		if (req)
+@@ -206,23 +213,33 @@ static int qce_crypto_probe(struct platform_device *pdev)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	qce->core = devm_clk_get_optional_enabled(qce->dev, "core");
++	qce->core = devm_clk_get_optional(qce->dev, "core");
+ 	if (IS_ERR(qce->core))
+ 		return PTR_ERR(qce->core);
+ 
+-	qce->iface = devm_clk_get_optional_enabled(qce->dev, "iface");
++	qce->iface = devm_clk_get_optional(qce->dev, "iface");
+ 	if (IS_ERR(qce->iface))
+ 		return PTR_ERR(qce->iface);
+ 
+-	qce->bus = devm_clk_get_optional_enabled(qce->dev, "bus");
++	qce->bus = devm_clk_get_optional(qce->dev, "bus");
+ 	if (IS_ERR(qce->bus))
+ 		return PTR_ERR(qce->bus);
+ 
+-	qce->mem_path = devm_of_icc_get(qce->dev, "memory");
++	qce->mem_path = devm_of_icc_get(dev, "memory");
+ 	if (IS_ERR(qce->mem_path))
+ 		return PTR_ERR(qce->mem_path);
+ 
+-	ret = icc_set_bw(qce->mem_path, QCE_DEFAULT_MEM_BANDWIDTH, QCE_DEFAULT_MEM_BANDWIDTH);
++	/*
++	 * Enable runtime PM after clocks and ICC path are acquired so that
++	 * the resume callback can enable clocks and apply the ICC bandwidth
++	 * vote before any hardware access takes place.
++	 */
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		return ret;
++
++	PM_RUNTIME_ACQUIRE_AUTOSUSPEND(dev, pm);
++	ret = PM_RUNTIME_ACQUIRE_ERR(&pm);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -244,9 +261,76 @@ static int qce_crypto_probe(struct platform_device *pdev)
+ 	qce->async_req_enqueue = qce_async_request_enqueue;
+ 	qce->async_req_done = qce_async_request_done;
+ 
+-	return devm_qce_register_algs(qce);
++	ret = devm_qce_register_algs(qce);
++	if (ret)
++		return ret;
++
++	/* Configure autosuspend after successful init */
++	pm_runtime_set_autosuspend_delay(dev, 100);
++	pm_runtime_use_autosuspend(dev);
++	pm_runtime_mark_last_busy(dev);
++
++	return 0;
++}
++
++static int qce_runtime_suspend(struct device *dev)
++{
++	struct qce_device *qce = dev_get_drvdata(dev);
++	int ret;
++
++	clk_disable_unprepare(qce->core);
++	clk_disable_unprepare(qce->iface);
++	clk_disable_unprepare(qce->bus);
++
++	ret = icc_set_bw(qce->mem_path, 0, 0);
++	if (ret) {
++		clk_prepare_enable(qce->bus);
++		clk_prepare_enable(qce->iface);
++		clk_prepare_enable(qce->core);
++		return ret;
++	}
++
++	return 0;
+ }
+ 
++static int qce_runtime_resume(struct device *dev)
++{
++	struct qce_device *qce = dev_get_drvdata(dev);
++	int ret;
++
++	ret = icc_set_bw(qce->mem_path, QCE_DEFAULT_MEM_BANDWIDTH,
++			 QCE_DEFAULT_MEM_BANDWIDTH);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(qce->core);
++	if (ret)
++		goto err_core;
++
++	ret = clk_prepare_enable(qce->iface);
++	if (ret)
++		goto err_iface;
++
++	ret = clk_prepare_enable(qce->bus);
++	if (ret)
++		goto err_bus;
++
++	return 0;
++
++err_bus:
++	clk_disable_unprepare(qce->iface);
++err_iface:
++	clk_disable_unprepare(qce->core);
++err_core:
++	icc_set_bw(qce->mem_path, 0, 0);
++	return ret;
++}
++
++static const struct dev_pm_ops qce_crypto_pm_ops = {
++	RUNTIME_PM_OPS(qce_runtime_suspend, qce_runtime_resume, NULL)
++	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
++};
++
+ static const struct of_device_id qce_crypto_of_match[] = {
+ 	{ .compatible = "qcom,crypto-v5.1", },
+ 	{ .compatible = "qcom,crypto-v5.4", },
+@@ -260,6 +344,7 @@ static struct platform_driver qce_crypto_driver = {
+ 	.driver = {
+ 		.name = KBUILD_MODNAME,
+ 		.of_match_table = qce_crypto_of_match,
++		.pm = pm_ptr(&qce_crypto_pm_ops),
+ 	},
+ };
+ module_platform_driver(qce_crypto_driver);
+-- 
+2.34.1

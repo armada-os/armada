@@ -5,6 +5,9 @@ steam_args=()
 if [[ ${1:-} == "--desktop" ]]; then
     shift
     steam_args=(-steamdeck)
+elif [[ -n "${GAMESCOPE_WAYLAND_DISPLAY:-}" && -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    # gamescope numbers its sockets by start order; this name is fixed
+    ln -sfn "${GAMESCOPE_WAYLAND_DISPLAY}" "${XDG_RUNTIME_DIR}/gamescope-primary"
 fi
 
 steam_root="${STEAM_ROOT:-${HOME}/.local/share/Steam}"
@@ -27,6 +30,9 @@ if [[ -d "${steam_runtime_bin}" ]]; then
     export PATH="${steam_runtime_bin}:${PATH}"
 fi
 export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
+# Steam restores these for compat tools, which otherwise start with no PATH
+export SYSTEM_PATH="${PATH}"
+export SYSTEM_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 
 # prune the Proton 11 registration earlier releases wrote; the internal-name
 # match keeps user-created tool dirs safe

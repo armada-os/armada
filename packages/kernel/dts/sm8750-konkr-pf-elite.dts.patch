@@ -1,0 +1,114 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocket-fit-elite: configure touch and DP audio, fix PCIe WAKE# polarity, codec rail sleep modes
+
+Use the full Chipone binding expected by Armada's touchscreen driver,
+remove volume-up as a wakeup source, and add the DisplayPort audio link.
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts b/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
+index eba9f43..5bb5f29 100644
+
+--- a/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
++++ b/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
+@@ -122,7 +122,6 @@
+ 			linux,code = <KEY_VOLUMEUP>;
+ 			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
+ 			debounce-interval = <15>;
+-			wakeup-source;
+ 		};
+ 		key-rc2 {
+ 			label = "Right-C2";
+@@ -913,14 +912,11 @@
+ /* Touchscreen = Chipone TDDI (touch half of the display driver IC; powered
+  * by the panel rails, no separate supplies — matches the stock node having
+  * none). On stock it sits on i2c bus 4 addr 0x48, IRQ TLMM 162 (edge),
+- * driver "chipone-tddi" = the Chipone CTS family (chipone_tddi_mmi on Moto,
+- * GPL source exists); no ICNL firmware blob on /vendor, so the firmware is
+- * panel-resident and the driver (patch 0061) stays lean.
++ * driver "chipone-tddi" = the Chipone CTS family. Armada uses ROCKNIX's full
++ * ICNL9922C fork, shared with the SM8650 Pocket FIT; no ICNL firmware blob on
++ * /vendor is required because the firmware is panel-resident.
+  * Stock node: /soc/qcom,qupv3_1_geni_se@ac0000/i2c@a90000/chipone_tddi@48
+- * (= mainline &i2c4), rst=TLMM161, x/y=1080/1920, pinctrl default=int
+- * input-pull-up, sleep=output-low. Node is inert until the driver lands
+- * (port plan: vendor_dlkm .ko modinfo for chip model + Moto GPL CTS source).
+- * VERIFY at port time: reset polarity, IRQ edge. */
++ * (= mainline &i2c4), rst=TLMM161, x/y=1080/1920. */
+ &i2c4 {
+ 	clock-frequency = <400000>;
+ 	status = "okay";
+@@ -930,15 +926,12 @@
+ 		reg = <0x48>;
+ 		interrupt-parent = <&tlmm>;
+ 		interrupts = <162 IRQ_TYPE_EDGE_FALLING>;
+-		reset-gpios = <&tlmm 161 GPIO_ACTIVE_LOW>;
+-		touchscreen-size-x = <1080>;
+-		touchscreen-size-y = <1920>;
+-		/* The panel is a portrait phone display mounted at 90° in a
+-		 * landscape device; the compositor already rotates (swaps x/y) for
+-		 * both display and touch. On device: native-X maps to device-Y and
+-		 * was inverted; native-Y maps to device-X and was correct. So invert
+-		 * native-X only (no swap — the compositor owns the rotation). */
+-		touchscreen-inverted-x;
++		chipone,irq-gpio = <&tlmm 162 GPIO_ACTIVE_HIGH>;
++		chipone,rst-gpio = <&tlmm 161 GPIO_ACTIVE_HIGH>;
++		chipone,x-res = <1080>;
++		chipone,y-res = <1920>;
++		/* Native X is inverted. The shared driver's CFG_CTS_WRAP_X setting
++		 * supplies the same correction for both KONKR panels. */
+ 		pinctrl-names = "default", "sleep";
+ 		pinctrl-0 = <&ts_int_default>;
+ 		pinctrl-1 = <&ts_int_sleep>;
+@@ -1517,6 +1510,18 @@
+ 			cpu { sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>; };
+ 			platform { sound-dai = <&q6apm>; };
+ 		};
++
++		/* HDMI audio out over USB-C DP alt mode. The codec side is the
++		 * hdmi-codec the DP bridge registers as a child of &mdss_dp0, and
++		 * this link is also what makes the machine driver create the
++		 * "DP0 Jack" control that UCM keys the HDMI device off.
++		 * Requires a DISPLAY_PORT_RX_0 graph in the topology blob. */
++		dp-dai-link {
++			link-name = "DisplayPort Playback";
++			codec { sound-dai = <&mdss_dp0>; };
++			cpu { sound-dai = <&q6apmbedai DISPLAY_PORT_RX_0>; };
++			platform { sound-dai = <&q6apm>; };
++		};
+ 	};
+ 
+ 	wcn7860-pmu {
+@@ -1621,7 +1626,7 @@
+ };
+ 
+ &pcieport0 {
+-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
+ 
+ 	wifi@0 {
+@@ -1699,3 +1704,25 @@
+ 			"qcom/sm8750/konkr/pfe/cdsp_dtb.mbn";
+ 	status = "okay";
+ };
++
++/* The codec keeps these rails enabled through s2idle; idle them in LPM */
++&vreg_l15b_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_bob1 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_l2i_1p2 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};

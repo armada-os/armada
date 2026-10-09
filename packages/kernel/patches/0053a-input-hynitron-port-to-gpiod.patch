@@ -1,0 +1,265 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] Input: hynitron: port vendor driver to GPIO descriptors
+
+Linux 7.1 removed the legacy OF GPIO-number API. Keep the Hynitron CST66xx
+driver required by the AYANEO Pocket DMG, but acquire and operate its reset
+and interrupt lines through GPIO descriptors. Use raw GPIO values so the
+vendor driver's existing physical reset/IRQ polarity remains unchanged.
+
+---
+diff --git a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst1xx.c b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst1xx.c
+index 3a31a77..ae8a9da 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst1xx.c
++++ b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst1xx.c
+@@ -209,9 +209,9 @@ static void cst1xx_rst(void)
+     if(hyn_1xxdata->work_mode==ENTER_BOOT_MODE){
+         hyn_set_i2c_addr(hyn_1xxdata,MAIN_I2C_ADDR);
+     }
+-    gpio_set_value(hyn_1xxdata->plat_data.reset_gpio,0);
++    gpiod_set_raw_value_cansleep(hyn_1xxdata->plat_data.reset_gpio,0);
+     msleep(5);
+-    gpio_set_value(hyn_1xxdata->plat_data.reset_gpio,1);
++    gpiod_set_raw_value_cansleep(hyn_1xxdata->plat_data.reset_gpio,1);
+ }
+ 
+ static int cst1xx_enter_boot(void)
+diff --git a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3240.c b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3240.c
+index ee9ddbb..a03662e 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3240.c
++++ b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3240.c
+@@ -226,9 +226,9 @@ static void cst3240_rst(void)
+     if(hyn_3240data->work_mode==ENTER_BOOT_MODE){
+         hyn_set_i2c_addr(hyn_3240data,MAIN_I2C_ADDR);
+     }
+-    gpio_set_value(hyn_3240data->plat_data.reset_gpio,0);
++    gpiod_set_raw_value_cansleep(hyn_3240data->plat_data.reset_gpio,0);
+     msleep(5);
+-    gpio_set_value(hyn_3240data->plat_data.reset_gpio,1);
++    gpiod_set_raw_value_cansleep(hyn_3240data->plat_data.reset_gpio,1);
+ }
+ 
+ static int cst3240_enter_boot(void)
+@@ -469,7 +469,7 @@ static int cst3240_get_dbg_data(u8 *buf, u16 len)
+         case RAWDATA_MODE:
+             timeout = 60;
+             while(--timeout){ //wait rise edge
+-                if(gpio_get_value(hyn_3240data->plat_data.irq_gpio)==1) break;
++                if(gpiod_get_raw_value_cansleep(hyn_3240data->plat_data.irq_gpio)==1) break;
+                 msleep(1);
+             }
+             ret = hyn_wr_reg(hyn_3240data,0x1000,2,buf,read_len); //mt 
+@@ -510,7 +510,7 @@ static int cst3240_get_test_result(u8 *buf, u16 len)
+     msleep(1);
+     timeout = 500;
+     while(--timeout){ //wait rise edge
+-        if(gpio_get_value(hyn_3240data->plat_data.irq_gpio)==1) break;
++        if(gpiod_get_raw_value_cansleep(hyn_3240data->plat_data.irq_gpio)==1) break;
+         msleep(10);
+     }
+     if(hyn_wr_reg(hyn_3240data,0x3000,2,buf,mt_len)){ //open high
+diff --git a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3xx.c b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3xx.c
+index a7e9921..44a9f8c 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3xx.c
++++ b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst3xx.c
+@@ -202,9 +202,9 @@ static void cst3xx_rst(void)
+     if(hyn_3xxdata->work_mode==ENTER_BOOT_MODE){
+         hyn_set_i2c_addr(hyn_3xxdata,MAIN_I2C_ADDR);
+     }
+-    gpio_set_value(hyn_3xxdata->plat_data.reset_gpio,0);
++    gpiod_set_raw_value_cansleep(hyn_3xxdata->plat_data.reset_gpio,0);
+     msleep(5);
+-    gpio_set_value(hyn_3xxdata->plat_data.reset_gpio,1);
++    gpiod_set_raw_value_cansleep(hyn_3xxdata->plat_data.reset_gpio,1);
+ }
+ 
+ static int cst3xx_enter_boot(void)
+diff --git a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst66xx.c b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst66xx.c
+index 743c32a..50fe701 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst66xx.c
++++ b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst66xx.c
+@@ -277,9 +277,9 @@ static void cst66xx_rst(void)
+     if(hyn_66xxdata->work_mode==ENTER_BOOT_MODE){
+         hyn_set_i2c_addr(hyn_66xxdata,MAIN_I2C_ADDR);
+     }
+-    gpio_set_value(hyn_66xxdata->plat_data.reset_gpio,0);
++    gpiod_set_raw_value_cansleep(hyn_66xxdata->plat_data.reset_gpio,0);
+     msleep(2);
+-    gpio_set_value(hyn_66xxdata->plat_data.reset_gpio,1);
++    gpiod_set_raw_value_cansleep(hyn_66xxdata->plat_data.reset_gpio,1);
+ }
+ 
+ static int cst66xx_wait_ready(u16 times,u8 ms,u16 reg,u16 check_vlue)
+diff --git a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst7xx.c b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst7xx.c
+index aac1ff1..dec98a0 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst7xx.c
++++ b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst7xx.c
+@@ -360,9 +360,9 @@ static int cst7xx_prox_handle(u8 cmd)
+ 
+ static void cst7xx_rst(void)
+ {
+-    gpio_set_value(hyn_7xxdata->plat_data.reset_gpio,0);
++    gpiod_set_raw_value_cansleep(hyn_7xxdata->plat_data.reset_gpio,0);
+     msleep(5);
+-    gpio_set_value(hyn_7xxdata->plat_data.reset_gpio,1);
++    gpiod_set_raw_value_cansleep(hyn_7xxdata->plat_data.reset_gpio,1);
+ }
+ 
+ 
+diff --git a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst8xxT.c b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst8xxT.c
+index 7ad51a6..022c149 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst8xxT.c
++++ b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst8xxT.c
+@@ -354,9 +354,9 @@ static int cst8xxT_set_workmode(enum work_mode mode,u8 enable)
+ 
+ static void cst8xxT_rst(void)
+ {
+-    gpio_set_value(hyn_8xxTdata->plat_data.reset_gpio,0);
++    gpiod_set_raw_value_cansleep(hyn_8xxTdata->plat_data.reset_gpio,0);
+     msleep(5);
+-    gpio_set_value(hyn_8xxTdata->plat_data.reset_gpio,1);
++    gpiod_set_raw_value_cansleep(hyn_8xxTdata->plat_data.reset_gpio,1);
+ }
+ 
+ static int cst8xxT_supend(void)
+diff --git a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst92xx.c b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst92xx.c
+index 049a068..223c99a 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst92xx.c
++++ b/drivers/input/touchscreen/hynitron/hyn_chips/hyn_cst92xx.c
+@@ -625,9 +625,9 @@ static int cst92xx_set_workmode(enum work_mode mode,u8 enable)
+ 
+ static void cst92xx_rst(void)
+ {
+-    gpio_set_value(hyn_92xxdata->plat_data.reset_gpio,0);
++    gpiod_set_raw_value_cansleep(hyn_92xxdata->plat_data.reset_gpio,0);
+     msleep(5);
+-    gpio_set_value(hyn_92xxdata->plat_data.reset_gpio,1);
++    gpiod_set_raw_value_cansleep(hyn_92xxdata->plat_data.reset_gpio,1);
+ }
+ 
+ 
+diff --git a/drivers/input/touchscreen/hynitron/hyn_core.c b/drivers/input/touchscreen/hynitron/hyn_core.c
+index 2aeb7fb..92b1e99 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_core.c
++++ b/drivers/input/touchscreen/hynitron/hyn_core.c
+@@ -63,14 +63,16 @@ static int hyn_parse_dt(struct hyn_ts_data *ts_data)
+             HYN_INFO("vdd_i2c not config");
+         }
+ 
+-        dt->reset_gpio = of_get_named_gpio(np, "reset-gpio", 0);
+-        dt->irq_gpio = of_get_named_gpio(np, "irq-gpio", 0);
+-        if(dt->reset_gpio < 0 || dt->irq_gpio < 0){
++        dt->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++        if (IS_ERR(dt->reset_gpio)) {
+             HYN_ERROR("dts get gpio failed");
+-            return -ENODEV;
++            return PTR_ERR(dt->reset_gpio);
+         }
+-        else{
+-            HYN_INFO("reset_gpio:%d irq_gpio:%d",dt->reset_gpio,dt->irq_gpio);
++
++        dt->irq_gpio = devm_gpiod_get(dev, "irq", GPIOD_IN);
++        if (IS_ERR(dt->irq_gpio)) {
++            HYN_ERROR("dts get gpio failed");
++            return PTR_ERR(dt->irq_gpio);
+         }
+ 
+         dt->pinctl = devm_pinctrl_get(dev);
+@@ -158,7 +160,6 @@ static int hyn_power_source_ctrl(int enable)
+ 
+ static int hyn_poweron(struct hyn_ts_data *ts_data)
+ {
+-    int ret = 0;
+     struct hyn_plat_data* dt = &ts_data->plat_data;
+     if(!IS_ERR_OR_NULL(hyn_data->plat_data.pinctl)){
+         if(pinctrl_select_state(dt->pinctl, dt->pin_active)){
+@@ -166,20 +167,6 @@ static int hyn_poweron(struct hyn_ts_data *ts_data)
+         }
+     }
+ 
+-    ret = gpio_request(dt->irq_gpio, "hyn_irq_gpio");
+-    ret |= gpio_request(dt->reset_gpio, "hyn_reset_gpio");
+-    if(ret < 0){
+-        HYN_ERROR("gpio_request failed");
+-        goto GPIO_SET_FAILE;
+-    }
+-    
+-    ret = gpio_direction_input(dt->irq_gpio);
+-    ret |= gpio_direction_output(dt->reset_gpio, 0);
+-    if(ret < 0){
+-        HYN_ERROR("set gpio_direction failed");
+-        goto GPIO_SET_FAILE;
+-    }
+-
+     if(!IS_ERR_OR_NULL(dt->vdd_ana)){
+         if(regulator_count_voltages(dt->vdd_ana) > 0){
+             if(regulator_set_voltage(dt->vdd_ana, 2800000, 3300000)){
+@@ -199,10 +186,8 @@ static int hyn_poweron(struct hyn_ts_data *ts_data)
+         HYN_ERROR("enable power failed");
+     }
+     mdelay(5);
+-    gpio_set_value(dt->reset_gpio, 1);
++    gpiod_set_raw_value_cansleep(dt->reset_gpio, 1);
+     return 0;
+-GPIO_SET_FAILE:
+-    return ret;
+ }
+ 
+ static int hyn_input_dev_init(struct hyn_ts_data *ts_data)
+@@ -635,7 +620,7 @@ static int hyn_ts_probe(struct spi_device *client)
+     }
+ #endif
+ 
+-    ts_data->gpio_irq =  gpio_to_irq(ts_data->plat_data.irq_gpio);
++    ts_data->gpio_irq = gpiod_to_irq(ts_data->plat_data.irq_gpio);
+     ret = request_threaded_irq(ts_data->gpio_irq, NULL, hyn_irq_handler,
+                                 (IRQF_TRIGGER_FALLING | IRQF_ONESHOT), HYN_DRIVER_NAME, ts_data);
+     if(ret){
+@@ -705,10 +690,6 @@ static int hyn_ts_remove(struct spi_device *client)
+ #if defined(CONFIG_HAS_EARLYSUSPEND)
+         unregister_early_suspend(&ts_data->early_suspend);
+ #endif
+-        if(gpio_is_valid(ts_data->plat_data.irq_gpio))
+-            gpio_free(ts_data->plat_data.irq_gpio);
+-        if(gpio_is_valid(ts_data->plat_data.reset_gpio))
+-            gpio_free(ts_data->plat_data.reset_gpio);
+         HYN_INFO("ts_remove5"); 
+         hyn_power_source_ctrl(0);
+         if(!IS_ERR_OR_NULL(ts_data->plat_data.vdd_ana)){
+@@ -790,4 +771,3 @@ module_exit(hyn_ts_exit);
+ MODULE_AUTHOR("Hynitron Driver Team");
+ MODULE_DESCRIPTION("Hynitron Touchscreen Driver");
+ MODULE_LICENSE("GPL v2");
+-
+diff --git a/drivers/input/touchscreen/hynitron/hyn_core.h b/drivers/input/touchscreen/hynitron/hyn_core.h
+index 45bd19e..659a300 100644
+--- a/drivers/input/touchscreen/hynitron/hyn_core.h
++++ b/drivers/input/touchscreen/hynitron/hyn_core.h
+@@ -2,7 +2,7 @@
+ #define HYNITRON_CORE_H
+ 
+ #include <linux/syscalls.h>
+-#include <linux/gpio.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/version.h>
+ #include <linux/types.h>
+ #include <linux/sched.h>
+@@ -23,7 +23,6 @@
+ #include <linux/proc_fs.h>
+ #include <linux/uaccess.h>
+ #include <linux/of.h>
+-#include <linux/of_gpio.h>
+ #include <linux/delay.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/pinctrl/consumer.h>
+@@ -156,9 +155,9 @@ struct hyn_plat_data {
+     struct regulator *vdd_ana;
+     struct regulator *vdd_i2c;
+ 
+-    int reset_gpio;
++    struct gpio_desc *reset_gpio;
+     u32 reset_gpio_flags;
+-    int irq_gpio;
++    struct gpio_desc *irq_gpio;
+     u32 irq_gpio_flags;
+ 
+     struct pinctrl *pinctl;

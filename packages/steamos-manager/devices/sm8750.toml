@@ -1,0 +1,18 @@
+# SM8750 handhelds. Board compatibles from packages/kernel/dts, identity from
+# system_files/usr/lib/armada/devices/*.conf.
+
+[[device]]
+dt.compatible = "ayn,odin3"
+device        = "ayn_odin_3"
+variant       = "Odin3"
+friendly_name = "AYN Odin 3"
+
+[[device]]
+dt.compatible = "konkr,pocket-fit-elite"
+device        = "konkr_pocket_fit_elite"
+variant       = "PocketFITElite"
+friendly_name = "KONKR Pocket FIT Elite"
+
+# armada-powerd owns the governor and serves CpuScaling1 over remotes.d.
+[cpu_scaling]
+driver = "none"

@@ -70,6 +70,9 @@ display_on() {
 mute_audio()   { as_session wpctl set-mute @DEFAULT_AUDIO_SINK@ 1 2>/dev/null || true; }
 unmute_audio() { as_session wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null || true; }
 
+lights_off() { timeout 5 /usr/bin/armada-rgb sleep || log "armada-rgb sleep failed"; }
+lights_on()  { timeout 5 /usr/bin/armada-rgb wake || log "armada-rgb wake failed"; }
+
 radio_soft_blocked() {
     rfkill list "$1" 2>/dev/null | grep -q 'Soft blocked: yes'
 }
@@ -268,6 +271,7 @@ do_suspend() {
     WAKE_DEV="$(power_device || true)"
     block_input
     display_off   # gamescope drm_sleep (game) / bl_power (desktop); after Steam's animation
+    lights_off
     freeze_processes
     # Radio suspend disabled until we can improve resume speed (currently takes 30+ seconds)
     # suspend_radios
@@ -290,6 +294,7 @@ do_resume() {
     unfreeze_processes
     unblock_input
     unmute_audio
+    lights_on
     display_on
     rm -f "$STATE_FLAG"
     rm -rf "$SAVE_DIR"

@@ -1,0 +1,248 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: haptics: fix atomic-context sleeps in the rumble bridge
+
+The qcom_spmi_haptics_global_* bridge wrapped the haptics driver's
+upload, playback, and erase callbacks in the haptics input device's
+event_lock. Those callbacks sleep: SPMI regmap I/O, an unconditional
+usleep_range in haptics_toggle_module_enable on every stop, the play
+mutex, and cancel_work_sync/cancel_delayed_work_sync against the
+set_gain and stop workers. RSInput's playback callback additionally
+runs under its own input device's event_lock with interrupts disabled,
+so the bridge's spin_unlock_irq re-enabled interrupts inside the outer
+critical section and underflowed the preempt count.
+
+On the AYN Odin 3 this produced "BUG: scheduling while atomic" on every
+rumble stop and intermittent hard lockups when input traffic contended
+the held event_lock during the sleep window.
+
+Make the bridge process-context only: serialize it with a mutex instead
+of the event_lock. The same mutex now also publishes phapchip, so a
+bridge call cannot race haptics_remove into a use after free. Defer
+RSInput's atomic playback callback to a work item on the freezable
+workqueue, cancel it in RSInput's suspend callback so a stale start
+cannot reach a suspended haptics chip, and flush rather than cancel it
+in remove so the final stop queued by the unregister-time effect flush
+still reaches the hardware. The upload callback already runs in
+sleepable context and calls the bridge directly. Cancel the haptics
+driver's pending stop and set-gain workers on suspend so a timer armed
+before sleep cannot fire into the resume path and race the first
+post-wake rumble.
+
+--- a/drivers/input/misc/qcom-hv-haptics.c
++++ b/drivers/input/misc/qcom-hv-haptics.c
+@@ -859,6 +859,12 @@
+ 
+ static struct haptics_chip *phapchip;
+ 
++/*
++ * Guards phapchip against remove and serializes the exported bridge; the
++ * bridged ff callbacks sleep, so bridge callers must be in process context.
++ */
++static DEFINE_MUTEX(haptics_global_lock);
++
+ bool qcom_haptics_vi_sense_is_enabled(void)
+ {
+ 	if (!phapchip)
+@@ -6528,7 +6534,9 @@
+ //		dev_err(chip->dev, "Creating debugfs failed, rc=%d\n", rc);
+ 
+ 	haptics_runtime_autosuspend(chip);
++	mutex_lock(&haptics_global_lock);
+ 	phapchip = chip;
++	mutex_unlock(&haptics_global_lock);
+ 	return 0;
+ 
+ remove_v_gain_error:
+@@ -6544,7 +6552,9 @@
+ {
+ 	struct haptics_chip *chip = dev_get_drvdata(&pdev->dev);
+ 
++	mutex_lock(&haptics_global_lock);
+ 	phapchip = NULL;
++	mutex_unlock(&haptics_global_lock);
+ 	if (chip->pbs_node)
+ 		of_node_put(chip->pbs_node);
+ 
+@@ -6602,6 +6612,10 @@
+ 	struct haptics_play_info *play = &chip->play;
+ 	int rc;
+ 
++	/* Pending workers must not fire into the resume path */
++	cancel_work_sync(&chip->set_gain_work);
++	cancel_delayed_work_sync(&chip->stop_work);
++
+ 	mutex_lock(&play->lock);
+ 	if ((play->pattern_src == FIFO) &&
+ 			atomic_read(&play->fifo_status.is_busy)) {
+@@ -6733,14 +6747,16 @@
+ int qcom_spmi_haptics_global_upload(struct ff_effect *effect) {
+ 	int ret;
+ 
+-	if (!phapchip)
+-		return -ENODEV;
++	mutex_lock(&haptics_global_lock);
+ 
+-	spin_lock_irq(&phapchip->input_dev->event_lock);
++	if (!phapchip) {
++		mutex_unlock(&haptics_global_lock);
++		return -ENODEV;
++	}
+ 
+ 	ret = phapchip->input_dev->ff->upload(phapchip->input_dev, effect, NULL);
+ 
+-	spin_unlock_irq(&phapchip->input_dev->event_lock);
++	mutex_unlock(&haptics_global_lock);
+ 
+ 	return ret;
+ }
+@@ -6748,10 +6764,12 @@
+ int qcom_spmi_haptics_global_playback(int effect_id, int val) {
+ 	int ret;
+ 
+-	if (!phapchip)
+-		return -ENODEV;
++	mutex_lock(&haptics_global_lock);
+ 
+-	spin_lock_irq(&phapchip->input_dev->event_lock);
++	if (!phapchip) {
++		mutex_unlock(&haptics_global_lock);
++		return -ENODEV;
++	}
+ 
+ 	if (val != 0)
+ 		ret = phapchip->input_dev->ff->playback(phapchip->input_dev, effect_id, val);
+@@ -6761,23 +6779,25 @@
+ 	if (ret)
+ 		pr_warn("%s called for %s, error in return (%d)\n", __func__, (val!=0 ? "Playback" : "Erase"), ret);
+ 
+-	spin_unlock_irq(&phapchip->input_dev->event_lock);
++	mutex_unlock(&haptics_global_lock);
+ 
+ 	return ret;
+ }
+ 
+ int qcom_spmi_haptics_global_set_gain(u16 gain) {
+-	if (!phapchip)
+-		return -ENODEV;
++	mutex_lock(&haptics_global_lock);
+ 
+-	spin_lock_irq(&phapchip->input_dev->event_lock);
++	if (!phapchip) {
++		mutex_unlock(&haptics_global_lock);
++		return -ENODEV;
++	}
+ 
+ 	//max is 0x7fff, and minimum is 0x4000 the same values android uses
+ 	gain = clamp(gain, 0x4000, 0x7fff);
+ 
+ 	phapchip->input_dev->ff->set_gain(phapchip->input_dev, gain);
+ 
+-	spin_unlock_irq(&phapchip->input_dev->event_lock);
++	mutex_unlock(&haptics_global_lock);
+ 
+ 	return 0;
+ }
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -18,6 +18,7 @@
+ #include <linux/serdev.h>
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/qcom_hv_haptics.h>
++#include <linux/workqueue.h>
+ #include <uapi/linux/sched/types.h>
+ 
+ static int update_params=0;
+@@ -140,6 +141,9 @@
+     bool invert_ry;
+     uint8_t rx_buf[1024];
+     uint8_t sequence_number;
++    struct work_struct rumble_work;
++    int rumble_effect_id;
++    int rumble_val;
+ };
+ 
+ static const unsigned int keymap[] = {
+@@ -406,6 +410,15 @@
+     .receive_buf = rsinput_rx,
+ };
+ 
++static void rsinput_rumble_work(struct work_struct *work)
++{
++    struct rsinput_driver *drv =
++        container_of(work, struct rsinput_driver, rumble_work);
++
++    qcom_spmi_haptics_global_playback(READ_ONCE(drv->rumble_effect_id),
++                                      READ_ONCE(drv->rumble_val));
++}
++
+ static int rsinput_rumble_upload(struct input_dev *dev,
+                                  struct ff_effect *effect,
+                                  struct ff_effect *old)
+@@ -418,10 +431,20 @@
+ 
+ static int rsinput_rumble_play(struct input_dev *dev, int effect_id, int val)
+ {
++    struct rsinput_driver *drv = input_get_drvdata(dev);
++
+     if (!rumble_enable)
+         return 0;
+ 
+-    return qcom_spmi_haptics_global_playback(effect_id, val);
++    /*
++     * Called under dev->event_lock and the bridge sleeps; latest request
++     * wins, and the freezable queue keeps it off a suspending chip.
++     */
++    WRITE_ONCE(drv->rumble_effect_id, effect_id);
++    WRITE_ONCE(drv->rumble_val, val);
++    queue_work(system_freezable_wq, &drv->rumble_work);
++
++    return 0;
+ }
+ 
+ static int rsinput_probe(struct serdev_device *serdev) {
+@@ -578,6 +601,8 @@
+     input_set_abs_params(drv->input, ABS_RZ, 0, trigger_right_max - trigger_right_antideadzone, 0, 30);
+ 
+     if (device_property_present(&serdev->dev, "rumble-haptics")) {
++        input_set_drvdata(drv->input, drv);
++        INIT_WORK(&drv->rumble_work, rsinput_rumble_work);
+         input_set_capability(drv->input, EV_FF, FF_PERIODIC);
+ 
+         error = input_ff_create(drv->input, 1);
+@@ -611,6 +636,9 @@
+ 
+     serdev_device_close(serdev);
+     input_unregister_device(drv->input);
++    /* flush, not cancel: unregister queues the final rumble stop */
++    if (drv->rumble_work.func)
++        flush_work(&drv->rumble_work);
+     if (drv->enable_gpio)
+         gpiod_set_value_cansleep(drv->enable_gpio, 0);
+ 
+@@ -620,6 +648,17 @@
+     regulator_disable(drv->vdd);
+ }
+ 
++static int rsinput_suspend(struct device *dev)
++{
++    struct rsinput_driver *drv = dev_get_drvdata(dev);
++
++    /* a pending rumble start must not fire into or after haptics suspend */
++    if (drv->rumble_work.func)
++        cancel_work_sync(&drv->rumble_work);
++
++    return 0;
++}
++
+ static int rsinput_resume(struct device *dev)
+ {
+     struct rsinput_driver *drv = dev_get_drvdata(dev);
+@@ -627,7 +666,7 @@
+     return rsinput_init_commands(drv);
+ }
+ 
+-static DEFINE_SIMPLE_DEV_PM_OPS(rsinput_pm_ops, NULL, rsinput_resume);
++static DEFINE_SIMPLE_DEV_PM_OPS(rsinput_pm_ops, rsinput_suspend, rsinput_resume);
+ 
+ static const struct of_device_id rsinput_of_match[] = {
+     { .compatible = "gamepad,rsinput" },

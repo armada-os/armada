@@ -1,0 +1,103 @@
+From: ROCKNIX <dev@rocknix.org>
+Subject: [PATCH] input: goodix: opt in to native-coordinate scaling from DT
+
+Some devices share controller firmware between panel variants with different
+resolutions. Allow those boards to describe the controller firmware's native
+coordinate range explicitly and scale it to the standard touchscreen size.
+Devices without both native-size properties retain the upstream behavior.
+
+--- a/Documentation/devicetree/bindings/input/touchscreen/goodix.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/goodix.yaml
+@@ -34,6 +34,18 @@ properties:
+   reg:
+     enum: [ 0x5d, 0x14 ]
+ 
++  goodix,native-size-x:
++    description: Horizontal coordinate range used by the controller firmware
++    $ref: /schemas/types.yaml#/definitions/uint32
++    minimum: 1
++    maximum: 65535
++
++  goodix,native-size-y:
++    description: Vertical coordinate range used by the controller firmware
++    $ref: /schemas/types.yaml#/definitions/uint32
++    minimum: 1
++    maximum: 65535
++
+   interrupts:
+     maxItems: 1
+ 
+@@ -61,6 +73,12 @@ properties:
+   touchscreen-size-y: true
+   touchscreen-swapped-x-y: true
+ 
++dependencies:
++  goodix,native-size-x:
++    [ goodix,native-size-y, touchscreen-size-x, touchscreen-size-y ]
++  goodix,native-size-y:
++    [ goodix,native-size-x, touchscreen-size-x, touchscreen-size-y ]
++
+ additionalProperties: false
+ 
+ required:
+--- a/drivers/input/touchscreen/goodix.h
++++ b/drivers/input/touchscreen/goodix.h
+@@ -102,6 +102,7 @@ struct goodix_ts_data {
+ 	unsigned short keymap[GOODIX_MAX_KEYS];
+ 	u8 main_clk[GOODIX_MAIN_CLK_LEN];
+ 	int bak_ref_len;
++	u32 scale_to_x, scale_to_y, native_x, native_y;
+ 	u8 *bak_ref;
+ };
+ 
+--- a/drivers/input/touchscreen/goodix.c
++++ b/drivers/input/touchscreen/goodix.c
+@@ -409,6 +409,10 @@ static void goodix_ts_report_touch_8b(struct goodix_ts_data *ts, u8 *coor_data)
+ 	int input_w = get_unaligned_le16(&coor_data[5]);
+ 
+ 	input_mt_slot(ts->input_dev, id);
++	if (ts->scale_to_x) {
++		input_x = (u64)input_x * ts->scale_to_x / ts->native_x;
++		input_y = (u64)input_y * ts->scale_to_y / ts->native_y;
++	}
+ 	input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, true);
+ 	touchscreen_report_pos(ts->input_dev, &ts->prop,
+ 			       input_x, input_y, true);
+@@ -424,6 +428,10 @@ static void goodix_ts_report_touch_9b(struct goodix_ts_data *ts, u8 *coor_data)
+ 	int input_w = get_unaligned_le16(&coor_data[7]);
+ 
+ 	input_mt_slot(ts->input_dev, id);
++	if (ts->scale_to_x) {
++		input_x = (u64)input_x * ts->scale_to_x / ts->native_x;
++		input_y = (u64)input_y * ts->scale_to_y / ts->native_y;
++	}
+ 	input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, true);
+ 	touchscreen_report_pos(ts->input_dev, &ts->prop,
+ 			       input_x, input_y, true);
+@@ -1067,6 +1075,26 @@ static void goodix_read_config(struct goodix_ts_data *ts)
+ 		input_abs_set_max(ts->input_dev, ABS_MT_POSITION_Y, y_max - 1);
+ 	}
+ 
++	{
++		struct device *dev = &ts->client->dev;
++		u32 native_x, native_y, target_x, target_y;
++
++		if (!device_property_read_u32(dev, "goodix,native-size-x", &native_x) &&
++		    !device_property_read_u32(dev, "goodix,native-size-y", &native_y) &&
++		    !device_property_read_u32(dev, "touchscreen-size-x", &target_x) &&
++		    !device_property_read_u32(dev, "touchscreen-size-y", &target_y) &&
++		    native_x && native_y && target_x && target_y &&
++		    (native_x != target_x || native_y != target_y)) {
++			ts->native_x = native_x;
++			ts->native_y = native_y;
++			ts->scale_to_x = target_x;
++			ts->scale_to_y = target_y;
++
++			dev_info(dev, "scaling native coordinates %ux%u to %ux%u\n",
++				 native_x, native_y, target_x, target_y);
++		}
++	}
++
+ 	ts->chip->calc_config_checksum(ts);
+ }
+ 

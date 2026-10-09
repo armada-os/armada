@@ -1,0 +1,72 @@
+From: virtudude <virtudude@protonmail.com>
+Date: Tue, 11 Aug 2026 00:00:00 +0000
+Subject: [PATCH] thermal: qcom: tsens: mask lower threshold interrupts across
+ system suspend
+
+The thermal core suspends all thermal zones at the start of
+dpm_prepare(), before any device prepare callback runs. Suspending
+from a warm state then guarantees that falling temperatures cross the
+last-programmed lower trip thresholds, and the resulting level
+interrupt can neither be serviced (zone updates are no-ops while
+zones are suspended) nor cleared: it refires at handler-pass rate for
+the rest of the transition and, being wake-armed, aborts every
+suspend attempt at the noirq stage or wakes s2idle immediately.
+
+Mask every sensor's lower threshold interrupt in a prepare callback,
+which runs after the thermal core has quiesced zones (so nothing can
+re-enable the interrupt) and before the suspend callbacks. Upper and
+critical interrupts stay armed, so overheating during the transition
+or during s2idle still wakes the system. No unmask is needed on
+resume: the first post-resume update of each thermal zone re-enables
+both directions via tsens_set_trips().
+
+---
+ drivers/thermal/qcom/tsens.c | 28 +++++++++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/thermal/qcom/tsens.c b/drivers/thermal/qcom/tsens.c
+index 6e3714e..51f20ef 100644
+--- a/drivers/thermal/qcom/tsens.c
++++ b/drivers/thermal/qcom/tsens.c
+@@ -1127,6 +1127,29 @@ static int tsens_get_temp(struct thermal_zone_device *tz, int *temp)
+ 	return priv->ops->get_temp(s, temp);
+ }
+ 
++static int __maybe_unused tsens_prepare(struct device *dev)
++{
++	struct tsens_priv *priv = dev_get_drvdata(dev);
++	unsigned int i;
++
++	if (tsens_version(priv) < VER_0_1)
++		return 0;
++
++	/*
++	 * The thermal core suspends every zone before device prepare
++	 * callbacks run, so a lower threshold crossed by falling
++	 * temperatures cannot be serviced and the level IRQ refires
++	 * until zones resume, aborting suspend once wake-armed.  Mask
++	 * LOWER across the transition; the first post-resume zone
++	 * update re-enables it through tsens_set_trips().  UPPER stays
++	 * armed so overheating still wakes the system.
++	 */
++	for (i = 0; i < priv->num_sensors; i++)
++		tsens_set_interrupt(priv, priv->sensor[i].hw_id, LOWER, false);
++
++	return 0;
++}
++
+ static int  __maybe_unused tsens_suspend(struct device *dev)
+ {
+ 	int ret = 0;
+@@ -1155,7 +1178,10 @@ static int __maybe_unused tsens_resume(struct device *dev)
+ 	return tsens_resume_common(priv);
+ }
+ 
+-static SIMPLE_DEV_PM_OPS(tsens_pm_ops, tsens_suspend, tsens_resume);
++static const struct dev_pm_ops tsens_pm_ops = {
++	.prepare = pm_sleep_ptr(tsens_prepare),
++	SET_SYSTEM_SLEEP_PM_OPS(tsens_suspend, tsens_resume)
++};
+ 
+ static const struct of_device_id tsens_table[] = {
+ 	{

@@ -1,0 +1,36 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] steamcompmgr: fallback focus to GAMESCOPE_FALLBACK_APPID
+
+When no baselayer window is focusable, show the window whose appid equals
+$GAMESCOPE_FALLBACK_APPID (a boot splash / loading screen opting in via its
+STEAM_GAME atom). Yields to the real window as soon as one appears. Focus
+selection only, off the per-frame composite path.
+
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 231e245a..2054a092 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -4251,6 +4251,23 @@ pick_primary_focus_and_override(
+ found:;
+ 	}
+ 
++	static const uint32_t s_fallbackAppID = []() {
++		const char *e = getenv( "GAMESCOPE_FALLBACK_APPID" );
++		return e ? (uint32_t)strtoul( e, nullptr, 0 ) : 0u;
++	}();
++	if ( !focus && s_fallbackAppID )
++	{
++		for ( steamcompmgr_win_t *fallback_window : vecPossibleFocusWindows )
++		{
++			if ( fallback_window->appID == s_fallbackAppID )
++			{
++				focus = fallback_window;
++				localGameFocused = true;
++				break;
++			}
++		}
++	}
++
+ 	if ( !focus && ( !globalFocus || !controlledFocus ) )
+ 	{
+ 		if ( !vecPossibleFocusWindows.empty() )

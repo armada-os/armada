@@ -1,0 +1,37 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocketevo: keep auxiliary keys from waking
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketevo.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketevo.dts
+@@ -38,7 +38,6 @@
+ 			debounce-interval = <15>;
+ 			gpios = <&tlmm 85 GPIO_ACTIVE_LOW>;
+ 			linux,code = <KEY_F13>;
+-			wakeup-source;
+ 		};
+ 
+ 		key-menu {
+@@ -46,7 +45,6 @@
+ 			debounce-interval = <15>;
+ 			gpios = <&tlmm 169 GPIO_ACTIVE_LOW>;
+ 			linux,code = <KEY_F14>;
+-			wakeup-source;
+ 		};
+ 
+ 		/* Silkscreen LC; the vendor device tree calls this rc2_key. */
+@@ -55,7 +53,6 @@
+ 			debounce-interval = <15>;
+ 			gpios = <&tlmm 170 GPIO_ACTIVE_LOW>;
+ 			linux,code = <KEY_F15>;
+-			wakeup-source;
+ 		};
+ 
+ 		/* Silkscreen RC; the vendor device tree calls this lc_key. */
+@@ -64,7 +61,6 @@
+ 			debounce-interval = <15>;
+ 			gpios = <&tlmm 91 GPIO_ACTIVE_LOW>;
+ 			linux,code = <KEY_F16>;
+-			wakeup-source;
+ 		};
+ 	};
+ };

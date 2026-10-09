@@ -1,0 +1,26 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pockets1k: wire SY7758 enable GPIO and add Goodix native scaling
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pockets1k.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pockets1k.dts
+@@ -94,9 +94,8 @@
+ 	backlight: sy7758@2e {
+ 		compatible = "silergy,sy7758";
+ 		reg = <0x2e>;
+-		pinctrl-0 = <&backlight_pwr_active>;
+-		pinctrl-1 = <&backlight_pwr_sleep>;
+-		pinctrl-names = "default", "sleep";
++		/* single-pin backlight: gpio41 is the enable; no separate vdd rail to gate */
++		enable-gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
+ 		status = "okay";
+ 	};
+ };
+@@ -117,6 +116,8 @@
+ 		VDDIO-supply = <&vreg_l14b_3p2>;
+ 		AVDD28-supply = <&vreg_l14b_3p2>;
+ 
++		goodix,native-size-x = <1440>;
++		goodix,native-size-y = <2560>;
+ 		touchscreen-size-x = <1080>;
+ 		touchscreen-size-y = <1920>;
+ 

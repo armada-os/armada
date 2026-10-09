@@ -1,0 +1,14 @@
+[Unit]
+Description=Armada splash (power off screen)
+DefaultDependencies=no
+After=display-manager.service
+Before=systemd-poweroff.service systemd-halt.service
+ConditionPathExists=/usr/libexec/armada/armada-splash
+ConditionPathExists=!/etc/armada/splash-disabled
+
+[Service]
+ExecStartPre=/usr/libexec/armada/armada-splash-shutdown-msg
+ExecStart=/usr/libexec/armada/armada-splash-launcher
+
+[Install]
+WantedBy=poweroff.target halt.target

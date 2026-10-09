@@ -1,0 +1,11 @@
+[Unit]
+Description=Point Steam's desktop session at Armada's wrapper
+After=steamos-manager.service
+Requires=steamos-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/armada/steam-default-session
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,241 @@
+From d9e9845751e0ff3a4b3253d4472b26334bbcd2fb Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Wed, 5 Aug 2026 18:11:45 -0400
+Subject: [PATCH] fix(force-feedback): reset effects when replacing targets
+
+The composite force-feedback ID map and evdev source effect caches outlive virtual target devices. On one-slot devices such as RSInput, replacing or suspending a target can leave its effect allocated, so the new target cannot upload rumble until InputPlumber restarts.
+
+Reset and erase source effects before target replacement and suspend, but leave live effects intact when the requested target set is unchanged. Clear the composite map, and wait with a timeout for stopped target tasks to close before creating replacements. This frees source slots and prevents late teardown events from racing new targets.
+---
+ src/input/composite_device/mod.rs     | 22 +++++++++++
+ src/input/composite_device/targets.rs | 53 ++++++++++++++++++++++++---
+ src/input/source/client.rs            | 13 +++++++
+ src/input/source/command.rs           |  1 +
+ src/input/source/evdev/gamepad.rs     | 13 +++++++
+ src/input/source/mod.rs               | 17 +++++++++
+ 6 files changed, 113 insertions(+), 6 deletions(-)
+
+diff --git a/src/input/composite_device/mod.rs b/src/input/composite_device/mod.rs
+index 14a5af7..78202e1 100644
+--- a/src/input/composite_device/mod.rs
++++ b/src/input/composite_device/mod.rs
+@@ -383,6 +383,17 @@ impl CompositeDevice {
+                         }
+                     }
+                     CompositeCommand::SetTargetDevices(target_types) => {
++                        let targets_changed = match self.targets.devices_match(&target_types).await
++                        {
++                            Ok(matches) => !matches,
++                            Err(e) => {
++                                log::warn!("Failed to compare target devices: {e}");
++                                true
++                            }
++                        };
++                        if targets_changed {
++                            self.reset_force_feedback_effects().await;
++                        }
+                         if let Err(e) = self.targets.set_devices(target_types).await {
+                             log::error!("Failed to set target devices: {e}");
+                         }
+@@ -521,6 +532,7 @@ impl CompositeDevice {
+                             "Preparing to suspend target devices for: {}",
+                             self.dbus.path()
+                         );
++                        self.reset_force_feedback_effects().await;
+                         self.targets.handle_suspend().await;
+                         if let Err(e) = sender.send(()).await {
+                             log::error!("Failed to send suspend response: {e:?}");
+@@ -640,6 +652,16 @@ impl CompositeDevice {
+         self.targets.set_dbus_devices(devices);
+     }
+ 
++    async fn reset_force_feedback_effects(&mut self) {
++        for (source_id, source) in self.source_devices.iter() {
++            if let Err(e) = source.reset_effects().await {
++                log::warn!("Failed to reset FF effects on {source_id}: {e}");
++            }
++        }
++        self.ff_effect_ids = (0..64).collect();
++        self.ff_effect_id_source_map.clear();
++    }
++
+     /// Return a list of source device paths (e.g. /dev/hidraw0, /dev/input/event0)
+     /// that this composite device is managing
+     fn get_source_device_paths(&self) -> Vec<String> {
+diff --git a/src/input/composite_device/targets.rs b/src/input/composite_device/targets.rs
+index f433c3a..89d5b6b 100644
+--- a/src/input/composite_device/targets.rs
++++ b/src/input/composite_device/targets.rs
+@@ -189,7 +189,17 @@ impl CompositeDeviceTargets {
+             for target_devices in self.target_devices_by_capability.values_mut() {
+                 target_devices.remove(&path);
+             }
+-            stop_tasks.spawn(async move { target.stop().await });
++            stop_tasks.spawn(async move {
++                let result = target.stop().await;
++                if result.is_ok()
++                    && tokio::time::timeout(Duration::from_secs(5), target.closed())
++                        .await
++                        .is_err()
++                {
++                    log::warn!("Timed out waiting for target device {path} to close");
++                }
++                result
++            });
+         }
+         for result in stop_tasks.join_all().await {
+             if let Err(e) = result {
+@@ -276,6 +286,28 @@ impl CompositeDeviceTargets {
+         Ok(())
+     }
+ 
++    /// Return whether the requested target devices are already running.
++    pub async fn devices_match(
++        &self,
++        device_types: &[TargetDeviceTypeId],
++    ) -> Result<bool, Box<dyn Error>> {
++        let mut kinds_running: Vec<TargetDeviceTypeId> = self
++            .target_kinds_running()
++            .await?
++            .into_values()
++            .collect();
++        if kinds_running.len() != device_types.len() {
++            return Ok(false);
++        }
++        for kind in device_types {
++            let Some(index) = kinds_running.iter().position(|running| running == kind) else {
++                return Ok(false);
++            };
++            kinds_running.swap_remove(index);
++        }
++        Ok(true)
++    }
++
+     /// Return a list of currently running target devices
+     async fn target_kinds_running(
+         &self,
+@@ -563,12 +595,21 @@ impl CompositeDeviceTargets {
+             for target_devices in self.target_devices_by_capability.values_mut() {
+                 target_devices.remove(&path);
+             }
+-            if let Err(e) = target.stop().await {
+-                log::error!("[{dbus_path}] Failed to stop old target device: {e:?}");
++            match target.stop().await {
++                Ok(()) => {
++                    if tokio::time::timeout(Duration::from_secs(5), target.closed())
++                        .await
++                        .is_err()
++                    {
++                        log::warn!(
++                            "[{dbus_path}] Timed out waiting for target device {path} to close"
++                        );
++                    }
++                }
++                Err(e) => {
++                    log::error!("[{dbus_path}] Failed to stop old target device: {e:?}");
++                }
+             }
+-
+-            // Wait a few beats to ensure that the target device is really gone
+-            tokio::time::sleep(Duration::from_millis(200)).await;
+         }
+ 
+         log::info!(
+diff --git a/src/input/source/client.rs b/src/input/source/client.rs
+index f75c31e..85ffae9 100644
+--- a/src/input/source/client.rs
++++ b/src/input/source/client.rs
+@@ -121,6 +121,19 @@ impl SourceDeviceClient {
+         }
+     }
+ 
++    /// Stop and erase every force feedback effect held by the source device.
++    pub async fn reset_effects(&self) -> Result<(), ClientError> {
++        let (tx, rx) = channel();
++        self.tx.try_send(SourceCommand::ResetEffects(tx))?;
++        match rx.recv_timeout(Duration::from_secs(1)) {
++            Ok(result) => match result {
++                Ok(_) => Ok(()),
++                Err(err) => Err(ClientError::ServiceError(err)),
++            },
++            Err(_err) => Err(ClientError::ChannelClosed),
++        }
++    }
++
+     /// Update the event filter for this source device.
+     pub async fn get_filtered_events(&self) -> Result<Vec<Capability>, ClientError> {
+         let (tx, rx) = channel();
+diff --git a/src/input/source/command.rs b/src/input/source/command.rs
+index e65905d..825143b 100644
+--- a/src/input/source/command.rs
++++ b/src/input/source/command.rs
+@@ -15,6 +15,7 @@ pub enum SourceCommand {
+     ),
+     UpdateEffect(i16, FFEffectData),
+     EraseEffect(i16, Sender<Result<(), Box<dyn Error + Send + Sync>>>),
++    ResetEffects(Sender<Result<(), Box<dyn Error + Send + Sync>>>),
+     GetEventFilter(Sender<Vec<Capability>>),
+     SetEventFilter(Vec<Capability>),
+     Stop,
+diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
+index 2bee6d3..321eed9 100644
+--- a/src/input/source/evdev/gamepad.rs
++++ b/src/input/source/evdev/gamepad.rs
+@@ -799,6 +799,19 @@ impl SourceOutputDevice for GamepadEventDevice {
+         self.ff_effects.remove(&effect_id);
+         Ok(())
+     }
++
++    fn reset_effects(&mut self) -> Result<(), OutputError> {
++        for (id, effect) in self.ff_effects.iter_mut() {
++            if let Err(e) = effect.stop() {
++                log::debug!("Failed to stop FF effect {id}: {e}");
++            }
++        }
++        self.ff_effects.clear();
++        self.ff_effects_dualsense = None;
++        self.ff_effects_deck = None;
++        self.ff_effects_rumble = None;
++        Ok(())
++    }
+ }
+ 
+ impl Debug for GamepadEventDevice {
+diff --git a/src/input/source/mod.rs b/src/input/source/mod.rs
+index da26e2b..1fa397e 100644
+--- a/src/input/source/mod.rs
++++ b/src/input/source/mod.rs
+@@ -170,6 +170,11 @@ pub trait SourceOutputDevice {
+         Ok(())
+     }
+ 
++    /// Stop and erase every force feedback effect held by this device.
++    fn reset_effects(&mut self) -> Result<(), OutputError> {
++        Ok(())
++    }
++
+     /// Stop the source device.
+     fn stop(&mut self) -> Result<(), OutputError> {
+         Ok(())
+@@ -517,6 +522,18 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+                             log::error!("Failed to send erase result: {:?}", err);
+                         }
+                     }
++                    SourceCommand::ResetEffects(composite_dev) => {
++                        let res = match implementation.reset_effects() {
++                            Ok(_) => composite_dev.send(Ok(())),
++                            Err(e) => {
++                                let err = format!("Failed to reset effects: {e:?}");
++                                composite_dev.send(Err(err.into()))
++                            }
++                        };
++                        if let Err(err) = res {
++                            log::error!("Failed to send reset result: {:?}", err);
++                        }
++                    }
+                     SourceCommand::WriteEvent(event) => {
+                         log::trace!("Received output event: {:?}", event);
+                         implementation.write_event(event)?;
+-- 
+2.55.0
+

@@ -5,6 +5,7 @@ import { saveFanCurves } from "../backend";
 import { FanCurveGraphEditor } from "./FanCurveEditor";
 import { useCurrentTemp } from "../hooks/useCurrentTemp";
 import { useFanCurvesSave } from "../hooks/useFanCurvesSave";
+import { t } from "../i18n";
 import { styles } from "../styles";
 import type { CurvesState } from "../types";
 
@@ -73,18 +74,18 @@ export function FanCurveEditorModal({
             onClick={handleSave}
             disabled={!dirty || saving}
           >
-            {saving ? "Saving..." : "Save Changes"}
+            {saving ? t("common.saving") : t("common.saveChanges")}
           </DialogButton>
           <DialogButton
             className="afc-modal-footer-half"
             onClick={handleRevert}
             disabled={!dirty || saving}
           >
-            Revert Changes
+            {t("common.revertChanges")}
           </DialogButton>
         </div>
         <DialogButton className="afc-modal-footer-full" onClick={() => closeModal?.()}>
-          Close
+          {t("common.close")}
         </DialogButton>
       </DialogFooter>
     </ModalRoot>

@@ -1,5 +1,5 @@
 ---
-name: Promote channel
+name: Promote release
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
         options: [beta, stable]
         required: true
       source:
-        description: "Source tag to promote from (e.g. testing or testing.20260608)"
+        description: "Source tag to promote from (e.g. staging or testing)"
         type: string
         default: testing
       version:
@@ -38,7 +38,7 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout
+      - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Prepare environment
@@ -51,15 +51,15 @@ jobs:
           done
           [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
 
-      - name: Install cosign
+      - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v2.6.3'
 
-      - name: Log in to ghcr.io
+      - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Refuse to promote an unsigned image
+      - name: Verify source container signature
         id: resolve
         run: |
           set -euxo pipefail
@@ -79,7 +79,7 @@ jobs:
           fi
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
 
-      - name: Promote (retag by digest — preserves digest, so the cosign signature carries)
+      - name: Publish release tags
         run: |
           set -euxo pipefail
           REPO="${IMAGE_REGISTRY}/${IMAGE_NAME}"

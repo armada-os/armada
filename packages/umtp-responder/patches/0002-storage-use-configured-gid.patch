@@ -1,0 +1,13 @@
+diff --git a/src/mtp_helpers.c b/src/mtp_helpers.c
+index e3447f9..d5b889a 100644
+--- a/src/mtp_helpers.c
++++ b/src/mtp_helpers.c
+@@ -414,7 +414,7 @@ int set_storage_giduid(mtp_ctx * ctx,uint32_t storage_id)
+ 			uid = ctx->storages[i].uid;
+ 
+ 		if(ctx->storages[i].gid != -1)
+-			gid = ctx->storages[i].uid;
++			gid = ctx->storages[i].gid;
+ 
+ 		return set_giduid(ctx,uid,gid);
+ 	}

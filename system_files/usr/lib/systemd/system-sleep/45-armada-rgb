@@ -1,0 +1,15 @@
+#!/bin/bash
+set -uo pipefail
+
+rgb=${ARMADA_RGB:-/usr/bin/armada-rgb}
+
+[[ "${2:-}" == suspend ]] || exit 0
+case "${1:-}" in
+    pre) action=sleep ;;
+    post) action=wake ;;
+    *) exit 0 ;;
+esac
+
+timeout 5 "$rgb" "$action" ||
+    printf 'armada-rgb-sleep: armada-rgb %s failed\n' "$action" >&2
+exit 0

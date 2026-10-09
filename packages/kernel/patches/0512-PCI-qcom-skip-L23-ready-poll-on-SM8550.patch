@@ -1,0 +1,28 @@
+From: virtudude <virtudude@protonmail.com>
+Date: Mon, 10 Aug 2026 00:00:00 +0000
+Subject: [PATCH] PCI: qcom: skip the L2/L3 Ready poll on SM8550
+
+dw_pcie_suspend_noirq() polls the LTSSM state after broadcasting
+PME_Turn_Off, which on SM8550 means reading PARF_LTSSM. That read is
+not serviced at this point in suspend entry and hard-wedges the SoC
+with no resume path. Opt SM8550 into skip_l23_ready so suspend uses
+the fixed PCIe-spec delay for L2 entry instead, the same accommodation
+i.MX6 uses.
+
+---
+ drivers/pci/controller/dwc/pcie-qcom.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -2109,6 +2109,10 @@
+ 
+ 	pp->ops = &qcom_pcie_dw_ops;
+ 
++	/* PARF_LTSSM is inaccessible after PME_Turn_Off on SM8550. */
++	if (of_device_is_compatible(dev->of_node, "qcom,pcie-sm8550"))
++		pp->skip_l23_ready = true;
++
+ 	ret = qcom_pcie_parse_ports(pcie);
+ 	if (ret) {
+ 		if (ret != -ENODEV) {

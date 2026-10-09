@@ -1,0 +1,36 @@
+From aeb2f0a0e18def41ae968872275ec00e7d2efd25 Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Mon, 20 Jul 2026 00:51:43 +0200
+Subject: [PATCH] Fix metrics on several msm GPUs
+
+---
+ src/gpu_fdinfo.cpp | 29 +++++++++++++++++++++++++----
+ 1 file changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/src/gpu_fdinfo.cpp b/src/gpu_fdinfo.cpp
+index c4d63f5..1586ed5 100644
+--- a/src/gpu_fdinfo.cpp
++++ b/src/gpu_fdinfo.cpp
+@@ -655,7 +665,18 @@ float GPU_fdinfo::amdgpu_helper_get_proc_vram() {
+ }
+ 
+ void GPU_fdinfo::init_kgsl() {
+-    const std::string sys_path = "/sys/class/kgsl/kgsl-3d0";
++    std::string sys_path;
++
++    const std::vector<std::string> sys_paths = {
++        "/sys/class/kgsl/kgsl-3d0",
++        "/sys/class/devfreq/5900000.gpu", // SM6115
++        "/sys/class/devfreq/3d00000.gpu", // SM8250/SM8550/SM8650/SM8750
++    };
++
++    for (const auto& path : sys_paths) {
++        sys_path = path;
++        if (fs::exists(sys_path)) break;
++    }
+ 
+     try {
+         if (!fs::exists(sys_path)) {
+-- 
+2.55.0
+

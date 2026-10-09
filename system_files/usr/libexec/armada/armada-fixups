@@ -142,10 +142,23 @@ def strip_compat_wildcard():
         pass
 
 
+def migrate_sddm_autologin():
+    # steamos-manager prefers the legacy name while it exists, so the two diverge.
+    legacy = pathlib.Path("/etc/sddm.conf.d/zz-steamos-autologin.conf")
+    if not legacy.is_file():
+        return
+    current = pathlib.Path("/etc/sddm.conf.d/zz-holo-autologin.conf")
+    if not current.exists():
+        current.write_text(legacy.read_text())
+    legacy.unlink()
+    print("Migrated autologin config to zz-holo-autologin.conf")
+
+
 def main():
     fix_desktop_ownership()
     fix_proton_11_tool_id()
     strip_compat_wildcard()
+    migrate_sddm_autologin()
 
 
 if __name__ == "__main__":

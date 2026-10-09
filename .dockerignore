@@ -1,2 +1,5 @@
 **/node_modules
 decky/armada-control/dist
+# Package sources build in packages/Containerfile with packages/ as their own
+# context. The image build consumes only their published images.
+packages

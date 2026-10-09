@@ -1,0 +1,266 @@
+# Builder stages: one per package, running its build.sh as a RUN step so the
+# result caches as a layer. Each out-<name> stage holds only the artifacts, laid
+# out as the armada Containerfile bind-mounts them.
+#
+# Contract every build.sh sees, here and under ./build-local.sh:
+#   /work  the package directory, cwd. Artifacts land in ./out
+#   /src   the packages root: toolchain.env, TERRA.env, sibling packages
+
+ARG BUILDER_IMAGE
+ARG GUEST_BUILDER_IMAGE
+
+FROM ${BUILDER_IMAGE} AS builder-base
+COPY toolchain.env scrub-scratch.sh /src/
+
+FROM builder-base AS pkg-armada-rgb
+COPY armada-rgb/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-armada-rgb
+COPY --from=pkg-armada-rgb /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-armada-splash
+COPY armada-splash/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-armada-splash
+COPY --from=pkg-armada-splash /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-gamescope
+COPY TERRA.env /src/
+COPY gamescope/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-gamescope
+COPY --from=pkg-gamescope /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-gamescope-session
+COPY TERRA.env /src/
+COPY gamescope-session/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-gamescope-session
+COPY --from=pkg-gamescope-session /work/out/ /rpms/
+
+FROM builder-base AS pkg-gamescope-session-steam
+COPY TERRA.env /src/
+COPY gamescope-session-steam/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-gamescope-session-steam
+COPY --from=pkg-gamescope-session-steam /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-inputplumber
+COPY inputplumber/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-inputplumber
+COPY --from=pkg-inputplumber /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-jupiter-hw-support
+COPY jupiter-hw-support/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-jupiter-hw-support
+COPY --from=pkg-jupiter-hw-support /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-kwin
+COPY kwin/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-kwin
+COPY --from=pkg-kwin /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-mangohud
+COPY mangohud/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-mangohud
+COPY --from=pkg-mangohud /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-mesa
+COPY mesa/ /work/
+WORKDIR /work
+RUN --mount=type=cache,id=armada-ccache-mesa,target=/ccache ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-mesa
+COPY --from=pkg-mesa /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-networkmanager
+COPY networkmanager/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-networkmanager
+COPY --from=pkg-networkmanager /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-wpa_supplicant
+COPY wpa_supplicant/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-wpa_supplicant
+COPY --from=pkg-wpa_supplicant /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-scx-scheds
+COPY TERRA.env /src/
+COPY scx-scheds/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-scx-scheds
+COPY --from=pkg-scx-scheds /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-plasma-mobile
+COPY plasma-mobile/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-plasma-mobile
+COPY --from=pkg-plasma-mobile /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-powerdevil
+COPY powerdevil/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-powerdevil
+COPY --from=pkg-powerdevil /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-protontricks
+COPY protontricks/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-protontricks
+COPY --from=pkg-protontricks /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-steamos-manager
+COPY steamos-manager/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-steamos-manager
+COPY --from=pkg-steamos-manager /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-umtp-responder
+COPY umtp-responder/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-umtp-responder
+COPY --from=pkg-umtp-responder /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-fex-sysroot
+COPY fex/ /work/
+WORKDIR /work
+RUN ./build-sysroot.sh
+
+FROM builder-base AS pkg-fex
+COPY fex/ /work/
+COPY --from=pkg-fex-sysroot /work/fex-sysroot-*.tar.gz /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-fex
+COPY --from=pkg-fex /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-kernel
+COPY kernel/ /work/
+WORKDIR /work
+RUN --mount=type=cache,id=armada-ccache-kernel,target=/ccache ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-kernel
+COPY --from=pkg-kernel /work/out/ /kernel/
+
+
+FROM builder-base AS pkg-extest
+COPY extest/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-extest
+COPY --from=pkg-extest /work/out/libextest.so /
+
+
+FROM ${BUILDER_IMAGE} AS pkg-steam-bootstrap-builder
+COPY steam-bootstrap/install-builder-deps.sh /tmp/
+RUN /tmp/install-builder-deps.sh
+
+FROM pkg-steam-bootstrap-builder AS pkg-steam-bootstrap
+COPY toolchain.env scrub-scratch.sh /src/
+COPY steam-bootstrap/ /work/
+WORKDIR /work
+RUN --mount=type=cache,id=steam-bootstrap-work,target=/work/work ./build.sh
+RUN --network=none --mount=type=cache,id=steam-bootstrap-work,target=/work/work \
+    bash generate.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-steam-bootstrap
+COPY --from=pkg-steam-bootstrap /work/out/ /steam-bootstrap/
+
+
+# Cross-builds an arm64 target from an x86_64 host.
+# Google ships NDK host binaries for linux-x86_64 only.
+FROM --platform=linux/amd64 ${BUILDER_IMAGE} AS pkg-mesa-android
+COPY toolchain.env scrub-scratch.sh /src/
+COPY mesa/ /src/mesa/
+COPY mesa-android/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-mesa-android
+COPY --from=pkg-mesa-android /work/out/vendor/ /waydroid/vendor/
+
+
+# The same Mesa build for Lepton's Android release, packaged with the rest of
+# its host side as an RPM.
+FROM --platform=linux/amd64 ${BUILDER_IMAGE} AS pkg-lepton
+COPY toolchain.env scrub-scratch.sh /src/
+COPY mesa/ /src/mesa/
+COPY mesa-android/ /src/mesa-android/
+COPY lepton/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-lepton
+COPY --from=pkg-lepton /work/out/ /rpms/
+
+
+# x86 Turnip for the FEX guest rootfs, built in the Arch image
+# pinned to the guest rootfs snapshot. Built on an x86_64 runner.
+FROM --platform=linux/amd64 ${GUEST_BUILDER_IMAGE} AS pkg-mesa-x86
+COPY scrub-scratch.sh /src/
+COPY mesa/ /src/mesa/
+COPY mesa-x86/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-mesa-x86
+COPY --from=pkg-mesa-x86 /work/out/ArmadaMesa.sqsh /

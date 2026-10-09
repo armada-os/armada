@@ -1,0 +1,17 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocketace: wire the SY7758 enable GPIO
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketace.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketace.dts
+@@ -74,9 +74,8 @@
+ 	backlight: sy7758@2e {
+ 		compatible = "silergy,sy7758";
+ 		reg = <0x2e>;
+-		pinctrl-0 = <&backlight_pwr_active>;
+-		pinctrl-1 = <&backlight_pwr_sleep>;
+-		pinctrl-names = "default", "sleep";
++		/* single-pin backlight: gpio41 is the enable; no separate vdd rail to gate */
++		enable-gpios = <&tlmm 41 GPIO_ACTIVE_HIGH>;
+ 		status = "okay";
+ 	};
+ };

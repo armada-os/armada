@@ -1,0 +1,9 @@
+[Unit]
+Description=Start Armada RGB brightness watcher when settings exist
+
+[Path]
+PathChanged=/etc/armada/rgb.json
+Unit=armada-rgb-brightness-watch.service
+
+[Install]
+WantedBy=multi-user.target

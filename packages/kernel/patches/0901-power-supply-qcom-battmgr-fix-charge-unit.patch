@@ -1,0 +1,26 @@
+Subject: [PATCH] power: supply: qcom_battmgr: fix CHARGE_FULL* on SM8350-class firmware
+
+SM8350-class firmware does not send BATTMGR_BAT_INFO, so the charge unit
+remains unset even though charge-domain values are returned by property reads.
+Set the unit explicitly so CHARGE_FULL* can be reported to userspace.
+
+---
+ drivers/power/supply/qcom_battmgr.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -1692,4 +1692,12 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	} else {
++		/*
++		 * The SM8350-class firmware has no BATTMGR_BAT_INFO request, so
++		 * @unit is never populated from the firmware. It reports charge
++		 * domain values, so set it statically here - otherwise the
++		 * CHARGE_* properties are rejected with -ENODATA.
++		 */
++		battmgr->unit = QCOM_BATTMGR_UNIT_mAh;
++
+ 		if (battmgr->variant == QCOM_BATTMGR_SM8550)
+ 			psy_desc = &sm8550_bat_psy_desc;
+ 		else

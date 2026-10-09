@@ -1,0 +1,185 @@
+From: Neil Armstrong <neil.armstrong@linaro.org>
+Date: Tue, 28 Jul 2026 10:46:43 +0200
+Subject: [PATCH 1/3] ASoC: qcom: audioreach: compute active channel maps from channel_map
+
+The Qualcom SM8650 based Ayaneo Pocket S2 gaming device has a set
+of 2 WSA speakers connected on the WSA2 lines.
+
+But the Audioreach DSP only handles WSA2 in pair with the WSA
+interface by using the upper bits of the active_channels_mask
+for WSA2 and the lower bits for WSA:
+
+/-------------------------------------------------\
+| Bits  |     3    |     2    |   1     |     0   |
+|-------------------------------------------------|
+| Line  | WSA2 Ch2 | WSA2 Ch1 | WSA Ch2 | WSA Ch1 |
+\-------------------------------------------------/
+
+Setting only the WSA2 upper bits is perfectly valid and
+functional but the current Audioreach code builds the bitmask
+from the channels count with:
+	active_channels_mask = (1 << num_channels) - 1;
+
+In order to enable the WSA2 bits the channel count should be 4,
+but the lower WSA bits are then also enabled and the DSP errors
+out when trying to play on the disabled WSA interface.
+
+A solution would've been to add a fake WSA2 topology element which
+would be translated into the top bits only, but it's not clean and
+add some special exceptions in the generic Audioreach code.
+
+The solution suggested by Srinivas is to use the channel mapping to
+set this bitmask.
+
+This works but makes all the other calls using the channel mapping fail
+because the DSP requires the channel_mapping table to start from index 0
+and using num_channel length in order to apply the mapping on the
+active_channels_mask bits in order.
+
+So we need to skip the empty channel mapping entries in all other
+users of the channel_map to build valid channel_mapping tables.
+
+This should not break any other usecases since the default channel
+mapping always start from index 0, and will add flexibilty to allow
+some special non linear mapping for other interfaces as well.
+
+Suggested-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Tested-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Reviewed-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+---
+ sound/soc/qcom/qdsp6/audioreach.c | 47 ++++++++++++++++++++++++++++++---------
+ 1 file changed, 37 insertions(+), 10 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
+index e6e9eb2e85aa..0cc840aca69d 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.c
++++ b/sound/soc/qcom/qdsp6/audioreach.c
+@@ -703,6 +703,7 @@ static int audioreach_codec_dma_set_media_format(struct q6apm_graph *graph,
+ 	int pm_sz = APM_HW_EP_PMODE_CFG_PSIZE;
+ 	int size = ic_sz + ep_sz + fs_sz + pm_sz;
+ 	void *p;
++	int i;
+ 
+ 	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_cmd_pkt(size, APM_CMD_SET_CFG, 0);
+ 	if (IS_ERR(pkt))
+@@ -741,7 +742,12 @@ static int audioreach_codec_dma_set_media_format(struct q6apm_graph *graph,
+ 
+ 	intf_cfg->cfg.lpaif_type = module->hw_interface_type;
+ 	intf_cfg->cfg.intf_index = module->hw_interface_idx;
+-	intf_cfg->cfg.active_channels_mask = (1 << cfg->num_channels) - 1;
++	intf_cfg->cfg.active_channels_mask = 0;
++	/* Convert the physical channel mapping into a bit field */
++	for (i = 0; i < AR_PCM_MAX_NUM_CHANNEL; i++)
++		if (cfg->channel_map[i])
++			intf_cfg->cfg.active_channels_mask |= BIT(i);
++
+ 	p += ic_sz;
+ 
+ 	pm_cfg = p;
+@@ -840,7 +846,7 @@ static int audioreach_mfc_set_media_format(struct q6apm_graph *graph,
+ 	uint32_t num_channels = cfg->num_channels;
+ 	int payload_size = APM_MFC_CFG_PSIZE(media_format, num_channels) +
+ 				APM_MODULE_PARAM_DATA_SIZE;
+-	int i;
++	int i, j;
+ 	void *p;
+ 
+ 	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_cmd_pkt(payload_size, APM_CMD_SET_CFG, 0);
+@@ -860,8 +866,12 @@ static int audioreach_mfc_set_media_format(struct q6apm_graph *graph,
+ 	media_format->sample_rate = cfg->sample_rate;
+ 	media_format->bit_width = cfg->bit_width;
+ 	media_format->num_channels = cfg->num_channels;
+-	for (i = 0; i < num_channels; i++)
+-		media_format->channel_mapping[i] = cfg->channel_map[i];
++	/* Convert the physical mapping to a logical mapping of the channels */
++	for (i = 0, j = 0; i < AR_PCM_MAX_NUM_CHANNEL && j < cfg->num_channels; i++) {
++		if (!cfg->channel_map[i])
++			continue;
++		media_format->channel_mapping[j++] = cfg->channel_map[i];
++	}
+ 
+ 	return q6apm_send_cmd_sync(graph->apm, pkt, 0);
+ }
+@@ -1080,6 +1090,7 @@ static int audioreach_pcm_set_media_format(struct q6apm_graph *graph,
+ 	struct apm_pcm_module_media_fmt_cmd *cfg;
+ 	struct apm_module_param_data *param_data;
+ 	int payload_size;
++	int i, j;
+ 
+ 	if (num_channels > 4) {
+ 		dev_err(graph->dev, "Error: Invalid channels (%d)!\n", num_channels);
+@@ -1113,7 +1124,12 @@ static int audioreach_pcm_set_media_format(struct q6apm_graph *graph,
+ 	media_cfg->num_channels = mcfg->num_channels;
+ 	media_cfg->q_factor = mcfg->bit_width - 1;
+ 	media_cfg->bits_per_sample = mcfg->bit_width;
+-	memcpy(media_cfg->channel_mapping, mcfg->channel_map, mcfg->num_channels);
++	/* Convert the physical mapping to a logical mapping of the channels */
++	for (i = 0, j = 0; i < AR_PCM_MAX_NUM_CHANNEL && j < mcfg->num_channels; i++) {
++		if (!mcfg->channel_map[i])
++			continue;
++		media_cfg->channel_mapping[j++] = mcfg->channel_map[i];
++	}
+ 
+ 	return q6apm_send_cmd_sync(graph->apm, pkt, 0);
+ }
+@@ -1163,6 +1179,7 @@ static int audioreach_shmem_set_media_format(struct q6apm_graph *graph,
+ 	struct payload_media_fmt_pcm *cfg;
+ 	struct media_format *header;
+ 	int rc, payload_size;
++	int i, j;
+ 	void *p;
+ 
+ 	if (num_channels > 4) {
+@@ -1202,7 +1219,12 @@ static int audioreach_shmem_set_media_format(struct q6apm_graph *graph,
+ 		cfg->q_factor = mcfg->bit_width - 1;
+ 		cfg->endianness = PCM_LITTLE_ENDIAN;
+ 		cfg->num_channels = mcfg->num_channels;
+-		memcpy(cfg->channel_mapping, mcfg->channel_map, mcfg->num_channels);
++		/* Convert the physical mapping to a logical mapping of the channels */
++		for (i = 0, j = 0; i < AR_PCM_MAX_NUM_CHANNEL && j < cfg->num_channels; i++) {
++			if (!mcfg->channel_map[i])
++				continue;
++			cfg->channel_mapping[j++] = mcfg->channel_map[i];
++		}
+ 	} else {
+ 		rc = audioreach_set_compr_media_format(header, p, mcfg);
+ 		if (rc)
+@@ -1279,7 +1301,7 @@ static int audioreach_speaker_protection_vi(struct q6apm_graph *graph,
+ 	struct apm_module_sp_vi_ex_mode_cfg *ex_cfg;
+ 	int op_sz, cm_sz, ex_sz;
+ 	struct apm_module_param_data *param_data;
+-	int rc, i, payload_size;
++	int rc, i, payload_size, j;
+ 	struct gpr_pkt *pkt;
+ 	void *p;
+ 
+@@ -1320,14 +1342,19 @@ static int audioreach_speaker_protection_vi(struct q6apm_graph *graph,
+ 	param_data->param_size = cm_sz - APM_MODULE_PARAM_DATA_SIZE;
+ 
+ 	cm_cfg->cfg.num_channels = num_channels * 2;
+-	for (i = 0; i < num_channels; i++) {
++	/* Convert the physical mapping to a logical mapping of the channels */
++	for (i = 0, j = 0; i < AR_PCM_MAX_NUM_CHANNEL && j < num_channels; i++) {
++		if (!mcfg->channel_map[i])
++			continue;
+ 		/*
+ 		 * Map speakers into Vsense and then Isense of each channel.
+ 		 * E.g. for PCM_CHANNEL_FL and PCM_CHANNEL_FR to:
+ 		 * [1, 2, 3, 4]
+ 		 */
+-		cm_cfg->cfg.channel_mapping[2 * i] = (mcfg->channel_map[i] - 1) * 2 + 1;
+-		cm_cfg->cfg.channel_mapping[2 * i + 1] = (mcfg->channel_map[i] - 1) * 2 + 2;
++		cm_cfg->cfg.channel_mapping[2 * j] = (mcfg->channel_map[i] - 1) * 2 + 1;
++		cm_cfg->cfg.channel_mapping[2 * j + 1] = (mcfg->channel_map[i] - 1) * 2 + 2;
++
++		++j;
+ 	}
+ 
+ 	p += cm_sz;
+
+-- 
+2.34.1
+
+
+

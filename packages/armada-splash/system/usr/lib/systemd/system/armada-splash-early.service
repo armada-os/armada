@@ -1,0 +1,16 @@
+[Unit]
+Description=Armada splash (early boot)
+# No Conflicts=display-manager.service: that deletes sddm's start job from
+# the boot transaction; the sddm drop-in stops this unit instead.
+DefaultDependencies=no
+Before=basic.target
+Conflicts=shutdown.target
+ConditionPathExists=/usr/libexec/armada/armada-splash
+ConditionPathExists=!/etc/armada/splash-disabled
+
+[Service]
+ExecStartPre=/usr/libexec/armada/armada-splash-progress Preparing Armada
+ExecStart=/usr/libexec/armada/armada-splash-launcher
+
+[Install]
+WantedBy=sysinit.target

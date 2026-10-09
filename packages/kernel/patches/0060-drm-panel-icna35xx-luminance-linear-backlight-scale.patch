@@ -1,0 +1,142 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] drm/panel: icna35xx: expose a luminance-linear backlight scale
+
+Both DDICs drive their panels at luminance ~ (DBV/4096)^2.2, measured on
+the AYN Odin 3 (ICNA3520) and Odin 2 Portal (ICNA3512) modules. Raw DBV
+in sysfs compresses the useful brightness range into the top of the
+scale and collapses the low end under nits-based brightness control.
+Translate the now luminance-linear sysfs scale to DBV through the
+brightness levels helper, using a measured default that device trees can
+override, and declare BACKLIGHT_SCALE_LINEAR.
+
+The table ends at 3413, the DBV ceiling the vendor Android trees set for
+every module on these DDICs, rather than the driver's 4096, which is one
+past the 12-bit register. The DDIC does not enforce the ceiling: on the
+Odin 3, white-screen panel power at DBV 4095 is 73% above DBV 3413. The
+sysfs range stays 0..4096, so userspace is unaffected.
+
+---
+--- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
++++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
+@@ -33,6 +33,7 @@
+ 	struct gpio_desc *reset_gpio;
+ 	struct regulator_bulk_data *supplies;
+ 	struct backlight_device *backlight;
++	struct drm_panel_bl_levels bl_levels;
+ 	bool enabled;
+ };
+ 
+@@ -49,6 +50,10 @@
+ 	unsigned int num_modes;
+ 	int (*init_sequence)(struct panel_info *pinfo);
+ 
++	const u16 *bl_levels;
++	unsigned int num_bl_levels;
++	unsigned int bl_num_interp;
++
+ 	struct drm_dsc_config dsc;
+ };
+ 
+@@ -87,11 +92,39 @@
+ 	return 0;
+ }
+ 
++/*
++ * Both DDICs drive their panels at luminance ~ (DBV/4096)^2.2, measured
++ * on the AYN Odin 3 and Odin 2 Portal modules. Userspace brightness
++ * models assume a scale linear in luminance, so the sysfs value is
++ * linear light, mapped to DBV through these levels.
++ * Ends at 3413, the vendor DBV ceiling, which the DDIC does not enforce.
++ */
++static const u16 icna35xx_bl_levels[129] = {
++	   0,  376,  516,  620,  707,  782,  849,  911,
++	 968, 1021, 1072, 1118, 1164, 1207, 1248, 1288,
++	1327, 1363, 1399, 1434, 1468, 1501, 1533, 1564,
++	1595, 1625, 1654, 1682, 1711, 1738, 1765, 1791,
++	1817, 1843, 1868, 1893, 1917, 1941, 1965, 1988,
++	2011, 2034, 2056, 2079, 2101, 2122, 2143, 2165,
++	2186, 2206, 2226, 2246, 2266, 2286, 2306, 2325,
++	2344, 2363, 2381, 2401, 2419, 2436, 2455, 2473,
++	2491, 2508, 2526, 2543, 2561, 2577, 2594, 2611,
++	2627, 2644, 2661, 2676, 2693, 2709, 2725, 2741,
++	2756, 2772, 2787, 2803, 2818, 2834, 2849, 2864,
++	2879, 2893, 2908, 2923, 2937, 2951, 2966, 2981,
++	2995, 3009, 3023, 3037, 3051, 3065, 3078, 3092,
++	3106, 3119, 3133, 3146, 3160, 3173, 3186, 3199,
++	3212, 3225, 3238, 3251, 3264, 3276, 3289, 3301,
++	3315, 3327, 3340, 3351, 3364, 3376, 3389, 3401,
++	3413
++};
++
+ static int icna3512_init_sequence(struct panel_info *pinfo)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 	struct drm_dsc_picture_parameter_set pps;
+-	u16 brightness = pinfo->backlight ? pinfo->backlight->props.brightness : 0;
++	u16 cached = pinfo->backlight ? pinfo->backlight->props.brightness : 0;
++	u16 brightness = drm_panel_bl_levels_map(&pinfo->bl_levels, cached);
+ 	u8 bl_payload[] = { 0x51, brightness >> 8, brightness & 0xff };
+ 
+ 	int cur_mode = icna35xx_get_current_mode(pinfo);
+@@ -160,7 +193,8 @@
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 	struct drm_dsc_picture_parameter_set pps;
+-	u16 brightness = pinfo->backlight ? pinfo->backlight->props.brightness : 0;
++	u16 cached = pinfo->backlight ? pinfo->backlight->props.brightness : 0;
++	u16 brightness = drm_panel_bl_levels_map(&pinfo->bl_levels, cached);
+ 	u8 bl_payload[] = { 0x51, brightness >> 8, brightness & 0xff };
+ 
+ 	int cur_mode = icna35xx_get_current_mode(pinfo);
+@@ -277,6 +311,9 @@
+ 	.format = MIPI_DSI_FMT_RGB888,
+ 	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+ 	.init_sequence = icna3512_init_sequence,
++	.bl_levels = icna35xx_bl_levels,
++	.num_bl_levels = ARRAY_SIZE(icna35xx_bl_levels),
++	.bl_num_interp = 32,
+ 	.dsc = {
+ 		.dsc_version_major = 0x1,
+ 		.dsc_version_minor = 0x1,
+@@ -299,6 +336,9 @@
+ 	.format = MIPI_DSI_FMT_RGB888,
+ 	.mode_flags =  MIPI_DSI_MODE_NO_EOT_PACKET | MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
+ 	.init_sequence = icna3520_init_sequence,
++	.bl_levels = icna35xx_bl_levels,
++	.num_bl_levels = ARRAY_SIZE(icna35xx_bl_levels),
++	.bl_num_interp = 32,
+ 	.dsc = {
+ 		.dsc_version_major = 0x1,
+ 		.dsc_version_minor = 0x1,
+@@ -445,7 +485,8 @@
+ {
+ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+ 	struct panel_info *pinfo = mipi_dsi_get_drvdata(dsi);
+-	u16 brightness = backlight_get_brightness(bl);
++	u16 brightness = drm_panel_bl_levels_map(&pinfo->bl_levels,
++						 backlight_get_brightness(bl));
+ 	int ret;
+ 
+ 	/*
+@@ -486,6 +527,7 @@
+ 		.type = BACKLIGHT_RAW,
+ 		.brightness = 4096,
+ 		.max_brightness = 4096,
++		.scale = BACKLIGHT_SCALE_LINEAR,
+ 	};
+ 
+ 	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+@@ -529,6 +571,13 @@
+ 
+ 	pinfo->panel.prepare_prev_first = true;
+ 
++	ret = drm_panel_bl_levels_init(&pinfo->bl_levels, dev,
++				       pinfo->desc->bl_levels,
++				       pinfo->desc->num_bl_levels,
++				       pinfo->desc->bl_num_interp, 4096);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to build backlight levels\n");
++
+     pinfo->backlight = icna35xx_create_backlight(dsi);
+ 	if (IS_ERR(pinfo->backlight))
+ 		return dev_err_probe(dev, PTR_ERR(pinfo->backlight),

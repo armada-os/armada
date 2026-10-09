@@ -1,0 +1,7 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+set -a
+eval "$(/usr/libexec/armada/device-env)"
+set +a
+exec /usr/bin/armada-rgb "$@"

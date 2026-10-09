@@ -1,0 +1,16 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocket-fit: use the dedicated sound card
+
+--- a/arch/arm64/boot/dts/qcom/sm8650-konkr-pf.dts
++++ b/arch/arm64/boot/dts/qcom/sm8650-konkr-pf.dts
+@@ -12,6 +12,10 @@
+ 	compatible = "konkr,pocket-fit", "qcom,sm8650";
+ };
+ 
++&{/sound} {
++	compatible = "konkr,pocket-fit-sndcard";
++};
++
+ &mdss_dsi0 {
+ 	status = "okay";
+ 	vdda-supply = <&vreg_l3i_1p2>;

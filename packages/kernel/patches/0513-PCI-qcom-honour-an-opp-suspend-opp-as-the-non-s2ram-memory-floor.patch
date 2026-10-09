@@ -1,0 +1,97 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] PCI: qcom: honour an opp-suspend OPP as the non-S2RAM memory floor
+
+On OPP platforms qcom_pcie_suspend_noirq() drops the OPP to NULL for
+non-S2RAM suspend, voting average/peak bandwidth of 0/0 on the PCIe
+memory path. These OPP votes are the PCIe controller's only DDR/LLCC
+contribution to the RPMh sleep set; with no PCIe memory-path sleep vote
+the SM8550 AOP never hands control back once the CPU cluster collapses
+in s2idle, and the device hard resets on wake.
+
+Select an OPP marked opp-suspend for non-S2RAM suspend, as modeled by
+the OPP core, and keep the drop to NULL when the DT defines no suspend
+OPP.
+
+Non-obvious choices:
+- Do not populate pcie->icc_mem as an alternative on OPP platforms:
+  qcom_pcie_icc_opp_update() takes the icc_mem branch when that handle
+  is present, bypassing OPP updates and pinning the memory-path vote at
+  its probe-time maximum.
+- The helper is guarded on pm_suspend_target_state so S2RAM still drops
+  the OPP entirely; its call sites run for every system-sleep target.
+- The suspend OPP is resolved with dev_pm_opp_get_suspend_opp_freq()
+  plus dev_pm_opp_find_freq_exact(); the synthetic opp-hz in the
+  companion DT keeps that frequency unique within the table.
+
+The root-cause analysis and the opp-suspend approach come from Luke
+Johnson's fix for this hardware in thorch
+(packages/linux-thorch/patches/0220-PCI-qcom-use-suspend-opp-for-non-s2ram.patch);
+this is an independent implementation for Linux 7.2.
+---
+--- a/drivers/pci/controller/dwc/pcie-qcom.c
++++ b/drivers/pci/controller/dwc/pcie-qcom.c
+@@ -2160,6 +2160,35 @@
+ 	return ret;
+ }
+ 
++/*
++ * Use the DT suspend OPP to retain the PCIe DDR/LLCC sleep-set votes
++ * during s2idle. Suspend-to-RAM tears the link down and keeps dropping
++ * the OPP.
++ */
++static int qcom_pcie_set_suspend_opp(struct qcom_pcie *pcie)
++{
++	struct device *dev = pcie->pci->dev;
++	struct dev_pm_opp *opp;
++	unsigned long freq;
++	int ret;
++
++	if (pm_suspend_target_state == PM_SUSPEND_MEM)
++		return dev_pm_opp_set_opp(dev, NULL);
++
++	freq = dev_pm_opp_get_suspend_opp_freq(dev);
++	if (!freq)
++		return dev_pm_opp_set_opp(dev, NULL);
++
++	opp = dev_pm_opp_find_freq_exact(dev, freq, true);
++	if (IS_ERR(opp))
++		return PTR_ERR(opp);
++
++	ret = dev_pm_opp_set_opp(dev, opp);
++	dev_pm_opp_put(opp);
++
++	return ret;
++}
++
+ static int qcom_pcie_suspend_noirq(struct device *dev)
+ {
+ 	struct qcom_pcie *pcie;
+@@ -2182,8 +2217,11 @@
+ 		if (ret)
+ 			dev_err(dev, "Failed to disable CPU-PCIe interconnect path: %d\n", ret);
+ 
+-		if (pcie->use_pm_opp)
+-			dev_pm_opp_set_opp(pcie->pci->dev, NULL);
++		if (pcie->use_pm_opp) {
++			ret = qcom_pcie_set_suspend_opp(pcie);
++			if (ret)
++				dev_err(dev, "Failed to set suspend OPP: %d\n", ret);
++		}
+ 	} else {
+ 		/*
+ 		 * Set minimum bandwidth required to keep data path
+@@ -2211,8 +2249,12 @@
+ 				dev_err(dev, "Failed to disable CPU-PCIe interconnect path: %d\n",
+ 					ret);
+ 
+-			if (pcie->use_pm_opp)
+-				dev_pm_opp_set_opp(pcie->pci->dev, NULL);
++			if (pcie->use_pm_opp) {
++				ret = qcom_pcie_set_suspend_opp(pcie);
++				if (ret)
++					dev_err(dev, "Failed to set suspend OPP: %d\n",
++						ret);
++			}
+ 		}
+ 	}
+ 	return ret;

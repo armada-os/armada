@@ -13,18 +13,75 @@ import {
   getControllerState,
   resetCalibration,
   saveCalibration,
+  startCalibrationRecording,
 } from "../backend";
-import { makeCapture, normalizedValue, triggerPercent, updateCapture } from "../lib/calibration";
-import type { CalibrationState, Capture } from "../types";
+import { normalizedValue, triggerPercent } from "../lib/calibration";
+import { t } from "../i18n";
+import type { CalibrationState, StickProgress, StickSide } from "../types";
 
 type Phase = "idle" | "recording";
 
-function StickPlot({ title, xName, yName, state }: { title: string; xName: string; yName: string; state: CalibrationState | null }) {
+const DONE_COLOR = "#59bf40";
+const MARKER_SIZE = 18;
+const MARKER_GUTTER = 24;
+const SIDE_POSITION: Record<StickSide, { left: string; top: string }> = {
+  left: { left: `${MARKER_GUTTER / 2}px`, top: "50%" },
+  right: { left: `calc(100% - ${MARKER_GUTTER / 2}px)`, top: "50%" },
+  up: { left: "50%", top: `${MARKER_GUTTER / 2}px` },
+  down: { left: "50%", top: `calc(100% - ${MARKER_GUTTER / 2}px)` },
+};
+
+const MARKER_RADIUS = MARKER_SIZE / 2 - 2;
+const MARKER_CIRCUMFERENCE = 2 * Math.PI * MARKER_RADIUS;
+
+function Marker({ progress, style }: { progress: number; style?: React.CSSProperties }) {
+  const done = progress >= 1;
+  const center = MARKER_SIZE / 2;
+  return (
+    <svg width={MARKER_SIZE} height={MARKER_SIZE} viewBox={`0 0 ${MARKER_SIZE} ${MARKER_SIZE}`} style={{ display: "block", flex: "none", ...style }}>
+      <circle
+        cx={center}
+        cy={center}
+        r={MARKER_RADIUS}
+        fill={done ? DONE_COLOR : "rgba(255,255,255,0.08)"}
+        stroke={done ? DONE_COLOR : "rgba(255,255,255,0.34)"}
+        strokeWidth={2}
+      />
+      {!done && (
+        <circle
+          cx={center}
+          cy={center}
+          r={MARKER_RADIUS}
+          fill="none"
+          stroke={DONE_COLOR}
+          strokeWidth={2}
+          strokeDasharray={MARKER_CIRCUMFERENCE}
+          strokeDashoffset={MARKER_CIRCUMFERENCE * (1 - progress)}
+          transform={`rotate(-90 ${center} ${center})`}
+          // Progress arrives in polled steps; a restarted hold must snap back, not glide.
+          style={{ transition: progress > 0 ? "stroke-dashoffset 90ms linear" : "none" }}
+        />
+      )}
+      {done && <path d="M5 9.4 L7.8 12.2 L13 6.6" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />}
+    </svg>
+  );
+}
+
+function StickPlot({ title, xName, yName, state, progress }: { title: string; xName: string; yName: string; state: CalibrationState | null; progress?: StickProgress }) {
   const x = normalizedValue(state, xName);
   const y = normalizedValue(state, yName);
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ marginBottom: "10px", fontSize: "15px", fontWeight: 600, opacity: 0.9 }}>{title}</div>
+      <div style={{ marginBottom: "4px", fontSize: "15px", fontWeight: 600, opacity: 0.9, textAlign: "center" }}>{title}</div>
+      <div style={{ position: "relative", padding: `${MARKER_GUTTER}px` }}>
+        {progress &&
+          (Object.keys(SIDE_POSITION) as StickSide[]).map((side) => (
+            <Marker
+              key={side}
+              progress={progress[side]}
+              style={{ position: "absolute", margin: `-${MARKER_SIZE / 2}px 0 0 -${MARKER_SIZE / 2}px`, ...SIDE_POSITION[side] }}
+            />
+          ))}
       <div
         style={{
           position: "relative",
@@ -51,20 +108,24 @@ function StickPlot({ title, xName, yName, state }: { title: string; xName: strin
           }}
         />
       </div>
+      </div>
     </div>
   );
 }
 
-function TriggerBar({ title, name, state }: { title: string; name: string; state: CalibrationState | null }) {
+function TriggerBar({ title, name, state, progress }: { title: string; name: string; state: CalibrationState | null; progress?: number }) {
   return (
-    <div>
-      <div style={{ marginBottom: "10px", fontSize: "15px", fontWeight: 600, opacity: 0.9 }}>{title}</div>
+    <div style={{ padding: `0 ${MARKER_GUTTER}px` }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px", fontSize: "15px", fontWeight: 600, opacity: 0.9 }}>
+        {title}
+        {progress !== undefined && <Marker progress={progress} />}
+      </div>
       <ProgressBar nProgress={triggerPercent(state, name)} nTransitionSec={0} />
     </div>
   );
 }
 
-const gridTwoCol = { display: "grid", gridTemplateColumns: "repeat(2, 132px)", gap: "22px", justifyContent: "center", width: "100%" } as const;
+const gridTwoCol = { display: "grid", gridTemplateColumns: `repeat(2, ${132 + 2 * MARKER_GUTTER}px)`, justifyContent: "center", width: "100%" } as const;
 
 // Modal input capture leaves gamepad focus frozen on the last-touched button.
 const focusStyles = `
@@ -82,15 +143,13 @@ const focusStyles = `
 
 function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
   const [state, setState] = useState<CalibrationState | null>(null);
-  const [capture, setCapture] = useState<Capture | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const sessionToken = useRef(`${Date.now()}-${Math.random()}`);
-  const phaseRef = useRef<Phase>("idle");
+  const [busy, setBusy] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const busyRef = useRef(false);
   const canApply = !!state?.canApply;
-  useEffect(() => {
-    phaseRef.current = phase;
-  }, [phase]);
-
+  const progress = phase === "recording" ? state?.progress : undefined;
   useEffect(() => {
     let cancelled = false;
     let inflight = false;
@@ -101,9 +160,6 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
         const next = await getControllerState();
         if (cancelled) return;
         setState(next);
-        if (phaseRef.current === "recording" && next.supported) {
-          setCapture((current) => updateCapture(current || makeCapture(next), next));
-        }
       } catch (error) {
         if (!cancelled) setState({ supported: false, reason: String(error), controls: {} } as CalibrationState);
       } finally {
@@ -128,52 +184,73 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
     };
   }, []);
 
-  const close = () => {
-    closeModal?.();
-  };
-  const start = () => {
-    setCapture(null);
-    setPhase("recording");
-  };
-  const save = async () => {
-    if (!capture) return;
+  // Save, reset and close each finish before another can start, so Close always sees a saved change.
+  const exclusive = async (work: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
     try {
-      const next = await saveCalibration(capture);
-      setState(next);
-      setCapture(null);
-      setPhase("idle");
-    } catch (error) {
-      setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
-      setPhase("idle");
+      await work();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
     }
   };
-  const reset = async () => {
-    try {
-      const next = await resetCalibration();
-      setState(next);
-    } catch (error) {
-      setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
-    }
-  };
+  const close = () =>
+    exclusive(async () => {
+      // Ending the session restarts InputPlumber after a change; stay open until the controller is back.
+      setClosing(true);
+      await endCalibrationSession(sessionToken.current).catch(() => {});
+      closeModal?.();
+    });
+  const start = () =>
+    exclusive(async () => {
+      try {
+        setState(await startCalibrationRecording());
+        setPhase("recording");
+      } catch (error) {
+        setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
+      }
+    });
+  const save = () =>
+    exclusive(async () => {
+      try {
+        const next = await saveCalibration();
+        setState(next);
+        setPhase("idle");
+      } catch (error) {
+        setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
+        setPhase("idle");
+      }
+    });
+  const reset = () =>
+    exclusive(async () => {
+      try {
+        const next = await resetCalibration();
+        setState(next);
+      } catch (error) {
+        setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
+      }
+    });
 
   const instructions = !state
-    ? "Checking controller..."
+    ? t("calibration.checking")
     : !canApply
-      ? "This device can't save calibration, but you can check stick and trigger response here."
+      ? t("calibration.readOnlyDescription")
       : phase === "recording"
-        ? "Move both sticks in full circles and fully press both triggers, then Save."
-        : "Press Start, then move sticks and triggers through full range.";
+        ? t("calibration.captureDescription")
+        : t("calibration.startDescription");
 
   return (
     <ModalRoot onCancel={close}>
       <DialogBody>
-        <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "22px" }}>
-          <StickPlot title="Left Stick" xName="left_x" yName="left_y" state={state} />
-          <StickPlot title="Right Stick" xName="right_x" yName="right_y" state={state} />
+        <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "10px" }}>
+          <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state} progress={progress?.left_stick} />
+          <StickPlot title={t("calibration.rightStick")} xName="right_x" yName="right_y" state={state} progress={progress?.right_stick} />
         </div>
         <div style={{ ...gridTwoCol, marginBottom: "16px" }}>
-          <TriggerBar title="LT" name="left_trigger" state={state} />
-          <TriggerBar title="RT" name="right_trigger" state={state} />
+          <TriggerBar title="LT" name="left_trigger" state={state} progress={progress?.left_trigger} />
+          <TriggerBar title="RT" name="right_trigger" state={state} progress={progress?.right_trigger} />
         </div>
         <div style={{ fontSize: "13px", lineHeight: "18px", opacity: 0.72, textAlign: "center" }}>{instructions}</div>
       </DialogBody>
@@ -181,18 +258,22 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
         <style>{focusStyles}</style>
         {!canApply ? (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={close}>Close</DialogButton>
+            <DialogButton onClick={close}>{t("common.close")}</DialogButton>
           </div>
         ) : phase === "recording" ? (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={save} disabled={!capture}>Save Calibration</DialogButton>
-            <DialogButton onClick={close}>Close</DialogButton>
+            <DialogButton onClick={save} disabled={!progress?.ready || busy}>{t("calibration.save")}</DialogButton>
+            <DialogButton onClick={close} disabled={busy}>
+              {closing ? t("calibration.applying") : t("common.close")}
+            </DialogButton>
           </div>
         ) : (
           <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={start}>Start Calibration</DialogButton>
-            <DialogButton onClick={reset}>Reset to Defaults</DialogButton>
-            <DialogButton onClick={close}>Close</DialogButton>
+            <DialogButton onClick={start} disabled={busy}>{t("calibration.start")}</DialogButton>
+            <DialogButton onClick={reset} disabled={busy}>{t("calibration.resetDefaults")}</DialogButton>
+            <DialogButton onClick={close} disabled={busy}>
+              {closing ? t("calibration.applying") : t("common.close")}
+            </DialogButton>
           </div>
         )}
       </DialogFooter>

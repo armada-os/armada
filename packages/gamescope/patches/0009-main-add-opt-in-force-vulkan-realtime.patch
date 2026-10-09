@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 6 Aug 2026 09:49:20 -0400
+Subject: [PATCH] main: add opt-in --force-vulkan-realtime
+
+Add --force-vulkan-realtime and GAMESCOPE_FORCE_VULKAN_REALTIME to enter
+the same realtime Vulkan queue path normally gated by CAP_SYS_NICE. Keep
+the default behavior and existing fallbacks unchanged.
+---
+ src/main.cpp         |  5 +++++
+ src/rendervulkan.cpp | 12 ++++++++----
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/src/main.cpp b/src/main.cpp
+index aefedb3f..b998019d 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -55,6 +55,7 @@ const char *g_pOriginalWaylandDisplay = nullptr;
+ 
+ bool g_bAllowDeferredBackend = false;
+ bool g_bExposeClientSampleableFormats = false;
++bool g_bForceVulkanRealtime = false;
+ 
+ int g_nCursorScaleHeight = -1;
+ 
+@@ -167,6 +168,7 @@ const struct option *gamescope_options = (struct option[]){
+ 
+ 	{ "allow-deferred-backend", no_argument, nullptr, 0 },
+ 	{ "expose-client-sampleable-formats", no_argument, nullptr, 0 },
++	{ "force-vulkan-realtime", no_argument, nullptr, 0 },
+ 	{ "keep-alive", no_argument, nullptr, 0 },
+ 
+ 	{} // keep last
+@@ -295,6 +297,7 @@ const char usage[] =
+ 	"  --allow-deferred-backend       Allows initting the backend in a deferred way, if it doesn't work immediately. (Note: This has some very minor correctness compromises that you should consider wrt. your platform with modifiers, etc).\n"
+ 	"  --expose-client-sampleable-formats\n"
+ 	"                                 Advertise Vulkan-sampleable client DMA-BUF formats even when the output backend cannot scan them out directly.\n"
++	"  --force-vulkan-realtime        Request realtime-priority Vulkan queues without CAP_SYS_NICE.\n"
+ 	"  --keep-alive                   Keep Gamescope alive even when the primary process has died.\n"
+ 	"\n"
+ 	"Keyboard shortcuts:\n"
+@@ -950,6 +953,8 @@ int main(int argc, char **argv)
+ 					g_bAllowDeferredBackend = true;
+ 				} else if (strcmp(opt_name, "expose-client-sampleable-formats") == 0) {
+ 					g_bExposeClientSampleableFormats = true;
++				} else if (strcmp(opt_name, "force-vulkan-realtime") == 0) {
++					g_bForceVulkanRealtime = true;
+ 				} else if (strcmp(opt_name, "keep-alive") == 0) {
+ 					cv_shutdown_on_primary_child_death = false;
+ 				} else if (strcmp(opt_name, "lease-connector") == 0) {
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 04d78da7..eb23af25 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -58,6 +58,7 @@
+ extern bool g_bWasPartialComposite;
+ extern bool g_bAllowDeferredBackend;
+ extern bool g_bExposeClientSampleableFormats;
++extern bool g_bForceVulkanRealtime;
+ 
+ static constexpr mat3x4 g_rgb2yuv_srgb_to_bt601_limited = {{
+   { 0.257f, 0.504f, 0.098f, 0.0625f },
+@@ -529,6 +530,9 @@ bool CVulkanDevice::createDevice()
+ 	}
+ 
+ 	float queuePriorities = 1.0f;
++	const bool useRealtimeVulkanQueue = gamescope::Process::HasCapSysNice() || g_bForceVulkanRealtime || env_to_bool( getenv( "GAMESCOPE_FORCE_VULKAN_REALTIME" ) );
++	if ( useRealtimeVulkanQueue )
++		vk_log.infof( "requesting realtime-priority Vulkan queues" );
+ 
+ 	VkDeviceQueueGlobalPriorityCreateInfoEXT queueCreateInfoEXT = {
+ 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO_EXT,
+@@ -540,14 +544,14 @@ bool CVulkanDevice::createDevice()
+ 	{
+ 		{
+ 			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+-			.pNext = gamescope::Process::HasCapSysNice() ? &queueCreateInfoEXT : nullptr,
++			.pNext = useRealtimeVulkanQueue ? &queueCreateInfoEXT : nullptr,
+ 			.queueFamilyIndex = m_queueFamily,
+ 			.queueCount = 1,
+ 			.pQueuePriorities = &queuePriorities
+ 		},
+ 		{
+ 			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+-			.pNext = gamescope::Process::HasCapSysNice() ? &queueCreateInfoEXT : nullptr,
++			.pNext = useRealtimeVulkanQueue ? &queueCreateInfoEXT : nullptr,
+ 			.queueFamilyIndex = m_generalQueueFamily,
+ 			.queueCount = 1,
+ 			.pQueuePriorities = &queuePriorities
+@@ -673,14 +677,14 @@ bool CVulkanDevice::createDevice()
+ 	};
+ 
+ 	VkResult res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
+-	if ( res == VK_ERROR_NOT_PERMITTED_KHR && gamescope::Process::HasCapSysNice() )
++	if ( res == VK_ERROR_NOT_PERMITTED_KHR && useRealtimeVulkanQueue )
+ 	{
+ 		fprintf(stderr, "vkCreateDevice failed with a high-priority queue (general + compute). Falling back to regular priority (general).\n");
+ 		queueCreateInfos[1].pNext = nullptr;
+ 		res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
+ 
+ 
+-		if ( res == VK_ERROR_NOT_PERMITTED_KHR && gamescope::Process::HasCapSysNice() )
++		if ( res == VK_ERROR_NOT_PERMITTED_KHR && useRealtimeVulkanQueue )
+ 		{
+ 			fprintf(stderr, "vkCreateDevice failed with a high-priority queue (compute). Falling back to regular priority (all).\n");
+ 			queueCreateInfos[0].pNext = nullptr;

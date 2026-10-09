@@ -1,0 +1,30 @@
+From 485238c7e123d63913e74aedbd9cfb8972f0328e Mon Sep 17 00:00:00 2001
+From: JPyke3 <github@pyk.ee>
+Date: Mon, 17 Aug 2026 07:45:07 +1000
+Subject: [PATCH 2/2] Input: goodix: allow overriding the input device name
+
+Read the optional label property into the input device name. This lets
+userspace distinguish touchscreens on dual-screen devices without relying
+on a generic driver name.
+
+Signed-off-by: JPyke3 <github@pyk.ee>
+---
+ drivers/input/touchscreen/goodix.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/input/touchscreen/goodix.c b/drivers/input/touchscreen/goodix.c
+index f17b8c3..1278907 100644
+--- a/drivers/input/touchscreen/goodix.c
++++ b/drivers/input/touchscreen/goodix.c
+@@ -1172,6 +1172,8 @@ static int goodix_configure_dev(struct goodix_ts_data *ts)
+ 	}
+ 
+ 	ts->input_dev->name = "Goodix Capacitive TouchScreen";
++	device_property_read_string(&ts->client->dev, "label",
++				    &ts->input_dev->name);
+ 	ts->input_dev->phys = "input/ts";
+ 	ts->input_dev->id.bustype = BUS_I2C;
+ 	ts->input_dev->id.vendor = 0x0416;
+-- 
+2.55.0
+

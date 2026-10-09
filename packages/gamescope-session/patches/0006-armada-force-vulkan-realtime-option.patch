@@ -1,0 +1,30 @@
+From ecc948c47e11857d2444b5be787fd6c1400ae1bf Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Fri, 14 Aug 2026 18:36:50 +0200
+Subject: [PATCH] add force vulkan realtime option
+
+---
+ usr/share/gamescope-session-plus/gamescope-session-plus | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/usr/share/gamescope-session-plus/gamescope-session-plus b/usr/share/gamescope-session-plus/gamescope-session-plus
+index 41843df..9b06fef 100755
+--- a/usr/share/gamescope-session-plus/gamescope-session-plus
++++ b/usr/share/gamescope-session-plus/gamescope-session-plus
+@@ -259,6 +259,13 @@ if [ -z "$GAMESCOPECMD" ]; then
+		export GAMESCOPE_EXPOSE_CLIENT_SAMPLEABLE_FORMATS=1
+	fi
+ 
++	# Gamescope selects Vulkan queue priority before the runtime performance daemon starts.
++	_armada_tweaks_config="${ARMADA_TWEAKS_CONFIG:-/etc/armada/game-tweaks.json}"
++	if jq -e '.global.gamescopeVulkanRealtime == true' "$_armada_tweaks_config" >/dev/null 2>&1; then
++		export GAMESCOPE_FORCE_VULKAN_REALTIME=1
++	fi
++	unset _armada_tweaks_config
++
+ 	GAMESCOPECMD="$(get_gamescope_binary) \
+ 		$CURSOR \
+ 		$RESOLUTION \
+-- 
+2.55.0
+

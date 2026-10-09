@@ -1,0 +1,41 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] mangoapp: keep a lease client off the shared queue
+
+Every gamescope opens the mangoapp queue with ftok("mangoapp", 65), a
+relative path that normally does not exist, so all of them share key -1.
+A --drm-lease-client gamescope driving a companion panel then fed its
+frame stats and focused pid into the main session's mangoapp, which
+reported the wrong app and, for a non-dumpable one, aborted reading its
+fdinfo.
+
+A lease client never runs a mangoapp, so it no longer opens the queue.
+The id starts at -1 instead of 0, a valid queue id, so every send and
+receive in that instance fails harmlessly.
+---
+diff --git a/src/mangoapp.cpp b/src/mangoapp.cpp
+index e7c7ede5..32a67ee1 100644
+--- a/src/mangoapp.cpp
++++ b/src/mangoapp.cpp
+@@ -15,7 +15,7 @@
+ #include "main.hpp"
+ 
+ static bool inited = false;
+-static int msgid = 0;
++static int msgid = -1;
+ static std::mutex s_SnapshotMutex;
+ static std::unordered_map<uint32_t, MangoappSnapshot_t> s_ConnectorSnapshots;
+ extern bool g_bAppWantsHDRCached;
+@@ -48,8 +48,11 @@ struct mangoapp_msg_v1 {
+ } __attribute__((packed));
+ 
+ void init_mangoapp(){
+-    int key = ftok("mangoapp", 65);
+-    msgid = msgget(key, 0666 | IPC_CREAT);
++    // A lease client must not feed the session's shared mangoapp queue
++    if (!g_sDrmLeaseClientSocket) {
++        int key = ftok("mangoapp", 65);
++        msgid = msgget(key, 0666 | IPC_CREAT);
++    }
+     inited = true;
+ }
+ 

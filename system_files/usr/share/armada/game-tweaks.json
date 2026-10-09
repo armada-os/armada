@@ -4,7 +4,6 @@
     "fexProfile": "default",
     "gamescopeCores": null,
     "gamescopeNice": -20,
-    "gamescopeRr": false,
     "gamescopeVulkanRealtime": true,
     "nice": 0,
     "scheduler": null,

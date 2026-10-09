@@ -1,0 +1,236 @@
+diff --git a/src/usbstring.c b/src/usbstring.c
+index 6df3b26..4ee8b3a 100644
+--- a/src/usbstring.c
++++ b/src/usbstring.c
+@@ -209,6 +209,8 @@ int unicode2charstring(char * str, uint16_t * unicodestr, int maxstrsize)
+ 	int chunksize;
+ 	char tmpstr[8];
+ 	unsigned char * byte_access;
++	uint32_t codepoint;
++	uint16_t first, second;
+ 
+ 	// Use bytes accesses instead of half word accesses to support unaligned addresses on pre ARMv7 CPUs.
+ 	byte_access = (unsigned char *)unicodestr;
+@@ -217,8 +219,30 @@ int unicode2charstring(char * str, uint16_t * unicodestr, int maxstrsize)
+ 	i = 0;
+ 	while( byte_access[0] || byte_access[1] )
+ 	{
+-		chunksize = utf8_encode( (char*)&tmpstr, ( ((uint16_t)byte_access[1]) << 8 ) | byte_access[0] );
++		first = (((uint16_t)byte_access[1]) << 8) | byte_access[0];
+ 		byte_access += 2;
++		codepoint = first;
++
++		if (first >= 0xD800 && first <= 0xDBFF)
++		{
++			second = (((uint16_t)byte_access[1]) << 8) | byte_access[0];
++			if (second >= 0xDC00 && second <= 0xDFFF)
++			{
++				codepoint = 0x10000 + (((uint32_t)first - 0xD800) << 10) +
++					    ((uint32_t)second - 0xDC00);
++				byte_access += 2;
++			}
++			else
++			{
++				codepoint = '?';
++			}
++		}
++		else if (first >= 0xDC00 && first <= 0xDFFF)
++		{
++			codepoint = '?';
++		}
++
++		chunksize = utf8_encode((char *)&tmpstr, codepoint);
+ 
+ 		if(!chunksize)
+ 		{   // Error -> default character
+@@ -249,115 +273,98 @@ int unicode2charstring(char * str, uint16_t * unicodestr, int maxstrsize)
+ 	return ret;
+ }
+ 
+-static int utf8_size(char c)
++static uint32_t utf8_decode(const unsigned char *input, int *ofs)
+ {
+-	int count = 0;
++	uint32_t codepoint;
++	int size;
+ 
+-	while (c & 0x80)
++	*ofs = 0;
++	if (input[0] < 0x80)
+ 	{
+-		c = c << 1;
+-		count++;
++		*ofs = 1;
++		return input[0];
+ 	}
+ 
+-	if(!count)
+-		count = 1;
+-
+-	return count;
+-}
+-
+-uint16_t utf2unicode(const unsigned char* pInput, int * ofs)
+-{
+-	uint8_t b1, b2, b3;
+-	int utfsize;
+-	uint16_t unicode_out;
+-
+-	*ofs = 0;
+-
+-	utfsize = utf8_size(*pInput);
+-
+-	switch ( utfsize )
++	if ((input[0] & 0xE0) == 0xC0)
+ 	{
+-		case 1:
+-			unicode_out = *pInput;
+-			*ofs = 1;
+-			return unicode_out;
+-		break;
+-
+-		case 2:
+-			b1 = *pInput++;
+-			b2 = *pInput++;
+-
+-			if ( (b2 & 0xC0) != 0x80 )
+-				return 0x0000;
+-
+-			unicode_out =  ( ( (b1 & 0x1F) << 6 ) | (b2 & 0x3F) ) & 0xFF;
+-			unicode_out |= (uint16_t)((b1 & 0x1F) >> 2) << 8;
+-			*ofs = 2;
+-			return unicode_out;
+-		break;
+-
+-		case 3:
+-			b1 = *pInput++;
+-			b2 = *pInput++;
+-			b3 = *pInput++;
+-
+-			if ( ((b2 & 0xC0) != 0x80) || ((b3 & 0xC0) != 0x80) )
+-				return 0x0000;
+-
+-			unicode_out =    (uint16_t)( ((b2 & 0x3F) << 6) |  (b3 & 0x3F) ) & 0x00FF;
+-			unicode_out |=   (uint16_t)( ((b1 &  0xF) << 4) | ((b2 & 0x3F) >> 2 ) ) << 8;
+-
+-			*ofs = 3;
+-
+-			return unicode_out;
+-		break;
+-
+-		default:
+-			*ofs = 0;
++		size = 2;
++		codepoint = input[0] & 0x1F;
++	}
++	else if ((input[0] & 0xF0) == 0xE0)
++	{
++		size = 3;
++		codepoint = input[0] & 0x0F;
++	}
++	else if ((input[0] & 0xF8) == 0xF0)
++	{
++		size = 4;
++		codepoint = input[0] & 0x07;
++	}
++	else
++	{
++		return 0;
++	}
+ 
+-			return 0x0000;
+-		break;
++	for (int i = 1; i < size; i++)
++	{
++		if ((input[i] & 0xC0) != 0x80)
++			return 0;
++		codepoint = (codepoint << 6) | (input[i] & 0x3F);
+ 	}
+ 
+-	return 0x0000;
++	if ((size == 2 && codepoint < 0x80) ||
++	    (size == 3 && codepoint < 0x800) ||
++	    (size == 4 && codepoint < 0x10000) ||
++	    (codepoint >= 0xD800 && codepoint <= 0xDFFF) ||
++	    codepoint > 0x10FFFF)
++		return 0;
++
++	*ofs = size;
++	return codepoint;
+ }
+ 
+ int char2unicodestring(char * unicodestr, int index, int maxsize, char * str, int unicodestrsize)
+ {
+-	uint16_t unicode;
+-	int ofs, len, start;
+-	int unicode_size;
+-
+-	start = index;
+-	len = 0;
+-	ofs = 0;
+-	unicode_size = 0;
+-	do
+-	{
+-		unicode = utf2unicode((unsigned char*)str, &ofs);
+-		str = str + ofs;
+-
+-		if(index + 2 >= maxsize)
+-			return -1;
+-
+-		unicodestr[index++] = unicode & 0xFF;
+-		unicodestr[index++] = (unicode >> 8) & 0xFF;
+-
+-		unicode_size += 2;
+-
+-		len++;
+-	} while(unicode && ofs && unicode_size < unicodestrsize*2 && unicode_size < 255 * 2 );
++	uint32_t codepoint;
++	uint16_t unit;
++	int ofs, units = 0;
+ 
+-	if( unicode_size >= 255 * 2 )
++	while (*str && units < unicodestrsize - 1 && units < 254)
+ 	{
+-		if(start + ((unicodestrsize*2)-2) >= maxsize)
++		codepoint = utf8_decode((unsigned char *)str, &ofs);
++		if (!ofs)
+ 			return -1;
++		str += ofs;
+ 
+-		unicodestr[start + ((255*2)-2)] = 0x00;
+-		unicodestr[start + ((255*2)-1)] = 0x00;
+-
+-		len = 255;
++		if (codepoint > 0xFFFF)
++		{
++			if (units + 2 >= unicodestrsize || units + 2 >= 255 ||
++			    index + 4 >= maxsize)
++				break;
++			codepoint -= 0x10000;
++			unit = 0xD800 | (codepoint >> 10);
++			unicodestr[index++] = unit & 0xFF;
++			unicodestr[index++] = unit >> 8;
++			unit = 0xDC00 | (codepoint & 0x3FF);
++			unicodestr[index++] = unit & 0xFF;
++			unicodestr[index++] = unit >> 8;
++			units += 2;
++		}
++		else
++		{
++			if (index + 2 >= maxsize)
++				return -1;
++			unit = codepoint;
++			unicodestr[index++] = unit & 0xFF;
++			unicodestr[index++] = unit >> 8;
++			units++;
++		}
+ 	}
+ 
+-	return len;
++	if (index + 2 > maxsize)
++		return -1;
++	unicodestr[index++] = 0;
++	unicodestr[index] = 0;
++
++	return units + 1;
+ }

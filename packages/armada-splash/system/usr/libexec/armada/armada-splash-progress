@@ -1,0 +1,34 @@
+#!/usr/bin/bash
+# Write one status line to the shared splash status file, atomically so a
+# reader never sees a half-written line. --error renders red.
+set -u
+
+STATUS="${ARMADA_SPLASH_STATUS:-/run/armada/splash/status}"
+
+# Root prepares the dirs (this can run before tmpfiles) and drops to the
+# armada user; a root writer in a user-owned dir is open to symlink swaps.
+if [[ $EUID -eq 0 ]]; then
+    install -d -m 0755 /run/armada
+    install -d -m 0755 -o armada -g armada "$(dirname "$STATUS")" 2>/dev/null || exit 0
+    id -u armada >/dev/null 2>&1 && command -v setpriv >/dev/null || exit 0
+    exec setpriv --reuid armada --regid armada --init-groups "$0" "$@"
+fi
+prefix=""
+if [[ "${1:-}" == "--error" ]]; then prefix='!'; shift; fi
+msg="${*:-}"
+
+# Every state change flows through here; journal it with its writer so any
+# boot's splash timeline is one `journalctl -t armada-splash` away.
+logger -t armada-splash -- "[$(ps -o comm= -p $PPID 2>/dev/null || echo '?')] ${prefix}${msg}" 2>/dev/null || true
+
+dir="$(dirname "$STATUS")"
+[[ -d "$dir" ]] || mkdir -p "$dir" 2>/dev/null || true
+
+tmp="$(mktemp "${dir}/.status.XXXXXX" 2>/dev/null)" || tmp=""
+if [[ -n "$tmp" ]]; then
+    printf '%s%s\n' "$prefix" "$msg" > "$tmp"
+    chmod 0644 "$tmp" 2>/dev/null    # 0644 so it stays readable across the root->user handoff
+    mv -f "$tmp" "$STATUS" 2>/dev/null || { rm -f "$tmp"; printf '%s%s\n' "$prefix" "$msg" > "$STATUS"; }
+else
+    printf '%s%s\n' "$prefix" "$msg" > "$STATUS" 2>/dev/null || true
+fi

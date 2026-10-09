@@ -1,0 +1,134 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 driver, fix PCIe WAKE# polarity, codec rail sleep modes
+
+--- a/arch/arm64/boot/dts/qcom/sm8650-ayaneo-common.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8650-ayaneo-common.dtsi
+@@ -121,6 +121,22 @@
+ 		pinctrl-names = "default";
+ 	};
+ 
++	sy7758_vdd33_reg: sy7758-vdd33-regulator {
++		compatible = "regulator-fixed";
++
++		regulator-name = "sy7758_vdd33";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++
++		gpios = <&tlmm 163 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++
++		vin-supply = <&vph_pwr>;
++
++		pinctrl-0 = <&sy7758_vdd33>;
++		pinctrl-names = "default";
++	};
++
+ 	gpio-keys {
+ 		compatible = "gpio-keys";
+ 
+@@ -133,7 +149,6 @@
+ 			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
+ 			debounce-interval = <15>;
+ 			linux,can-disable;
+-			wakeup-source;
+ 		};
+ 	};
+ 
+@@ -1019,9 +1034,7 @@
+ 		regulator-min-microvolt = <5000000>;
+ 		regulator-max-microvolt = <5000000>;
+ 		reset-gpios = <&tlmm 59 GPIO_ACTIVE_HIGH>,
+-					<&tlmm 58 GPIO_ACTIVE_HIGH>,
+-					<&tlmm 163 GPIO_ACTIVE_HIGH>,
+-					<&tlmm 164 GPIO_ACTIVE_HIGH>;
++					<&tlmm 58 GPIO_ACTIVE_HIGH>;
+ 		status = "okay";
+ 	};
+ 
+@@ -1029,6 +1042,13 @@
+ 	sy7758_bl: sy7758@2e {
+ 		reg = <0x2e>;
+ 		compatible = "silergy,sy7758";
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&sy7758_default>;
++
++		vdd-supply = <&sy7758_vdd33_reg>;
++		enable-gpios = <&tlmm 164 GPIO_ACTIVE_HIGH>;
++
+ 		status = "okay";
+ 	};
+ };
+@@ -1093,7 +1113,7 @@
+ };
+ 
+ &pcieport0 {
+-	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
+ 
+ 	wifi@0 {
+@@ -1127,7 +1147,7 @@
+ };
+ 
+ &pcie1_port0 {
+-	wake-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 99 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
+ 
+ 	/* Renesas μPD720201 PCIe USB3.0 HOST CONTROLLER */
+@@ -1452,13 +1472,27 @@
+ 	};
+ 
+ 	panel_pwr_active: panel-pwr-active-state {
+-		pins = "gpio58", "gpio59", "gpio164", "gpio163";
++		pins = "gpio58", "gpio59";
+ 		function = "gpio";
+ 		drive-strength = <8>;
+ 		bias-pull-up;
+ 		output-high;
+ 	};
+ 
++	sy7758_default: sy7758-default-state {
++		pins = "gpio164";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	sy7758_vdd33: sy7758-vdd33-state {
++		pins = "gpio163";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
+ 	disp0_reset_n_active: disp0-reset-n-active-state {
+ 		pins = "gpio133";
+ 		function = "gpio";
+@@ -1659,3 +1693,25 @@
+ &xo_board {
+ 	clock-frequency = <76800000>;
+ };
++
++/* The codec keeps these rails enabled through s2idle; idle them in LPM */
++&vreg_l15b_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_bob1 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_l3c_1p2 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};

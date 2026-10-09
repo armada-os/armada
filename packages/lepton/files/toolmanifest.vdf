@@ -1,0 +1,7 @@
+"manifest"
+{
+	"commandline" "/lepton %verb% --"
+	"version" "2"
+	"use_tool_subprocess_reaper" "1"
+	"compatmanager_layer_name" "lepton"
+}

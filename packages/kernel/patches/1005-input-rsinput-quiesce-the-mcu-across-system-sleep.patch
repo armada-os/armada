@@ -1,0 +1,45 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: rsinput: quiesce the MCU across system sleep
+
+The MCU streams input reports continuously and is told nothing at
+suspend. Reports arriving while the GENI UART is suspending cause its
+IRQ handler to return IRQ_NONE repeatedly, after which spurious-IRQ
+detection disables the UART IRQ:
+
+    irq 188: nobody cared (try booting with the "irqpoll" option)
+    Disabling IRQ #188
+
+Resume then reinitializes the MCU, but the RX path stays dead and the
+controller is unusable until reboot. Whether the race fires depends on
+MCU transmit timing, so the failure is intermittent.
+
+Quiesce the MCU before the port suspends by dropping its enable and
+reset lines, mirroring rsinput_remove(). rsinput_resume() already
+performs the full power-on and re-initialisation through
+rsinput_init_commands().
+
+Based on Luke Johnson's rsinput suspend patch, carried in pocknix as
+kernel/sm8550/patches/20-sm8550/1004-input-rsinput-suspend-resume-gamepad-mcu.patch.
+
+Originally-by: Luke Johnson <jaewun@me.com>
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -692,6 +692,17 @@
+     if (drv->rumble_work.func)
+         cancel_work_sync(&drv->rumble_work);
+ 
++    /*
++     * Stop continuous MCU reports before the UART suspends; otherwise the
++     * UART IRQ can be disabled as spurious. rsinput_resume() powers the
++     * MCU back on through rsinput_init_commands().
++     */
++    if (drv->enable_gpio)
++        gpiod_set_value_cansleep(drv->enable_gpio, 0);
++
++    if (drv->reset_gpio)
++        gpiod_set_value_cansleep(drv->reset_gpio, 0);
++
+     return 0;
+ }
+ 

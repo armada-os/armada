@@ -38,7 +38,8 @@ grep -Fq 'action = "start" if enabled else "stop"' "$CONTROL"
 ! grep -Fq 'action, "--now", "armada-mtp.service"' "$CONTROL"
 # Defense in depth if the unit becomes enableable again.
 grep -Fq 'systemctl disable armada-mtp.service' "$ROOT/build_files/40-vendor-system-files.sh"
-grep -Fq 'umtp-responder@sha256:' "$ROOT/Containerfile"
+grep -Fq 'FROM ${UMTP_RESPONDER_REF} AS umtp-responder' "$ROOT/Containerfile"
+grep -Fq 'FROM scratch AS out-umtp-responder' "$ROOT/packages/Containerfile"
 
 (
     source "$STORAGE_LIB"

@@ -1,0 +1,281 @@
+--- a/usr/lib/hwsupport/block-device-event.sh	2024-06-24 21:24:02.000000000 -0400
++++ b/usr/lib/hwsupport/block-device-event.sh	2026-07-03 12:59:09.442931427 -0400
+@@ -16,6 +16,7 @@
+ 
+ ACTION=$1
+ DEVBASE=$2
++DEVICE="/dev/${DEVBASE}"
+ 
+ # Shared between this and format-device.sh to ensure we're not
+ # double-triggering nor automounting while formatting or vice-versa.
+@@ -50,7 +51,7 @@
+         detected_us=$(make_dbus_udisks_call get-property data t "${drive}" Drive TimeMediaDetected)
+         # The 5 seconds window is taken from the original GNOME fix that inspired this one
+         # https://gitlab.gnome.org/GNOME/gvfs/-/commit/b4800b987b4a8423a52306c9aef35b3777464cc5
+-        if (( detected_us / 1000000 + 5 < current_time )); then
++        if (( detected_us / 1000000 + 30 < current_time )); then
+             echo "Skipping mounting /dev/${DEVBASE} because it has not been inserted recently" >&2
+             exit 0
+         fi
+--- a/usr/lib/hwsupport/common-functions	2024-06-24 21:24:02.000000000 -0400
++++ b/usr/lib/hwsupport/common-functions	2026-07-03 12:59:09.443041405 -0400
+@@ -52,3 +52,124 @@
+         return 1
+     fi
+ }
++
++armada_device_disk()
++{
++    local dev="$1"
++    local real
++    local name
++    local parent
++
++    real=$(readlink -f "${dev}" 2>/dev/null) || return 1
++    while read -r name parent; do
++        [[ "${name}" == "${real}" ]] || continue
++        if [[ -n "${parent}" ]]; then
++            basename "${parent}"
++        else
++            basename "${real}"
++        fi
++        return 0
++    done < <(lsblk -nrpo NAME,PKNAME 2>/dev/null)
++
++    parent=$(lsblk -no PKNAME "${real}" 2>/dev/null | head -n1 || true)
++    if [[ -n "${parent}" ]]; then
++        basename "${parent}"
++    else
++        basename "${real}"
++    fi
++}
++
++armada_disk_from_majmin()
++{
++    local majmin="$1"
++    local name
++    local current
++    local parent
++
++    while read -r name current parent; do
++        [[ "${current}" == "${majmin}" ]] || continue
++        if [[ -n "${parent}" ]]; then
++            basename "${parent}"
++        else
++            basename "${name}"
++        fi
++        return 0
++    done < <(lsblk -nrpo NAME,MAJ:MIN,PKNAME 2>/dev/null)
++
++    return 1
++}
++
++armada_mount_source_disk()
++{
++    local target="$1"
++    local source
++    local majmin
++
++    source=$(findmnt -rn -o SOURCE --target "${target}" 2>/dev/null | head -n1 || true)
++    if [[ "${source}" == /dev/* ]]; then
++        source="${source%%[*}"
++        armada_device_disk "${source}"
++        return $?
++    fi
++
++    majmin=$(findmnt -rn -o MAJ:MIN --target "${target}" 2>/dev/null | head -n1 || true)
++    [[ -n "${majmin}" ]] || return 1
++    armada_disk_from_majmin "${majmin}"
++}
++
++armada_device_majmin()
++{
++    local dev="$1"
++    local real
++    local name
++    local current
++
++    real=$(readlink -f "${dev}" 2>/dev/null) || return 1
++    while read -r name current; do
++        [[ "${name}" == "${real}" ]] || continue
++        printf '%s\n' "${current}"
++        return 0
++    done < <(lsblk -nrpo NAME,MAJ:MIN 2>/dev/null)
++
++    return 1
++}
++
++armada_is_mounted_device()
++{
++    local dev="$1"
++    local majmin
++
++    majmin=$(armada_device_majmin "${dev}") || return 1
++    findmnt -rn -o MAJ:MIN 2>/dev/null | grep -Fxq "${majmin}"
++}
++
++armada_is_system_storage_device()
++{
++    local dev="$1"
++    local disk
++    local target
++    local source_disk
++
++    disk=$(armada_device_disk "${dev}") || return 1
++
++    for target in / /var /sysroot /etc /boot /boot/efi; do
++        source_disk=$(armada_mount_source_disk "${target}" || true)
++        [[ -n "${source_disk}" ]] || continue
++        if [[ "${disk}" == "${source_disk}" ]]; then
++            return 0
++        fi
++    done
++
++    return 1
++}
++
++armada_is_sd_storage_device()
++{
++    local dev="$1"
++    local disk
++
++    disk=$(armada_device_disk "${dev}") || return 1
++    [[ "${disk}" =~ ^mmcblk[0-9]+$ ]] || return 1
++    [[ -r "/sys/block/${disk}/device/type" ]] || return 1
++    [[ "$(cat "/sys/block/${disk}/device/type")" == "SD" ]] || return 1
++}
+--- a/usr/lib/hwsupport/format-device.sh	2024-06-24 21:24:02.000000000 -0400
++++ b/usr/lib/hwsupport/format-device.sh	2026-07-03 12:59:09.443110024 -0400
+@@ -52,9 +52,6 @@
+     /dev/mmcblk[0-9])
+         STORAGE_PARTITION="${STORAGE_DEVICE}p1"
+         ;;
+-    /dev/sd[a-z])
+-        STORAGE_PARTITION="${STORAGE_DEVICE}1"
+-        ;;
+     *)
+         echo "Unknown or unsupported device: $STORAGE_DEVICE"
+         exit 19 #ENODEV
+@@ -64,6 +61,16 @@
+     exit 19 #ENODEV
+ fi
+ 
++if ! armada_is_sd_storage_device "${STORAGE_DEVICE}"; then
++    echo "Refusing to format non-SD storage device: ${STORAGE_DEVICE}" >&2
++    exit 19 # ENODEV
++fi
++
++if armada_is_system_storage_device "${STORAGE_DEVICE}"; then
++    echo "Refusing to format system storage device: ${STORAGE_DEVICE}" >&2
++    exit 16 # EBUSY
++fi
++
+ STORAGE_PARTBASE="${STORAGE_PARTITION#/dev/}"
+ 
+ # Shared between this and block-device-event.sh to ensure we're not
+--- a/usr/lib/hwsupport/format-sdcard.sh	2024-06-24 21:24:02.000000000 -0400
++++ b/usr/lib/hwsupport/format-sdcard.sh	2026-07-03 12:59:09.443156151 -0400
+@@ -1,3 +1,28 @@
+ #!/bin/bash
+ 
+-exec /usr/lib/hwsupport/format-device.sh --device /dev/mmcblk0 "$@"
++set -euo pipefail
++
++. /usr/lib/hwsupport/common-functions
++
++find_non_system_sd()
++{
++    local dev
++    for dev in /sys/block/mmcblk*; do
++        [[ "${dev##*/}" =~ ^mmcblk[0-9]+$ ]] || continue
++        [[ -b "/dev/${dev##*/}" ]] || continue
++        armada_is_sd_storage_device "/dev/${dev##*/}" || continue
++        armada_is_system_storage_device "/dev/${dev##*/}" && continue
++        printf '/dev/%s\n' "${dev##*/}"
++        return 0
++    done
++
++    return 1
++}
++
++storage_device="$(find_non_system_sd || true)"
++if [[ -z "${storage_device}" ]]; then
++    echo "No non-system SD storage device found" >&2
++    exit 19 # ENODEV
++fi
++
++exec /usr/lib/hwsupport/format-device.sh --device "${storage_device}" "$@"
+--- a/usr/lib/hwsupport/steamos-automount.sh	2024-06-24 21:24:02.000000000 -0400
++++ b/usr/lib/hwsupport/steamos-automount.sh	2026-07-03 12:59:41.225313211 -0400
+@@ -22,8 +22,9 @@
+ ACTION=$1
+ DEVBASE=$2
+ DEVICE="/dev/${DEVBASE}"
+-DECK_UID=$(id -u deck)
+-DECK_GID=$(id -g deck)
++DECK_UID=1000
++DECK_GID=$(id -g "${DECK_UID}")
++DECK_USER=$(id -nu "${DECK_UID}")
+ 
+ send_steam_url()
+ {
+@@ -33,7 +34,7 @@
+   if pgrep -x "steam" > /dev/null; then
+       # TODO use -ifrunning and check return value - if there was a steam process and it returns -1, the message wasn't sent
+       # need to retry until either steam process is gone or -ifrunning returns 0, or timeout i guess
+-      systemd-run -M ${DECK_UID}@ --user --collect --wait sh -c "./.steam/root/ubuntu12_32/steam steam://${command}/${encoded@Q}"
++      systemd-run --uid="${DECK_UID}" --collect --wait sh -c "/usr/bin/steam steam://${command}/${encoded@Q}"
+       echo "Sent URL to steam: steam://${command}/${arg} (steam://${command}/${encoded})"
+   else
+       echo "Could not send steam URL steam://${command}/${arg} (steam://${command}/${encoded}) -- steam not running"
+@@ -53,6 +54,21 @@
+     readonly FSCK_ERROR=1
+     readonly MOUNT_ERROR=2
+ 
++    if ! armada_is_sd_storage_device "${DEVICE}"; then
++        echo "Skipping non-SD storage device ${DEVICE}"
++        exit 0
++    fi
++
++    if armada_is_system_storage_device "${DEVICE}"; then
++        echo "Skipping system storage device ${DEVICE}"
++        exit 0
++    fi
++
++    if armada_is_mounted_device "${DEVICE}"; then
++        echo "Skipping already-mounted device ${DEVICE}"
++        exit 0
++    fi
++
+     # Get info for this drive: $ID_FS_LABEL, and $ID_FS_TYPE
+     dev_json=$(lsblk -o PATH,LABEL,FSTYPE --json -- "$DEVICE" | jq '.blockdevices[0]')
+     ID_FS_LABEL=$(jq -r '.label | select(type == "string")' <<< "$dev_json")
+@@ -90,7 +106,7 @@
+                                  "block_devices/${DEVBASE}"      \
+                                  Filesystem Mount                \
+                                  'a{sv}' 3                       \
+-                                 as-user s deck                  \
++                                 as-user s "${DECK_USER}"        \
+                                  auth.no_user_interaction b true \
+                                  options s "$OPTS")
+ 
+@@ -102,7 +118,7 @@
+     # Create a symlink from /run/media to keep compatibility with apps
+     # that use the older mount point (for SD cards only).
+     case "${DEVBASE}" in
+-        mmcblk0p*)
++        mmcblk[0-9]p*)
+             if [[ -z "${ID_FS_LABEL}" ]]; then
+                 old_mount_point="/run/media/${DEVBASE}"
+             else
+--- a/usr/lib/udev/rules.d/99-steamos-automount.rules	2024-06-24 21:24:02.000000000 -0400
++++ b/usr/lib/udev/rules.d/99-steamos-automount.rules	2026-07-03 12:59:45.830312504 -0400
+@@ -1,7 +1,7 @@
+ # Originally from https://serverfault.com/a/767079
+ # Run a mount script through systemd on any mmcblk* and sd* activity
+ 
+-KERNEL!="mmcblk*|sd*",          GOTO="steamos_automount_end"
++KERNEL!="mmcblk*p*",           GOTO="steamos_automount_end"
+ ENV{ID_FS_USAGE}!="filesystem", GOTO="steamos_automount_end"
+ 
+ # The service expects to be asynchronous and shouldn't block udev rules

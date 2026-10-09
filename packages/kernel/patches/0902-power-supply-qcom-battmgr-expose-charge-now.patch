@@ -1,0 +1,54 @@
+Subject: [PATCH] power: supply: qcom_battmgr: expose CHARGE_NOW on SM8350-class firmware
+
+SM8350-class firmware reports the remaining charge in BATT_CHG_COUNTER.
+Expose that value as CHARGE_NOW as well as CHARGE_COUNTER so userspace can
+derive an absolute energy level and runtime estimate.
+
+---
+ drivers/power/supply/qcom_battmgr.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -441,6 +441,7 @@
+ 	[POWER_SUPPLY_PROP_CYCLE_COUNT] = BATT_CYCLE_COUNT,
+ 	[POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN] =  BATT_CHG_FULL_DESIGN,
+ 	[POWER_SUPPLY_PROP_CHARGE_FULL] = BATT_CHG_FULL,
++	[POWER_SUPPLY_PROP_CHARGE_NOW] = BATT_CHG_COUNTER,
+ 	[POWER_SUPPLY_PROP_MODEL_NAME] = BATT_MODEL_NAME,
+ 	[POWER_SUPPLY_PROP_TIME_TO_FULL_AVG] = BATT_TTF_AVG,
+ 	[POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG] = BATT_TTE_AVG,
+@@ -878,6 +879,7 @@
+ 	POWER_SUPPLY_PROP_CYCLE_COUNT,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
+ 	POWER_SUPPLY_PROP_MODEL_NAME,
+ 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
+ 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
+@@ -910,6 +912,7 @@
+ 	POWER_SUPPLY_PROP_CYCLE_COUNT,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+ 	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
+ 	POWER_SUPPLY_PROP_MODEL_NAME,
+ 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
+ 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
+@@ -1440,10 +1443,13 @@
+ 			break;
+ 		case BATT_TECHNOLOGY:
+ 			battmgr->info.technology = le32_to_cpu(resp->intval.value);
+-			break;
+-		case BATT_CHG_COUNTER:
+-			battmgr->info.charge_count = le32_to_cpu(resp->intval.value);
+ 			break;
++		case BATT_CHG_COUNTER:
++			val = le32_to_cpu(resp->intval.value);
++			battmgr->info.charge_count = val;
++			/* the firmware reports the remaining charge here */
++			battmgr->status.capacity = val;
++			break;
+ 		case BATT_CYCLE_COUNT:
+ 			battmgr->info.cycle_count = le32_to_cpu(resp->intval.value);
+ 			break;

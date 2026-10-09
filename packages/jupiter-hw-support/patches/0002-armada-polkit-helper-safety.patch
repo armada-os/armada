@@ -1,0 +1,31 @@
+diff --git a/usr/bin/steamos-polkit-helpers/steamos-enable-sshd b/usr/bin/steamos-polkit-helpers/steamos-enable-sshd
+index 682d22f..ba0b69d 100755
+--- a/usr/bin/steamos-polkit-helpers/steamos-enable-sshd
++++ b/usr/bin/steamos-polkit-helpers/steamos-enable-sshd
+@@ -8,4 +8,4 @@ then
+     exec pkexec --disable-internal-agent "$0" "$@"
+ fi
+ 
+-exec systemctl enable --now sshd
++exec systemctl enable --now sshd.service
+diff --git a/usr/bin/steamos-polkit-helpers/steamos-set-hostname b/usr/bin/steamos-polkit-helpers/steamos-set-hostname
+index 387e533..39e8759 100755
+--- a/usr/bin/steamos-polkit-helpers/steamos-set-hostname
++++ b/usr/bin/steamos-polkit-helpers/steamos-set-hostname
+@@ -8,4 +8,15 @@ then
+     exec pkexec --disable-internal-agent "$0" "$@"
+ fi
+ 
+-hostnamectl set-hostname "$1"
++if [[ "$#" -ne 1 ]]; then
++    echo "usage: $0 <hostname>" >&2
++    exit 22
++fi
++
++hostname="$1"
++if [[ ! "${hostname}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
++    echo "Invalid hostname: ${hostname}" >&2
++    exit 22
++fi
++
++exec hostnamectl set-hostname "${hostname}"

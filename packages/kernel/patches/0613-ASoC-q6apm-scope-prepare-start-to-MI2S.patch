@@ -1,0 +1,24 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: qdsp6: scope prepare-time port start to MI2S
+
+ROCKNIX carries the prepare-time start from its SM8750 tree for the Odin 3
+AW88166 PLL-lock sequence, but Armada uses one kernel across SM8550, SM8650
+and SM8750. Limit the workaround to playback MI2S backends so it does not
+change prepare/trigger ordering for unrelated LPASS DAIs.
+
+---
+diff --git a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+--- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
++++ b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+@@ -233,7 +233,10 @@ static int q6apm_lpass_dai_prepare(struct snd_pcm_substream *substream,
+ 	 * PCM trigger; start the port here so BCLK is up in time. The
+ 	 * trigger's !is_port_started guard then no-ops. Playback only.
+ 	 */
+-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
++	    ((dai->id >= PRIMARY_MI2S_RX && dai->id <= QUATERNARY_MI2S_TX) ||
++	     (dai->id >= QUINARY_MI2S_RX &&
++	      dai->id <= QUINARY_MI2S_TX))) {
+ 		rc = q6apm_graph_start(dai_data->graph[dai->id]);
+ 		if (rc < 0) {
+ 			dev_err(dai->dev, "Failed to start APM port %d\n", dai->id);

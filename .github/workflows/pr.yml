@@ -1,0 +1,455 @@
+---
+name: PR
+
+# Builds the packages a PR changes and assembles the image, in one run. It never
+# authenticates to a registry, so a PR cannot put anything into GHCR.
+
+on:
+  pull_request:
+    branches:
+      - main
+      - staging
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  BASE_IMAGE: "quay.io/fedora/fedora-bootc:44"
+  IMAGE_DESC: "Armada: a gaming-focused, SteamOS-like Fedora bootc image for ARM64 handhelds"
+  IMAGE_NAME: "${{ github.event.repository.name }}"
+  UPSTREAM_PKG: "ghcr.io/armada-os/armada/pkg"
+  UPSTREAM_CACHE: "ghcr.io/armada-os/armada/buildcache"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve packages
+    runs-on: ubuntu-24.04
+    outputs:
+      refs: ${{ steps.resolve.outputs.refs }}
+      native: ${{ steps.resolve.outputs.native }}
+      cross: ${{ steps.resolve.outputs.cross }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install skopeo
+        run: command -v skopeo >/dev/null || { sudo apt-get update && sudo apt-get install -y skopeo; }
+
+      - name: Resolve what this PR has to build
+        id: resolve
+        run: |
+          set -euo pipefail
+          # Anonymous: reading a public package needs no token, and holding none
+          # is what keeps this workflow unable to write.
+          native='[]'
+          cross='[]'
+          refs=""
+          for dir in packages/*/; do
+            pkg="$(basename "${dir}")"
+            [ -f "${dir}/build.sh" ] || continue
+            hash="$(packages/package-hash.sh "${pkg}")"
+            var="$(printf '%s' "${pkg}" | tr '[:lower:]-' '[:upper:]_')_REF"
+
+            if skopeo inspect --raw "docker://${UPSTREAM_PKG}/${pkg}:${hash}" >/dev/null 2>&1; then
+              echo "::notice::${pkg} already built upstream (${hash})"
+              refs="${refs}${var}=${UPSTREAM_PKG}/${pkg}:${hash}"$'\n'
+              continue
+            fi
+
+            echo "::notice::${pkg} changed by this PR, building it (${hash})"
+            refs="${refs}${var}=localhost/armada/pkg/${pkg}:${hash}"$'\n'
+            # These need an x86_64 host, so they cannot build on the arm64
+            # runner that builds the image.
+            case "${pkg}" in
+              mesa-android|lepton|mesa-x86) target=cross ;;
+              *)                            target=native ;;
+            esac
+            entry="$(jq -c -n --arg p "${pkg}" --arg h "${hash}" '{package:$p, hash:$h}')"
+            if [ "${target}" = cross ]; then
+              cross="$(jq -c --argjson e "${entry}" '. + [$e]' <<<"${cross}")"
+            else
+              native="$(jq -c --argjson e "${entry}" '. + [$e]' <<<"${native}")"
+            fi
+          done
+
+          expected=$(grep -c '^ARG [A-Z0-9_]*_REF$' Containerfile)
+          got=$(printf '%s' "${refs}" | grep -c '_REF=')
+          if [ "${expected}" -ne "${got}" ]; then
+            echo "::error::Containerfile wants ${expected} package refs, resolved ${got}"
+            exit 1
+          fi
+
+          echo "native=${native}" >> "${GITHUB_OUTPUT}"
+          echo "cross=${cross}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "refs<<PKG_REFS_EOF"
+            printf '%s' "${refs}"
+            echo "PKG_REFS_EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+          {
+            echo "### Packages"
+            echo "- built here: $(jq length <<<"${native}") native, $(jq length <<<"${cross}") cross"
+            echo "- reused from upstream: $(( got - $(jq length <<<"${native}") - $(jq length <<<"${cross}") ))"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  cross:
+    name: ${{ matrix.package }} (x86_64)
+    needs: resolve
+    if: needs.resolve.outputs.cross != '[]'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.cross) }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install container tools
+        run: |
+          set -euxo pipefail
+          need=""
+          for t in buildah; do
+            command -v "$t" >/dev/null || need="$need $t"
+          done
+          # Runner crun mismatches podman ("crun: unknown version specified").
+          command -v runc >/dev/null || need="$need runc"
+          [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
+          mkdir -p ~/.config/containers
+          printf '[engine]\nruntime = "runc"\n' > ~/.config/containers/containers.conf
+
+      - name: Resolve builder images
+        run: |
+          set -euo pipefail
+          source packages/toolchain.env
+          source packages/mesa-x86/BASE.env
+          echo "BUILDER_IMAGE=${BUILDER_IMAGE}" >> "${GITHUB_ENV}"
+          echo "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" >> "${GITHUB_ENV}"
+
+      - name: Build package
+        env:
+          PACKAGE: ${{ matrix.package }}
+          HASH: ${{ matrix.hash }}
+        run: |
+          set -euxo pipefail
+          # --cache-from only. Nothing here may write to the registry.
+          buildah build \
+            -f packages/Containerfile \
+            --target "out-${PACKAGE}" \
+            --layers \
+            --cache-from "${UPSTREAM_CACHE}/${PACKAGE}" \
+            --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
+            --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+            -t "localhost/armada/pkg/${PACKAGE}:${HASH}" \
+            packages/
+
+      - name: Export for the image build
+        env:
+          PACKAGE: ${{ matrix.package }}
+          HASH: ${{ matrix.hash }}
+        run: |
+          set -euxo pipefail
+          mkdir -p "${RUNNER_TEMP}/export"
+          # buildah, not skopeo: reading its rootless storage needs a user
+          # namespace, and ubuntu-24.04 only lets buildah itself open one.
+          buildah push \
+            "localhost/armada/pkg/${PACKAGE}:${HASH}" \
+            "oci-archive:${RUNNER_TEMP}/export/${PACKAGE}.tar"
+
+      - name: Upload package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pkg-${{ matrix.package }}
+          path: ${{ runner.temp }}/export/${{ matrix.package }}.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  image:
+    name: Container image
+    needs: [resolve, cross]
+    if: >-
+      !cancelled() &&
+      needs.resolve.result == 'success' &&
+      (needs.cross.result == 'success' || needs.cross.result == 'skipped')
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    env:
+      DISK_TAG: pr-${{ github.event.pull_request.number }}
+    steps:
+      - name: Free build space
+        uses: ublue-os/remove-unwanted-software@cc0becac701cf642c8f0a6613bbdaf5dc36b259e # v9
+        with:
+          remove-codeql: true
+
+      - name: Prepare environment
+        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "${GITHUB_ENV}"
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install container tools
+        run: |
+          set -euxo pipefail
+          need=""
+          for t in buildah jq skopeo; do
+            command -v "$t" >/dev/null || need="$need $t"
+          done
+          command -v runc >/dev/null || need="$need runc"
+          [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
+          mkdir -p ~/.config/containers
+          printf '[engine]\nruntime = "runc"\n' > ~/.config/containers/containers.conf
+
+      - name: Install disk build dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends containernetworking-plugins
+
+      - name: Install just
+        uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3
+
+      - name: Require native OverlayFS
+        run: |
+          set -euxo pipefail
+          buildah info --storage-opt=overlay.mount_program= |
+            jq -e '.store.GraphStatus["Native Overlay Diff"] == "true"'
+
+      - name: Load cross-built packages
+        if: needs.cross.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          # gh instead of download-artifact: this repo pins every action, and
+          # there is no pinned download-artifact to reuse.
+          dir="${RUNNER_TEMP}/imported"
+          mkdir -p "${dir}"
+          gh run download "${GITHUB_RUN_ID}" --pattern 'pkg-*' --dir "${dir}"
+          while read -r pkg hash; do
+            # gh lays artifacts out differently for one vs many, so find the tar.
+            tar="$(find "${dir}" -name "${pkg}.tar" -print -quit)"
+            [ -n "${tar}" ] || { echo "::error::${pkg}.tar missing from artifacts"; exit 1; }
+            id="$(buildah pull "oci-archive:${tar}")"
+            buildah tag "${id}" "localhost/armada/pkg/${pkg}:${hash}"
+          done < <(jq -r '.[] | "\(.package) \(.hash)"' <<<'${{ needs.resolve.outputs.cross }}')
+
+      - name: Build the remaining packages
+        if: needs.resolve.outputs.native != '[]'
+        run: |
+          set -euxo pipefail
+          source packages/toolchain.env
+          source packages/mesa-x86/BASE.env
+          while read -r pkg hash; do
+            echo "::group::${pkg}"
+            buildah build \
+              -f packages/Containerfile \
+              --target "out-${pkg}" \
+              --layers \
+              --cache-from "${UPSTREAM_CACHE}/${pkg}" \
+              --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
+              --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+              -t "localhost/armada/pkg/${pkg}:${hash}" \
+              packages/
+            echo "::endgroup::"
+          done < <(jq -r '.[] | "\(.package) \(.hash)"' <<<'${{ needs.resolve.outputs.native }}')
+
+      - name: Write package refs
+        run: |
+          set -euo pipefail
+          printf '%s' '${{ needs.resolve.outputs.refs }}' > "${RUNNER_TEMP}/package-refs.env"
+          # Every localhost ref must already be in local storage. A miss here
+          # surfaces as a confusing pull failure mid-build.
+          while read -r line; do
+            ref="${line#*=}"
+            case "${ref}" in
+              localhost/*)
+                buildah inspect --type image "${ref}" >/dev/null 2>&1 || {
+                  echo "::error::${ref} was never built"
+                  exit 1
+                } ;;
+            esac
+          done < "${RUNNER_TEMP}/package-refs.env"
+          cat "${RUNNER_TEMP}/package-refs.env"
+
+      - name: Get image version
+        id: version
+        run: |
+          echo "created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)" >> $GITHUB_OUTPUT
+          echo "version=$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate image metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: metadata
+        with:
+          tags: |
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.revision=${{ steps.version.outputs.revision }}
+            org.opencontainers.image.created=${{ steps.version.outputs.created }}
+            org.opencontainers.image.description=${{ env.IMAGE_DESC }}
+            org.opencontainers.image.licenses=GPL-2.0-or-later
+            org.opencontainers.image.title=${{ env.IMAGE_NAME }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            containers.bootc=1
+          sep-tags: " "
+          sep-annotations: " "
+
+      - name: Prepare Chunkah config
+        id: chunkah_config
+        env:
+          METADATA_JSON: ${{ steps.metadata.outputs.json }}
+        run: |
+          set -euo pipefail
+          base_digest=$(skopeo inspect --override-arch arm64 --format '{{.Digest}}' \
+            "docker://${BASE_IMAGE}")
+          base_image="${BASE_IMAGE%:*}@${base_digest}"
+          config=$(skopeo inspect --override-arch arm64 --config \
+            "docker://${base_image}" |
+            jq -c --argjson metadata "${METADATA_JSON}" '
+              .config |
+              .Labels = ((.Labels // {}) + ($metadata.labels // {})) |
+              del(.Labels["ostree.commit"]) |
+              del(.Labels["ostree.final-diffid"])')
+          printf '%s\n' "${config}" > "${RUNNER_TEMP}/chunkah-config.json"
+          echo "base_image=${base_image}" >> "${GITHUB_OUTPUT}"
+          echo "config=${config}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build container image
+        uses: redhat-actions/buildah-build@719e3c40d8af9790c23eca13f7daa339f2867034 # v3.1.0
+        with:
+          containerfiles: |
+            ./Containerfile
+          image: ${{ env.IMAGE_NAME }}
+          tags: pr-build
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            ARMADA_VERSION=${{ steps.version.outputs.version }}
+            BASE_IMAGE=${{ steps.chunkah_config.outputs.base_image }}
+            CHUNKAH_CONFIG_STR=${{ steps.chunkah_config.outputs.config }}
+          # armada-rootfs is consumed through RUN --mount, so retain otherwise-unused stages.
+          extra-args: |
+            --build-arg-file=${{ runner.temp }}/package-refs.env
+            --skip-unused-stages=false
+            --target=chunkah
+            --volume=${{ runner.temp }}:/run/src
+            --security-opt=label=disable
+            --storage-opt=overlay.mount_program=
+          oci: false
+
+      - name: Validate Chunkah output
+        run: |
+          set -euxo pipefail
+          CHUNKAH_LOG_FILE="${RUNNER_TEMP}/chunkah.log"
+          CHUNKAH_MANIFEST_FILE="${RUNNER_TEMP}/chunkah-manifest.json"
+          CHUNKAH_IMAGE_CONFIG_FILE="${RUNNER_TEMP}/chunkah-image-config.json"
+          for component in steam proton fex-rootfs; do
+            if ! grep -Eq "creating tar layer .*\"xattr/${component}\"" "${CHUNKAH_LOG_FILE}"; then
+              echo "::error::Chunkah did not emit an xattr/${component} component layer"
+              exit 1
+            fi
+          done
+
+          CHUNKED_REF="oci:${RUNNER_TEMP}/chunked"
+          skopeo inspect --raw "${CHUNKED_REF}" > "${CHUNKAH_MANIFEST_FILE}"
+          jq -e '(.layers | length) > 1 and (.layers | length) <= 128' \
+            "${CHUNKAH_MANIFEST_FILE}" || {
+              echo "::error::Chunkah output has an invalid layer count"
+              exit 1
+            }
+          jq -e '((.annotations // {}) | has("ostree.commit") | not) and
+            ((.annotations // {}) | has("ostree.final-diffid") | not)' \
+            "${CHUNKAH_MANIFEST_FILE}" || {
+              echo "::error::Chunkah output retained OSTree manifest annotations"
+              exit 1
+            }
+          skopeo inspect --config "${CHUNKED_REF}" > "${CHUNKAH_IMAGE_CONFIG_FILE}"
+          jq -e --slurpfile expected "${RUNNER_TEMP}/chunkah-config.json" \
+            '.config == $expected[0]' "${CHUNKAH_IMAGE_CONFIG_FILE}" || {
+              echo "::error::Chunkah output did not preserve the prepared runtime config"
+              exit 1
+            }
+          jq -e '.architecture == "arm64" and .os == "linux" and
+              .config.Cmd == ["/sbin/init"] and
+              .config.Labels["containers.bootc"] == "1" and
+              .config.Labels["ostree.bootable"] == "true" and
+              (.config.Labels | has("ostree.commit") | not) and
+              (.config.Labels | has("ostree.final-diffid") | not)' \
+            "${CHUNKAH_IMAGE_CONFIG_FILE}"
+          python3 build_files/verify-steam-bootstrap.py --oci "${RUNNER_TEMP}/chunked"
+          jq '{layers: (.layers | length), compressed_bytes: ([.layers[].size] | add)}' \
+            "${CHUNKAH_MANIFEST_FILE}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Export container image
+        run: |
+          skopeo copy "oci:${RUNNER_TEMP}/chunked" \
+            "oci-archive:${RUNNER_TEMP}/armada-${DISK_TAG}.tar"
+
+      - name: Upload container image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: armada-container-pr${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/armada-${{ env.DISK_TAG }}.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Load the image for the disk build
+        run: |
+          set -euxo pipefail
+          # bootc-image-builder runs under sudo, so the image has to live in
+          # root's storage, and a localhost ref stops the Justfile pulling it.
+          sudo skopeo copy "oci:${RUNNER_TEMP}/chunked" \
+            "containers-storage:localhost/${IMAGE_NAME}:${DISK_TAG}"
+
+      - name: Build disk image
+        run: |
+          set -euxo pipefail
+          JUST_BIN=$(command -v just)
+          sudo git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          sudo env PATH="${PATH}" "${JUST_BIN}" \
+            build-armada-image "localhost/${IMAGE_NAME}" "${DISK_TAG}"
+          sudo chown -R "$(id -u):$(id -g)" output
+
+      - name: Prepare disk image
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          images=(output/armada-*.img.gz)
+          if [ "${#images[@]}" -ne 1 ] || [ ! -s "${images[0]}" ]; then
+            echo "::error::Expected exactly one nonempty disk image in output/."
+            exit 1
+          fi
+          filename="${images[0]##*/}"
+          # Basename so sha256sum -c works beside the downloaded image.
+          (cd output && sha256sum "${filename}" > "${filename}.sha256")
+          {
+            echo "### Disk image"
+            echo "\`${filename}\` ($(du -h "output/${filename}" | cut -f1))"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload disk image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: armada-disk-pr${{ github.event.pull_request.number }}
+          path: |
+            output/armada-*.img.gz
+            output/armada-*.img.gz.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

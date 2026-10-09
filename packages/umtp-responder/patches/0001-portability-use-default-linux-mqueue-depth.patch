@@ -1,0 +1,13 @@
+diff --git a/src/msgqueue.c b/src/msgqueue.c
+index ad32c3f..0ada0fa 100644
+--- a/src/msgqueue.c
++++ b/src/msgqueue.c
+@@ -60,7 +60,7 @@
+ 
+ static struct mq_attr qattrs = {
+   0,  // flags
+-  20, // max number of messages on the queue
++  10, // max number of messages on the queue
+   MAX_MSG_SIZE,
+   0   // number of messages currently on the queue
+ };

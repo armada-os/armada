@@ -1,0 +1,2 @@
+# Replaces upstream's platform.toml. Empty on purpose: every key left out is
+# an interface that never registers, and none of upstream's are ours to serve.

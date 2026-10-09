@@ -1,0 +1,16 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocketdmg: use GPIO descriptor properties
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketdmg.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketdmg.dts
+@@ -83,8 +83,8 @@
+ 
+ 		interrupt-parent = <&tlmm>;
+ 		interrupts = <25 0x02>;
+-		reset-gpio = <&tlmm 24 0x01>;
+-		irq-gpio = <&tlmm 25 0x02>;
++		reset-gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
++		irq-gpios = <&tlmm 25 GPIO_ACTIVE_HIGH>;
+ 
+ 		pinctrl-names = "ts_active","ts_suspend";
+ 		pinctrl-0 = <&ts_int_active &ts_reset_active>;

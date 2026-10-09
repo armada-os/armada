@@ -1,0 +1,20 @@
+#!/usr/bin/bash
+# steamos-manager's default starts life as upstream's plasma.desktop, which puts
+# Steam's "Switch to Desktop" on the raw session instead of our wrapper. Seeds only.
+set -euo pipefail
+
+steamosctl=${ARMADA_STEAMOSCTL:-/usr/bin/steamosctl}
+legacy_desktop_session=${ARMADA_LEGACY_DESKTOP_SESSION:-/etc/armada/desktop-session}
+default_session=${ARMADA_DEFAULT_DESKTOP_SESSION:-armada-plasma.desktop}
+
+if [[ $(cat "${legacy_desktop_session}" 2>/dev/null) == mobile ]]; then
+    default_session=armada-plasma-mobile.desktop
+fi
+
+current=$("${steamosctl}" get-default-desktop-session 2>/dev/null | tail -1) || exit 0
+
+case "${current}" in
+    armada-*.desktop) exit 0 ;;
+esac
+
+"${steamosctl}" set-default-desktop-session "${default_session}"

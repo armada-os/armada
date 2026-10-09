@@ -1,0 +1,173 @@
+---
+name: Packages
+
+# Builds each package as a Containerfile stage and hands the result to the image
+# build. One job per package so they build in parallel. Folding them into the
+# image build would serialise 20 builds onto one machine.
+
+on:
+  workflow_call:
+    outputs:
+      build_args:
+        description: "PKG_REF=<image> lines, one per package, for --build-arg-file"
+        value: ${{ jobs.prepare.outputs.build_args }}
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  prepare:
+    name: Resolve packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      build_args: ${{ steps.resolve.outputs.build_args }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install skopeo
+        run: command -v skopeo >/dev/null || { sudo apt-get update && sudo apt-get install -y skopeo; }
+
+      - name: Resolve what needs building
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          owner="${{ github.repository_owner }}"
+          repo="ghcr.io/${owner,,}/armada/pkg"
+          echo "${GH_TOKEN}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          matrix='[]'
+          args=""
+          # The package set is the directories themselves, so it cannot drift
+          # from the tree. Only the cross-compiled ones need a non-arm runner.
+          for dir in packages/*/; do
+            pkg="$(basename "${dir}")"
+            [ -f "${dir}/build.sh" ] || continue
+            hash="$(packages/package-hash.sh "${pkg}")"
+            ref="${repo}/${pkg}:${hash}"
+
+            case "${pkg}" in
+              mesa-android|lepton|mesa-x86) runner=ubuntu-24.04 ;;
+              *)                            runner=ubuntu-24.04-arm ;;
+            esac
+
+            if skopeo inspect --raw "docker://${ref}" >/dev/null 2>&1; then
+              echo "::notice::${pkg} already built (${hash})"
+            else
+              echo "::notice::${pkg} needs building (${hash})"
+              matrix="$(jq -c --arg p "${pkg}" --arg r "${runner}" --arg h "${hash}" \
+                '. + [{package:$p, runner:$r, hash:$h}]' <<<"${matrix}")"
+            fi
+
+            # The image build needs a ref for every package, built now or not.
+            var="$(printf '%s' "${pkg}" | tr '[:lower:]-' '[:upper:]_')_REF"
+            args="${args}${var}=${ref}"$'\n'
+          done
+
+          echo "matrix=${matrix}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "build_args<<BUILD_ARGS_EOF"
+            printf '%s' "${args}"
+            echo "BUILD_ARGS_EOF"
+          } >> "${GITHUB_OUTPUT}"
+          echo "### Packages to build: $(jq length <<<"${matrix}")" >> "${GITHUB_STEP_SUMMARY}"
+          jq -r '.[] | "- \(.package)"' <<<"${matrix}" >> "${GITHUB_STEP_SUMMARY}"
+
+  build:
+    name: ${{ matrix.package }}
+    needs: prepare
+    if: needs.prepare.outputs.matrix != '[]'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install container tools
+        run: |
+          set -euxo pipefail
+          need=""
+          for t in buildah skopeo; do
+            command -v "$t" >/dev/null || need="$need $t"
+          done
+          # Runner crun mismatches podman ("crun: unknown version specified").
+          command -v runc >/dev/null || need="$need runc"
+          [ -z "$need" ] || { sudo apt-get update && sudo apt-get install -y $need; }
+          mkdir -p ~/.config/containers
+          printf '[engine]\nruntime = "runc"\n' > ~/.config/containers/containers.conf
+
+      - name: Resolve builder images
+        run: |
+          set -euo pipefail
+          # Only the FROM images need to cross the build-arg boundary. build.sh
+          # sources toolchain.env itself from /src inside the stage.
+          source packages/toolchain.env
+          source packages/mesa-x86/BASE.env
+          echo "BUILDER_IMAGE=${BUILDER_IMAGE}" >> "${GITHUB_ENV}"
+          echo "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" >> "${GITHUB_ENV}"
+          owner="${{ github.repository_owner }}"
+          echo "CACHE_REPO=ghcr.io/${owner,,}/armada/buildcache/${{ matrix.package }}" >> "${GITHUB_ENV}"
+
+      - name: Locate buildah cache mounts
+        id: cachedir
+        run: echo "dir=/var/tmp/buildah-cache-$(id -u)" >> "${GITHUB_OUTPUT}"
+
+      - name: ccache
+        # Buildah's cache mounts live outside the layer store, so they start
+        # empty on a fresh runner unless restored here.
+        if: matrix.package == 'kernel' || matrix.package == 'mesa'
+        uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca # v4.2.3
+        with:
+          path: ${{ steps.cachedir.outputs.dir }}
+          # hash the pinned toolchain into the key so a bump cannot serve stale objects
+          key: ccache-${{ matrix.package }}-${{ runner.arch }}-${{ hashFiles('packages/toolchain.env') }}-${{ hashFiles(format('packages/{0}/**', matrix.package)) }}
+          restore-keys: |
+            ccache-${{ matrix.package }}-${{ runner.arch }}-${{ hashFiles('packages/toolchain.env') }}-
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | buildah login -u "${{ github.actor }}" --password-stdin ghcr.io
+
+      - name: Build and publish
+        env:
+          PACKAGE: ${{ matrix.package }}
+          HASH: ${{ matrix.hash }}
+        run: |
+          set -euxo pipefail
+          owner="${{ github.repository_owner }}"
+          REF="ghcr.io/${owner,,}/armada/pkg/${PACKAGE}:${HASH}"
+
+          buildah build \
+            -f packages/Containerfile \
+            --target "out-${PACKAGE}" \
+            --layers \
+            --cache-from "${CACHE_REPO}" \
+            --cache-to "${CACHE_REPO}" \
+            --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
+            --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+            -t "${REF}" \
+            packages/
+
+          # Another run can publish this hash while we build. Identical inputs,
+          # so skipping is safe, but warn in case the hash is missing an input.
+          if skopeo inspect --raw "docker://${REF}" >/dev/null 2>&1; then
+            echo "::warning::${REF} already published, skipping push"
+          else
+            buildah push "${REF}"
+          fi
+          {
+            echo "### \`${PACKAGE}\` published"
+            echo '```'
+            echo "${REF}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"

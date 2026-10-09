@@ -1,0 +1,65 @@
+From 596f4214b845ed36ad7887bbd73b4033ac2c4562 Mon Sep 17 00:00:00 2001
+From: Micah Stanley <stanleymicah@proton.me>
+Date: Sun, 28 Jun 2026 02:24:15 +0000
+Subject: [PATCH] mobileshell/shellutil: Simplify the Set Input Region Function
+
+Simplifies the shellutil setInputRegion function by using the QWindow setMask function instead of messing around with the wl surface for setting a window's input region.
+---
+ components/mobileshell/shellutil.cpp | 40 ++--------------------------
+ 1 file changed, 2 insertions(+), 38 deletions(-)
+
+diff --git a/components/mobileshell/shellutil.cpp b/components/mobileshell/shellutil.cpp
+index 8bbc183..a036cb8 100644
+--- a/components/mobileshell/shellutil.cpp
++++ b/components/mobileshell/shellutil.cpp
+@@ -122,45 +122,9 @@ void ShellUtil::setWindowLayer(QQuickWindow *window, LayerShellQt::Window::Layer
+ 
+ void ShellUtil::setInputRegion(QWindow *window, const QRect &region)
+ {
+-    if (!window) {
+-        return;
+-    }
+-
+-    auto waylandWindow = dynamic_cast<QtWaylandClient::QWaylandWindow *>(window->handle());
+-    if (!waylandWindow) {
+-        qWarning() << "Failed to retrieve Wayland window handle.";
+-        return;
+-    }
+-
+-    auto waylandDisplay = dynamic_cast<QtWaylandClient::QWaylandDisplay *>(waylandWindow->display());
+-    if (!waylandDisplay) {
+-        qWarning() << "Failed to retrieve Wayland display.";
+-        return;
+-    }
+-
+-    wl_compositor *compositorResource = static_cast<wl_compositor *>(waylandDisplay->compositor()->object());
+-    if (!compositorResource) {
+-        qWarning() << "Failed to retrieve compositor.";
+-        return;
+-    }
+-
+-    wl_surface *surface = waylandWindow->wlSurface();
+-    if (!surface) {
+-        qWarning() << "Failed to retrieve Wayland surface.";
+-        return;
+-    }
+-
+-    if (region.isEmpty()) {
+-        wl_surface_set_input_region(surface, nullptr);
+-    } else {
+-        wl_region *inputRegion = wl_compositor_create_region(compositorResource);
+-
+-        wl_region_add(inputRegion, region.x(), region.y(), region.width(), region.height());
+-        wl_surface_set_input_region(surface, inputRegion);
+-        wl_region_destroy(inputRegion);
+-    }
++    if (!window) return;
+ 
+-    wl_surface_commit(surface);
++    window->setMask(region);
+ }
+ 
+ QString ShellUtil::toPlainText(QString htmlString)
+-- 
+2.55.0
+

@@ -1,0 +1,50 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: mangmi-pocket-max: keep trigger conversion independent of calibration
+
+The MCU reports descending trigger readings. trigger_*_max is the
+calibrated evdev range, not the MCU release reference. Using it for both
+shifts every sample by the calibration correction as well as the
+advertised range, so full travel cannot reach 100 percent unless the
+fully pressed reading is zero, and repeated calibration makes the error
+worse.
+
+Convert against the fixed MCU_BRAKE_MAX and MCU_GAS_MAX references and
+let the calibrated maximum describe the observed travel only, matching
+rsinput. Leave samples unclipped above the calibrated maximum so a
+subsequent calibration can measure a larger travel.
+
+--- a/drivers/input/joystick/mangmi-pocket-max.c
++++ b/drivers/input/joystick/mangmi-pocket-max.c
+@@ -211,13 +211,14 @@ static int mcu_stick(u16 raw, int center, bool invert)
+ 	return DIV_ROUND_CLOSEST(v * MCU_AXIS_OUT, MCU_MAP_ZONE);
+ }
+ 
+-static int mcu_trigger(u16 raw, int trigger_max, int deadzone, int antideadzone)
++/* release is the MCU reference, independent of the calibrated evdev maximum. */
++static int mcu_trigger(u16 raw, int release, int deadzone, int antideadzone)
+ {
+-	int v = trigger_max - (int)raw;
++	int v = release - (int)raw;
+ 
+ 	if (v < deadzone)
+ 		return 0;
+-	return clamp(v - antideadzone, 0, trigger_max - antideadzone);
++	return max(v - antideadzone, 0);
+ }
+ 
+ struct mcu_gpio_btn {
+@@ -458,12 +459,12 @@ static irqreturn_t mcu_adc_irq(int irq, void *data)
+ 
+ 	if (var->ch_tl >= 0)
+ 		input_report_abs(dev, ABS_HAT2X,
+-				 mcu_trigger(adc[var->ch_tl], trigger_left_max,
++				 mcu_trigger(adc[var->ch_tl], MCU_BRAKE_MAX,
+ 					     trigger_left_deadzone,
+ 					     trigger_left_antideadzone));
+ 	if (var->ch_tr >= 0)
+ 		input_report_abs(dev, ABS_HAT2Y,
+-				 mcu_trigger(adc[var->ch_tr], trigger_right_max,
++				 mcu_trigger(adc[var->ch_tr], MCU_GAS_MAX,
+ 					     trigger_right_deadzone,
+ 					     trigger_right_antideadzone));
+ 

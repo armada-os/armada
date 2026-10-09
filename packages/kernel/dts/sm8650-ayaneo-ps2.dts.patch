@@ -1,0 +1,16 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: pocket-s2: use the dedicated sound card
+
+--- a/arch/arm64/boot/dts/qcom/sm8650-ayaneo-ps2.dts
++++ b/arch/arm64/boot/dts/qcom/sm8650-ayaneo-ps2.dts
+@@ -12,6 +12,10 @@
+ 	compatible = "ayaneo,pocket-s2", "qcom,sm8650";
+ };
+ 
++&{/sound} {
++	compatible = "ayaneo,pocket-s2-sndcard";
++};
++
+ &i2c4 {
+ 	touchscreen@5d {
+ 		reg = <0x5d>;

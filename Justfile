@@ -75,40 +75,81 @@ sudoif command *args:
     }
     sudoif {{ command }} {{ args }}
 
+# Registry holding published package images (override to use a fork's)
+export pkg_registry := env("ARMADA_PKG_REGISTRY", "ghcr.io/armada-os/armada/pkg")
+
+# Build one package and tag it by content hash, the way CI does
+[group('Packages')]
+package name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source packages/toolchain.env
+    source packages/mesa-x86/BASE.env
+    [ -d "packages/{{ name }}" ] || { echo "unknown package: {{ name }}" >&2; exit 1; }
+    hash="$(packages/package-hash.sh {{ name }})"
+    buildah build \
+        -f packages/Containerfile \
+        --target "out-{{ name }}" \
+        --layers \
+        --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
+        --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+        -t "localhost/armada/pkg/{{ name }}:${hash}" \
+        packages/
+    echo "==> localhost/armada/pkg/{{ name }}:${hash}"
+
+# Build every package (slow from cold, unchanged ones are layer-cache hits)
+[group('Packages')]
+packages:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for dir in packages/*/; do
+        pkg="$(basename "${dir}")"
+        [ -f "${dir}/build.sh" ] || continue
+        echo "==> ${pkg}"
+        just package "${pkg}"
+    done
+
+# Show each package's content hash and whether it is built locally
+[group('Packages')]
+packages-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for dir in packages/*/; do
+        pkg="$(basename "${dir}")"
+        [ -f "${dir}/build.sh" ] || continue
+        hash="$(packages/package-hash.sh "${pkg}")"
+        if podman image exists "localhost/armada/pkg/${pkg}:${hash}" 2>/dev/null; then
+            printf '  %-24s %s  local\n' "${pkg}" "${hash}"
+        else
+            printf '  %-24s %s  %s\n' "${pkg}" "${hash}" "${pkg_registry}/${pkg}:${hash}"
+        fi
+    done
+
 build $target_image=image_name $tag=default_tag:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    BUILD_ARGS=()
+    # Resolve every package to an image: one built locally if present, else
+    # the published one for that content hash.
+    REFS="$(mktemp)"
+    trap 'rm -f "${REFS}"' EXIT
+    for dir in packages/*/; do
+        pkg="$(basename "${dir}")"
+        [ -f "${dir}/build.sh" ] || continue
+        hash="$(packages/package-hash.sh "${pkg}")"
+        var="$(echo "${pkg}" | tr '[:lower:]-' '[:upper:]_')_REF"
+        local_ref="localhost/armada/pkg/${pkg}:${hash}"
+        if podman image exists "${local_ref}" 2>/dev/null; then
+            echo "${var}=${local_ref}" >> "${REFS}"
+        else
+            echo "${var}=${pkg_registry}/${pkg}:${hash}" >> "${REFS}"
+        fi
+    done
+    expected=$(grep -c '^ARG [A-Z0-9_]*_REF$' Containerfile)
+    got=$(wc -l < "${REFS}")
+    [ "${expected}" -eq "${got}" ] || { echo "Containerfile wants ${expected} refs, resolved ${got}" >&2; exit 1; }
+
     ARMADA_VERSION="$(TZ=America/New_York date +%Y%m%d).$(git rev-parse --short HEAD)"
-    BUILD_ARGS+=("--build-arg" "ARMADA_VERSION=${ARMADA_VERSION}")
-
-    # Allow local armada-packages images to override pinned package images.
-    mapfile -t PKG_VARS < <(sed -n 's/^ARG \([A-Z0-9_]*_PKG\)=.*/\1/p' Containerfile)
-    declare -A KNOWN_PKG_VARS=()
-    for var in "${PKG_VARS[@]}"; do
-        KNOWN_PKG_VARS["${var}"]=1
-    done
-    for p in ${ARMADA_LOCAL_PKGS:-}; do
-        var="$(echo "$p" | tr '[:lower:]-' '[:upper:]_')_PKG"
-        if [[ -z "${KNOWN_PKG_VARS[$var]:-}" ]]; then
-            echo "unknown package in ARMADA_LOCAL_PKGS: ${p}" >&2
-            exit 1
-        fi
-        export "${var}=localhost/armada-packages/${p}:latest"
-    done
-    LOCAL_PKG=0
-    for var in "${PKG_VARS[@]}"; do
-        if [[ -n "${!var:-}" ]]; then
-            BUILD_ARGS+=("--build-arg" "${var}=${!var}")
-            [[ "${!var}" == localhost/* ]] && LOCAL_PKG=1
-            echo "==> using ${var}=${!var}"
-        fi
-    done
-
-    # localhost package images need --pull=missing.
-    PULL_POLICY="newer"
-    [[ "${LOCAL_PKG}" == 1 ]] && PULL_POLICY="missing"
 
     SECRET_ARGS=()
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
@@ -116,10 +157,11 @@ build $target_image=image_name $tag=default_tag:
     fi
 
     podman build \
-        "${BUILD_ARGS[@]}" \
+        --build-arg "ARMADA_VERSION=${ARMADA_VERSION}" \
+        --build-arg-file "${REFS}" \
         "${SECRET_ARGS[@]}" \
         --platform linux/arm64 \
-        --pull="${PULL_POLICY}" \
+        --pull=newer \
         --target armada-rootfs \
         --tag "${target_image}:${tag}" \
         .

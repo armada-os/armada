@@ -1,0 +1,14 @@
+[Unit]
+Description=Armada splash (reboot screen)
+DefaultDependencies=no
+After=display-manager.service
+Before=systemd-reboot.service
+ConditionPathExists=/usr/libexec/armada/armada-splash
+ConditionPathExists=!/etc/armada/splash-disabled
+
+[Service]
+ExecStartPre=/usr/libexec/armada/armada-splash-shutdown-msg Restarting
+ExecStart=/usr/libexec/armada/armada-splash-launcher
+
+[Install]
+WantedBy=reboot.target

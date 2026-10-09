@@ -1,0 +1,59 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] Input: hynitron: configure GPIO directions after pinctrl
+
+Acquiring the descriptors with direction flags drives the reset line while
+the pinctrl state is still unknown. Request both descriptors as-is, then
+restore the vendor driver's original ordering: select the active pinctrl
+state, configure IRQ as input and reset as raw-low, enable power, and finally
+release reset. The reset helpers already sleep, so their cansleep descriptor
+accessors remain appropriate.
+
+---
+diff --git a/drivers/input/touchscreen/hynitron/hyn_core.c b/drivers/input/touchscreen/hynitron/hyn_core.c
+--- a/drivers/input/touchscreen/hynitron/hyn_core.c
++++ b/drivers/input/touchscreen/hynitron/hyn_core.c
+@@ -63,13 +63,13 @@ static int hyn_parse_dt(struct hyn_ts_data *ts_data)
+             HYN_INFO("vdd_i2c not config");
+         }
+ 
+-        dt->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++        dt->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_ASIS);
+         if (IS_ERR(dt->reset_gpio)) {
+             HYN_ERROR("dts get gpio failed");
+             return PTR_ERR(dt->reset_gpio);
+         }
+ 
+-        dt->irq_gpio = devm_gpiod_get(dev, "irq", GPIOD_IN);
++        dt->irq_gpio = devm_gpiod_get(dev, "irq", GPIOD_ASIS);
+         if (IS_ERR(dt->irq_gpio)) {
+             HYN_ERROR("dts get gpio failed");
+             return PTR_ERR(dt->irq_gpio);
+@@ -160,13 +160,27 @@ static int hyn_power_source_ctrl(int enable)
+ 
+ static int hyn_poweron(struct hyn_ts_data *ts_data)
+ {
+-    struct hyn_plat_data* dt = &ts_data->plat_data;
++    struct hyn_plat_data *dt = &ts_data->plat_data;
++    int ret;
++
+     if(!IS_ERR_OR_NULL(hyn_data->plat_data.pinctl)){
+         if(pinctrl_select_state(dt->pinctl, dt->pin_active)){
+             HYN_ERROR("pin active set failed");
+         }
+     }
+ 
++    ret = gpiod_direction_input(dt->irq_gpio);
++    if (ret) {
++        HYN_ERROR("set irq gpio direction failed");
++        return ret;
++    }
++
++    ret = gpiod_direction_output_raw(dt->reset_gpio, 0);
++    if (ret) {
++        HYN_ERROR("set reset gpio direction failed");
++        return ret;
++    }
++
+     if(!IS_ERR_OR_NULL(dt->vdd_ana)){
+         if(regulator_count_voltages(dt->vdd_ana) > 0){
+             if(regulator_set_voltage(dt->vdd_ana, 2800000, 3300000)){

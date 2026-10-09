@@ -38,6 +38,13 @@ for app in apps:
         assert "/" not in install["filename"], app["id"]
     if install.get("asset"):
         re.compile(install["asset"])
+    # Becomes controller_neptune_<name>.vdf, one of Steam's own templates.
+    template = app.get("controllerTemplate")
+    if template is not None:
+        assert re.fullmatch(r"[a-z0-9_+]+", template), app["id"]
+        assert catalog.launch_spec(app)["controllerTemplate"] == template, app["id"]
+    else:
+        assert "controllerTemplate" not in (catalog.launch_spec(app) or {}), app["id"]
     # A tool that needs Steam closed must never be offered as a Steam shortcut.
     if app.get("desktopOnly"):
         assert catalog.launch_spec(app) is None, app["id"]
@@ -65,7 +72,7 @@ store = pathlib.Path(sys.argv[1])
 rules = ET.parse(store / "templates/es-de/es_find_rules.xml").getroot()
 names = {e.get("name") for e in rules.findall("emulator")}
 # The emulators the store installs that ES-DE's linuxarm rules cannot find.
-assert names == {"ARMSX2", "CEMU", "PICO-8_64", "VITA3K", "XENIAEDGE"}, names
+assert names == {"ARMSX2", "BIGPEMU", "CEMU", "PICO-8_64", "VITA3K", "XENIAEDGE"}, names
 # Every entry here REPLACES the bundled one and takes its extensions and
 # alternative launch commands with it, so it must carry ES-DE's whole entry.
 systems = ET.parse(store / "templates/es-de/es_systems.xml").getroot()
@@ -292,7 +299,7 @@ PY
 # Every app that changed packaging must declare the ref it displaces, or an
 # existing install is stranded with no way to remove it from the Store.
 python3 - "$STORE" <<'PY'
-import sys, pathlib, json, tempfile
+import os, sys, pathlib, json, tempfile, zipfile
 store = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(store / "py_modules"))
 from armada_store import catalog
@@ -333,6 +340,28 @@ assert catalog.wrap_launch_options(catalog.DEFAULT_LAUNCH_OPTIONS) == catalog.DE
 with tempfile.NamedTemporaryFile() as custom:
     prepared = catalog.prepare_shortcut(custom.name)
 assert prepared["launchOptions"] == catalog.DEFAULT_LAUNCH_OPTIONS, prepared
+assert "compatTool" not in prepared, prepared
+
+# APKs run through Lepton (Armada); a renamed non-APK is treated as a plain file.
+with tempfile.TemporaryDirectory() as tmp:
+    apk = pathlib.Path(tmp, "com.example.game.apk")
+    with zipfile.ZipFile(apk, "w") as z:
+        z.writestr("AndroidManifest.xml", b"")
+    fake = pathlib.Path(tmp, "notes.apk")
+    fake.write_text("not a zip")
+    catalog.ANDROID_COMPAT_TOOL_DIR = tmp
+    prepared = catalog.prepare_shortcut(str(apk))
+    assert prepared["compatTool"] == "lepton_armada", prepared
+    assert prepared["name"] == "com example game", prepared
+    assert prepared["launchOptions"] == catalog.DEFAULT_LAUNCH_OPTIONS, prepared
+    assert not os.access(apk, os.X_OK), "an APK must not be made executable"
+    assert "compatTool" not in catalog.prepare_shortcut(str(fake))
+    catalog.ANDROID_COMPAT_TOOL_DIR = str(pathlib.Path(tmp, "missing"))
+    try:
+        catalog.prepare_shortcut(str(apk))
+        raise AssertionError("APK accepted without Lepton (Armada)")
+    except ValueError:
+        pass
 
 duck = next(a for a in apps if a["id"] == "duckstation")
 assert catalog.present_conflicts(duck, set()) == [], "conflict reported while absent"

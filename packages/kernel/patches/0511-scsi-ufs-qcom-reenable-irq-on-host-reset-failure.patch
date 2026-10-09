@@ -1,0 +1,44 @@
+From: virtudude <virtudude@protonmail.com>
+Date: Mon, 10 Aug 2026 00:00:00 +0000
+Subject: [PATCH] scsi: ufs: qcom: re-enable the IRQ on host reset failure
+
+ufs_qcom_host_reset() disables the controller IRQ around the core
+reset, but the reset assert/deassert error exits return without
+re-enabling it, leaving the controller IRQ masked. Route the error
+exits through the existing re-enable.
+
+---
+ drivers/ufs/host/ufs-qcom.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -449,7 +449,7 @@
+ 	if (ret) {
+ 		dev_err(hba->dev, "%s: core_reset assert failed, err = %d\n",
+ 				 __func__, ret);
+-		return ret;
++		goto out;
+ 	}
+
+ 	/*
+@@ -463,15 +463,17 @@
+ 	if (ret) {
+ 		dev_err(hba->dev, "%s: core_reset deassert failed, err = %d\n",
+ 				 __func__, ret);
+-		return ret;
++		goto out;
+ 	}
+
+ 	usleep_range(1000, 1100);
+
++	ret = 0;
++out:
+ 	if (reenable_intr)
+ 		ufshcd_enable_irq(hba);
+
+-	return 0;
++	return ret;
+ }
+
+ static u32 ufs_qcom_get_hs_gear(struct ufs_hba *hba)

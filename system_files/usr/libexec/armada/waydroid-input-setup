@@ -1,56 +1,204 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/python3
+"""Keep Waydroid's controller nodes aligned with InputPlumber's shared sources."""
 
-boot_completed=
-deadline=$((SECONDS + 90))
-while (( SECONDS < deadline )); do
-    boot_completed=$(timeout 3s waydroid shell -- getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
-    if [[ "$boot_completed" == "1" ]]; then
-        break
-    fi
-    sleep 1
-done
+import contextlib
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
+import time
 
-if [[ "$boot_completed" != "1" ]]; then
-    echo "Android did not finish booting before the controller setup timeout" >&2
-    exit 1
-fi
+from gi.repository import Gio, GLib
 
-keylayout_source=/usr/share/armada/waydroid/keylayout
-keylayout_target=/var/home/armada/.local/share/waydroid/data/system/devices/keylayout
-if [[ -d "$keylayout_source" ]]; then
-    install -d -m 0755 "$keylayout_target"
-    for keylayout in "$keylayout_source"/*.kl; do
-        [[ -e "$keylayout" ]] || continue
-        install -m 0644 "$keylayout" "$keylayout_target/$(basename "$keylayout")"
-    done
-fi
 
-events=()
-for event in /sys/class/input/event*; do
-    if ! udevadm info --query=property --path="$event" 2>/dev/null | grep -qx 'ARMADA_WAYDROID_GAMEPAD=1'; then
-        continue
-    fi
-    events+=("$event")
-done
+LXC_PATH = "/var/lib/waydroid/lxc"
+BOTTOM_SCREEN = Path("/run/user/1000/armada-bottom-screen-active")
+KEYLAYOUTS = Path("/usr/share/armada/waydroid/keylayout")
+EVENT_NAME = re.compile(r"event[0-9]+")
+INPUT_EVENT = re.compile(r"\s(?:add|change|remove)\s+(\S+)\s+\(input\)$")
+ANDROID_INPUT_GID = 1004
 
-if (( ! ${#events[@]} )); then
-    echo "No Waydroid passthrough gamepad found"
-    exit 0
-fi
 
-if [[ -e /run/user/1000/armada-bottom-screen-active ]]; then
-    waydroid shell -- setprop persist.waydroid.uevent false
-    for event in "${events[@]}"; do
-        name=$(basename "$event")
-        waydroid shell -- rm -f "/dev/input/$name"
-        echo "Hid $name from Waydroid while the bottom screen is active"
-    done
-    exit 0
-fi
+def command(*args):
+    return subprocess.run(args, capture_output=True, text=True, timeout=5, check=True).stdout
 
-waydroid shell -- setprop persist.waydroid.uevent true
-for event in "${events[@]}"; do
-    echo add > "$event/uevent"
-    echo "Exposed $(basename "$event") to Waydroid"
-done
+
+def shared_devices():
+    devices = {}
+    output = command("udevadm", "info", "--export-db", "--subsystem-match=input")
+    for record in output.split("\n\n"):
+        properties = dict(line[3:].split("=", 1) for line in record.splitlines()
+                          if line.startswith("E: ") and "=" in line)
+        if properties.get("INPUTPLUMBER_SHARED_GAMEPAD") != "1":
+            continue
+        path = Path(properties.get("DEVNAME", ""))
+        if path.parent != Path("/dev/input") or not EVENT_NAME.fullmatch(path.name):
+            continue
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            continue
+        device = os.makedev(int(properties["MAJOR"]), int(properties["MINOR"]))
+        if stat.S_ISCHR(info.st_mode) and info.st_rdev == device and stat.S_IMODE(info.st_mode) == 0:
+            devices[path.name] = (device, properties["DEVPATH"])
+    return devices
+
+
+def publish_node(staging, inputs, name, device):
+    node = staging / name
+    os.mknod(node, stat.S_IFCHR | 0o600, device)
+    os.chown(node, 0, ANDROID_INPUT_GID)
+    node.chmod(0o660)
+    # EventHub watches IN_CREATE, not IN_MOVED_TO or permission changes.
+    os.link(node, inputs / name)
+    node.unlink()
+
+
+def reconcile_nodes(dev, desired, published):
+    inputs = dev / "input"
+    existing = set()
+    for node in inputs.iterdir():
+        if not EVENT_NAME.fullmatch(node.name):
+            continue
+        info = node.lstat()
+        if not stat.S_ISCHR(info.st_mode):
+            continue
+        expected = desired.get(node.name)
+        if (expected is None or published.get(node.name) != expected or expected[0] != info.st_rdev
+                or stat.S_IMODE(info.st_mode) != 0o660
+                or info.st_uid != 0 or info.st_gid != ANDROID_INPUT_GID):
+            node.unlink()
+        else:
+            existing.add(node.name)
+    with tempfile.TemporaryDirectory(prefix=".armada-input-", dir=dev) as directory:
+        for name, (device, _) in desired.items():
+            if name not in existing:
+                publish_node(Path(directory), inputs, name, device)
+
+
+def install_keylayouts(root):
+    target = root / "data/system/devices/keylayout"
+    target.mkdir(parents=True, exist_ok=True)
+    for source in KEYLAYOUTS.glob("*.kl"):
+        destination = target / source.name
+        if not destination.exists() or destination.read_bytes() != source.read_bytes():
+            shutil.copyfile(source, destination)
+            destination.chmod(0o644)
+
+
+class ControllerInput:
+    def __init__(self):
+        self.loop = GLib.MainLoop()
+        self.processes = []
+        self.monitors = []
+        self.pending = 0
+        self.deadline = 0
+        self.configured = None
+        self.published = {}
+        self.failed = False
+
+    def request(self):
+        self.deadline = time.monotonic() + 30
+        if not self.pending:
+            self.pending = GLib.idle_add(self.update)
+
+    def update(self):
+        self.pending = 0
+        try:
+            result = subprocess.run(
+                ["lxc-info", "-P", LXC_PATH, "-n", "waydroid", "-pH"],
+                capture_output=True, text=True, timeout=5)
+            pid = result.stdout.strip()
+            if result.returncode or not pid.isdecimal() or int(pid) <= 0:
+                self.configured = None
+                return GLib.SOURCE_REMOVE
+            root = Path("/proc") / pid / "root"
+            # Keep the selected container's tmpfs pinned if its init exits mid-pass.
+            with contextlib.ExitStack() as stack:
+                dev_fd = os.open(root / "dev", os.O_RDONLY | os.O_DIRECTORY)
+                stack.callback(os.close, dev_fd)
+                dev = Path(f"/proc/self/fd/{dev_fd}")
+                identity = (pid, os.fstat(dev_fd).st_dev, os.fstat(dev_fd).st_ino)
+                fresh = identity != self.configured
+                if fresh:
+                    self.published = {}
+                    ready = command("lxc-attach", "-P", LXC_PATH, "-n", "waydroid", "--clear-env",
+                                    "--", "/system/bin/getprop", "ro.persistent_properties.ready")
+                    # A saved hotplug setting must not overwrite this change later in boot.
+                    if ready.strip() != "true":
+                        raise BlockingIOError("Android persistent properties are not loaded")
+                    command("lxc-attach", "-P", LXC_PATH, "-n", "waydroid", "--clear-env",
+                            "--", "/system/bin/setprop", "persist.waydroid.uevent", "false")
+                    install_keylayouts(root)
+                desired = {} if BOTTOM_SCREEN.exists() else shared_devices()
+                reconcile_nodes(dev, desired, self.published)
+                self.configured = identity
+                self.published = desired
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
+            if time.monotonic() < self.deadline:
+                self.pending = GLib.timeout_add(1000, self.update)
+            else:
+                print(f"Waydroid controller setup failed: {error}", flush=True)
+                self.failed = True
+                self.loop.quit()
+        return GLib.SOURCE_REMOVE
+
+    def input_event(self, line):
+        match = INPUT_EVENT.search(line)
+        # The header follows subscription; rescan for changes missed during startup.
+        if line.startswith("UDEV -") or (match and EVENT_NAME.fullmatch(Path(match[1]).name)):
+            self.request()
+
+    def container_event(self, line):
+        if "[STOPPED]" in line:
+            self.configured = None
+        elif "[RUNNING]" in line:
+            self.request()
+
+    def watch_process(self, args, callback):
+        process = subprocess.Popen(args, stdout=subprocess.PIPE)
+        self.processes.append(process)
+        buffer = bytearray()
+
+        def readable(fd, condition):
+            data = os.read(fd, 65536)
+            if not data:
+                print(f"Input event monitor exited: {args[0]}", flush=True)
+                self.failed = True
+                self.loop.quit()
+                return GLib.SOURCE_REMOVE
+            buffer.extend(data)
+            while b"\n" in buffer:
+                line, _, rest = buffer.partition(b"\n")
+                buffer[:] = rest
+                callback(line.decode(errors="replace"))
+            return GLib.SOURCE_CONTINUE
+
+        GLib.io_add_watch(process.stdout.fileno(), GLib.PRIORITY_DEFAULT,
+                          GLib.IO_IN | GLib.IO_HUP, readable)
+
+    def run(self):
+        self.watch_process(["udevadm", "monitor", "--udev", "--subsystem-match=input"], self.input_event)
+        self.watch_process(["lxc-monitor", "-P", LXC_PATH, "-n", "waydroid"], self.container_event)
+        monitor = Gio.File.new_for_path(str(BOTTOM_SCREEN)).monitor_file(Gio.FileMonitorFlags.NONE, None)
+        monitor.connect("changed", lambda *_: self.request())
+        self.monitors.append(monitor)
+        self.request()
+        try:
+            self.loop.run()
+        finally:
+            for process in self.processes:
+                process.terminate()
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+        return int(self.failed)
+
+
+if __name__ == "__main__":
+    raise SystemExit(ControllerInput().run())

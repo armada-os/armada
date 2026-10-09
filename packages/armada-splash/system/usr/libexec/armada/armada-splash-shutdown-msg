@@ -1,0 +1,8 @@
+#!/usr/bin/bash
+# ostree finalizes a staged OS update during shutdown; warn instead of the
+# plain message so the long finalize does not read as a hang.
+set -u
+
+msg="${*:-Shutting down}"
+[[ -e /run/ostree/staged-deployment ]] && msg="Applying update. Do not power off."
+exec /usr/libexec/armada/armada-splash-progress "$msg"

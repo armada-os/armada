@@ -1,0 +1,1515 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] drm/msm/dpu: drive DSPP IGC and 3D gamut through LUTDMA
+
+DPU 9.0 and later keep their color LUT blocks behind a LUT bus fed only
+by the LUTDMA engine, with no memory-mapped write path, which is why
+mainline exposes only PCC and GC on these SoCs. Port the engine from the
+downstream sde driver (v2 layout for DPU 9.x, v3 for DPU 10.x and 12.x,
+sideband queue, command buffers in the KMS VM) and use it for the DSPP
+inverse gamma, exposed as a 256-entry DEGAMMA_LUT, and the 17^3 gamut
+LUT, exposed as the CRTC blob property DPU_3D_LUT (drm_color_lut entries,
+red fastest). The engine is mapped from an optional "lutdma" reg entry;
+without it the properties are not exposed. A DSPP joins the topology only
+on a modeset, so one is requested when color management starts or stops.
+
+The LUT bus formats are not documented and were measured on hardware (by
+feeding single-node inputs through the IGC and reading the interface CRC,
+confirmed by eye with solid primaries): the IGC takes its three
+components as (G, B, R), and the gamut block streams the 17^3 nodes in
+drm_color_lut order (red fastest) with (R, G, B) per node, rotating
+consecutive nodes through its four tables. The IGC has 257 samples at
+i/256, so the 256-entry DEGAMMA_LUT is resampled onto it.
+
+A command buffer is rewritten in place, so a DSPP update waits for the
+previous transfer's done bit on every buffer it will touch before queuing
+any of it, and skips the update if one is still pending; in-flight marks
+are dropped on runtime resume, when the power domain has reset the status.
+
+Verified on the AYN Odin 2 Portal (SM8550, engine v2) and Odin 3 (SM8750,
+engine v3): transfers complete, the IGC and gamut registers read back
+what the DMA wrote, and gamescope's shaper and 3D LUT scan out directly
+with no DPU errors. SM8750's GC v2 is also a LUT bus block and is not
+wired up.
+
+---
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_10_0_sm8650.h
+@@ -182,19 +182,19 @@
+ 	{
+ 		.name = "dspp_0", .id = DSPP_0,
+ 		.base = 0x54000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_1", .id = DSPP_1,
+ 		.base = 0x56000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_2", .id = DSPP_2,
+ 		.base = 0x58000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_3", .id = DSPP_3,
+ 		.base = 0x5a000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	},
+ };
+ 
+@@ -432,6 +432,7 @@
+ 	.mixer = sm8650_lm,
+ 	.dspp_count = ARRAY_SIZE(sm8650_dspp),
+ 	.dspp = sm8650_dspp,
++	.reg_dma = &sm8650_reg_dma,
+ 	.pingpong_count = ARRAY_SIZE(sm8650_pp),
+ 	.pingpong = sm8650_pp,
+ 	.dsc_count = ARRAY_SIZE(sm8650_dsc),
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_12_0_sm8750.h
+@@ -473,6 +473,7 @@
+ 	.mixer = sm8750_lm,
+ 	.dspp_count = ARRAY_SIZE(sm8750_dspp),
+ 	.dspp = sm8750_dspp,
++	.reg_dma = &sm8650_reg_dma,
+ 	.pingpong_count = ARRAY_SIZE(sm8750_pp),
+ 	.pingpong = sm8750_pp,
+ 	.dsc_count = ARRAY_SIZE(sm8750_dsc),
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_9_0_sm8550.h
+@@ -182,19 +182,19 @@
+ 	{
+ 		.name = "dspp_0", .id = DSPP_0,
+ 		.base = 0x54000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_1", .id = DSPP_1,
+ 		.base = 0x56000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_2", .id = DSPP_2,
+ 		.base = 0x58000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	}, {
+ 		.name = "dspp_3", .id = DSPP_3,
+ 		.base = 0x5a000, .len = 0x1800,
+-		.sblk = &sdm845_dspp_sblk,
++		.sblk = &sm8550_dspp_sblk,
+ 	},
+ };
+ static const struct dpu_pingpong_cfg sm8550_pp[] = {
+@@ -389,6 +389,7 @@
+ 	.mixer = sm8550_lm,
+ 	.dspp_count = ARRAY_SIZE(sm8550_dspp),
+ 	.dspp = sm8550_dspp,
++	.reg_dma = &sm8550_reg_dma,
+ 	.pingpong_count = ARRAY_SIZE(sm8550_pp),
+ 	.pingpong = sm8550_pp,
+ 	.dsc_count = ARRAY_SIZE(sm8550_dsc),
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -44,6 +44,13 @@
+ #define	CONVERT_S3_15(val) \
+ 	(((((u64)val) & ~BIT_ULL(63)) >> 17) & GENMASK_ULL(17, 0))
+ 
++/* color management lives in the DSPP, which only joins the topology on a modeset */
++static bool dpu_crtc_state_needs_dspp(const struct drm_crtc_state *crtc_state)
++{
++	return crtc_state->ctm || crtc_state->gamma_lut || crtc_state->degamma_lut ||
++	       to_dpu_crtc_state(crtc_state)->lut3d;
++}
++
+ static struct dpu_kms *_dpu_crtc_get_kms(struct drm_crtc *crtc)
+ {
+ 	struct msm_drm_private *priv = crtc->dev->dev_private;
+@@ -844,6 +851,8 @@
+ 	gc_lut->flags = 0;
+ }
+ 
++#define DPU_CP_BLOCKS_RETRIES	8
++
+ static void _dpu_crtc_setup_cp_blocks(struct drm_crtc *crtc)
+ {
+ 	struct drm_crtc_state *state = crtc->state;
+@@ -853,10 +862,14 @@
+ 	struct dpu_hw_gc_lut *gc_lut;
+ 	struct dpu_hw_ctl *ctl;
+ 	struct dpu_hw_dspp *dspp;
+-	int i;
++	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
++	unsigned long sb_ctls = 0;
++	bool fresh, retry = false;
++	int i, ret;
+ 
+ 
+-	if (!state->color_mgmt_changed && !drm_atomic_crtc_needs_modeset(state))
++	fresh = state->color_mgmt_changed || drm_atomic_crtc_needs_modeset(state);
++	if (!fresh && !dpu_crtc->cp_blocks_retries)
+ 		return;
+ 
+ 	for (i = 0; i < cstate->num_mixers; i++) {
+@@ -884,18 +897,80 @@
+ 				dspp->ops.setup_gc(dspp, NULL);
+ 			} else {
+ 				gc_lut = kzalloc_obj(*gc_lut);
+-				if (!gc_lut)
+-					continue;
+-				_dpu_crtc_get_gc_lut(state, gc_lut);
+-				dspp->ops.setup_gc(dspp, gc_lut);
+-				kfree(gc_lut);
++				if (gc_lut) {
++					_dpu_crtc_get_gc_lut(state, gc_lut);
++					dspp->ops.setup_gc(dspp, gc_lut);
++					kfree(gc_lut);
++				}
+ 			}
+ 
+ 			/* stage config flush mask */
+ 			ctl->ops.update_pending_flush_dspp(ctl,
+ 				mixer[i].hw_dspp->idx, DPU_DSPP_GC);
+ 		}
++
++		if (dspp->ops.setup_gamut || dspp->ops.setup_igc) {
++			ret = dpu_hw_dspp_reg_dma_wait(dspp, ctl->idx);
++			if (ret) {
++				DPU_ERROR("dspp %d LUT update skipped: %d\n", dspp->idx, ret);
++				retry = true;
++				continue;
++			}
++		}
++
++		if (dspp->ops.setup_gamut) {
++			ret = dspp->ops.setup_gamut(dspp,
++						    cstate->lut3d ? cstate->lut3d->data : NULL,
++						    ctl->idx);
++			if (ret) {
++				DPU_ERROR("dspp %d gamut setup failed: %d\n", dspp->idx, ret);
++				retry = true;
++			} else {
++				ctl->ops.update_pending_flush_dspp(ctl, dspp->idx, DPU_DSPP_GAMUT);
++				ctl->ops.update_pending_flush_dspp(ctl, dspp->idx, DPU_DSPP_SB);
++				sb_ctls |= BIT(ctl->idx);
++			}
++		}
++
++		if (dspp->ops.setup_igc) {
++			ret = dspp->ops.setup_igc(dspp,
++						  state->degamma_lut ?
++						  state->degamma_lut->data : NULL,
++						  ctl->idx);
++			if (ret) {
++				DPU_ERROR("dspp %d igc setup failed: %d\n", dspp->idx, ret);
++				retry = true;
++				continue;
++			}
++
++			ctl->ops.update_pending_flush_dspp(ctl, dspp->idx, DPU_DSPP_IGC);
++			ctl->ops.update_pending_flush_dspp(ctl, dspp->idx, DPU_DSPP_SB);
++			sb_ctls |= BIT(ctl->idx);
++		}
+ 	}
++
++	/* one last-command per CTL closes its sideband queue for this frame */
++	for_each_set_bit(i, &sb_ctls, CTL_MAX) {
++		for (int m = 0; m < cstate->num_mixers; m++) {
++			if (mixer[m].lm_ctl->idx == i && mixer[m].hw_dspp) {
++				ret = dpu_reg_dma_last_cmd_sb(mixer[m].hw_dspp->reg_dma, i);
++				if (ret) {
++					DPU_ERROR("ctl %d lutdma last command failed: %d\n",
++						  i, ret);
++					retry = true;
++				}
++				break;
++			}
++		}
++	}
++
++	/* a wedged engine must not pay the wait timeout on every frame */
++	if (!retry)
++		dpu_crtc->cp_blocks_retries = 0;
++	else if (fresh)
++		dpu_crtc->cp_blocks_retries = DPU_CP_BLOCKS_RETRIES;
++	else
++		dpu_crtc->cp_blocks_retries--;
+ }
+ 
+ static void dpu_crtc_atomic_begin(struct drm_crtc *crtc,
+@@ -1011,6 +1086,7 @@
+ 	DRM_DEBUG_ATOMIC("crtc%d\n", crtc->base.id);
+ 
+ 	__drm_atomic_helper_crtc_destroy_state(state);
++	drm_property_blob_put(cstate->lut3d);
+ 
+ 	kfree(cstate);
+ }
+@@ -1169,10 +1245,46 @@
+ 
+ 	/* duplicate base helper */
+ 	__drm_atomic_helper_crtc_duplicate_state(crtc, &cstate->base);
++	if (cstate->lut3d)
++		drm_property_blob_get(cstate->lut3d);
+ 
+ 	return &cstate->base;
+ }
+ 
++static int dpu_crtc_atomic_set_property(struct drm_crtc *crtc,
++					struct drm_crtc_state *state,
++					struct drm_property *property, uint64_t val)
++{
++	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
++	struct dpu_crtc_state *cstate = to_dpu_crtc_state(state);
++	bool replaced = false;
++	int ret;
++
++	if (property != dpu_crtc->lut3d_property)
++		return -EINVAL;
++
++	ret = drm_property_replace_blob_from_id(crtc->dev, &cstate->lut3d, val, -1,
++						DPU_GAMUT_3D_SIZE * sizeof(struct drm_color_lut),
++						sizeof(struct drm_color_lut), &replaced);
++	if (!ret)
++		state->color_mgmt_changed |= replaced;
++	return ret;
++}
++
++static int dpu_crtc_atomic_get_property(struct drm_crtc *crtc,
++					const struct drm_crtc_state *state,
++					struct drm_property *property, uint64_t *val)
++{
++	struct dpu_crtc *dpu_crtc = to_dpu_crtc(crtc);
++	const struct dpu_crtc_state *cstate = to_dpu_crtc_state(state);
++
++	if (property != dpu_crtc->lut3d_property)
++		return -EINVAL;
++
++	*val = cstate->lut3d ? cstate->lut3d->base.id : 0;
++	return 0;
++}
++
+ static void dpu_crtc_atomic_print_state(struct drm_printer *p,
+ 					const struct drm_crtc_state *state)
+ {
+@@ -1423,7 +1535,7 @@
+ 	else
+ 		topology.num_lm = 1;
+ 
+-	if (crtc_state->ctm || crtc_state->gamma_lut)
++	if (dpu_crtc_state_needs_dspp(crtc_state))
+ 		topology.num_dspp = topology.num_lm;
+ 
+ 	return topology;
+@@ -1488,8 +1600,8 @@
+ 
+ 		cstate->mixers[i].hw_lm = to_dpu_hw_mixer(hw_lm[i]);
+ 		cstate->mixers[i].lm_ctl = to_dpu_hw_ctl(hw_ctl[ctl_idx]);
+-		if (i < num_dspp)
+-			cstate->mixers[i].hw_dspp = to_dpu_hw_dspp(hw_dspp[i]);
++		cstate->mixers[i].hw_dspp = i < num_dspp ?
++			to_dpu_hw_dspp(hw_dspp[i]) : NULL;
+ 	}
+ 
+ 	cstate->num_mixers = num_lm;
+@@ -1524,6 +1636,38 @@
+ 	    (!clone_mode_requested && clone_mode_enabled))
+ 		new_crtc_state->mode_changed = true;
+ 
++	if (dpu_crtc_state_needs_dspp(old_crtc_state) != dpu_crtc_state_needs_dspp(new_crtc_state))
++		new_crtc_state->mode_changed = true;
++
++	return 0;
++}
++
++/* every DSPP reserved for this CRTC must carry the LUT blocks the state uses */
++static int _dpu_crtc_check_cp_blocks(struct drm_crtc *crtc, struct drm_crtc_state *crtc_state)
++{
++	struct dpu_kms *dpu_kms = _dpu_crtc_get_kms(crtc);
++	struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc_state);
++	struct dpu_global_state *global_state;
++	struct dpu_hw_blk *hw_dspp[MAX_CHANNELS_PER_CRTC];
++	int i, num_dspp;
++
++	global_state = dpu_kms_get_global_state(crtc_state->state);
++	if (IS_ERR(global_state))
++		return PTR_ERR(global_state);
++
++	num_dspp = dpu_rm_get_assigned_resources(&dpu_kms->rm, global_state, crtc,
++						 DPU_HW_BLK_DSPP, hw_dspp, ARRAY_SIZE(hw_dspp));
++	for (i = 0; i < num_dspp; i++) {
++		struct dpu_hw_dspp *dspp = to_dpu_hw_dspp(hw_dspp[i]);
++
++		if ((crtc_state->degamma_lut && !dspp->ops.setup_igc) ||
++		    (cstate->lut3d && !dspp->ops.setup_gamut)) {
++			DRM_DEBUG_ATOMIC("crtc%d: dspp %d lacks the requested LUT block\n",
++					 crtc->base.id, dspp->idx - DSPP_0);
++			return -EINVAL;
++		}
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1542,14 +1686,31 @@
+ 
+ 	bool needs_dirtyfb = dpu_crtc_needs_dirtyfb(crtc_state);
+ 
+-	/* don't reallocate resources if only ACTIVE has beeen changed */
+-	if (crtc_state->mode_changed || crtc_state->connectors_changed ||
+-	    crtc_state->color_mgmt_changed) {
++	/* DEGAMMA_LUT_SIZE only caps the blob; the IGC table needs every entry */
++	if (crtc_state->degamma_lut &&
++	    drm_color_lut_size(crtc_state->degamma_lut) != DPU_DEGAMMA_LUT_SIZE) {
++		DRM_DEBUG_ATOMIC("crtc%d: degamma lut has %d entries, need %d\n",
++				 crtc->base.id, drm_color_lut_size(crtc_state->degamma_lut),
++				 DPU_DEGAMMA_LUT_SIZE);
++		return -EINVAL;
++	}
++
++	/*
++	 * Reassign only when the encoder is reprogrammed too: a color change
++	 * that alters the topology has already asked for a modeset.
++	 */
++	if (crtc_state->mode_changed || crtc_state->connectors_changed) {
+ 		rc = dpu_crtc_assign_resources(crtc, crtc_state);
+ 		if (rc < 0)
+ 			return rc;
+ 	}
+ 
++	if (crtc_state->degamma_lut || cstate->lut3d) {
++		rc = _dpu_crtc_check_cp_blocks(crtc, crtc_state);
++		if (rc)
++			return rc;
++	}
++
+ 	if (crtc_state->planes_changed || crtc_state->zpos_changed) {
+ 		if (dpu_use_virtual_planes)
+ 			rc = dpu_crtc_reassign_planes(crtc, crtc_state);
+@@ -1854,6 +2015,8 @@
+ 	.reset = dpu_crtc_reset,
+ 	.atomic_duplicate_state = dpu_crtc_duplicate_state,
+ 	.atomic_destroy_state = dpu_crtc_destroy_state,
++	.atomic_set_property = dpu_crtc_atomic_set_property,
++	.atomic_get_property = dpu_crtc_atomic_get_property,
+ 	.atomic_print_state = dpu_crtc_atomic_print_state,
+ 	.late_register = dpu_crtc_late_register,
+ 	.verify_crc_source = dpu_crtc_verify_crc_source,
+@@ -1922,12 +2085,23 @@
+ 
+ 	if (dpu_kms->catalog->dspp_count) {
+ 		const struct dpu_dspp_cfg *dspp = &dpu_kms->catalog->dspp[0];
++		struct dpu_hw_dspp *hw_dspp = dpu_kms->rm.dspp_blks[0] ?
++			to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[0]) : NULL;
++		u32 degamma = hw_dspp && hw_dspp->ops.setup_igc ? DPU_DEGAMMA_LUT_SIZE : 0;
++
++		if (hw_dspp && hw_dspp->ops.setup_gamut) {
++			dpu_crtc->lut3d_property = drm_property_create(dev, DRM_MODE_PROP_BLOB,
++								       "DPU_3D_LUT", 0);
++			if (dpu_crtc->lut3d_property)
++				drm_object_attach_property(&crtc->base,
++							   dpu_crtc->lut3d_property, 0);
++		}
+ 
+ 		if (dspp->sblk->gc.base) {
+ 			drm_mode_crtc_set_gamma_size(crtc, DPU_GAMMA_LUT_SIZE);
+-			drm_crtc_enable_color_mgmt(crtc, 0, true, DPU_GAMMA_LUT_SIZE);
++			drm_crtc_enable_color_mgmt(crtc, degamma, true, DPU_GAMMA_LUT_SIZE);
+ 		} else {
+-			drm_crtc_enable_color_mgmt(crtc, 0, true, 0);
++			drm_crtc_enable_color_mgmt(crtc, degamma, true, 0);
+ 		}
+ 	}
+ 
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.h
+@@ -156,6 +156,10 @@
+ struct dpu_crtc {
+ 	struct drm_crtc base;
+ 	char name[DPU_CRTC_NAME_SIZE];
++	struct drm_property *lut3d_property;
++
++	/* flushes left to reprogram color after a LUTDMA wait or setup failure */
++	u8 cp_blocks_retries;
+ 
+ 	struct drm_pending_vblank_event *event;
+ 	u32 vsync_count;
+@@ -225,6 +229,16 @@
+ 
+ 	enum dpu_crtc_crc_source crc_source;
+ 	int crc_frame_skip_count;
++
++	/*
++	 * DPU_3D_LUT: DPU_GAMUT_3D_SIZE drm_color_lut entries indexed
++	 * r + 17 * (g + 17 * b), the top 12 bits of each 16-bit value used,
++	 * reserved ignored; tetrahedral interpolation on the display's blended
++	 * output after DEGAMMA_LUT and before CTM and GAMMA_LUT. 0 bypasses
++	 * the block; setting or clearing it while the CRTC has no other color
++	 * property needs a modeset.
++	 */
++	struct drm_property_blob *lut3d;
+ };
+ 
+ #define to_dpu_crtc_state(x) \
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+@@ -451,9 +451,37 @@
+ 		.len = 0x40, .version = 0x10008},
+ };
+ 
++static const struct dpu_dspp_sub_blks sm8550_dspp_sblk = {
++	.pcc = {.name = "pcc", .base = 0x1700,
++		.len = 0x90, .version = 0x40000},
++	.gc = {.name = "gc", .base = 0x17c0,
++		.len = 0x40, .version = 0x10008},
++	.igc = {.name = "igc", .base = 0x1260,
++		.len = 0x1c, .version = 0x40000},
++	.gamut = {.name = "gamut", .base = 0x1000,
++		.len = 0x1c, .version = 0x40003},
++};
++
++static const struct dpu_reg_dma_cfg sm8550_reg_dma = {
++	.base = 0xac000, .len = 0x800,
++	.db_off = 0x0, .sb_off = 0x400,
++	.version = 0x20000,
++};
++
++static const struct dpu_reg_dma_cfg sm8650_reg_dma = {
++	.base = 0x180000, .len = 0x7000,
++	.db_off = 0x0, .sb_off = 0x800,
++	.version = 0x30000,
++};
++
++/* GC v2 on this DSPP is a LUT bus block too and is not wired up yet */
+ static const struct dpu_dspp_sub_blks sm8750_dspp_sblk = {
+ 	.pcc = {.name = "pcc", .base = 0x1700,
+ 		.len = 0x90, .version = 0x60000},
++	.igc = {.name = "igc", .base = 0x1260,
++		.len = 0x1c, .version = 0x50000},
++	.gamut = {.name = "gamut", .base = 0x1000,
++		.len = 0x1c, .version = 0x40003},
+ };
+ 
+ /*************************************************************
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+@@ -82,6 +82,9 @@
+ enum {
+ 	DPU_DSPP_PCC = 0x1,
+ 	DPU_DSPP_GC,
++	DPU_DSPP_IGC,
++	DPU_DSPP_GAMUT,
++	DPU_DSPP_SB,
+ 	DPU_DSPP_MAX
+ };
+ 
+@@ -335,6 +338,26 @@
+ struct dpu_dspp_sub_blks {
+ 	struct dpu_pp_blk pcc;
+ 	struct dpu_pp_blk gc;
++	/* inverse gamma; a LUT bus block, loaded through LUTDMA */
++	struct dpu_pp_blk igc;
++	/* 3D gamut LUT; a LUT bus block, loaded through LUTDMA */
++	struct dpu_pp_blk gamut;
++};
++
++/**
++ * struct dpu_reg_dma_cfg - LUTDMA engine registers, relative to the MDSS base
++ * @base: engine block
++ * @len: block length
++ * @db_off: double-buffered queue registers within the block
++ * @sb_off: sideband queue registers within the block
++ * @version: engine version, 0x20000 (DPU 9.x) or 0x30000 (DPU 10.x and later)
++ */
++struct dpu_reg_dma_cfg {
++	u32 base;
++	u32 len;
++	u32 db_off;
++	u32 sb_off;
++	u32 version;
+ };
+ 
+ struct dpu_pingpong_sub_blks {
+@@ -752,6 +775,8 @@
+ 	u32 dspp_count;
+ 	const struct dpu_dspp_cfg *dspp;
+ 
++	const struct dpu_reg_dma_cfg *reg_dma;
++
+ 	u32 cwb_count;
+ 	const struct dpu_cwb_cfg *cwb;
+ 
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
+@@ -402,6 +402,15 @@
+ 	case DPU_DSPP_GC:
+ 		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(5);
+ 		break;
++	case DPU_DSPP_IGC:
++		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(2);
++		break;
++	case DPU_DSPP_GAMUT:
++		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(3);
++		break;
++	case DPU_DSPP_SB:
++		ctx->pending_dspp_flush_mask[dspp - DSPP_0] |= BIT(31);
++		break;
+ 	default:
+ 		return;
+ 	}
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.c
+@@ -115,6 +115,189 @@
+ 	DPU_REG_WRITE(&ctx->hw, base, reg);
+ }
+ 
++/*
++ * DSPP_IGC (v4, v5): opcode register at +0x4, enable bit 8. The table
++ * travels over the LUT bus as 257 samples at i / 256 of three 16-bit values
++ * in G, B, R order (the block's c0, c1, c2); v4 takes 12 bits MSB aligned,
++ * v5 all 16. The order is hardware-measured.
++ */
++#define IGC_OPCODE_OFF		0x4
++#define IGC_EN			BIT(8)
++#define IGC_V4_MASK		0xfff0
++#define IGC_SAMPLES		257
++#define IGC_BEAT		(DPU_LUTBUS_IGC_TRANS_SIZE * sizeof(u32))
++#define IGC_LEN			roundup(IGC_SAMPLES * 3 * sizeof(u16), IGC_BEAT)
++#define IGC_BUF_SIZE		(IGC_LEN + 16 * sizeof(u32))
++
++static u16 lut_chan(const struct drm_color_lut *e, int chan)
++{
++	return chan == 0 ? e->red : chan == 1 ? e->green : e->blue;
++}
++
++/* sample i of the hardware table sits at i / 256, DEGAMMA_LUT entry i at i / 255 */
++static u16 igc_sample(const struct drm_color_lut *lut, int i, int chan)
++{
++	int pos = i * (DPU_DEGAMMA_LUT_SIZE - 1);
++	int idx = pos / (IGC_SAMPLES - 1);
++	int frac = pos % (IGC_SAMPLES - 1);
++	int a = lut_chan(&lut[idx], chan);
++	int b = lut_chan(&lut[min(idx + 1, DPU_DEGAMMA_LUT_SIZE - 1)], chan);
++
++	return (a * (IGC_SAMPLES - 1 - frac) + b * frac + (IGC_SAMPLES - 1) / 2) /
++	       (IGC_SAMPLES - 1);
++}
++
++static int dpu_setup_dspp_igc(struct dpu_hw_dspp *ctx, const struct drm_color_lut *lut,
++			      int ctl_idx)
++{
++	struct dpu_reg_dma_buf *buf = &ctx->igc_buf;
++	u32 base = ctx->cap->sblk->igc.base;
++	u16 mask = ctx->cap->sblk->igc.version >= 0x50000 ? 0xffff : IGC_V4_MASK;
++	__le16 *data;
++	int i, j, ret;
++
++	if (!ctx->reg_dma || !buf->vaddr || !base)
++		return -EOPNOTSUPP;
++
++	ret = dpu_reg_dma_buf_begin(ctx->reg_dma, buf);
++	if (ret)
++		return ret;
++	ret = dpu_reg_dma_decode_sel(ctx->reg_dma, buf, DPU_REG_DMA_SEL_DSPP(ctx->idx - DSPP_0));
++	if (ret)
++		return ret;
++
++	if (!lut) {
++		ret = dpu_reg_dma_single_write(buf, base + IGC_OPCODE_OFF, 0);
++		return ret ? ret : dpu_reg_dma_kick_off_sb(ctx->reg_dma, ctl_idx, buf);
++	}
++
++	data = dpu_reg_dma_lut_reserve(buf, DPU_LUTBUS_BLOCK_IGC, DPU_LUTBUS_IGC_TRANS_SIZE,
++				       IGC_LEN);
++	if (!data)
++		return -ENOSPC;
++
++	for (i = 0, j = 0; i < IGC_SAMPLES; i++) {
++		data[j++] = cpu_to_le16(igc_sample(lut, i, 1) & mask);
++		data[j++] = cpu_to_le16(igc_sample(lut, i, 2) & mask);
++		data[j++] = cpu_to_le16(igc_sample(lut, i, 0) & mask);
++	}
++
++	ret = dpu_reg_dma_single_write(buf, base + IGC_OPCODE_OFF, IGC_EN);
++	return ret ? ret : dpu_reg_dma_kick_off_sb(ctx->reg_dma, ctl_idx, buf);
++}
++
++/*
++ * DSPP_GAMUT (v4.3): opmode at +0x0 (mode 17 = 0 << 2, enable bit 0). The
++ * 17^3 grid lives in four tables of 1229 entries, interleaved entry by
++ * entry over the LUT bus, which is the same as streaming the nodes in
++ * drm_color_lut order (red fastest, blue slowest). Each node is three
++ * 16-bit values (R, G, B), 12 bits MSB aligned, trans size 6. The node
++ * order and component order are hardware-measured, not documented.
++ */
++#define GAMUT_V43_MODE17_EN	BIT(0)
++#define GAMUT_V43_TBL_NUM	4
++#define GAMUT_V43_TBL_LEN	1229
++#define GAMUT_V43_BEAT		(DPU_LUTBUS_GAMUT_TRANS_SIZE * sizeof(u32))
++#define GAMUT_V43_LEN		roundup(GAMUT_V43_TBL_NUM * GAMUT_V43_TBL_LEN * 3 * sizeof(u16), \
++				       GAMUT_V43_BEAT)
++#define GAMUT_V43_BUF_SIZE	(GAMUT_V43_LEN + 16 * sizeof(u32))
++
++static int dpu_setup_dspp_gamut(struct dpu_hw_dspp *ctx, const struct drm_color_lut *lut,
++				int ctl_idx)
++{
++	struct dpu_reg_dma_buf *buf = &ctx->gamut_buf;
++	u32 base = ctx->cap->sblk->gamut.base;
++	__le16 *data;
++	int n, k, ret;
++
++	if (!ctx->reg_dma || !buf->vaddr || !base)
++		return -EOPNOTSUPP;
++
++	ret = dpu_reg_dma_buf_begin(ctx->reg_dma, buf);
++	if (ret)
++		return ret;
++	ret = dpu_reg_dma_decode_sel(ctx->reg_dma, buf, DPU_REG_DMA_SEL_DSPP(ctx->idx - DSPP_0));
++	if (ret)
++		return ret;
++
++	if (!lut) {
++		ret = dpu_reg_dma_single_write(buf, base, 0);
++		return ret ? ret : dpu_reg_dma_kick_off_sb(ctx->reg_dma, ctl_idx, buf);
++	}
++
++	data = dpu_reg_dma_lut_reserve(buf, DPU_LUTBUS_BLOCK_GAMUT, DPU_LUTBUS_GAMUT_TRANS_SIZE,
++				       GAMUT_V43_LEN);
++	if (!data)
++		return -ENOSPC;
++
++	for (n = 0, k = 0; n < DPU_GAMUT_3D_SIZE; n++) {
++		data[k++] = cpu_to_le16(drm_color_lut_extract(lut[n].red, 12) << 4);
++		data[k++] = cpu_to_le16(drm_color_lut_extract(lut[n].green, 12) << 4);
++		data[k++] = cpu_to_le16(drm_color_lut_extract(lut[n].blue, 12) << 4);
++	}
++
++	ret = dpu_reg_dma_single_write(buf, base, GAMUT_V43_MODE17_EN);
++	return ret ? ret : dpu_reg_dma_kick_off_sb(ctx->reg_dma, ctl_idx, buf);
++}
++
++int dpu_hw_dspp_set_reg_dma(struct dpu_hw_dspp *ctx, struct dpu_reg_dma *reg_dma)
++{
++	int ret;
++
++	/* only the block revisions whose LUT bus format is known */
++	if (ctx->cap->sblk->igc.base &&
++	    (ctx->cap->sblk->igc.version == 0x40000 || ctx->cap->sblk->igc.version == 0x50000)) {
++		ret = dpu_reg_dma_buf_alloc(reg_dma, &ctx->igc_buf, IGC_BUF_SIZE);
++		if (ret)
++			return ret;
++		ctx->ops.setup_igc = dpu_setup_dspp_igc;
++	}
++	if (ctx->cap->sblk->gamut.base && ctx->cap->sblk->gamut.version == 0x40003) {
++		ret = dpu_reg_dma_buf_alloc(reg_dma, &ctx->gamut_buf, GAMUT_V43_BUF_SIZE);
++		if (ret) {
++			dpu_reg_dma_buf_free(reg_dma, &ctx->igc_buf);
++			ctx->ops.setup_igc = NULL;
++			return ret;
++		}
++		ctx->ops.setup_gamut = dpu_setup_dspp_gamut;
++	}
++	ctx->reg_dma = reg_dma;
++	return 0;
++}
++
++/* the IGC and gamut updates are queued as one batch: wait for all of it or none */
++int dpu_hw_dspp_reg_dma_wait(struct dpu_hw_dspp *ctx, int ctl_idx)
++{
++	int ret;
++
++	if (!ctx->reg_dma)
++		return 0;
++	ret = dpu_reg_dma_buf_wait(ctx->reg_dma, &ctx->igc_buf);
++	if (!ret)
++		ret = dpu_reg_dma_buf_wait(ctx->reg_dma, &ctx->gamut_buf);
++	if (!ret && ctl_idx >= CTL_0 && ctl_idx < CTL_MAX)
++		ret = dpu_reg_dma_buf_wait(ctx->reg_dma, &ctx->reg_dma->last_cmd[ctl_idx]);
++	return ret;
++}
++
++void dpu_hw_dspp_reg_dma_resume(struct dpu_hw_dspp *ctx)
++{
++	ctx->igc_buf.ctl_idx = 0;
++	ctx->gamut_buf.ctl_idx = 0;
++}
++
++void dpu_hw_dspp_clear_reg_dma(struct dpu_hw_dspp *ctx)
++{
++	if (!ctx->reg_dma)
++		return;
++
++	dpu_reg_dma_buf_free(ctx->reg_dma, &ctx->igc_buf);
++	dpu_reg_dma_buf_free(ctx->reg_dma, &ctx->gamut_buf);
++	ctx->ops.setup_igc = NULL;
++	ctx->ops.setup_gamut = NULL;
++	ctx->reg_dma = NULL;
++}
++
+ /**
+  * dpu_hw_dspp_init() - Initializes the DSPP hw driver object.
+  * should be called once before accessing every DSPP.
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dspp.h
+@@ -5,6 +5,10 @@
+ #ifndef _DPU_HW_DSPP_H
+ #define _DPU_HW_DSPP_H
+ 
++#include <drm/drm_color_mgmt.h>
++
++#include "dpu_hw_reg_dma.h"
++
+ struct dpu_hw_dspp;
+ 
+ /**
+@@ -34,6 +38,9 @@
+ };
+ 
+ #define DPU_GAMMA_LUT_SIZE 1024
++#define DPU_DEGAMMA_LUT_SIZE 256
++#define DPU_GAMUT_3D_EDGE 17
++#define DPU_GAMUT_3D_SIZE (DPU_GAMUT_3D_EDGE * DPU_GAMUT_3D_EDGE * DPU_GAMUT_3D_EDGE)
+ #define PGC_TBL_LEN 512
+ #define PGC_8B_ROUND BIT(0)
+ 
+@@ -72,6 +79,23 @@
+ 	 */
+ 	void (*setup_gc)(struct dpu_hw_dspp *ctx, struct dpu_hw_gc_lut *gc_lut);
+ 
++	/**
++	 * setup_igc - queue an inverse gamma lut over LUTDMA for the given CTL;
++	 * NULL disables. The caller flushes DPU_DSPP_IGC and DPU_DSPP_SB and
++	 * closes the CTL's sideband queue.
++	 * @ctx: Pointer to dspp context
++	 * @lut: DPU_DEGAMMA_LUT_SIZE entries, or NULL
++	 * @ctl_idx: CTL that flushes this dspp
++	 */
++	int (*setup_igc)(struct dpu_hw_dspp *ctx, const struct drm_color_lut *lut, int ctl_idx);
++
++	/**
++	 * setup_gamut - queue a 3D gamut lut over LUTDMA; NULL disables.
++	 * Caller flushes DPU_DSPP_GAMUT and DPU_DSPP_SB.
++	 * @lut: DPU_GAMUT_3D_SIZE entries, red fastest, or NULL
++	 */
++	int (*setup_gamut)(struct dpu_hw_dspp *ctx, const struct drm_color_lut *lut, int ctl_idx);
++
+ };
+ 
+ /**
+@@ -92,6 +116,11 @@
+ 
+ 	/* Ops */
+ 	struct dpu_hw_dspp_ops ops;
++
++	/* LUTDMA, set once the engine exists */
++	struct dpu_reg_dma *reg_dma;
++	struct dpu_reg_dma_buf igc_buf;
++	struct dpu_reg_dma_buf gamut_buf;
+ };
+ 
+ /**
+@@ -108,5 +137,10 @@
+ 				     const struct dpu_dspp_cfg *cfg,
+ 				     void __iomem *addr);
+ 
++int dpu_hw_dspp_set_reg_dma(struct dpu_hw_dspp *ctx, struct dpu_reg_dma *reg_dma);
++int dpu_hw_dspp_reg_dma_wait(struct dpu_hw_dspp *ctx, int ctl_idx);
++void dpu_hw_dspp_reg_dma_resume(struct dpu_hw_dspp *ctx);
++void dpu_hw_dspp_clear_reg_dma(struct dpu_hw_dspp *ctx);
++
+ #endif /*_DPU_HW_DSPP_H */
+ 
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.c
+@@ -0,0 +1,388 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <drm/drm_managed.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/seq_file.h>
++
++#include "msm_drv.h"
++#include "msm_gem.h"
++#include "dpu_hwio.h"
++#include "dpu_hw_reg_dma.h"
++
++/* Command words: opcode in the high bits of the first dword */
++#define SINGLE_REG_WRITE_OPCODE		BIT(28)
++#define LUTBUS_WRITE_OPCODE		(BIT(30) | BIT(29))
++#define NO_OP_OPCODE			0
++#define MAX_RELATIVE_OFF		(BIT(21) - 1)
++#define MAX_DWORDS_SZ			(BIT(14) - 1)
++#define LUTBUS_BLOCK_SEL_MASK		0xffff
++#define LUTBUS_TRANS_SZ_MASK		0xff0000
++#define LUTBUS_LUT_SIZE_MASK		0x3fff
++
++/* queue command word */
++#define CMD_WRITE			BIT(22)
++#define CMD_LAST			BIT(24)
++
++#define REG_DMA_OPMODE			0x4
++#define REG_DMA_ERROR_CLEAR_MASK	(BIT(0) | BIT(1) | BIT(2) | BIT(16) | \
++					 BIT(17) | BIT(18) | BIT(19))
++
++#define ADDR_ALIGN			BIT(8)
++#define GUARD_BYTES			(ADDR_ALIGN - 1)
++#define LAST_CMD_BUF_SIZE		(128 * sizeof(u32))
++#define DONE_TIMEOUT_US			2000
++
++/*
++ * Per-version register layout. The decode select is itself an absolute
++ * register write to the engine, so its address is part of the layout.
++ */
++struct dpu_reg_dma_layout {
++	u32 decode_sel;
++	u32 intr4_status;
++	u32 intr4_clear;
++	u32 (*queue1)(int ctl_idx);
++	u32 (*intr_status)(int ctl_idx);
++	u32 (*intr_clear)(int ctl_idx);
++	u32 (*done_mask)(int ctl_idx);
++};
++
++static const u32 v2_done_mask[CTL_MAX] = {
++	[CTL_0] = BIT(21), [CTL_1] = BIT(22), [CTL_2] = BIT(23),
++	[CTL_3] = BIT(24), [CTL_4] = BIT(27), [CTL_5] = BIT(28),
++};
++
++static u32 v2_queue1(int ctl_idx) { return 0x1c + (ctl_idx - CTL_0) * 0x10; }
++static u32 v2_intr_status(int ctl_idx) { return 0x160; }
++static u32 v2_intr_clear(int ctl_idx) { return 0x1a0; }
++static u32 v2_done(int ctl_idx) { return v2_done_mask[ctl_idx]; }
++
++static const struct dpu_reg_dma_layout dpu_reg_dma_v2 = {
++	.decode_sel = 0x180ac114,
++	.intr4_status = 0x170,
++	.intr4_clear = 0x1b0,
++	.queue1 = v2_queue1,
++	.intr_status = v2_intr_status,
++	.intr_clear = v2_intr_clear,
++	.done_mask = v2_done,
++};
++
++/*
++ * v3: one 4 KiB window per CTL with its own queues, status and reset,
++ * numbered by CTL id, so CTL_0 uses the second window.
++ */
++static u32 v3_queue1(int ctl_idx) { return 0x1000 * ctl_idx + 0x8; }
++static u32 v3_intr_status(int ctl_idx) { return 0x1000 * ctl_idx + 0x44; }
++static u32 v3_intr_clear(int ctl_idx) { return 0x1000 * ctl_idx + 0x48; }
++static u32 v3_done(int ctl_idx) { return BIT(4); }
++
++static const struct dpu_reg_dma_layout dpu_reg_dma_v3 = {
++	.decode_sel = 0x18180114,
++	.intr4_status = 0x170,
++	.intr4_clear = 0x1b0,
++	.queue1 = v3_queue1,
++	.intr_status = v3_intr_status,
++	.intr_clear = v3_intr_clear,
++	.done_mask = v3_done,
++};
++
++int dpu_reg_dma_buf_alloc(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf, u32 size)
++{
++	u64 iova, aligned;
++	void *vaddr;
++
++	if (!size || (size / sizeof(u32)) > MAX_DWORDS_SZ)
++		return -EINVAL;
++
++	vaddr = msm_gem_kernel_new(dma->dev, size + GUARD_BYTES, MSM_BO_WC, dma->vm,
++				   &buf->bo, &iova);
++	if (IS_ERR(vaddr))
++		return PTR_ERR(vaddr);
++
++	aligned = ALIGN(iova, ADDR_ALIGN);
++	buf->iova = aligned;
++	buf->vaddr = vaddr + (aligned - iova);
++	buf->size = size;
++	buf->index = 0;
++	buf->ctl_idx = 0;
++	return 0;
++}
++
++void dpu_reg_dma_buf_free(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf)
++{
++	if (!buf->bo)
++		return;
++	msm_gem_kernel_put(buf->bo, dma->vm);
++	buf->bo = NULL;
++	buf->vaddr = NULL;
++	buf->iova = 0;
++}
++
++/*
++ * A buffer is rewritten in place, so wait for the transfer that last read
++ * it (the done bit is set by the flush-triggered transfer). On a timeout
++ * the buffer stays owned and the update is refused rather than rewriting
++ * live command memory; dpu_reg_dma_resume() drops the mark after a power
++ * collapse, the only case where the status register reads clear.
++ */
++int dpu_reg_dma_buf_wait(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf)
++{
++	u32 status;
++	int ret;
++
++	if (!buf->vaddr)
++		return -EINVAL;
++	if (!buf->ctl_idx)
++		return 0;
++
++	ret = read_poll_timeout(DPU_REG_READ, status,
++				status & dma->layout->done_mask(buf->ctl_idx),
++				10, DONE_TIMEOUT_US, false,
++				&dma->sb, dma->layout->intr_status(buf->ctl_idx));
++	if (ret) {
++		DRM_ERROR_RATELIMITED("LUTDMA ctl%d previous transfer not done (%#x)\n",
++				      buf->ctl_idx - CTL_0, status);
++		return -ETIMEDOUT;
++	}
++	buf->ctl_idx = 0;
++	return 0;
++}
++
++int dpu_reg_dma_buf_begin(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf)
++{
++	int ret = dpu_reg_dma_buf_wait(dma, buf);
++
++	if (ret)
++		return ret;
++	buf->index = 0;
++	return 0;
++}
++
++static __le32 *buf_reserve(struct dpu_reg_dma_buf *buf, u32 bytes)
++{
++	__le32 *loc;
++
++	if (buf->index + bytes > buf->size)
++		return NULL;
++	loc = (__le32 *)((u8 *)buf->vaddr + buf->index);
++	buf->index += bytes;
++	return loc;
++}
++
++static int write_decode_sel(struct dpu_reg_dma_buf *buf, u32 decode_sel, u32 sel)
++{
++	__le32 *loc = buf_reserve(buf, 2 * sizeof(u32));
++
++	if (!loc)
++		return -ENOSPC;
++	loc[0] = cpu_to_le32(decode_sel);
++	loc[1] = cpu_to_le32(sel);
++	return 0;
++}
++
++int dpu_reg_dma_single_write(struct dpu_reg_dma_buf *buf, u32 blk_offset, u32 val)
++{
++	__le32 *loc = buf_reserve(buf, 2 * sizeof(u32));
++
++	if (!loc)
++		return -ENOSPC;
++	loc[0] = cpu_to_le32(SINGLE_REG_WRITE_OPCODE | (blk_offset & MAX_RELATIVE_OFF));
++	loc[1] = cpu_to_le32(val);
++	return 0;
++}
++
++/*
++ * Queue a LUT bus write of len bytes and return its zeroed payload area for
++ * the caller to fill with little-endian LUT bus data.
++ */
++void *dpu_reg_dma_lut_reserve(struct dpu_reg_dma_buf *buf, u32 block_sel, u32 trans_size,
++			      u32 len)
++{
++	u32 beat = trans_size * sizeof(u32);
++	__le32 *loc, *tail;
++
++	if (len % beat)
++		return NULL;
++
++	loc = buf_reserve(buf, 2 * sizeof(u32) + len + 3 * sizeof(u32));
++	if (!loc)
++		return NULL;
++
++	loc[0] = cpu_to_le32(LUTBUS_WRITE_OPCODE | (block_sel & LUTBUS_BLOCK_SEL_MASK));
++	loc[1] = cpu_to_le32(((trans_size << 16) & LUTBUS_TRANS_SZ_MASK) |
++			     ((len / beat) & LUTBUS_LUT_SIZE_MASK));
++	memset(&loc[2], 0, len);
++
++	/* the engine needs residual data plus the next opcode to exceed four dwords */
++	tail = (__le32 *)((u8 *)&loc[2] + len);
++	tail[0] = cpu_to_le32(NO_OP_OPCODE);
++	tail[1] = cpu_to_le32(NO_OP_OPCODE);
++	tail[2] = cpu_to_le32(NO_OP_OPCODE);
++	return &loc[2];
++}
++
++/* the v3 layout maps one window per CTL and the catalog length bounds them */
++bool dpu_reg_dma_ctl_valid(struct dpu_reg_dma *dma, int ctl_idx)
++{
++	const struct dpu_reg_dma_layout *l = dma->layout;
++	u32 sb_len = dma->cfg->len - dma->cfg->sb_off;
++
++	if (ctl_idx < CTL_0 || ctl_idx >= CTL_MAX)
++		return false;
++	return l->queue1(ctl_idx) + 2 * sizeof(u32) <= sb_len &&
++	       l->intr_status(ctl_idx) + sizeof(u32) <= sb_len &&
++	       l->intr_clear(ctl_idx) + sizeof(u32) <= sb_len;
++}
++
++static int kick_off_sb(struct dpu_reg_dma *dma, int ctl_idx, struct dpu_reg_dma_buf *buf, bool last)
++{
++	const struct dpu_reg_dma_layout *l = dma->layout;
++	u32 queue, cmd1, status;
++
++	if (!dpu_reg_dma_ctl_valid(dma, ctl_idx) || !buf->iova || !buf->index)
++		return -EINVAL;
++	queue = l->queue1(ctl_idx);
++
++	/* the command buffer is write-combined; publish it before the engine reads it */
++	wmb();
++
++	cmd1 = CMD_WRITE | ((buf->index / sizeof(u32)) & MAX_DWORDS_SZ);
++	if (last)
++		cmd1 |= CMD_LAST;
++
++	DPU_REG_WRITE(&dma->sb, REG_DMA_OPMODE, BIT(0));
++	status = DPU_REG_READ(&dma->sb, l->intr4_status);
++	if (status) {
++		DRM_ERROR_RATELIMITED("LUTDMA error status %#x\n", status);
++		DPU_REG_WRITE(&dma->sb, l->intr4_clear, REG_DMA_ERROR_CLEAR_MASK);
++	}
++
++	DPU_REG_WRITE(&dma->sb, queue, lower_32_bits(buf->iova));
++	DPU_REG_WRITE(&dma->sb, queue + 0x4, cmd1);
++	buf->ctl_idx = ctl_idx;
++
++	if (last) {
++		/* the last-command descriptor must be queued before the done bit is armed */
++		wmb();
++		DPU_REG_WRITE(&dma->sb, l->intr_clear(ctl_idx), l->done_mask(ctl_idx));
++	}
++	return 0;
++}
++
++int dpu_reg_dma_kick_off_sb(struct dpu_reg_dma *dma, int ctl_idx, struct dpu_reg_dma_buf *buf)
++{
++	return kick_off_sb(dma, ctl_idx, buf, false);
++}
++
++/*
++ * Close the sideband queue for this CTL: a last-command descriptor tells the
++ * engine the batch is complete, and the DSPP_SB flush then starts it.
++ */
++int dpu_reg_dma_last_cmd_sb(struct dpu_reg_dma *dma, int ctl_idx)
++{
++	struct dpu_reg_dma_buf *buf;
++	int ret;
++
++	if (!dpu_reg_dma_ctl_valid(dma, ctl_idx))
++		return -EINVAL;
++
++	buf = &dma->last_cmd[ctl_idx];
++	ret = dpu_reg_dma_buf_begin(dma, buf);
++	if (ret)
++		return ret;
++	ret = write_decode_sel(buf, dma->layout->decode_sel, 0);
++	if (ret)
++		return ret;
++
++	return kick_off_sb(dma, ctl_idx, buf, true);
++}
++
++int dpu_reg_dma_decode_sel(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf, u32 sel)
++{
++	return write_decode_sel(buf, dma->layout->decode_sel, sel);
++}
++
++static bool transfer_done(struct dpu_reg_dma *dma, int ctl_idx)
++{
++	u32 status = DPU_REG_READ(&dma->sb, dma->layout->intr_status(ctl_idx));
++
++	return status & dma->layout->done_mask(ctl_idx);
++}
++
++void dpu_reg_dma_debugfs_show(struct dpu_reg_dma *dma, struct seq_file *s)
++{
++	const struct dpu_reg_dma_layout *l = dma->layout;
++	int i;
++
++	seq_printf(s, "engine v%x sb_off %#x\n", dma->cfg->version, dma->cfg->sb_off);
++	seq_printf(s, "opmode %#010x intr4_status %#010x\n",
++		   DPU_REG_READ(&dma->sb, REG_DMA_OPMODE), DPU_REG_READ(&dma->sb, l->intr4_status));
++	for (i = CTL_0; i < CTL_MAX; i++) {
++		if (!dpu_reg_dma_ctl_valid(dma, i))
++			continue;
++		if (!dma->last_cmd[i].iova)
++			continue;
++		seq_printf(s, "ctl%d q1 addr %#010x cmd %#010x intr_status %#010x done %d last_cmd iova %#llx\n",
++			   i - CTL_0, DPU_REG_READ(&dma->sb, l->queue1(i)),
++			   DPU_REG_READ(&dma->sb, l->queue1(i) + 4),
++			   DPU_REG_READ(&dma->sb, l->intr_status(i)), transfer_done(dma, i),
++			   dma->last_cmd[i].iova);
++	}
++}
++
++struct dpu_reg_dma *dpu_reg_dma_init(struct drm_device *dev, struct drm_gpuvm *vm,
++				     void __iomem *base, const struct dpu_reg_dma_cfg *cfg)
++{
++	struct dpu_reg_dma *dma;
++	int i, ret;
++
++	dma = drmm_kzalloc(dev, sizeof(*dma), GFP_KERNEL);
++	if (!dma)
++		return ERR_PTR(-ENOMEM);
++
++	switch (cfg->version) {
++	case DPU_REG_DMA_VER_2_0:
++		dma->layout = &dpu_reg_dma_v2;
++		break;
++	case DPU_REG_DMA_VER_3_0:
++		dma->layout = &dpu_reg_dma_v3;
++		break;
++	default:
++		return ERR_PTR(-EOPNOTSUPP);
++	}
++
++	dma->dev = dev;
++	dma->vm = vm;
++	dma->cfg = cfg;
++	dma->sb.blk_addr = base + cfg->sb_off;
++	dma->sb.log_mask = DPU_DBG_MASK_TOP;
++
++	for (i = CTL_0; i < CTL_MAX; i++) {
++		ret = dpu_reg_dma_buf_alloc(dma, &dma->last_cmd[i], LAST_CMD_BUF_SIZE);
++		if (ret) {
++			while (--i >= CTL_0)
++				dpu_reg_dma_buf_free(dma, &dma->last_cmd[i]);
++			return ERR_PTR(ret);
++		}
++	}
++
++	return dma;
++}
++
++/* The engine lost its state with the power domain; nothing is in flight */
++void dpu_reg_dma_resume(struct dpu_reg_dma *dma)
++{
++	int i;
++
++	for (i = CTL_0; i < CTL_MAX; i++)
++		dma->last_cmd[i].ctl_idx = 0;
++}
++
++/* Must run while the display VM is still alive */
++void dpu_reg_dma_destroy(struct dpu_reg_dma *dma)
++{
++	int i;
++
++	for (i = CTL_0; i < CTL_MAX; i++)
++		dpu_reg_dma_buf_free(dma, &dma->last_cmd[i]);
++}
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_reg_dma.h
+@@ -0,0 +1,82 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * LUTDMA: the DPU's LUT DMA engine. Color LUT blocks on DPU 9.x and later
++ * (DSPP IGC and gamut, VIG IGC and gamut) have no memory-mapped write path;
++ * their tables are streamed over a LUT bus by this engine from a command
++ * buffer in the display IOMMU domain. The sideband (SB) queue is triggered
++ * by the CTL's DSPP_SB flush, so a transfer lands with the frame it was
++ * queued for.
++ */
++
++#ifndef _DPU_HW_REG_DMA_H
++#define _DPU_HW_REG_DMA_H
++
++#include <linux/types.h>
++#include "dpu_hw_mdss.h"
++#include "dpu_hw_catalog.h"
++#include "dpu_hw_util.h"
++
++struct drm_device;
++struct seq_file;
++struct drm_gpuvm;
++struct drm_gem_object;
++
++/* LUT bus block select for the LUT write command */
++#define DPU_LUTBUS_BLOCK_IGC		0
++#define DPU_LUTBUS_BLOCK_GAMUT		1
++/* LUT bus transfer sizes, in dwords per beat */
++#define DPU_LUTBUS_IGC_TRANS_SIZE	3
++#define DPU_LUTBUS_GAMUT_TRANS_SIZE	6
++
++/* decode select bits */
++#define DPU_REG_DMA_SEL_VIG(n)		BIT(n)
++#define DPU_REG_DMA_SEL_DSPP(n)		BIT(17 + (n))
++
++#define DPU_REG_DMA_VER_2_0		0x20000
++#define DPU_REG_DMA_VER_3_0		0x30000
++
++struct dpu_reg_dma_buf {
++	struct drm_gem_object *bo;
++	u64 iova;
++	void *vaddr;
++	u32 size;
++	u32 index;
++	/* CTL whose sideband queue last consumed this buffer, 0 for none */
++	int ctl_idx;
++};
++
++struct dpu_reg_dma_layout;
++
++struct dpu_reg_dma {
++	struct drm_device *dev;
++	struct drm_gpuvm *vm;
++	struct dpu_hw_blk_reg_map sb;
++	const struct dpu_reg_dma_cfg *cfg;
++	const struct dpu_reg_dma_layout *layout;
++	struct dpu_reg_dma_buf last_cmd[CTL_MAX];
++};
++
++struct dpu_reg_dma *dpu_reg_dma_init(struct drm_device *dev, struct drm_gpuvm *vm,
++				     void __iomem *base, const struct dpu_reg_dma_cfg *cfg);
++void dpu_reg_dma_resume(struct dpu_reg_dma *dma);
++void dpu_reg_dma_debugfs_show(struct dpu_reg_dma *dma, struct seq_file *s);
++void dpu_reg_dma_destroy(struct dpu_reg_dma *dma);
++int dpu_reg_dma_buf_alloc(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf, u32 size);
++void dpu_reg_dma_buf_free(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf);
++
++/*
++ * Command buffer construction. dpu_reg_dma_buf_begin() waits for the
++ * buffer's previous transfer before it is rewritten.
++ */
++int dpu_reg_dma_buf_wait(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf);
++int dpu_reg_dma_buf_begin(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf);
++int dpu_reg_dma_decode_sel(struct dpu_reg_dma *dma, struct dpu_reg_dma_buf *buf, u32 sel);
++int dpu_reg_dma_single_write(struct dpu_reg_dma_buf *buf, u32 blk_offset, u32 val);
++void *dpu_reg_dma_lut_reserve(struct dpu_reg_dma_buf *buf, u32 block_sel, u32 trans_size,
++			      u32 len);
++
++bool dpu_reg_dma_ctl_valid(struct dpu_reg_dma *dma, int ctl_idx);
++int dpu_reg_dma_kick_off_sb(struct dpu_reg_dma *dma, int ctl_idx, struct dpu_reg_dma_buf *buf);
++int dpu_reg_dma_last_cmd_sb(struct dpu_reg_dma *dma, int ctl_idx);
++
++#endif /* _DPU_HW_REG_DMA_H */
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -33,6 +33,7 @@
+ #include "dpu_formats.h"
+ #include "dpu_hw_vbif.h"
+ #include "dpu_kms.h"
++#include "dpu_hw_dspp.h"
+ #include "dpu_plane.h"
+ #include "dpu_vbif.h"
+ #include "dpu_writeback.h"
+@@ -97,6 +98,43 @@
+ 	return 0;
+ }
+ 
++static int dpu_debugfs_lutdma_show(struct seq_file *s, void *v)
++{
++	struct dpu_kms *dpu_kms = s->private;
++	int i, ret;
++
++	if (!dpu_kms->reg_dma) {
++		seq_puts(s, "no engine\n");
++		return 0;
++	}
++
++	ret = pm_runtime_resume_and_get(&dpu_kms->pdev->dev);
++	if (ret)
++		return ret;
++	dpu_reg_dma_debugfs_show(dpu_kms->reg_dma, s);
++	for (i = 0; i < ARRAY_SIZE(dpu_kms->rm.dspp_blks); i++) {
++		struct dpu_hw_dspp *dspp;
++		u32 base;
++
++		if (!dpu_kms->rm.dspp_blks[i])
++			continue;
++		dspp = to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[i]);
++		base = dspp->cap->sblk->igc.base;
++		if (!base)
++			continue;
++		seq_printf(s, "dspp%d igc opcode %#010x buf iova %#llx index %u\n", i,
++			   readl_relaxed(dspp->hw.blk_addr + base + 0x4),
++			   dspp->igc_buf.iova, dspp->igc_buf.index);
++		if (dspp->cap->sblk->gamut.base)
++			seq_printf(s, "dspp%d gamut opmode %#010x buf iova %#llx index %u\n", i,
++				   readl_relaxed(dspp->hw.blk_addr + dspp->cap->sblk->gamut.base),
++				   dspp->gamut_buf.iova, dspp->gamut_buf.index);
++	}
++	pm_runtime_put_sync(&dpu_kms->pdev->dev);
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(dpu_debugfs_lutdma);
++
+ static int dpu_debugfs_danger_stats_show(struct seq_file *s, void *v)
+ {
+ 	return _dpu_danger_signal_status(s, true);
+@@ -306,6 +344,7 @@
+ 	debugfs_create_x32(DPU_DEBUGFS_HWMASKNAME, 0600, entry, p);
+ 
+ 	dpu_debugfs_danger_init(dpu_kms, entry);
++	debugfs_create_file("lutdma", 0400, entry, dpu_kms, &dpu_debugfs_lutdma_fops);
+ 	dpu_debugfs_vbif_init(dpu_kms, entry);
+ 	dpu_debugfs_core_irq_init(dpu_kms, entry);
+ 	dpu_debugfs_sspp_init(dpu_kms, entry);
+@@ -886,11 +925,27 @@
+ 	return 0;
+ }
+ 
++static void _dpu_kms_reg_dma_destroy(struct dpu_kms *dpu_kms)
++{
++	int i;
++
++	if (!dpu_kms->reg_dma)
++		return;
++
++	for (i = 0; i < ARRAY_SIZE(dpu_kms->rm.dspp_blks); i++)
++		if (dpu_kms->rm.dspp_blks[i])
++			dpu_hw_dspp_clear_reg_dma(to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[i]));
++
++	dpu_reg_dma_destroy(dpu_kms->reg_dma);
++	dpu_kms->reg_dma = NULL;
++}
++
+ static void _dpu_kms_hw_destroy(struct dpu_kms *dpu_kms)
+ {
+ 	dpu_kms->hw_intr = NULL;
+ 
+ 	/* safe to call these more than once during shutdown */
++	_dpu_kms_reg_dma_destroy(dpu_kms);
+ 	_dpu_kms_mmu_destroy(dpu_kms);
+ 
+ 	dpu_kms->hw_vbif = NULL;
+@@ -1135,6 +1190,63 @@
+ 
+ #define	DPU_PERF_DEFAULT_MAX_CORE_CLK_RATE	412500000
+ 
++/* The LUTDMA engine sits in the MDSS register space outside "mdp"; the DT names it */
++static int _dpu_kms_reg_dma_init(struct dpu_kms *dpu_kms)
++{
++	const struct dpu_reg_dma_cfg *cfg = dpu_kms->catalog->reg_dma;
++	struct resource *res;
++	void __iomem *base;
++	struct dpu_reg_dma *dma;
++	int i, rc;
++
++	if (!cfg)
++		return 0;
++
++	res = platform_get_resource_byname(dpu_kms->pdev, IORESOURCE_MEM, "lutdma");
++	if (!res) {
++		DPU_DEBUG("no lutdma reg, LUT color blocks unavailable\n");
++		return 0;
++	}
++	if (resource_size(res) < cfg->len) {
++		DPU_ERROR("lutdma reg %pR is smaller than the engine (%#x)\n", res, cfg->len);
++		return -EINVAL;
++	}
++	base = devm_ioremap_resource(&dpu_kms->pdev->dev, res);
++	if (IS_ERR(base))
++		return PTR_ERR(base);
++
++	dma = dpu_reg_dma_init(dpu_kms->dev, dpu_kms->base.vm, base, cfg);
++	if (IS_ERR(dma))
++		return PTR_ERR(dma);
++	dpu_kms->reg_dma = dma;
++
++	for (i = 0; i < ARRAY_SIZE(dpu_kms->rm.dspp_blks); i++) {
++		if (!dpu_kms->rm.dspp_blks[i])
++			continue;
++		rc = dpu_hw_dspp_set_reg_dma(to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[i]), dma);
++		if (rc) {
++			_dpu_kms_reg_dma_destroy(dpu_kms);
++			return rc;
++		}
++	}
++
++	DPU_DEBUG("LUTDMA v%x at %pR\n", cfg->version, res);
++	return 0;
++}
++
++static void _dpu_kms_reg_dma_resume(struct dpu_kms *dpu_kms)
++{
++	int i;
++
++	if (!dpu_kms->reg_dma)
++		return;
++
++	dpu_reg_dma_resume(dpu_kms->reg_dma);
++	for (i = 0; i < ARRAY_SIZE(dpu_kms->rm.dspp_blks); i++)
++		if (dpu_kms->rm.dspp_blks[i])
++			dpu_hw_dspp_reg_dma_resume(to_dpu_hw_dspp(dpu_kms->rm.dspp_blks[i]));
++}
++
+ static int dpu_kms_hw_init(struct msm_kms *kms)
+ {
+ 	struct dpu_kms *dpu_kms;
+@@ -1214,6 +1326,11 @@
+ 		goto err_pm_put;
+ 	}
+ 
++	rc = _dpu_kms_reg_dma_init(dpu_kms);
++	if (rc)
++		DPU_ERROR("LUTDMA init failed: %d, LUT color blocks unavailable\n", rc);
++	rc = 0;
++
+ 	struct dpu_hw_vbif *hw;
+ 	const struct dpu_vbif_cfg *vbif = dpu_kms->catalog->vbif;
+ 
+@@ -1464,6 +1581,7 @@
+ 	}
+ 
+ 	dpu_vbif_init_memtypes(dpu_kms);
++	_dpu_kms_reg_dma_resume(dpu_kms);
+ 
+ 	drm_for_each_encoder(encoder, ddev)
+ 		dpu_encoder_virt_runtime_resume(encoder);
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.h
+@@ -21,6 +21,7 @@
+ #include "dpu_hw_lm.h"
+ #include "dpu_hw_interrupts.h"
+ #include "dpu_hw_top.h"
++#include "dpu_hw_reg_dma.h"
+ #include "dpu_rm.h"
+ #include "dpu_core_perf.h"
+ 
+@@ -83,6 +84,7 @@
+ 
+ 	struct dpu_hw_vbif *hw_vbif;
+ 	struct dpu_hw_mdp *hw_mdp;
++	struct dpu_reg_dma *reg_dma;
+ 
+ 	bool has_danger_ctrl;
+ 
+diff -ruN a/drivers/gpu/drm/msm/Makefile b/drivers/gpu/drm/msm/Makefile
+--- a/drivers/gpu/drm/msm/Makefile
++++ b/drivers/gpu/drm/msm/Makefile
+@@ -89,6 +89,7 @@
+ 	disp/dpu1/dpu_hw_sspp.o \
+ 	disp/dpu1/dpu_hw_sspp_v13.o \
+ 	disp/dpu1/dpu_hw_dspp.o \
++	disp/dpu1/dpu_hw_reg_dma.o \
+ 	disp/dpu1/dpu_hw_merge3d.o \
+ 	disp/dpu1/dpu_hw_top.o \
+ 	disp/dpu1/dpu_hw_util.o \

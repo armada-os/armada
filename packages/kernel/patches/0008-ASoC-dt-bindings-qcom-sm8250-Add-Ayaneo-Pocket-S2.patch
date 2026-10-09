@@ -1,0 +1,32 @@
+From: Neil Armstrong <neil.armstrong@linaro.org>
+Date: Tue, 28 Jul 2026 10:46:44 +0200
+Subject: [PATCH 2/3] ASoC: dt-bindings: qcom,sm8250: Add Ayaneo Pocket S2 sound card
+
+Document the bindings for the sound card on the Ayaneo Pocket S2
+which uses the special speaker connection incompatible with
+the default SM8650 sound card.
+
+Acked-by: Krzysztof Kozlowski <krzysztof.kozlowski@oss.qualcomm.com>
+Signed-off-by: Neil Armstrong <neil.armstrong@linaro.org>
+---
+ Documentation/devicetree/bindings/sound/qcom,sm8250.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml b/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
+index bd5f5a6268a3..0998b2abd8bb 100644
+--- a/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,sm8250.yaml
+@@ -31,6 +31,7 @@ properties:
+               - qcom,sm8750-sndcard
+           - const: qcom,sm8450-sndcard
+       - enum:
++          - ayaneo,pocket-s2-sndcard
+           - fairphone,fp4-sndcard
+           - fairphone,fp5-sndcard
+           - qcom,apq8096-sndcard
+
+-- 
+2.34.1
+
+
+

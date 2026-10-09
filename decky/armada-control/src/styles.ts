@@ -54,6 +54,12 @@ export const styles = `
         --colored-toggles-main-color: #0000;
         background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
       }
+      .armada-control-tabs .armada-rgb-saturation .${gamepadSliderClasses.SliderTrack} {
+        --left-track-color: #0000;
+        --colored-toggles-main-color: #0000;
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 1));
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+      }
       .armada-control-tabs .armada-subheader {
         text-transform: uppercase;
         font-size: 12px;

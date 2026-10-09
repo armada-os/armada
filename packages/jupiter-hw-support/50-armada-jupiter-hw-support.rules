@@ -1,0 +1,23 @@
+polkit.addRule(function(action, subject) {
+    if (!subject.active || !subject.isInGroup("wheel")) {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var actions = [
+        "org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-format-sdcard",
+        "org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-format-device",
+        "org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-set-hostname",
+        "org.valve.policykit.steamos.pkexec.run-steamos-polkit-helpers-steamos-enable-sshd",
+        "org.freedesktop.udisks2.eject-media",
+        "org.freedesktop.udisks2.power-off-drive",
+        "org.freedesktop.udisks2.filesystem-unmount-others",
+        "org.freedesktop.udisks2.eject-media-other-seat",
+        "org.freedesktop.udisks2.power-off-drive-other-seat"
+    ];
+
+    if (actions.indexOf(action.id) >= 0) {
+        return polkit.Result.YES;
+    }
+
+    return polkit.Result.NOT_HANDLED;
+});

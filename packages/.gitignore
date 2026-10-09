@@ -1,0 +1,27 @@
+# Build artifacts — every package emits into out/
+out/
+release/
+work/
+build/
+
+# Compiled / downloaded / generated artifacts, never committed
+fex-sysroot-macros.inc
+*.rpm
+*.src.rpm
+*.tar.zst
+*.tar.gz
+*.tar.xz
+*.cpio
+*.img
+*.so
+# built by hand and checked by hash, see lepton/build-android.sh
+!lepton/prebuilt/**/*.so
+
+# ccache for build-local.sh runs
+.ccache/
+
+# Editor noise
+*.swp
+*.swo
+.idea/
+.vscode/

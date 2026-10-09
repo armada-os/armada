@@ -32,12 +32,7 @@ EOF
 
 source /ctx/abl/release.env
 abl_releases=/ctx/abl/releases.tsv
-abl_archive=/tmp/rocknix-abl.tar.gz
-curl --connect-timeout 30 --retry 3 -fsSL -o "${abl_archive}" \
-    "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
-abl_src=/tmp/rocknix-abl
-mkdir -p "${abl_src}"
-tar -xzf "${abl_archive}" -C "${abl_src}" --strip-components=1
+abl_src=/ctx/abl
 manifest=/usr/lib/armada/abl/manifest
 install -Dpm 0644 /dev/null "${manifest}"
 install -Dpm 0644 "${abl_releases}" /usr/lib/armada/abl/releases.tsv
@@ -72,8 +67,6 @@ for soc in SM8250 SM8550 SM8650 SM8750; do
         "${actual_hash}" \
         >> "${manifest}"
 done
-rm -f "${abl_archive}"
-rm -rf "${abl_src}"
 
 chmod 0755 /usr/libexec/armada/*
 chmod 0755 /usr/libexec/os-session-select
@@ -93,21 +86,27 @@ systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
 systemctl enable armada-guestos.service
+systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service
 systemctl enable armada-rgb.service
+systemctl enable armada-rgb-brightness-watch.service
+systemctl enable armada-rgb-brightness-watch.path
 systemctl enable armada-fixups.service
 systemctl enable armada-update-reserve.service
 systemctl enable armada-installer-visibility.service
 systemctl enable armada-steamapps.service
 systemctl enable armada-powerd.service
 systemctl enable armada-control.service
-systemctl enable armada-steamos-manager.service
-systemctl --global enable armada-steamos-manager.service
+systemctl enable steamos-manager.service
+systemctl --global enable steamos-manager.service
+systemctl --global enable steamos-manager-session-cleanup.service
+systemctl --global enable armada-steam-default-session.service
+systemctl --global enable armada-steam-charging-eta.service
 systemctl enable armada-bootimg-sync.service
 systemctl enable armada-esp-rename.service
 systemctl enable armada-boot-hotkeys.service
 systemctl enable armada-flatpak-setup.service
-systemctl enable armada-waydroid-input.path
+systemctl enable armada-waydroid-input.service
 systemctl enable armada-splash-stall.service
 systemctl enable armada-splash-early.service
 systemctl enable armada-splash-reboot-screen.service
@@ -147,3 +146,6 @@ systemctl mask systemd-backlight@.service
 # We ship the flathub repo by default, the fedora repo only contains a subset of
 # the same apps that are in flathub, so we mask it to avoid confusion and issues.
 systemctl mask flatpak-add-fedora-repos.service
+
+# No CEC hardware on any Armada device.
+systemctl --global mask steamos-manager-configure-cecd.service

@@ -1,0 +1,427 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] libliftoff: preserve stacking across multiple primary planes
+
+The msm DPU driver exposes multiple primary planes compatible with the same
+CRTC. The allocator skips primaries in its ordering checks and tracks only
+one primary layer/plane pair, allowing the Steam overlay to be placed below
+an opaque game. Hardware rotation exposes this when layers can scan out
+separately.
+
+Check the relative order of every pair of overlapping assigned layers,
+including primaries. Use DRM's plane object ID tie-break for equal explicit
+zpos values and retain primary-first traversal for drivers that require it.
+This lets the allocator find a correctly ordered hardware assignment.
+
+Overlapping layers on planes with equal guessed zpos and no explicit zpos
+properties are rejected because their hardware order is unknown. Previously,
+multiple primaries could accept such assignments without checking the order.
+
+Add regression coverage for multiple primaries and inherited zpos, requiring
+full hardware allocation whenever a correctly ordered assignment exists.
+
+---
+diff --git a/subprojects/libliftoff/alloc.c b/subprojects/libliftoff/alloc.c
+--- a/subprojects/libliftoff/alloc.c
++++ b/subprojects/libliftoff/alloc.c
+@@ -93,8 +93,6 @@
+ 
+ 	struct liftoff_layer **alloc; /* only items up to plane_idx are valid */
+ 	int score; /* number of allocated layers */
+-	int last_layer_zpos;
+-	int primary_layer_zpos, primary_plane_zpos;
+ 
+ 	bool composited; /* per-output */
+ 
+@@ -128,11 +126,7 @@
+ plane_step_init_next(struct alloc_step *step, struct alloc_step *prev,
+ 		     struct liftoff_layer *layer)
+ {
+-	struct liftoff_plane *plane;
+-	struct liftoff_layer_property *zpos_prop;
+ 	size_t len;
+-
+-	plane = liftoff_container_of(prev->plane_link, plane, link);
+ 
+ 	step->plane_link = prev->plane_link->next;
+ 	step->plane_idx = prev->plane_idx + 1;
+@@ -152,23 +146,6 @@
+ 		step->score = prev->score;
+ 	}
+ 
+-	zpos_prop = NULL;
+-	if (layer != NULL) {
+-		zpos_prop = layer_get_core_property(layer, LIFTOFF_PROP_ZPOS);
+-	}
+-	if (zpos_prop != NULL && plane->type != DRM_PLANE_TYPE_PRIMARY) {
+-		step->last_layer_zpos = zpos_prop->value;
+-	} else {
+-		step->last_layer_zpos = prev->last_layer_zpos;
+-	}
+-	if (zpos_prop != NULL && plane->type == DRM_PLANE_TYPE_PRIMARY) {
+-		step->primary_layer_zpos = zpos_prop->value;
+-		step->primary_plane_zpos = plane->zpos;
+-	} else {
+-		step->primary_layer_zpos = prev->primary_layer_zpos;
+-		step->primary_plane_zpos = prev->primary_plane_zpos;
+-	}
+-
+ 	if (layer != NULL) {
+ 		len = strlen(prev->log_prefix) + 2;
+ 		if (len > sizeof(step->log_prefix) - 1) {
+@@ -229,82 +206,52 @@
+ 	return false;
+ }
+ 
+-static bool
+-has_allocated_layer_over(struct liftoff_output *output, struct alloc_step *step,
+-			 struct liftoff_layer *layer)
+-{
+-	ssize_t i;
++/* Primary planes can share a CRTC and are not visited in zpos order. */
++static bool
++check_layer_plane_zpos(struct alloc_step *step, struct liftoff_layer *layer,
++                       struct liftoff_plane *plane)
++{
+ 	struct liftoff_plane *other_plane;
+ 	struct liftoff_layer *other_layer;
+-	struct liftoff_layer_property *zpos_prop, *other_zpos_prop;
+-
+-	zpos_prop = layer_get_core_property(layer, LIFTOFF_PROP_ZPOS);
+-	if (zpos_prop == NULL) {
+-		return false;
+-	}
+-
+-	i = -1;
+-	liftoff_list_for_each(other_plane, &output->device->planes, link) {
++	struct liftoff_layer_property *zpos, *other_zpos;
++	ssize_t i = -1;
++	bool plane_above;
++
++	zpos = layer_get_core_property(layer, LIFTOFF_PROP_ZPOS);
++	if (zpos == NULL) {
++		return true;
++	}
++
++	liftoff_list_for_each(other_plane, &layer->output->device->planes, link) {
+ 		i++;
+ 		if (i >= (ssize_t)step->plane_idx) {
+ 			break;
+ 		}
+-		if (other_plane->type == DRM_PLANE_TYPE_PRIMARY) {
+-			continue;
+-		}
+-
+ 		other_layer = step->alloc[i];
+-		if (other_layer == NULL) {
+-			continue;
+-		}
+-
+-		other_zpos_prop = layer_get_core_property(other_layer,
+-							  LIFTOFF_PROP_ZPOS);
+-		if (other_zpos_prop == NULL) {
+-			continue;
+-		}
+-
+-		/* Since plane zpos is descending, this means the other layer is
+-		 * supposed to be under but is mapped to a plane over the
+-		 * current one. */
+-		if (zpos_prop->value > other_zpos_prop->value &&
+-		    layer_intersects(layer, other_layer)) {
+-			return true;
+-		}
+-	}
+-
+-	return false;
+-}
+-
+-static bool
+-has_allocated_plane_under(struct liftoff_output *output,
+-			  struct alloc_step *step, struct liftoff_layer *layer)
+-{
+-	struct liftoff_plane *plane, *other_plane;
+-	ssize_t i;
+-
+-	plane = liftoff_container_of(step->plane_link, plane, link);
+-
+-	i = -1;
+-	liftoff_list_for_each(other_plane, &output->device->planes, link) {
+-		i++;
+-		if (i >= (ssize_t)step->plane_idx) {
+-			break;
+-		}
+-		if (other_plane->type == DRM_PLANE_TYPE_PRIMARY) {
+-			continue;
+-		}
+-		if (step->alloc[i] == NULL) {
+-			continue;
+-		}
+-
+-		if (plane->zpos >= other_plane->zpos &&
+-		    layer_intersects(layer, step->alloc[i])) {
+-			return true;
+-		}
+-	}
+-
+-	return false;
++		if (other_layer == NULL || !layer_intersects(layer, other_layer)) {
++			continue;
++		}
++		other_zpos = layer_get_core_property(other_layer, LIFTOFF_PROP_ZPOS);
++		if (other_zpos == NULL || zpos->value == other_zpos->value) {
++			continue;
++		}
++
++		if (plane->zpos != other_plane->zpos) {
++			plane_above = plane->zpos > other_plane->zpos;
++		} else if (plane->core_props[LIFTOFF_PROP_ZPOS] != NULL &&
++		           other_plane->core_props[LIFTOFF_PROP_ZPOS] != NULL) {
++			/* DRM orders equal explicit zpos values by plane object ID. */
++			plane_above = plane->id > other_plane->id;
++		} else {
++			/* Guessed zpos ties do not define a hardware order. */
++			return false;
++		}
++
++		if ((zpos->value > other_zpos->value) != plane_above) {
++			return false;
++		}
++	}
++	return true;
+ }
+ 
+ static bool
+@@ -313,7 +260,6 @@
+ 			     struct liftoff_plane *plane)
+ {
+ 	struct liftoff_output *output;
+-	struct liftoff_layer_property *zpos_prop;
+ 
+ 	output = layer->output;
+ 
+@@ -322,46 +268,11 @@
+ 		return false;
+ 	}
+ 
+-	zpos_prop = layer_get_core_property(layer, LIFTOFF_PROP_ZPOS);
+-	if (zpos_prop != NULL) {
+-		if ((int)zpos_prop->value > step->last_layer_zpos &&
+-		    has_allocated_layer_over(output, step, layer)) {
+-			/* This layer needs to be on top of the last
+-			 * allocated one */
+-			liftoff_log(LIFTOFF_DEBUG,
+-				    "%s Layer %p -> plane %"PRIu32": "
+-				    "layer zpos invalid",
+-				    step->log_prefix, (void *)layer, plane->id);
+-			return false;
+-		}
+-		if ((int)zpos_prop->value < step->last_layer_zpos &&
+-		    has_allocated_plane_under(output, step, layer)) {
+-			/* This layer needs to be under the last
+-			 * allocated one, but this plane isn't under the
+-			 * last one (in practice, since planes are
+-			 * sorted by zpos it means it has the same zpos,
+-			 * ie. undefined ordering). */
+-			liftoff_log(LIFTOFF_DEBUG,
+-				    "%s Layer %p -> plane %"PRIu32": "
+-				    "plane zpos invalid",
+-				    step->log_prefix, (void *)layer, plane->id);
+-			return false;
+-		}
+-		if (plane->type != DRM_PLANE_TYPE_PRIMARY &&
+-		    (int)zpos_prop->value < step->primary_layer_zpos &&
+-		    plane->zpos > step->primary_plane_zpos) {
+-			/* Primary planes are handled up front, because some
+-			 * drivers fail all atomic commits when it's missing.
+-			 * However that messes up with our zpos checks. In
+-			 * particular, we need to make sure we don't put a layer
+-			 * configured to be over the primary plane under it.
+-			 * TODO: revisit this once we add underlay support. */
+-			liftoff_log(LIFTOFF_DEBUG,
+-				    "%s Layer %p -> plane %"PRIu32": "
+-				    "layer zpos under primary",
+-				    step->log_prefix, (void *)layer, plane->id);
+-			return false;
+-		}
++	if (!check_layer_plane_zpos(step, layer, plane)) {
++		liftoff_log(LIFTOFF_DEBUG,
++			    "%s Layer %p -> plane %"PRIu32": plane zpos invalid",
++			    step->log_prefix, (void *)layer, plane->id);
++		return false;
+ 	}
+ 
+ 	if (plane->type != DRM_PLANE_TYPE_PRIMARY &&
+@@ -1046,9 +957,6 @@
+ 	step.plane_link = device->planes.next;
+ 	step.plane_idx = 0;
+ 	step.score = 0;
+-	step.last_layer_zpos = INT_MAX;
+-	step.primary_layer_zpos = INT_MIN;
+-	step.primary_plane_zpos = INT_MAX;
+ 	step.composited = false;
+ 	ret = output_choose_layers(output, &result, &step);
+ 	if (ret != 0) {
+diff --git a/subprojects/libliftoff/test/meson.build b/subprojects/libliftoff/test/meson.build
+--- a/subprojects/libliftoff/test/meson.build
++++ b/subprojects/libliftoff/test/meson.build
+@@ -23,6 +23,10 @@
+ )
+ 
+ tests = {
++	'multi_primary': [
++		'reset', 'inherited', 'reversed', 'equal', 'constrained',
++		'mixed', 'disjoint', 'unknown-order', 'infeasible',
++	],
+ 	'alloc': [
+ 		'basic',
+ 		'no-props-fail',
+diff --git a/subprojects/libliftoff/test/test_multi_primary.c b/subprojects/libliftoff/test/test_multi_primary.c
+new file mode 100644
+--- /dev/null
++++ b/subprojects/libliftoff/test/test_multi_primary.c
+@@ -0,0 +1,146 @@
++#include <assert.h>
++#include <inttypes.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <string.h>
++#include <unistd.h>
++#include <libliftoff.h>
++#include "libdrm_mock.h"
++
++struct test_case {
++	const char *name;
++	uint64_t zpos[3];
++	bool constrain_game;
++	bool disjoint;
++	bool mixed_types;
++	bool no_zpos;
++	bool needs_composition;
++};
++
++static const struct test_case tests[] = {
++	{ .name = "reset", .zpos = {0, 0, 0} },
++	{ .name = "inherited", .zpos = {255, 255, 0} },
++	{ .name = "reversed", .zpos = {2, 1, 0} },
++	{ .name = "equal", .zpos = {255, 255, 255} },
++	{ .name = "constrained", .zpos = {255, 255, 0}, .constrain_game = true },
++	{ .name = "mixed", .zpos = {255, 255, 0}, .mixed_types = true },
++	{ .name = "disjoint", .zpos = {255, 255, 0}, .disjoint = true },
++	{ .name = "unknown-order", .no_zpos = true, .needs_composition = true },
++	{ .name = "infeasible", .constrain_game = true, .needs_composition = true },
++};
++
++static void
++check_assignment(struct liftoff_output *output,
++                 struct liftoff_mock_plane **planes,
++                 struct liftoff_layer **layers, const struct test_case *test)
++{
++	const char *names[] = {"game", "external overlay", "Steam overlay"};
++	int assignment[3] = {-1, -1, -1};
++	int i, j, a, b;
++
++	assert(liftoff_output_needs_composition(output) == test->needs_composition);
++	for (i = 0; i < 3; i++) {
++		for (j = 0; j < 3; j++) {
++			if (liftoff_mock_plane_get_layer(planes[j]) == layers[i]) {
++				assignment[i] = j;
++			}
++		}
++		if (!test->needs_composition) {
++			assert(assignment[i] >= 0);
++		}
++		fprintf(stderr, "%s: %s -> plane index %d\n", test->name, names[i], assignment[i]);
++	}
++	if (test->disjoint) {
++		return;
++	}
++	for (i = 0; i < 3; i++) {
++		for (j = i + 1; j < 3; j++) {
++			a = assignment[i];
++			b = assignment[j];
++			if (a < 0 || b < 0) {
++				continue;
++			}
++			assert(!test->no_zpos);
++			assert(test->zpos[a] < test->zpos[b] ||
++			       (test->zpos[a] == test->zpos[b] &&
++			        liftoff_mock_plane_get_id(planes[a]) < liftoff_mock_plane_get_id(planes[b])));
++		}
++	}
++}
++
++int main(int argc, char **argv)
++{
++	const uint64_t layer_zpos[] = {0, 2, 3};
++	struct liftoff_mock_plane *planes[3];
++	struct liftoff_layer *layers[3];
++	struct liftoff_device *device;
++	struct liftoff_output *output;
++	const struct test_case *test = NULL;
++	drmModePropertyRes prop = {0};
++	uint64_t range[] = {0, 255};
++	struct liftoff_output_apply_options options = {.timeout_ns = INT64_MAX};
++	drmModeAtomicReq *req;
++	int fd, i, j, frame;
++	size_t t;
++
++	assert(argc == 2);
++	for (t = 0; t < sizeof(tests) / sizeof(tests[0]); t++) {
++		if (strcmp(argv[1], tests[t].name) == 0) {
++			test = &tests[t];
++			break;
++		}
++	}
++	assert(test != NULL);
++	strcpy(prop.name, "zpos");
++	prop.flags = DRM_MODE_PROP_RANGE;
++	prop.count_values = 2;
++	prop.values = range;
++	for (i = 0; i < 3; i++) {
++		planes[i] = liftoff_mock_drm_create_plane(test->mixed_types && i == 1
++			? DRM_PLANE_TYPE_OVERLAY : DRM_PLANE_TYPE_PRIMARY);
++		if (!test->no_zpos) {
++			liftoff_mock_plane_add_property(planes[i], &prop, test->zpos[i]);
++		}
++	}
++	fd = liftoff_mock_drm_open();
++	liftoff_mock_verbose = false;
++	device = liftoff_device_create(fd);
++	assert(device != NULL);
++	assert(liftoff_device_register_all_planes(device) == 0);
++	output = liftoff_output_create(device, liftoff_mock_drm_crtc_id);
++	for (i = 0; i < 3; i++) {
++		layers[i] = liftoff_layer_create(output);
++		liftoff_layer_set_property(layers[i], "FB_ID", liftoff_mock_drm_create_fb(layers[i]));
++		liftoff_layer_set_property(layers[i], "CRTC_X", test->disjoint ? (uint64_t)i * 1080 : 0);
++		liftoff_layer_set_property(layers[i], "CRTC_Y", 0);
++		liftoff_layer_set_property(layers[i], "CRTC_W", 1080);
++		liftoff_layer_set_property(layers[i], "CRTC_H", 1920);
++		liftoff_layer_set_property(layers[i], "SRC_X", 0);
++		liftoff_layer_set_property(layers[i], "SRC_Y", 0);
++		liftoff_layer_set_property(layers[i], "SRC_W", 1920u << 16);
++		liftoff_layer_set_property(layers[i], "SRC_H", 1080u << 16);
++		liftoff_layer_set_property(layers[i], "zpos", layer_zpos[i]);
++		for (j = 0; j < 3; j++) {
++			if (!test->constrain_game || i != 0 || j == 2) {
++				liftoff_mock_plane_add_compatible_layer(planes[j], layers[i]);
++			}
++		}
++	}
++	for (frame = 0; frame < 3; frame++) {
++		if (frame == 2) {
++			liftoff_layer_set_property(layers[0], "FB_ID", liftoff_mock_drm_create_fb(layers[0]));
++		}
++		req = drmModeAtomicAlloc();
++		assert(liftoff_output_apply(output, req, 0, &options) == 0);
++		assert(drmModeAtomicCommit(fd, req, 0, NULL) == 0);
++		check_assignment(output, planes, layers, test);
++		drmModeAtomicFree(req);
++	}
++	for (i = 0; i < 3; i++) {
++		liftoff_layer_destroy(layers[i]);
++	}
++	liftoff_output_destroy(output);
++	liftoff_device_destroy(device);
++	close(fd);
++	return 0;
++}

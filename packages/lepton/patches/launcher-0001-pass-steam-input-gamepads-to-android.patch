@@ -1,0 +1,37 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] launcher: pass Steam Input's gamepads to Android
+
+Applies to the launcher Steam installs (app 3029110).
+
+Mount Steam Input's virtual gamepads into the container and forward the
+hint that stops SDL from ignoring them.
+
+---
+--- a/liblepton/mounting.sh
++++ b/liblepton/mounting.sh
+@@ -373,6 +373,10 @@
+     # Tell Mesa where to slurp up its shaders
+     #println "    setenv MESA_SHADER_CACHE_DIR /data/shaders" >> "${ZYGOTE_LAUNCH_RC}"
+     println "    setenv Steam3Master $(podman_subnet).1:57343" >> "${ZYGOTE_LAUNCH_RC}"
++    # SDL ignores Steam's virtual gamepad unless Steam's hint for it reaches the game
++    if [[ -n "${SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD:-}" ]]; then
++        println "    setenv SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD ${SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD}" >> "${ZYGOTE_LAUNCH_RC}"
++    fi
+ 
+     chmod 0644 "${ZYGOTE_LAUNCH_RC}"
+     podman_mount_entry "${ZYGOTE_LAUNCH_RC}" "/system/etc/init/hw/init.zygote64.rc" ro,U
+@@ -461,6 +465,14 @@
+         fi
+     done
+ 
++    # Steam Input presents every controller as a virtual pad; hand those to Android
++    local SYS_EV EV
++    for SYS_EV in /sys/devices/virtual/input/input*/event*; do
++        [[ "$(cat "${SYS_EV}/device/id/vendor" 2>/dev/null)" == "28de" ]] || continue
++        EV="/dev/input/${SYS_EV##*/}"
++        [[ -r "${EV}" ]] && podman_mount_entry "${EV}" "${EV}" rw
++    done
++
+     # By default, we do not allow writes to msg
+     local KMSG_MOUNT="/dev/null"
+     if [[ "${LEPTON_ALLOW_KMSG:-false}" != "false" ]]; then

@@ -1,0 +1,17 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] Input: qcom-haptics: update __assign_str for Linux 7.1
+
+Linux 7.1's tracepoint __assign_str() macro takes only the field name; it
+derives the source expression from the matching __string() declaration.
+
+--- a/include/trace/events/qcom_haptics.h
++++ b/include/trace/events/qcom_haptics.h
+@@ -84,7 +84,7 @@ TRACE_EVENT(qcom_haptics_status,
+ 	),
+ 
+ 	TP_fast_assign(
+-		__assign_str(id_name, name);
++		__assign_str(id_name);
+ 		__entry->msb = msb;
+ 		__entry->lsb = lsb;
+ 	),

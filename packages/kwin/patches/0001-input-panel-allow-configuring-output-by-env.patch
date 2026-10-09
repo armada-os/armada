@@ -1,0 +1,79 @@
+diff -ruN a/src/inputpanelv1window.cpp b/src/inputpanelv1window.cpp
+--- a/src/inputpanelv1window.cpp
++++ b/src/inputpanelv1window.cpp
+@@ -18,6 +18,7 @@
+ #include "wayland/textinput_v3.h"
+ #include "wayland_server.h"
+ #include "workspace.h"
++#include <QByteArray>
+ 
+ namespace KWin
+ {
+@@ -26,8 +27,8 @@
+     : WaylandWindow(panelSurface->surface())
+     , m_panelSurface(panelSurface)
+ {
+-    setOutput(workspace()->activeOutput());
+-    setMoveResizeOutput(workspace()->activeOutput());
++    setOutput(inputPanelOutput());
++    setMoveResizeOutput(inputPanelOutput());
+     setSkipSwitcher(true);
+     setSkipPager(true);
+     setSkipTaskbar(true);
+@@ -87,6 +88,17 @@
+     }
+ }
+ 
++LogicalOutput *InputPanelV1Window::inputPanelOutput() const
++{
++    const QByteArray outputName = qgetenv("ARMADA_VIRTUAL_KEYBOARD_CONNECTOR");
++    if (!outputName.isEmpty()) {
++        if (auto output = workspace()->findOutput(QString::fromUtf8(outputName))) {
++            return output;
++        }
++    }
++    return workspace()->activeOutput();
++}
++
+ void InputPanelV1Window::resetPosition()
+ {
+     Q_ASSERT(!isDeleted());
+@@ -97,13 +109,14 @@
+     case Mode::VirtualKeyboard: {
+         // maliit creates a fullscreen overlay so use the input shape as the window geometry.
+         m_windowGeometry = surface()->input().boundingRect();
+-
+-        const auto activeOutput = workspace()->activeOutput();
++        const auto panelOutput = inputPanelOutput();
++        setOutput(panelOutput);
++        setMoveResizeOutput(panelOutput);
+         RectF availableArea;
+         if (waylandServer()->isScreenLocked()) {
+-            availableArea = workspace()->clientArea(FullScreenArea, this, activeOutput);
++            availableArea = workspace()->clientArea(FullScreenArea, this, panelOutput);
+         } else {
+-            availableArea = workspace()->clientArea(MaximizeArea, this, activeOutput);
++            availableArea = workspace()->clientArea(MaximizeArea, this, panelOutput);
+         }
+ 
+         RectF geo = m_windowGeometry;
+@@ -112,7 +125,7 @@
+         if (geo.width() < availableArea.width()) {
+             geo.moveHorizontalCenter(availableArea.horizontalCenter());
+         } else { // otherwise align to be centred within the screen
+-            const RectF outputArea = activeOutput->geometry();
++            const RectF outputArea = panelOutput->geometry();
+             geo.moveHorizontalCenter(outputArea.horizontalCenter());
+         }
+ 
+diff -ruN a/src/inputpanelv1window.h b/src/inputpanelv1window.h
+--- a/src/inputpanelv1window.h
++++ b/src/inputpanelv1window.h
+@@ -90,6 +90,7 @@
+     void showTopLevel(OutputInterface *output, InputPanelSurfaceV1Interface::Position position);
+     void showOverlayPanel();
+     void resetPosition();
++    LogicalOutput *inputPanelOutput() const;
+     void reposition();
+     void handleMapped();
+     void handleUnmapped();

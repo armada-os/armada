@@ -1,0 +1,14 @@
+# Relays these three interfaces to armada-powerd, which owns them. In /etc
+# because the steamos-manager RPM owns everything under /usr/share.
+
+[PerformanceProfile1]
+bus_name = "org.armada.Power"
+object_path = "/org/armada/Power"
+
+[GpuPerformanceLevel1]
+bus_name = "org.armada.Power"
+object_path = "/org/armada/Power"
+
+[CpuScaling1]
+bus_name = "org.armada.Power"
+object_path = "/org/armada/Power"

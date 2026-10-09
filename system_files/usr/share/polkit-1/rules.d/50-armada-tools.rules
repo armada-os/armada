@@ -1,0 +1,8 @@
+polkit.addRule(function(action, subject) {
+    var program = action.lookup("program");
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        program == "/usr/libexec/armada/armada-tools-priv" &&
+        subject.user == "armada") {
+        return polkit.Result.YES;
+    }
+});

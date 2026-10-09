@@ -1,0 +1,33 @@
+From 4b370f318e143f97178ab8ae55c10f3f6f5ccee3 Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Wed, 5 Aug 2026 05:38:36 +0200
+Subject: [PATCH] source armada specific quirks
+
+---
+ .../gamescope-session-plus/gamescope-session-plus     | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/usr/share/gamescope-session-plus/gamescope-session-plus b/usr/share/gamescope-session-plus/gamescope-session-plus
+index cc97ad3..d8aff1f 100755
+--- a/usr/share/gamescope-session-plus/gamescope-session-plus
++++ b/usr/share/gamescope-session-plus/gamescope-session-plus
+@@ -111,6 +111,17 @@ if [ -f /usr/share/gamescope-session-plus/device-quirks ]; then
+ 	. /usr/share/gamescope-session-plus/device-quirks
+ fi
+ 
++# Source Armada device quirks if exists
++if [ -f /usr/libexec/armada/device-env ]; then
++        eval "$(/usr/libexec/armada/device-env)"
++fi
++if [ -n "${ARMADA_GAMESCOPE_FAKE_OUTPUT_MM:-}" ]; then
++	FAKE_OUTPUT_MM="$ARMADA_GAMESCOPE_FAKE_OUTPUT_MM"
++fi
++if [ "${ARMADA_GAMESCOPE_USE_ROTATION_SHADER:-0}" = "1" ]; then
++	FORCE_COMPOSITION_ROTATION=1
++fi
++
+ # Source client app specific configuration files
+ set -a
+ for i in ${CLIENT_CONFIG_DIR_USR}/${CLIENT} ${CLIENT_CONFIG_DIR_ETC}/${CLIENT} ${CLIENT_CONFIG_DIR_LOCAL}/${CLIENT}; do
+-- 
+2.55.0

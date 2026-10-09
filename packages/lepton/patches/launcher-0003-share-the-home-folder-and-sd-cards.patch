@@ -1,0 +1,33 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] launcher: share the home folder and SD cards
+
+Applies to the launcher Steam installs (app 3029110).
+
+Link the home folder and the mounted SD cards into the app's shared storage
+beside Documents and Download, the same way the launcher shares those. Apps
+that turn a picked folder back into a file path then accept them.
+
+---
+--- a/liblepton/mounting.sh
++++ b/liblepton/mounting.sh
+@@ -150,12 +150,20 @@
+             rm -rf "${TARGET_PATH}/Movies"
+             ln -s "${HOME}/Videos" "${TARGET_PATH}/Movies"
+         fi
++        rm -rf "${TARGET_PATH}/Home"
++        ln -s "${HOME}" "${TARGET_PATH}/Home"
++        if [[ -d "/run/media/${USER}" ]]; then
++            rm -rf "${TARGET_PATH}/SD cards"
++            ln -s "/run/media/${USER}" "${TARGET_PATH}/SD cards"
++        fi
+         if [[ -d "${STEAM_COMPAT_DATA_PATH:-}" ]]; then
+             ln -s "${STEAM_COMPAT_DATA_PATH}/external" "$(data_mount_path)/media/0"
+         fi
+         podman_mount_entry_optional "${HOME}/Documents" "${HOME}/Documents" rw
+         podman_mount_entry_optional "${HOME}/Videos" "${HOME}/Videos" rw
+         podman_mount_entry_optional "${HOME}/Downloads" "${HOME}/Downloads" rw
++        podman_mount_entry "${HOME}" "${HOME}" rw
++        podman_mount_entry_optional "/run/media/${USER}" "/run/media/${USER}" rw
+     fi
+ 
+     if steamos_devmode_enabled; then

@@ -73,15 +73,22 @@ the guides there rather than instructions copied from older releases or posts.
 
 ## Development
 
-This repository assembles the Armada bootc image and its flashable disk images.
-The development recipes require [just](https://just.systems/) and
-[Podman](https://podman.io/):
+This repository assembles the Armada bootc image and its flashable disk images,
+along with the upstream-derived packages it ships (see
+[`packages/`](packages/README.md)). The development recipes require
+[just](https://just.systems/) and [Podman](https://podman.io/):
 
 ```console
-$ just check   # Run the test suite and check recipe formatting
-$ just build   # Build the local bootc container image
-$ just --list  # Show disk-image, VM, and other development recipes
+$ just check     # Run the test suite and check recipe formatting
+$ just packages  # Build the packages the image consumes (slow from cold)
+$ just build     # Build the local bootc container image
+$ just --list    # Show disk-image, VM, and other development recipes
 ```
+
+Each package builds as a stage in `packages/Containerfile` and is published
+under a tag derived from its own sources, so an unchanged package is never
+rebuilt. `just build` uses a locally built package when you have one and the
+published image otherwise, so you only build what you are changing.
 
 Issues and pull requests are welcome. For installation or device support, check
 the [troubleshooting documentation](https://armadaos.dev/troubleshooting/frequently-asked-questions/)

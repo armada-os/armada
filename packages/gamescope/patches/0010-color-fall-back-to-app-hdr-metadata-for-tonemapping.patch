@@ -1,0 +1,181 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] color: fall back to app HDR metadata for PQ tone mapping
+
+The PQ to Gamma 2.2 tone map only engages when a client supplies the
+GAMESCOPE_HDR_TONEMAP_SOURCE_METADATA atoms. With them absent the operator
+stays None and HDR content channel-clips at the display white point,
+blowing out highlights. This fulfils the existing TODOs: derive the source
+range from the app's HDR metadata blob when the atoms are missing, derive
+the display range from the connector when that is missing too, and default
+the operator to the per-channel EETF for synthesized metadata.
+
+Mastering values are sanitized against the 10000 nit PQ ceiling before
+being trusted; titles are seen reporting sentinel values like 6.58e6 nits.
+Synthesized source black stays zero and the operator only defaults when
+the source peak exceeds the display peak, keeping clear of the EETF's
+non-finite regions below source black and at the ks == 1 singularity. A
+client-written operator atom is honored even when it says None, and
+deleting the atom restores the fallback. Atom-driven configuration is
+unchanged when present.
+
+diff --git a/src/HDRTonemap.h b/src/HDRTonemap.h
+new file mode 100644
+index 00000000..24d01cf5
+--- /dev/null
++++ b/src/HDRTonemap.h
+@@ -0,0 +1,40 @@
++#pragma once
++
++#include "color_helpers.h"
++
++namespace gamescope
++{
++    // PQ tops out at 10000 nits; titles are seen reporting sentinel or
++    // wrong-unit mastering values (e.g. 6.58e6).
++    constexpr bool TonemapNitsPlausible( float flNits )
++    {
++        return flNits > 0.0f && flNits <= 10000.0f;
++    }
++
++    // Black stays zero: the EETF is non-finite below a positive source black.
++    constexpr tonemap_info_t AppTonemapSourceInfo(
++        float flMaxCLLNits,
++        float flMasteringMaxNits )
++    {
++        tonemap_info_t info{};
++        if ( TonemapNitsPlausible( flMaxCLLNits ) )
++            info.flWhitePointNits = flMaxCLLNits;
++        else if ( TonemapNitsPlausible( flMasteringMaxNits ) )
++            info.flWhitePointNits = flMasteringMaxNits;
++        return info;
++    }
++
++    // Peaks at or below the display white hit the EETF ks == 1 singularity
++    // and need no compression anyway.
++    constexpr bool ShouldDefaultTonemapOperator(
++        bool bSynthesizedSource,
++        bool bOperatorAtomSet,
++        ETonemapOperator eOperator,
++        float flSourceWhiteNits,
++        float flDisplayWhiteNits )
++    {
++        return bSynthesizedSource && !bOperatorAtomSet &&
++            eOperator == ETonemapOperator_None &&
++            flSourceWhiteNits > flDisplayWhiteNits;
++    }
++}
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index d3f2b7cb..f8f5f40c 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -504,6 +504,7 @@ struct gamescope_color_mgmt_t
+ 
+ 	// HDR Display Metadata Override & Tonemapping
+ 	ETonemapOperator hdrTonemapOperator = ETonemapOperator_None;
++	bool bHdrTonemapOperatorSet = false;
+ 	tonemap_info_t hdrTonemapDisplayMetadata = { 0 };
+ 	tonemap_info_t hdrTonemapSourceMetadata = { 0 };
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index f7fb9895..df25c3db 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -31,6 +31,7 @@
+ 
+ #include "backend.h"
+ #include "HDRGamma22.h"
++#include "HDRTonemap.h"
+ #include "gamescope_shared.h"
+ #include "xwayland_ctx.hpp"
+ #include <X11/X.h>
+@@ -403,8 +404,18 @@ create_color_mgmt_luts(
+ 					tonemap_info_t source = newColorMgmt.hdrTonemapSourceMetadata;
+ 					tonemap_info_t dest = newColorMgmt.hdrTonemapDisplayMetadata;
+ 					// Otherwise, rely on the Vulkan source info and the EDID
+-					// TODO: If source is invalid, use the provided metadata.
+-					// TODO: If hdrTonemapDisplayMetadata is invalid, use the one provided by the display
++					bool bSynthesizedSource = false;
++					if ( !source.BIsValid() && newColorMgmt.appHDRMetadata )
++					{
++						const hdr_metadata_infoframe &infoframe = newColorMgmt.appHDRMetadata->View<hdr_output_metadata>().hdmi_metadata_type1;
++						source = gamescope::AppTonemapSourceInfo(
++							nits_from_u16( infoframe.max_cll ),
++							nits_from_u16( infoframe.max_display_mastering_luminance ) );
++						bSynthesizedSource = source.BIsValid();
++					}
++					if ( !dest.BIsValid() && bSynthesizedSource )
++						dest.flWhitePointNits = newColorMgmt.flInternalDisplayBrightness;
++					const tonemap_info_t destDisplay = dest;
+ 
+ 					// Adjust the source brightness range by the requested HDR input gain
+ 					dest.flBlackPointNits /= flGain;
+@@ -413,7 +424,14 @@ create_color_mgmt_luts(
+ 					if ( source.BIsValid() && dest.BIsValid() )
+ 					{
+ 						tonemapping.eOperator = newColorMgmt.hdrTonemapOperator;
+-						tonemapping.eetf2390.init( source, newColorMgmt.hdrTonemapDisplayMetadata );
++						if ( gamescope::ShouldDefaultTonemapOperator(
++							bSynthesizedSource,
++							newColorMgmt.bHdrTonemapOperatorSet,
++							tonemapping.eOperator,
++							source.flWhitePointNits,
++							destDisplay.flWhitePointNits ) )
++							tonemapping.eOperator = ETonemapOperator_EETF2390_Independent;
++						tonemapping.eetf2390.init( source, destDisplay );
+ 					}
+ 					else
+ 					{
+@@ -7256,6 +7274,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 	if ( ev->atom == ctx->atoms.gamescopeHDRTonemapOperator )
+ 	{
+ 		g_ColorMgmt.pending.hdrTonemapOperator = (ETonemapOperator) get_prop( ctx, ctx->root, ctx->atoms.gamescopeHDRTonemapOperator, 0 );
++		g_ColorMgmt.pending.bHdrTonemapOperatorSet = ev->state == PropertyNewValue;
+ 		hasRepaint = true;
+ 	}
+ 
+diff --git a/tests/test_drm_composition.cpp b/tests/test_drm_composition.cpp
+index b31bb39c..a08d192a 100644
+--- a/tests/test_drm_composition.cpp
++++ b/tests/test_drm_composition.cpp
+@@ -3,6 +3,9 @@
+ 
+ #include "Backends/DRMComposition.h"
+ #include "HDRGamma22.h"
++#include "HDRTonemap.h"
++
++#include <cmath>
+ 
+ using namespace gamescope;
+ 
+@@ -59,3 +62,31 @@ TEST_CASE("Gamma 2.2 SDR white is only scaled against HDR content", "[color][hdr
+     REQUIRE_FALSE( ShouldScaleGamma22SDRWhite( false, true, true ) );
+     REQUIRE_FALSE( ShouldScaleGamma22SDRWhite( true, true, false ) );
+ }
++
++TEST_CASE("App HDR metadata fallback sanitizes implausible values", "[color][hdr]")
++{
++    REQUIRE( AppTonemapSourceInfo( 2000.0f, 6.583e6f ).flWhitePointNits == 2000.0f );
++    REQUIRE( AppTonemapSourceInfo( 0.0f, 4000.0f ).flWhitePointNits == 4000.0f );
++    REQUIRE_FALSE( AppTonemapSourceInfo( 0.0f, 6.583e6f ).BIsValid() );
++    REQUIRE_FALSE( AppTonemapSourceInfo( 0.0f, 0.0f ).BIsValid() );
++    REQUIRE( AppTonemapSourceInfo( 2000.0f, 4000.0f ).flBlackPointNits == 0.0f );
++}
++
++TEST_CASE("Tonemap operator defaults only for compressing synthesized sources", "[color][hdr]")
++{
++    REQUIRE( ShouldDefaultTonemapOperator( true, false, ETonemapOperator_None, 2000.0f, 650.0f ) );
++
++    REQUIRE_FALSE( ShouldDefaultTonemapOperator( true, false, ETonemapOperator_None, 650.0f, 650.0f ) );
++    REQUIRE_FALSE( ShouldDefaultTonemapOperator( true, false, ETonemapOperator_None, 400.0f, 650.0f ) );
++    REQUIRE_FALSE( ShouldDefaultTonemapOperator( false, false, ETonemapOperator_None, 2000.0f, 650.0f ) );
++    REQUIRE_FALSE( ShouldDefaultTonemapOperator( true, true, ETonemapOperator_None, 2000.0f, 650.0f ) );
++    REQUIRE_FALSE( ShouldDefaultTonemapOperator( true, false, ETonemapOperator_EETF2390_Luma, 2000.0f, 650.0f ) );
++}
++
++TEST_CASE("Synthesized tonemap configs keep the EETF finite", "[color][hdr]")
++{
++    eetf_2390_t eetf;
++    eetf.init( AppTonemapSourceInfo( 2000.0f, 0.0f ), tonemap_info_t{ 0.0f, 650.0f } );
++    for ( float flNits : { 0.001f, 0.01f, 1.0f, 100.0f, 650.0f, 2000.0f, 3000.0f } )
++        REQUIRE( std::isfinite( eetf.apply_max_rgb( glm::vec3( flNits ) ).r ) );
++}

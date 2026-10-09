@@ -1,0 +1,148 @@
+#!/usr/bin/bash
+# CLIENTCMD wrapper: run Steam behind the boot-gap splash, forward updater
+# progress, and surface launch failures.
+set -u
+
+# shellcheck source=/dev/null
+[[ -r /etc/armada/splash.conf ]] && source /etc/armada/splash.conf
+
+MODE="${ARMADA_SPLASH_MODE:-x11}"              # x11 | off
+DIR="${ARMADA_SPLASH_DIR:-/usr/share/armada/splash}"
+# Unset = X display size; a forced portrait size gets fit-scaled/pillarboxed.
+W="${ARMADA_SPLASH_W:-}"
+H="${ARMADA_SPLASH_H:-}"
+CEF_PORT="${ARMADA_SPLASH_CEF_PORT:-8080}"
+SLOW_AFTER="${ARMADA_SPLASH_SLOW_AFTER:-25}"   # secs -> "still starting" message
+ERROR_HOLD="${ARMADA_SPLASH_ERROR_HOLD:-45}"   # secs to show a launch failure
+SPLASH_BIN="${ARMADA_SPLASH_BIN:-/usr/libexec/armada/armada-splash}"
+ASSET="${ARMADA_SPLASH_ASSET:-${DIR}/splash.asp}"
+FONT="${ARMADA_SPLASH_FONT:-${DIR}/font.ttf}"
+
+# One status file across all boot phases; writes go through armada-splash-progress.
+STATUS="${ARMADA_SPLASH_STATUS:-/run/armada/splash/status}"
+PROGRESS="${ARMADA_SPLASH_PROGRESS:-/usr/libexec/armada/armada-splash-progress}"
+logdir="${HOME}/.local/share/armada/logs"
+mkdir -p "$logdir"
+stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo boot)"
+steamlog="$logdir/steam-launch-$stamp.log"
+faillog="$logdir/last-steam-failure.log"
+
+say() { [[ -n "$*" ]] && ARMADA_SPLASH_STATUS="$STATUS" "$PROGRESS" "$@"; return 0; }
+cef_up() { (exec 3<>"/dev/tcp/127.0.0.1/${CEF_PORT}") 2>/dev/null; }
+
+say "Starting Steam"
+
+# Clear the retained early-boot frame so a later DRM release cannot re-scan
+# it as a ghost; invisible now, gamescope owns scanout.
+[[ "$MODE" == "x11" && -w /dev/fb0 ]] && cat /dev/zero > /dev/fb0 2>/dev/null
+
+# gamescope shows this fallback-appid window until Steam's window replaces
+# it; the splash exits itself on displacement.
+splash_pid=""
+splash_args=()
+if [[ "$MODE" == "x11" && -n "${DISPLAY:-}" && -x "$SPLASH_BIN" ]]; then
+    splash_args=(--backend x11 --image "$ASSET" --status "$STATUS" --font "$FONT")
+    [[ -n "$W" && -n "$H" ]] && splash_args+=(--width "$W" --height "$H")
+    read -r -a extra <<<"${ARMADA_SPLASH_ARGS:-}"
+    splash_args+=("${extra[@]}")
+    "$SPLASH_BIN" "${splash_args[@]}" &
+    splash_pid=$!
+fi
+
+# A listener that predates this launch is not this Steam's CEF; trust the
+# port only after it has been observed closed.
+cef_stale=0
+cef_up && cef_stale=1
+
+# Child, not exec: a Steam crash must not tear down gamescope (and the
+# splash) before the error can be shown.
+"$@" >"$steamlog" 2>&1 &
+steam_pid=$!
+
+waited=0
+# Forward bootstrapper lines ("[ 45%] Downloading update...") to the splash.
+fwd_last=""
+saw_update=0
+forward_updater() {
+    local raw
+    raw="$(tail -c 8192 "$steamlog" 2>/dev/null \
+        | grep -aE '^(\[[0-9 -]{1,4}%?\]|Installing bootstrap)' | tail -1)"
+    [[ -z "$raw" || "$raw" == "$fwd_last" ]] && return
+    fwd_last="$raw"
+    # The sub-second "Checking..." and every-boot "Verifying..." are noise
+    # unless a real update was seen.
+    case "$raw" in
+        *"Checking for available updates"*) return ;;
+        *[Dd]ownload*|*Extracting*|*Applying*|"Installing bootstrap"*) saw_update=1 ;;
+        *"Verifying installation"*) (( saw_update )) || return ;;
+    esac
+    case "$raw" in
+        "Installing bootstrap"*) say "Installing Steam" ;;
+        # Valve's wording; drop its trailing ellipsis to match the rest.
+        *) say "$(sed -E 's/^\[-+\] *//; s/\.\.\.$//' <<<"$raw")" ;;
+    esac
+}
+
+steam_up=0
+while kill -0 "$steam_pid" 2>/dev/null; do
+    if (( cef_stale )); then
+        cef_up || cef_stale=0
+    elif cef_up && { sleep 0.3; cef_up; }; then
+        steam_up=1; break
+    fi
+    forward_updater
+    if (( waited == SLOW_AFTER )) && [[ -z "$fwd_last" ]]; then
+        say "Still starting. First boot installs Steam and can take a few minutes."
+    fi
+    sleep 1; (( waited++ ))
+done
+
+wait "$steam_pid"; code=$?
+
+# 42 = Steam's relaunch request (self-update applied), not a failure; the
+# session restarts Steam and the splash exits on displacement.
+if (( code == 42 )); then
+    say "Restarting Steam"
+    exit 42
+fi
+
+# The UI came up (or Steam left cleanly): the session's to handle, not a
+# launch failure. The red screen is for nonzero pre-UI exits only.
+if (( steam_up )) || (( code == 0 )); then exit "$code"; fi
+
+tail_line="$(grep -aiE 'error|fatal|segfault|assert|abort|not found|failed' "$steamlog" | tail -1)"
+[[ -z "$tail_line" ]] && tail_line="$(tail -1 "$steamlog" 2>/dev/null)"
+{
+    echo "armada steam launch failure @ $stamp"
+    echo "exit code: $code"
+    echo "cmd: $*"
+    echo "--- last output ---"
+    tail -40 "$steamlog" 2>/dev/null
+} > "$faillog"
+
+# A '!' line renders red; raw and verbatim, full text in $faillog.
+msg="!Steam launch failed (exit ${code})"
+[[ -n "$tail_line" ]] && msg="${msg}"$'\n'"!${tail_line}"
+say "$msg"
+
+# A fresh renderer for the error: the startup one may have been displaced
+# already (or be about to process a displacement), ending the hold early.
+if [[ -n "$splash_pid" ]]; then
+    kill "$splash_pid" 2>/dev/null
+    wait "$splash_pid" 2>/dev/null
+    splash_pid=""
+fi
+if [[ "$MODE" == "x11" && -n "${DISPLAY:-}" && -x "$SPLASH_BIN" ]]; then
+    "$SPLASH_BIN" "${splash_args[@]}" &
+    splash_pid=$!
+fi
+
+# Hold the error long enough to read, then return control to the session;
+# an unbounded hold wedges the boot with no input path to escape it.
+if [[ -n "$splash_pid" ]]; then
+    ( sleep "$ERROR_HOLD"; kill "$splash_pid" 2>/dev/null ) &
+    killer=$!
+    wait "$splash_pid"
+    kill "$killer" 2>/dev/null
+fi
+exit "$code"

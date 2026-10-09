@@ -1,0 +1,428 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] drm: let a socket lease holder yield to drm-lease-v1 clients
+
+A socket lease holder started with --drm-lease-yield is suspended when a
+drm-lease-v1 client requests the lease and resumed when that client
+releases it. Suspend reuses the VT-switch path: the holder stops
+presenting, parks its page flip reader so the shared event queue is left
+to the new client, and acks only once nothing of its can commit; the
+broker grants only on that ack and otherwise leaves it the holder. Resume
+forces a modeset. A holder that did not opt in keeps the exclusive
+semantics. The flip handler also ignores events whose user data is not
+one of its own, since every holder reads from a dup of the same lease.
+---
+--- a/src/main.hpp	2026-09-06 14:03:08.580867677 +0000
++++ b/src/main.hpp	2026-09-06 16:42:04.531163078 +0000
+@@ -35,6 +35,7 @@
+ extern const char *g_sOutputName;
+ extern const char *g_sLeaseConnectorName;
+ extern const char *g_sDrmLeaseClientSocket;
++extern bool g_bDrmLeaseYield;
+ extern const char *g_sIgnoreTouchDevice;
+ extern bool g_bExternalForced;
+ extern std::vector<uint32_t> g_customRefreshRates;
+@@ -66,6 +67,9 @@
+ 	Down = 1,
+ 	Motion,
+ 	Up,
++	// Broker to a yielding companion: stop using the lease / take it back.
++	Suspend,
++	Resume,
+ };
+ 
+ struct DrmLeaseEvent
+@@ -79,6 +83,18 @@
+ 
+ void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touchId, uint32_t time );
+ 
++// Suspends a yielding companion for a protocol client; true only once it
++// acknowledged that nothing of its can commit; false leaves it the holder.
++bool drm_lease_companion_suspend( int nTimeoutMs );
++void drm_lease_companion_resume();
++// True while a connected companion may still commit to the lease.
++bool drm_lease_companion_active();
++
++// Companion side (--drm-lease-client). quiesce returns false when a
++// present or the flip reader could not be stopped in time.
++bool drm_lease_client_suspended();
++bool drm_lease_client_quiesce();
++
+ enum class GamescopeUpscaleFilter : uint32_t
+ {
+     LINEAR = 0,
+--- a/src/main.cpp	2026-09-06 14:03:08.576652141 +0000
++++ b/src/main.cpp	2026-09-06 16:42:04.461031557 +0000
+@@ -98,6 +98,7 @@
+ 	{ "framerate-limit", required_argument, nullptr, 0 },
+ 	{ "lease-connector", required_argument, nullptr, 0 },
+ 	{ "drm-lease-client", required_argument, nullptr, 0 },
++	{ "drm-lease-yield", no_argument, nullptr, 0 },
+ 	{ "ignore-touch-device", required_argument, nullptr, 0 },
+ 
+ 	// openvr options
+@@ -223,6 +224,7 @@
+ 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
+ 	"  --lease-connector              if specified, marks a display connector for DRM leasing.\n"
+ 	"  --drm-lease-client             use a DRM lease from the given socket.\n"
++	"  --drm-lease-yield              give the lease up to drm-lease-v1 clients while they run.\n"
+ 	"  --ignore-touch-device          if specified, disables touch input for a given display.\n"
+ 	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
+ 	"  --hdr-enabled                  enable HDR output (needs Gamescope WSI layer enabled for support from clients)\n"
+@@ -795,6 +797,7 @@
+ const char *g_sOutputName = nullptr;
+ const char *g_sLeaseConnectorName = nullptr;
+ const char *g_sDrmLeaseClientSocket = nullptr;
++bool g_bDrmLeaseYield = false;
+ const char *g_sIgnoreTouchDevice = nullptr;
+ std::atomic<int> g_nActiveLeaseClients = { 0 };
+ std::atomic<int> g_nProtocolLeaseHolders = { 0 };
+@@ -959,6 +962,8 @@
+ 					g_sLeaseConnectorName = optarg;
+ 				} else if (strcmp(opt_name, "drm-lease-client") == 0) {
+ 					g_sDrmLeaseClientSocket = optarg;
++				} else if (strcmp(opt_name, "drm-lease-yield") == 0) {
++					g_bDrmLeaseYield = true;
+ 				} else if (strcmp(opt_name, "ignore-touch-device") == 0) {
+ 					g_sIgnoreTouchDevice = optarg;
+ 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
+--- a/src/Backends/DRMBackend.cpp	2026-09-06 14:03:08.580552196 +0000
++++ b/src/Backends/DRMBackend.cpp	2026-09-06 16:42:04.534336051 +0000
+@@ -26,6 +26,8 @@
+ #include <span>
+ #include <string>
+ #include <thread>
++#include <chrono>
++#include <condition_variable>
+ #include <unordered_map>
+ #include <unordered_set>
+ #include <utility>
+@@ -192,6 +194,10 @@
+ // thread still using the DRM fd while we clean up.
+ static std::thread g_page_flip_handler_thread;
+ static std::atomic<bool> g_page_flip_handler_thread_should_exit{false};
++static std::atomic<bool> g_page_flip_handler_thread_parked{false};
++static const void *g_pPresentCtxs[3] = {};
++// Serializes Present() against suspension of a lease-client companion.
++static std::mutex g_leasePresentMutex;
+ 
+ static int g_page_flip_pipe_fds[2] = { -1, -1 };
+ 
+@@ -863,6 +869,10 @@
+ extern void mangoapp_output_update( uint64_t vblanktime );
+ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
+ {
++	// A lease fd is shared with the other holders, whose events carry
++	// their own user data.
++	if ( data != g_pPresentCtxs[0] && data != g_pPresentCtxs[1] && data != g_pPresentCtxs[2] )
++		return;
+ 	DRMPresentCtx *pCtx = reinterpret_cast<DRMPresentCtx *>( data );
+ 
+ 	// Make this const when we move into CDRMBackend.
+@@ -922,7 +932,11 @@
+ 
+ 	while ( !g_page_flip_handler_thread_should_exit.load( std::memory_order_acquire ) )
+ 	{
+-		int ret = poll( fds, nfds, -1 );
++		// A suspended companion leaves the shared event queue to the holder,
++		// once its own last flip has been drained.
++		const bool bSuspended = drm_lease_client_suspended() && g_DRM.uPendingFlipCount.load() == 0;
++		g_page_flip_handler_thread_parked.store( bSuspended, std::memory_order_release );
++		int ret = bSuspended ? poll( &fds[1], 1, 100 ) : poll( fds, nfds, g_sDrmLeaseClientSocket ? 100 : -1 );
+ 		if ( ret < 0 ) {
+ 			if ( errno == EINTR )
+ 				continue;
+@@ -935,7 +949,7 @@
+ 			break;
+ 		}
+ 
+-		if ( (fds[0].revents & POLLIN) ) {
++		if ( !bSuspended && (fds[0].revents & POLLIN) ) {
+ 			drmEventContext evctx = {
+ 				.version = 3,
+ 				.page_flip_handler2 = page_flip_handler,
+@@ -1379,8 +1393,13 @@
+ }
+ 
+ static std::mutex g_leaseClientMutex;
++static std::condition_variable g_leaseClientCv;
+ static int g_nLeaseClientFd = -1;
+ static bool g_bLeaseClientWantsTouch = false;
++static bool g_bLeaseClientYields = false;
++static bool g_bLeaseClientSuspendPending = false;
++static bool g_bLeaseClientSuspended = false;
++static uint64_t g_uLeaseClientGeneration = 0;
+ 
+ static bool lease_send_fd( int nClientFd, int nLeaseFd )
+ {
+@@ -1414,7 +1433,12 @@
+ 		std::lock_guard lock( g_leaseClientMutex );
+ 		g_nLeaseClientFd = -1;
+ 		g_bLeaseClientWantsTouch = false;
++		g_bLeaseClientYields = false;
++		g_bLeaseClientSuspendPending = false;
++		g_bLeaseClientSuspended = false;
++		g_uLeaseClientGeneration++;
+ 	}
++	g_leaseClientCv.notify_all();
+ 	close( nClientFd );
+ 	nClientFd = -1;
+ 	{
+@@ -1429,7 +1453,7 @@
+ {
+ 	static_assert( sizeof( DrmLeaseEvent ) == 20 );
+ 	std::lock_guard lock( g_leaseClientMutex );
+-	if ( !g_bLeaseClientWantsTouch )
++	if ( !g_bLeaseClientWantsTouch || g_bLeaseClientSuspended )
+ 		return;
+ 
+ 	DrmLeaseEvent event = {
+@@ -1440,7 +1464,67 @@
+ 		.y = static_cast<float>( y ),
+ 	};
+ 	if ( send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL ) != sizeof( event ) )
+-		shutdown( g_nLeaseClientFd, SHUT_RDWR );
++	{
++		g_bLeaseClientWantsTouch = false;
++		g_bLeaseClientYields = false;
++	}
++}
++
++// Caller holds g_leaseClientMutex.
++static bool lease_send_control( DrmLeaseEventType type )
++{
++	DrmLeaseEvent event = { .type = type };
++	if ( send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL ) == sizeof( event ) )
++		return true;
++	// The socket is unusable but the lease fd may still be driven; stop
++	// talking to it and let the peer's disconnect end its tenure.
++	g_bLeaseClientWantsTouch = false;
++	g_bLeaseClientYields = false;
++	return false;
++}
++
++bool drm_lease_companion_active()
++{
++	std::lock_guard lock( g_leaseClientMutex );
++	return g_nLeaseClientFd >= 0 && !g_bLeaseClientSuspended;
++}
++
++bool drm_lease_companion_suspend( int nTimeoutMs )
++{
++	std::unique_lock<std::mutex> lock( g_leaseClientMutex );
++	if ( g_nLeaseClientFd < 0 || g_bLeaseClientSuspended )
++		return true;
++	if ( !g_bLeaseClientYields || g_bLeaseClientSuspendPending )
++		return false;
++	const uint64_t uGeneration = g_uLeaseClientGeneration;
++	g_bLeaseClientSuspendPending = true;
++	if ( !lease_send_control( DrmLeaseEventType::Suspend ) )
++	{
++		g_bLeaseClientSuspendPending = false;
++		return false;
++	}
++	g_leaseClientCv.wait_for( lock, std::chrono::milliseconds( nTimeoutMs ),
++		[&] { return g_bLeaseClientSuspended || g_uLeaseClientGeneration != uGeneration; } );
++	g_bLeaseClientSuspendPending = false;
++	if ( g_uLeaseClientGeneration != uGeneration )
++		return false;
++	if ( !g_bLeaseClientSuspended )
++	{
++		drm_log.infof( "lease-connector: companion did not suspend in time" );
++		lease_send_control( DrmLeaseEventType::Resume );
++		return false;
++	}
++	return true;
++}
++
++void drm_lease_companion_resume()
++{
++	std::lock_guard lock( g_leaseClientMutex );
++	if ( g_nLeaseClientFd < 0 || !g_bLeaseClientSuspended )
++		return;
++	g_bLeaseClientSuspended = false;
++	if ( lease_send_control( DrmLeaseEventType::Resume ) )
++		drm_log.infof( "lease-connector: companion resumed" );
+ }
+ 
+ static void lease_socket_thread_run( struct drm_t *drm )
+@@ -1475,6 +1559,25 @@
+ 				g_bLeaseClientWantsTouch = true;
+ 				drm_log.infof( "lease-connector: companion requested touch input" );
+ 			}
++			else if ( request == 'Y' )
++			{
++				std::lock_guard lock( g_leaseClientMutex );
++				g_bLeaseClientYields = true;
++				drm_log.infof( "lease-connector: companion yields to drm-lease-v1 clients" );
++			}
++			else if ( request == 'A' )
++			{
++				bool bExpected;
++				{
++					std::lock_guard lock( g_leaseClientMutex );
++					bExpected = g_bLeaseClientSuspendPending;
++					if ( bExpected )
++						g_bLeaseClientSuspended = true;
++				}
++				g_leaseClientCv.notify_all();
++				if ( bExpected )
++					drm_log.infof( "lease-connector: companion suspended" );
++			}
+ 		}
+ 
+ 		if ( !( pfds[0].revents & POLLIN ) )
+@@ -1512,6 +1615,10 @@
+ 			std::lock_guard lock( g_leaseClientMutex );
+ 			g_nLeaseClientFd = nClientFd;
+ 			g_bLeaseClientWantsTouch = false;
++			g_bLeaseClientYields = false;
++			g_bLeaseClientSuspendPending = false;
++			g_bLeaseClientSuspended = false;
++			g_uLeaseClientGeneration++;
+ 		}
+ 		g_nActiveLeaseClients.fetch_add( 1 );
+ 		grantLock.unlock();
+@@ -4270,6 +4377,26 @@
+ 	return g_DRM.uLeasedConnectorId;
+ }
+ 
++bool drm_lease_client_quiesce()
++{
++	// Runs on the wlserver thread, which a present's modeset may need, so
++	// never block; bounded below the broker's wait so a late ack still counts.
++	for ( int i = 0; i < 70; i++ )
++	{
++		if ( g_leasePresentMutex.try_lock() )
++		{
++			const bool bIdle = g_DRM.uPendingFlipCount.load() == 0 &&
++				g_page_flip_handler_thread_parked.load( std::memory_order_acquire );
++			g_leasePresentMutex.unlock();
++			if ( bIdle )
++				return true;
++		}
++		std::this_thread::sleep_for( std::chrono::milliseconds( 5 ) );
++	}
++	drm_log.errorf( "lease client: could not stop presenting while suspending" );
++	return false;
++}
++
+ std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm)
+ {
+ 	if ( !drm->pConnector )
+@@ -4306,6 +4433,8 @@
+ 	public:
+ 		CDRMBackend()
+ 		{
++			for ( int i = 0; i < 3; i++ )
++				g_pPresentCtxs[i] = &m_PresentCtxs[i];
+ 		}
+ 
+ 		virtual ~CDRMBackend()
+@@ -4365,6 +4494,10 @@
+ 
+ 		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+ 		{
++			std::lock_guard leaseLock( g_leasePresentMutex );
++			if ( drm_lease_client_suspended() )
++				return 0;
++
+ 			static uint64_t s_ulLastTime = get_time_in_nanos();
+ 			uint64_t ulNow = get_time_in_nanos();
+ 			drm_log.debugf( "CDRMBackend::Present Begin: %lu -> delta: %lu", ulNow, ulNow - s_ulLastTime );
+--- a/src/wlserver.cpp	2026-09-06 14:03:08.581118758 +0000
++++ b/src/wlserver.cpp	2026-09-06 16:42:04.533083406 +0000
+@@ -1596,8 +1596,11 @@
+ 		int nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
+ 		if ( nRemaining == 0 )
+ 			drm_lease_blank();
++		bool bLastProtocolHolder = g_nProtocolLeaseHolders.load() == 0;
+ 		grantLock.unlock();
+ 		wl_log.infof( "drm-lease: protocol lease released (%d holders remain)", nRemaining );
++		if ( bLastProtocolHolder )
++			drm_lease_companion_resume();
+ 	}
+ }
+ 
+@@ -1644,11 +1647,21 @@
+ 	}
+ 	wl_resource_set_implementation( lease, &drm_lease_impl, NULL, drm_lease_resource_destroyed );
+ 
+-	// The lease has a single holder across both frontends.
++	// The lease has a single holder across both frontends, except that a
++	// yielding socket companion is suspended for a protocol client.
+ 	bool bGranted = false;
+ 	{
+ 		std::unique_lock<std::mutex> grantLock( g_LeaseGrantMutex );
+-		if ( g_nActiveLeaseClients.load() == 0 )
++		bool bFree = g_nActiveLeaseClients.load() == 0;
++		if ( !bFree && g_nProtocolLeaseHolders.load() == 0 )
++		{
++			grantLock.unlock();
++			bFree = drm_lease_companion_suspend( 500 );
++			grantLock.lock();
++			// A companion may have come or gone while the lock was dropped.
++			bFree = bFree && g_nProtocolLeaseHolders.load() == 0 && !drm_lease_companion_active();
++		}
++		if ( bFree )
+ 		{
+ 			int nFd = drm_lease_dup_fd();
+ 			if ( nFd >= 0 )
+@@ -1967,6 +1980,12 @@
+ static struct wl_event_source *g_pDrmLeaseEventSource = nullptr;
+ static DrmLeaseEvent g_drmLeaseEvent = {};
+ static size_t g_nDrmLeaseEventBytes = 0;
++static std::atomic<bool> g_bDrmLeaseSuspended{ false };
++
++bool drm_lease_client_suspended()
++{
++	return g_bDrmLeaseSuspended.load( std::memory_order_acquire );
++}
+ 
+ static void drm_lease_client_dispatch_event()
+ {
+@@ -1984,6 +2003,27 @@
+ 		case DrmLeaseEventType::Up:
+ 			wlserver_touchup( g_drmLeaseEvent.touchId, g_drmLeaseEvent.time );
+ 			break;
++		case DrmLeaseEventType::Suspend:
++			// Same path as losing the VT: stop presenting, re-modeset on resume.
++			g_bDrmLeaseSuspended.store( true, std::memory_order_release );
++			GetBackend()->DirtyState( false, false );
++			if ( drm_lease_client_quiesce() )
++			{
++				send( g_nDrmLeaseSocketFd, "A", 1, MSG_NOSIGNAL );
++				wl_log.infof( "DRM lease suspended by the broker" );
++			}
++			else
++			{
++				// No ack: the broker rejects its client and this companion keeps the lease.
++				g_bDrmLeaseSuspended.store( false, std::memory_order_release );
++				GetBackend()->DirtyState( true, true );
++			}
++			break;
++		case DrmLeaseEventType::Resume:
++			g_bDrmLeaseSuspended.store( false, std::memory_order_release );
++			GetBackend()->DirtyState( true, true );
++			wl_log.infof( "DRM lease resumed by the broker" );
++			break;
+ 	}
+ }
+ 
+@@ -2069,6 +2109,8 @@
+ 	memcpy( &nLeaseFd, CMSG_DATA( cmsg ), sizeof( nLeaseFd ) );
+ 	if ( send( nSocketFd, "I", 1, MSG_NOSIGNAL ) != 1 )
+ 		return Fail( "Could not request DRM lease touch input" );
++	if ( g_bDrmLeaseYield && send( nSocketFd, "Y", 1, MSG_NOSIGNAL ) != 1 )
++		return Fail( "Could not declare the DRM lease yielding" );
+ 
+ 	int nFlags = fcntl( nSocketFd, F_GETFL );
+ 	if ( nFlags < 0 || fcntl( nSocketFd, F_SETFL, nFlags | O_NONBLOCK ) < 0 )
+@@ -2086,6 +2128,8 @@
+ 
+ bool wlsession_active()
+ {
++	if ( g_sDrmLeaseClientSocket )
++		return !drm_lease_client_suspended();
+ 	return !wlserver.wlr.session || wlserver.wlr.session->active;
+ }
+ 

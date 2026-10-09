@@ -1,0 +1,46 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: sm8550: add a PCIe suspend OPP
+
+Give pcie0 a suspend-only OPP so pcie-qcom keeps a nonzero DDR/LLCC
+sleep-set contract once the CPU cluster collapses in s2idle. Without it
+pcie-qcom votes average/peak bandwidth of 0/0 on the PCIe memory path
+during suspend; after the CPU cluster collapses, the SM8550 AOP fails
+to return control and the device hard resets on wake.
+
+Use a 1000 kBps floor. The driver's non-OPP suspend path uses
+kBps_to_icc(1), a 1 kBps sleep-set peak was validated as sufficient,
+and the vendor kernel votes 800 kBps for PCIe during suspend. The
+selected floor is of the same order and three orders of magnitude
+below the 1969000 kBps active peak.
+
+pcie1 is disabled in the SM8550 board DTS files that use this table,
+so it never probes.
+
+The root-cause analysis and the opp-suspend approach come from Luke
+Johnson's fix for this hardware in thorch
+(packages/linux-thorch/patches/0221-arm64-dts-qcom-sm8550-mark-pcie-suspend-opp.patch);
+this DT entry and its floor value were derived independently for
+Linux 7.2.
+---
+--- a/arch/arm64/boot/dts/qcom/sm8550.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+@@ -2444,6 +2444,19 @@
+ 					opp-peak-kBps = <1969000 1>;
+ 					opp-level = <3>;
+ 				};
++
++				/*
++				 * Suspend-only DDR/LLCC floor for the RPMh sleep
++				 * set. opp-hz is synthetic and opp-level is
++				 * absent, so link-speed and power-domain-level
++				 * matching cannot select it for an active link.
++				 */
++				opp-suspend-1 {
++					opp-hz = /bits/ 64 <1>;
++					required-opps = <&rpmhpd_opp_min_svs>;
++					opp-peak-kBps = <1000 1>;
++					opp-suspend;
++				};
+ 			};
+ 
+ 			pcieport0: pcie@0 {

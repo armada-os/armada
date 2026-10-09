@@ -1,0 +1,412 @@
+From b7b19999bc4507cb6ced3196fd3122743b9be58d Mon Sep 17 00:00:00 2001
+From: Matthieu Bucchianeri <mbucchia@valvesoftware.com>
+Date: Tue, 21 Jul 2026 17:52:34 -0700
+Subject: [PATCH] Add gpufreq_limit to custom profiles.
+
+---
+ data/devices/steam-frame.toml       |  1 +
+ steamos-manager/src/gpu.rs          | 64 +++++++++++++++++++++++++----
+ steamos-manager/src/hardware.rs     |  1 +
+ steamos-manager/src/manager/root.rs | 30 ++++++++------
+ steamos-manager/src/manager/user.rs | 10 +++--
+ steamos-manager/src/power.rs        | 40 ++++++++++++++----
+ 6 files changed, 115 insertions(+), 31 deletions(-)
+
+diff --git a/data/devices/steam-frame.toml b/data/devices/steam-frame.toml
+index d9abc52..bbf5785 100644
+--- a/data/devices/steam-frame.toml
++++ b/data/devices/steam-frame.toml
+@@ -40,3 +40,4 @@ cpufreq = [
+   { policy = 5, max = 2035200 },
+   { policy = 7, max = 2035200 },
+ ]
++gpufreq_limit = 629
+diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
+index 377f4ba..6c64f8a 100644
+--- a/steamos-manager/src/gpu.rs
++++ b/steamos-manager/src/gpu.rs
+@@ -138,6 +138,7 @@ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
+     sysfs_path: PathBuf,
+     available_freqs: Vec<u32>,
+     level: DevfreqPerformanceLevel,
++    manual_clocks: Option<u32>,
+ }
+ 
+ #[async_trait]
+@@ -157,7 +158,9 @@ pub(crate) trait GpuPerformanceLevelDriver: Send + Sync {
+ 
+     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>>;
+     async fn get_clocks(&self) -> Result<u32>;
+-    async fn set_clocks(&self, clocks: u32) -> Result<()>;
++    async fn set_clocks_auto_with_limit(&mut self, limit: u32) -> Result<()>;
++    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()>;
++    async fn set_clocks(&mut self, clocks: u32) -> Result<()>;
+ }
+ 
+ pub(crate) async fn gpu_power_profile_driver() -> Result<Box<dyn GpuPowerProfileDriver>> {
+@@ -389,7 +392,17 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
+         Ok(min..=max)
+     }
+ 
+-    async fn set_clocks(&self, clocks: u32) -> Result<()> {
++    async fn set_clocks_auto_with_limit(&mut self, _limit: u32) -> Result<()> {
++        // Not supported - do nothing.
++        Ok(())
++    }
++
++    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()> {
++        // Not supported - do nothing.
++        Ok(())
++    }
++
++    async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
+         // Set GPU clocks to given value valid
+         // Only used when GPU Performance Level is manual, but write whenever called.
+         let base = find_hwmon(AMDGPU_HWMON_NAME).await?;
+@@ -607,7 +620,17 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
+         self.read_freq(self.config.min_freq).await
+     }
+ 
+-    async fn set_clocks(&self, clocks: u32) -> Result<()> {
++    async fn set_clocks_auto_with_limit(&mut self, _limit: u32) -> Result<()> {
++        // Not supported - do nothing.
++        Ok(())
++    }
++
++    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()> {
++        // Not supported - do nothing.
++        Ok(())
++    }
++
++    async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
+         let current_level = self.get_performance_level().await?;
+ 
+         if current_level == GpuPerformanceLevel::Intel(IntelPerformanceLevel::Auto) {
+@@ -637,6 +660,7 @@ impl DevfreqGpuPerformanceLevelDriver {
+                 .sorted()
+                 .collect(),
+             level: DevfreqPerformanceLevel::Auto,
++            manual_clocks: None,
+         })
+     }
+ 
+@@ -681,8 +705,11 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+             bail!("This is not an devfreq-compatible performance level");
+         };
+ 
++        self.level = level;
++
+         match level {
+             DevfreqPerformanceLevel::Auto => {
++                self.manual_clocks = None;
+                 self.write_value(DEVFREQ_MINIMUM_FREQ, &self.min_freq().to_string())
+                     .await?;
+                 self.write_value(DEVFREQ_MAXIMUM_FREQ, &self.max_freq().to_string())
+@@ -694,8 +721,6 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+             }
+         }
+ 
+-        self.level = level;
+-
+         Ok(())
+     }
+ 
+@@ -712,7 +737,32 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+         Ok(current_freq.trim().parse::<u32>()? / 1_000_000u32)
+     }
+ 
+-    async fn set_clocks(&self, clocks: u32) -> Result<()> {
++    async fn set_clocks_auto_with_limit(&mut self, limit: u32) -> Result<()> {
++        let out_min = self.min_freq();
++        let out_max = limit * 1_000_000u32;
++        self.level = DevfreqPerformanceLevel::Auto;
++        self.write_value(DEVFREQ_MINIMUM_FREQ, &out_min.to_string())
++            .await?;
++        self.write_value(DEVFREQ_MAXIMUM_FREQ, &out_max.to_string())
++            .await?;
++
++        Ok(())
++    }
++
++    async fn unset_clocks_auto_with_limit(&mut self) -> Result<()> {
++        if let Some(clocks) = self.manual_clocks {
++            self.level = DevfreqPerformanceLevel::Manual;
++            self.set_clocks(clocks).await?;
++        } else {
++            self.set_performance_level(GpuPerformanceLevel::Devfreq(DevfreqPerformanceLevel::Auto))
++                .await?;
++        }
++
++        Ok(())
++    }
++
++    async fn set_clocks(&mut self, clocks: u32) -> Result<()> {
++        self.manual_clocks = Some(clocks);
+         if self.level == DevfreqPerformanceLevel::Auto {
+             return Ok(());
+         }
+@@ -994,7 +1044,7 @@ CCLK_RANGE in Core0:
+     #[tokio::test]
+     async fn test_set_amdgpu_gpu_clocks() {
+         let _h = testing::start();
+-        let driver = AmdgpuPerformanceLevelDriver {};
++        let mut driver = AmdgpuPerformanceLevelDriver {};
+ 
+         assert!(driver.set_clocks(1600).await.is_err());
+         setup_amdgpu().await.expect("setup_amdgpu");
+diff --git a/steamos-manager/src/hardware.rs b/steamos-manager/src/hardware.rs
+index e8b0412..58d6e5a 100644
+--- a/steamos-manager/src/hardware.rs
++++ b/steamos-manager/src/hardware.rs
+@@ -194,6 +194,7 @@ pub(crate) struct PerformanceProfileConfig {
+ pub(crate) struct CustomPerformanceProfile {
+     pub name: String,
+     pub cpufreq: Vec<CpufreqRange>,
++    pub gpufreq_limit: Option<u32>,
+ }
+ 
+ #[derive(Clone, Deserialize, Debug)]
+diff --git a/steamos-manager/src/manager/root.rs b/steamos-manager/src/manager/root.rs
+index 61b37fb..29f1d51 100644
+--- a/steamos-manager/src/manager/root.rs
++++ b/steamos-manager/src/manager/root.rs
+@@ -9,10 +9,11 @@
+ use anyhow::{Result, anyhow};
+ use std::collections::HashMap;
+ use std::ffi::OsStr;
++use std::sync::Arc;
+ use tokio::fs::File;
+ use tokio::spawn;
+ use tokio::sync::mpsc::Sender;
+-use tokio::sync::oneshot;
++use tokio::sync::{Mutex, oneshot};
+ use tracing::{debug, error, info};
+ use zbus::message::Header;
+ use zbus::object_server::SignalEmitter;
+@@ -65,7 +66,7 @@ pub struct SteamOSManager {
+     fan_control: FanControl,
+     tdp_limit_manager: Option<Box<dyn TdpLimitManager>>,
+     platform_profile: Option<Box<dyn PlatformProfileDriver>>,
+-    gpu_performance_level: Option<Box<dyn GpuPerformanceLevelDriver>>,
++    gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
+     gpu_power_profile: Option<Box<dyn GpuPowerProfileDriver>>,
+     // Whether we should use trace-cmd or not.
+     // True on galileo devices, false otherwise
+@@ -77,6 +78,12 @@ pub struct SteamOSManager {
+ 
+ impl SteamOSManager {
+     pub async fn new(connection: Connection, channel: Sender<Command>) -> Result<Self> {
++        let gpu_performance_level = gpu_performance_level_driver()
++            .await
++            .inspect_err(|e| info!("Could not set up GPU performance management: {e}"))
++            .ok()
++            .map(|driver| Arc::new(Mutex::new(driver)));
++
+         Ok(SteamOSManager {
+             fan_control: FanControl::new(connection.clone()),
+             wifi_debug_mode: WifiDebugMode::Off,
+@@ -84,18 +91,15 @@ impl SteamOSManager {
+                 .await
+                 .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
+                 .ok(),
+-            platform_profile: platform_profile_driver()
+-                .await
+-                .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
+-                .ok(),
+-            gpu_performance_level: gpu_performance_level_driver()
+-                .await
+-                .inspect_err(|e| info!("Could not set up GPU performance management: {e}"))
+-                .ok(),
++            gpu_performance_level: gpu_performance_level.clone(),
+             gpu_power_profile: gpu_power_profile_driver()
+                 .await
+                 .inspect_err(|e| info!("Could not set up GPU power profile management: {e}"))
+                 .ok(),
++            platform_profile: platform_profile_driver(gpu_performance_level.clone())
++                .await
++                .inspect_err(|e| info!("Could not set up platform profile management: {e}"))
++                .ok(),
+             should_trace: steam_deck_variant().await.unwrap_or_default()
+                 == SteamDeckVariant::Galileo,
+             job_manager: JobManager::new(connection.clone()).await?,
+@@ -509,11 +513,12 @@ impl SteamOSManager {
+             debug!("SetGpuPerformanceLevel: discarding out of order serial");
+             return Ok(());
+         }
+-        let Some(ref mut driver) = self.gpu_performance_level else {
++        let Some(driver) = &self.gpu_performance_level else {
+             return Err(fdo::Error::Failed(String::from(
+                 "GPU performance settings not configured",
+             )));
+         };
++        let mut driver = driver.lock().await;
+         let level = match driver.performance_level_from_str(level) {
+             Ok(level) => level,
+             Err(e) => return Err(to_zbus_fdo_error(e)),
+@@ -534,11 +539,12 @@ impl SteamOSManager {
+             debug!("SetManualGpuClock: discarding out of order serial");
+             return Ok(());
+         }
+-        let Some(ref driver) = self.gpu_performance_level else {
++        let Some(driver) = &self.gpu_performance_level else {
+             return Err(fdo::Error::Failed(String::from(
+                 "GPU performance settings not configured",
+             )));
+         };
++        let mut driver = driver.lock().await;
+         driver
+             .set_clocks(clocks)
+             .await
+diff --git a/steamos-manager/src/manager/user.rs b/steamos-manager/src/manager/user.rs
+index 5d8a9f1..831a425 100644
+--- a/steamos-manager/src/manager/user.rs
++++ b/steamos-manager/src/manager/user.rs
+@@ -844,7 +844,9 @@ impl Manager2 {
+ impl PerformanceProfile1 {
+     #[zbus(property(emits_changed_signal = "const"))]
+     async fn available_performance_profiles(&self) -> fdo::Result<Vec<String>> {
+-        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
++        let driver = platform_profile_driver(None)
++            .await
++            .map_err(to_zbus_fdo_error)?;
+         driver
+             .get_available_platform_profiles()
+             .await
+@@ -853,7 +855,9 @@ impl PerformanceProfile1 {
+ 
+     #[zbus(property)]
+     async fn performance_profile(&self) -> fdo::Result<String> {
+-        let driver = platform_profile_driver().await.map_err(to_zbus_fdo_error)?;
++        let driver = platform_profile_driver(None)
++            .await
++            .map_err(to_zbus_fdo_error)?;
+         driver
+             .get_platform_profile()
+             .await
+@@ -1824,7 +1828,7 @@ async fn create_device_interfaces(
+         });
+     }
+ 
+-    if let Ok(driver) = platform_profile_driver().await
++    if let Ok(driver) = platform_profile_driver(None).await
+         && !driver
+             .get_available_platform_profiles()
+             .await
+diff --git a/steamos-manager/src/power.rs b/steamos-manager/src/power.rs
+index f2ec3a0..3205dab 100644
+--- a/steamos-manager/src/power.rs
++++ b/steamos-manager/src/power.rs
+@@ -17,12 +17,13 @@ use std::ops::RangeInclusive;
+ use std::os::fd::OwnedFd;
+ use std::path::{Path, PathBuf};
+ use std::str::FromStr;
++use std::sync::Arc;
+ use strum::{Display, EnumIter, EnumString, VariantNames};
+ use tokio::fs::{self, File, read_dir, read_to_string, try_exists};
+ use tokio::io::{AsyncWriteExt, ErrorKind, Interest};
+ use tokio::net::unix::pipe;
+ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+-use tokio::sync::oneshot;
++use tokio::sync::{Mutex, oneshot};
+ use tokio::task::JoinSet;
+ use tracing::{debug, error, warn};
+ use zbus::names::OwnedBusName;
+@@ -30,7 +31,7 @@ use zbus::zvariant::OwnedObjectPath;
+ use zbus::{Connection, ObjectServer, fdo};
+ 
+ use crate::error::{to_zbus_error, to_zbus_fdo_error};
+-use crate::gpu::AMDGPU_HWMON_NAME;
++use crate::gpu::{AMDGPU_HWMON_NAME, GpuPerformanceLevelDriver};
+ use crate::hardware::{CpufreqRange, CustomPerformanceProfile, FanControlState, device_config};
+ use crate::manager::MANAGER_PATH;
+ use crate::manager::root::RootManagerProxy;
+@@ -126,7 +127,9 @@ pub enum CPUBoostState {
+     Enabled = 1,
+ }
+ 
+-pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileDriver>> {
++pub(crate) async fn platform_profile_driver(
++    gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
++) -> Result<Box<dyn PlatformProfileDriver>> {
+     let config = device_config().await?;
+     let config = config
+         .as_ref()
+@@ -146,8 +149,12 @@ pub(crate) async fn platform_profile_driver() -> Result<Box<dyn PlatformProfileD
+         PlatformProfileDriverType::Custom => {
+             if let Some(ref profile) = config.custom_profile {
+                 Ok(Box::new(
+-                    CustomPlatformProfileDriver::new(profile, Some(&config.suggested_default))
+-                        .await?,
++                    CustomPlatformProfileDriver::new(
++                        profile,
++                        Some(&config.suggested_default),
++                        gpu_performance_level,
++                    )
++                    .await?,
+                 ))
+             } else {
+                 Err(anyhow!("No custom profiles configured"))
+@@ -549,7 +556,7 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
+         let Some(ref performance_profile) = self.performance_profile else {
+             return Ok(true);
+         };
+-        if let Ok(driver) = platform_profile_driver().await {
++        if let Ok(driver) = platform_profile_driver(None).await {
+             Ok(driver.get_platform_profile().await? == *performance_profile)
+         } else {
+             Ok(true)
+@@ -648,7 +655,7 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
+         let Some(ref performance_profile) = self.performance_profile else {
+             return Ok(true);
+         };
+-        if let Ok(driver) = platform_profile_driver().await {
++        if let Ok(driver) = platform_profile_driver(None).await {
+             Ok(driver.get_platform_profile().await? == *performance_profile)
+         } else {
+             Ok(true)
+@@ -788,10 +795,10 @@ pub(crate) struct AcpiPlatformProfileDriver {
+     path: PathBuf,
+ }
+ 
+-#[derive(Debug)]
+ pub(crate) struct CustomPlatformProfileDriver {
+     profiles: Vec<CustomPerformanceProfile>,
+     current_profile: Option<String>,
++    gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
+ }
+ 
+ #[async_trait]
+@@ -839,10 +846,15 @@ impl PlatformProfileDriver for AcpiPlatformProfileDriver {
+ }
+ 
+ impl CustomPlatformProfileDriver {
+-    async fn new(profiles: &[CustomPerformanceProfile], current: Option<&String>) -> Result<Self> {
++    async fn new(
++        profiles: &[CustomPerformanceProfile],
++        current: Option<&String>,
++        gpu_performance_level: Option<Arc<Mutex<Box<dyn GpuPerformanceLevelDriver>>>>,
++    ) -> Result<Self> {
+         Ok(Self {
+             profiles: profiles.to_owned(),
+             current_profile: current.cloned(),
++            gpu_performance_level,
+         })
+     }
+ }
+@@ -866,6 +878,16 @@ impl PlatformProfileDriver for CustomPlatformProfileDriver {
+             for cpufreq in &profile.cpufreq {
+                 write_cpu_freq_sysfs_contents(cpufreq).await?
+             }
++
++            if let Some(driver) = &self.gpu_performance_level {
++                let mut driver = driver.lock().await;
++                if let Some(gpufreq_limit) = &profile.gpufreq_limit {
++                    driver.set_clocks_auto_with_limit(*gpufreq_limit).await?;
++                } else {
++                    driver.unset_clocks_auto_with_limit().await?;
++                }
++            }
++
+             self.current_profile = Some(profile.name.clone());
+             Ok(())
+         } else {

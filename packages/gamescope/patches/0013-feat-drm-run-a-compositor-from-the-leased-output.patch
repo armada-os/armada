@@ -1,0 +1,575 @@
+From a701830dffacad98031a907e177167a521468516 Mon Sep 17 00:00:00 2001
+From: JPyke3 <github@pyk.ee>
+Date: Fri, 28 Aug 2026 17:57:35 +1000
+Subject: [PATCH] feat(drm): run a compositor from the leased output
+
+---
+ src/Backends/DRMBackend.cpp | 189 ++++++++++++++++++++----------------
+ src/main.cpp                |  16 +++
+ src/main.hpp                |  19 ++++
+ src/wlserver.cpp            | 157 +++++++++++++++++++++++++++++-
+ 4 files changed, 295 insertions(+), 86 deletions(-)
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 979877a..7815212 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1378,123 +1378,146 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
+ 	liftoff_log_scope.vlogf(priority, fmt, args);
+ }
+ 
+-static void lease_socket_thread_run( struct drm_t *drm )
++static std::mutex g_leaseClientMutex;
++static int g_nLeaseClientFd = -1;
++static bool g_bLeaseClientWantsTouch = false;
++
++static bool lease_send_fd( int nClientFd, int nLeaseFd )
+ {
+-	pthread_setname_np( pthread_self(), "gs-lease-sock" );
++	union {
++		char buf[ CMSG_SPACE( sizeof(int) ) ];
++		struct cmsghdr align;
++	} control = {};
++	char data = 'L';
++	struct iovec iov = { .iov_base = &data, .iov_len = 1 };
++	struct msghdr msg = {
++		.msg_iov = &iov,
++		.msg_iovlen = 1,
++		.msg_control = control.buf,
++		.msg_controllen = sizeof( control.buf ),
++	};
++	struct cmsghdr *cmsg = CMSG_FIRSTHDR( &msg );
++	cmsg->cmsg_level = SOL_SOCKET;
++	cmsg->cmsg_type = SCM_RIGHTS;
++	cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
++	memcpy( CMSG_DATA( cmsg ), &nLeaseFd, sizeof(int) );
+ 
+-	// Keep client fds open for the lifetime of the companion process so we
+-	// can detect when it exits (POLLHUP on the socket). This drives the
+-	// g_nActiveLeaseClients counter, which gates whether wlserver drops
+-	// touch events for the --ignore-touch-device device (Game Mode) or
+-	// forwards them (Desktop Mode, companion not running).
+-	std::vector<int> clientFds;
++	return sendmsg( nClientFd, &msg, MSG_NOSIGNAL ) == 1;
++}
+ 
+-	while ( drm->bLeaseThreadRunning.load() )
++static void lease_disconnect_client( int &nClientFd )
++{
++	if ( nClientFd < 0 )
++		return;
++
++	{
++		std::lock_guard lock( g_leaseClientMutex );
++		g_nLeaseClientFd = -1;
++		g_bLeaseClientWantsTouch = false;
++	}
++	close( nClientFd );
++	nClientFd = -1;
+ 	{
+-		std::vector<struct pollfd> pfds;
+-		pfds.reserve( clientFds.size() + 1 );
++		std::scoped_lock grantLock( g_LeaseGrantMutex );
++		g_nActiveLeaseClients.fetch_sub( 1 );
++	}
++	drm_log.infof( "lease-connector: companion app disconnected" );
++}
++
++void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touchId, uint32_t time )
++{
++	static_assert( sizeof( DrmLeaseEvent ) == 20 );
++	std::lock_guard lock( g_leaseClientMutex );
++	if ( !g_bLeaseClientWantsTouch )
++		return;
+ 
+-		struct pollfd listenPfd = {};
+-		listenPfd.fd = drm->nLeaseSocketFd;
+-		listenPfd.events = POLLIN;
+-		pfds.push_back( listenPfd );
++	DrmLeaseEvent event = {
++		.type = type,
++		.touchId = touchId,
++		.time = time,
++		.x = static_cast<float>( x ),
++		.y = static_cast<float>( y ),
++	};
++	if ( send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL ) != sizeof( event ) )
++		shutdown( g_nLeaseClientFd, SHUT_RDWR );
++}
+ 
+-		for ( int cfd : clientFds )
+-		{
+-			struct pollfd cp = {};
+-			cp.fd = cfd;
+-			cp.events = 0; // we only care about hangup/error
+-			pfds.push_back( cp );
+-		}
++static void lease_socket_thread_run( struct drm_t *drm )
++{
++	pthread_setname_np( pthread_self(), "gs-lease-sock" );
++	int nClientFd = -1;
+ 
+-		int ret = poll( pfds.data(), pfds.size(), 1000 );
++	while ( drm->bLeaseThreadRunning.load() )
++	{
++		struct pollfd pfds[2] = {
++			{ .fd = drm->nLeaseSocketFd, .events = POLLIN },
++			{ .fd = nClientFd, .events = POLLIN },
++		};
++		int ret = poll( pfds, nClientFd >= 0 ? 2 : 1, 1000 );
+ 		if ( ret <= 0 )
+ 			continue;
+ 
+-		// Reap any disconnected companions first.
+-		for ( size_t i = clientFds.size(); i-- > 0; )
++		if ( nClientFd >= 0 && pfds[1].revents & ( POLLHUP | POLLERR | POLLNVAL ) )
++			lease_disconnect_client( nClientFd );
++
++		if ( nClientFd >= 0 && pfds[1].revents & POLLIN )
+ 		{
+-			short revents = pfds[ i + 1 ].revents;
+-			if ( revents & ( POLLHUP | POLLERR | POLLNVAL ) )
++			char request = 0;
++			ssize_t nRead = recv( nClientFd, &request, 1, MSG_DONTWAIT );
++			if ( nRead == 0 )
++				lease_disconnect_client( nClientFd );
++			else if ( nRead < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK )
++				lease_disconnect_client( nClientFd );
++			else if ( request == 'I' )
+ 			{
+-				close( clientFds[ i ] );
+-				clientFds.erase( clientFds.begin() + i );
+-				int nRemaining;
+-				{
+-					std::scoped_lock grantLock( g_LeaseGrantMutex );
+-					nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
+-				}
+-				drm_log.infof( "lease-connector: companion app disconnected (%d still connected)", nRemaining );
++				std::lock_guard lock( g_leaseClientMutex );
++				g_bLeaseClientWantsTouch = true;
++				drm_log.infof( "lease-connector: companion requested touch input" );
+ 			}
+ 		}
+ 
+-		if ( !( pfds[ 0 ].revents & POLLIN ) )
++		if ( !( pfds[0].revents & POLLIN ) )
+ 			continue;
+ 
+-		int nClientFd = accept( drm->nLeaseSocketFd, nullptr, nullptr );
+-		if ( nClientFd < 0 )
++		int nAcceptedFd = accept4( drm->nLeaseSocketFd, nullptr, nullptr, SOCK_CLOEXEC );
++		if ( nAcceptedFd < 0 )
++			continue;
++		if ( nClientFd >= 0 )
++		{
++			send( nAcceptedFd, "B", 1, MSG_NOSIGNAL );
++			close( nAcceptedFd );
++			drm_log.infof( "lease-connector: rejected companion while lease is busy" );
+ 			continue;
++		}
+ 
+ 		std::unique_lock<std::mutex> grantLock( g_LeaseGrantMutex );
+-
+ 		if ( g_nProtocolLeaseHolders.load() > 0 )
+ 		{
+ 			grantLock.unlock();
+ 			drm_log.infof( "lease-connector: refusing socket companion, lease is held via drm-lease-v1" );
+-			close( nClientFd );
++			close( nAcceptedFd );
+ 			continue;
+ 		}
+-
+-		// Send the DRM lease fd via SCM_RIGHTS
+-		union {
+-			char buf[ CMSG_SPACE( sizeof(int) ) ];
+-			struct cmsghdr align;
+-		} u;
+-		memset( &u, 0, sizeof(u) );
+-
+-		char data = 'L';
+-		struct iovec iov = {};
+-		iov.iov_base = &data;
+-		iov.iov_len = 1;
+-
+-		struct msghdr msg = {};
+-		msg.msg_iov = &iov;
+-		msg.msg_iovlen = 1;
+-		msg.msg_control = u.buf;
+-		msg.msg_controllen = sizeof( u.buf );
+-
+-		struct cmsghdr *cmsg = CMSG_FIRSTHDR( &msg );
+-		cmsg->cmsg_level = SOL_SOCKET;
+-		cmsg->cmsg_type = SCM_RIGHTS;
+-		cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
+-		memcpy( CMSG_DATA( cmsg ), &drm->nLeaseFd, sizeof(int) );
+-
+-		ssize_t nSent = sendmsg( nClientFd, &msg, 0 );
+-		if ( nSent < 0 )
++		if ( !lease_send_fd( nAcceptedFd, drm->nLeaseFd ) )
+ 		{
+ 			grantLock.unlock();
+ 			drm_log.errorf( "lease-connector: sendmsg failed: %s", strerror( errno ) );
+-			close( nClientFd );
++			close( nAcceptedFd );
++			continue;
+ 		}
+-		else
++
++		nClientFd = nAcceptedFd;
+ 		{
+-			// Keep the client fd open. The companion is expected to hold its
+-			// end of the socket for its entire lifetime; closing it signals
+-			// us that it's gone and touch events should flow to wlserver again.
+-			clientFds.push_back( nClientFd );
+-			int nNow = g_nActiveLeaseClients.fetch_add( 1 ) + 1;
+-			grantLock.unlock();
+-			drm_log.infof( "lease-connector: sent lease fd to companion app (%d connected)", nNow );
++			std::lock_guard lock( g_leaseClientMutex );
++			g_nLeaseClientFd = nClientFd;
++			g_bLeaseClientWantsTouch = false;
+ 		}
++		g_nActiveLeaseClients.fetch_add( 1 );
++		grantLock.unlock();
++		drm_log.infof( "lease-connector: sent lease fd to companion app" );
+ 	}
+ 
+-	for ( int cfd : clientFds )
+-		close( cfd );
+-	if ( !clientFds.empty() )
+-	{
+-		std::scoped_lock grantLock( g_LeaseGrantMutex );
+-		g_nActiveLeaseClients.fetch_sub( (int)clientFds.size() );
+-	}
++	lease_disconnect_client( nClientFd );
+ }
+ 
+ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+diff --git a/src/main.cpp b/src/main.cpp
+index 9b004c9..6426ea9 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -98,6 +98,7 @@ const struct option *gamescope_options = (struct option[]){
+ 	{ "immediate-flips", no_argument, nullptr, 0 },
+ 	{ "framerate-limit", required_argument, nullptr, 0 },
+ 	{ "lease-connector", required_argument, nullptr, 0 },
++	{ "drm-lease-client", required_argument, nullptr, 0 },
+ 	{ "ignore-touch-device", required_argument, nullptr, 0 },
+ 
+ 	// openvr options
+@@ -222,6 +223,7 @@ const char usage[] =
+ 	"  --force-windows-fullscreen     force windows inside of gamescope to be the size of the nested display (fullscreen)\n"
+ 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
+ 	"  --lease-connector              if specified, marks a display connector for DRM leasing.\n"
++	"  --drm-lease-client             use a DRM lease from the given socket.\n"
+ 	"  --ignore-touch-device          if specified, disables touch input for a given display.\n"
+ 	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
+ 	"  --hdr-enabled                  enable HDR output (needs Gamescope WSI layer enabled for support from clients)\n"
+@@ -793,6 +795,7 @@ int g_nPreferredOutputHeight = 0;
+ bool g_bExposeWayland = false;
+ const char *g_sOutputName = nullptr;
+ const char *g_sLeaseConnectorName = nullptr;
++const char *g_sDrmLeaseClientSocket = nullptr;
+ const char *g_sIgnoreTouchDevice = nullptr;
+ std::atomic<int> g_nActiveLeaseClients = { 0 };
+ std::atomic<int> g_nProtocolLeaseHolders = { 0 };
+@@ -959,6 +962,8 @@ int main(int argc, char **argv)
+ 					cv_shutdown_on_primary_child_death = false;
+ 				} else if (strcmp(opt_name, "lease-connector") == 0) {
+ 					g_sLeaseConnectorName = optarg;
++				} else if (strcmp(opt_name, "drm-lease-client") == 0) {
++					g_sDrmLeaseClientSocket = optarg;
+ 				} else if (strcmp(opt_name, "ignore-touch-device") == 0) {
+ 					g_sIgnoreTouchDevice = optarg;
+ 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
+@@ -1066,6 +1071,17 @@ int main(int argc, char **argv)
+ 		eCurrentBackend = auto_select_backend();
+ 	}
+ 
++	if ( g_sDrmLeaseClientSocket && eCurrentBackend != gamescope::GamescopeBackend::DRM )
++	{
++		fprintf( stderr, "gamescope: --drm-lease-client requires --backend drm\n" );
++		return 1;
++	}
++	if ( g_sDrmLeaseClientSocket && g_sLeaseConnectorName )
++	{
++		fprintf( stderr, "gamescope: --drm-lease-client cannot be used with --lease-connector\n" );
++		return 1;
++	}
++
+ 	if ( g_pOriginalWaylandDisplay != NULL )
+ 	{
+         if (CheckWaylandPresentationTime())
+diff --git a/src/main.hpp b/src/main.hpp
+index 5c9c2b3..5d7fc97 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -34,6 +34,7 @@ extern bool g_bGrabbed;
+ extern float g_mouseSensitivity;
+ extern const char *g_sOutputName;
+ extern const char *g_sLeaseConnectorName;
++extern const char *g_sDrmLeaseClientSocket;
+ extern const char *g_sIgnoreTouchDevice;
+ extern bool g_bExternalForced;
+ extern std::vector<uint32_t> g_customRefreshRates;
+@@ -59,6 +60,24 @@ int drm_lease_open_enum_fd();
+ const char *drm_lease_connector_name();
+ uint32_t drm_lease_connector_id();
+ 
++enum class DrmLeaseEventType : uint32_t
++{
++	Down = 1,
++	Motion,
++	Up,
++};
++
++struct DrmLeaseEvent
++{
++	DrmLeaseEventType type;
++	int32_t touchId;
++	uint32_t time;
++	float x;
++	float y;
++};
++
++void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touchId, uint32_t time );
++
+ enum class GamescopeUpscaleFilter : uint32_t
+ {
+     LINEAR = 0,
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 6205a7a..08e866b 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -5,11 +5,14 @@
+ #include <stdlib.h>
+ #include <unistd.h>
+ #include <pthread.h>
++#include <signal.h>
+ #include <string.h>
+ #include <poll.h>
+ #include <fcntl.h>
+ #include <xf86drm.h>
+ #include <sys/eventfd.h>
++#include <sys/socket.h>
++#include <sys/un.h>
+ 
+ #include <linux/input-event-codes.h>
+ 
+@@ -522,7 +525,10 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+ 	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
+ 
+ 	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	{
++		drm_lease_send_touch( DrmLeaseEventType::Down, event->x, event->y, event->touch_id, event->time_msec );
+ 		return;
++	}
+ 
+ 	wlserver_touch_associate_connector( touch );
+ 	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec, touch->connector );
+@@ -534,7 +540,10 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+ 	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
+ 
+ 	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	{
++		drm_lease_send_touch( DrmLeaseEventType::Up, 0.0, 0.0, event->touch_id, event->time_msec );
+ 		return;
++	}
+ 
+ 	wlserver_touchup( event->touch_id, event->time_msec );
+ }
+@@ -545,7 +554,10 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
+ 	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
+ 
+ 	if ( touch->bIgnoreWhileLeased && g_nActiveLeaseClients.load() > 0 )
++	{
++		drm_lease_send_touch( DrmLeaseEventType::Motion, event->x, event->y, event->touch_id, event->time_msec );
+ 		return;
++	}
+ 
+ 	wlserver_touch_associate_connector( touch );
+ 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
+@@ -1948,9 +1960,131 @@ void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle
+ ///////////////////////
+ 
+ #if HAVE_SESSION
++static int g_nDrmLeaseFd = -1;
++static int g_nDrmLeaseSocketFd = -1;
++static struct wl_event_source *g_pDrmLeaseEventSource = nullptr;
++static DrmLeaseEvent g_drmLeaseEvent = {};
++static size_t g_nDrmLeaseEventBytes = 0;
++
++static void drm_lease_client_dispatch_event()
++{
++	auto *pConnector = GetBackend()->GetCurrentConnector();
++	switch ( g_drmLeaseEvent.type )
++	{
++		case DrmLeaseEventType::Down:
++			wlserver_touchdown( g_drmLeaseEvent.x, g_drmLeaseEvent.y,
++				g_drmLeaseEvent.touchId, g_drmLeaseEvent.time, pConnector );
++			break;
++		case DrmLeaseEventType::Motion:
++			wlserver_touchmotion( g_drmLeaseEvent.x, g_drmLeaseEvent.y,
++				g_drmLeaseEvent.touchId, g_drmLeaseEvent.time, false, pConnector );
++			break;
++		case DrmLeaseEventType::Up:
++			wlserver_touchup( g_drmLeaseEvent.touchId, g_drmLeaseEvent.time );
++			break;
++	}
++}
++
++static int drm_lease_client_disconnected()
++{
++	wl_log.errorf( "DRM lease broker disconnected" );
++	raise( SIGTERM );
++	return 0;
++}
++
++static int drm_lease_client_event( int fd, uint32_t mask, void * )
++{
++	if ( mask & ( WL_EVENT_HANGUP | WL_EVENT_ERROR ) )
++		return drm_lease_client_disconnected();
++
++	while ( true )
++	{
++		char *pWrite = reinterpret_cast<char *>( &g_drmLeaseEvent ) + g_nDrmLeaseEventBytes;
++		ssize_t nRead = recv( fd, pWrite, sizeof( g_drmLeaseEvent ) - g_nDrmLeaseEventBytes, MSG_DONTWAIT );
++		if ( nRead > 0 )
++		{
++			g_nDrmLeaseEventBytes += nRead;
++			if ( g_nDrmLeaseEventBytes != sizeof( g_drmLeaseEvent ) )
++				continue;
++			drm_lease_client_dispatch_event();
++			g_nDrmLeaseEventBytes = 0;
++			continue;
++		}
++		if ( nRead == 0 )
++			return drm_lease_client_disconnected();
++		if ( errno == EINTR )
++			continue;
++		if ( errno == EAGAIN || errno == EWOULDBLOCK )
++			return 0;
++		return drm_lease_client_disconnected();
++	}
++}
++
++static int drm_lease_client_open()
++{
++	int nSocketFd = socket( AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0 );
++	if ( nSocketFd < 0 )
++	{
++		wl_log.errorf_errno( "DRM lease socket creation failed" );
++		return -1;
++	}
++
++	int nLeaseFd = -1;
++	auto Fail = [&]( const char *pszMessage )
++	{
++		wl_log.errorf( "%s", pszMessage );
++		if ( nLeaseFd >= 0 )
++			close( nLeaseFd );
++		close( nSocketFd );
++		return -1;
++	};
++	struct sockaddr_un addr = { .sun_family = AF_UNIX };
++	if ( strlen( g_sDrmLeaseClientSocket ) >= sizeof( addr.sun_path ) )
++		return Fail( "DRM lease socket path is too long" );
++	strcpy( addr.sun_path, g_sDrmLeaseClientSocket );
++	if ( connect( nSocketFd, reinterpret_cast<struct sockaddr *>( &addr ), sizeof( addr ) ) < 0 )
++		return Fail( "Could not connect to DRM lease broker" );
++
++	char data = 0;
++	struct iovec iov = { .iov_base = &data, .iov_len = 1 };
++	char control[ CMSG_SPACE( sizeof(int) ) ] = {};
++	struct msghdr msg = {
++		.msg_iov = &iov,
++		.msg_iovlen = 1,
++		.msg_control = control,
++		.msg_controllen = sizeof( control ),
++	};
++	if ( recvmsg( nSocketFd, &msg, MSG_CMSG_CLOEXEC ) != 1 )
++		return Fail( "Could not receive DRM lease" );
++	if ( data == 'B' )
++		return Fail( "DRM lease is busy" );
++	if ( data != 'L' )
++		return Fail( "DRM lease broker returned an invalid response" );
++
++	struct cmsghdr *cmsg = CMSG_FIRSTHDR( &msg );
++	if ( !cmsg || cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS )
++		return Fail( "DRM lease broker returned no file descriptor" );
++	memcpy( &nLeaseFd, CMSG_DATA( cmsg ), sizeof( nLeaseFd ) );
++	if ( send( nSocketFd, "I", 1, MSG_NOSIGNAL ) != 1 )
++		return Fail( "Could not request DRM lease touch input" );
++
++	int nFlags = fcntl( nSocketFd, F_GETFL );
++	if ( nFlags < 0 || fcntl( nSocketFd, F_SETFL, nFlags | O_NONBLOCK ) < 0 )
++		return Fail( "Could not make DRM lease socket nonblocking" );
++	g_pDrmLeaseEventSource = wl_event_loop_add_fd( wlserver.event_loop, nSocketFd,
++		WL_EVENT_READABLE | WL_EVENT_HANGUP | WL_EVENT_ERROR, drm_lease_client_event, nullptr );
++	if ( !g_pDrmLeaseEventSource )
++		return Fail( "Could not monitor DRM lease socket" );
++
++	g_nDrmLeaseFd = nLeaseFd;
++	g_nDrmLeaseSocketFd = nSocketFd;
++	wl_log.infof( "Using DRM lease from '%s'", g_sDrmLeaseClientSocket );
++	return g_nDrmLeaseFd;
++}
++
+ bool wlsession_active()
+ {
+-	return wlserver.wlr.session->active;
++	return !wlserver.wlr.session || wlserver.wlr.session->active;
+ }
+ 
+ static void handle_session_active( struct wl_listener *listener, void *data )
+@@ -2054,7 +2188,7 @@ bool wlsession_init( void ) {
+ 	wlserver_set_output_info( &output_info );
+ 
+ #if HAVE_SESSION
+-	if ( !GetBackend()->IsSessionBased() )
++	if ( !GetBackend()->IsSessionBased() || g_sDrmLeaseClientSocket )
+ 	{
+ 		s_bInitted = true;
+ 		return true;
+@@ -2087,6 +2221,9 @@ static void kms_device_handle_change( struct wl_listener *listener, void *data )
+ }
+ 
+ int wlsession_open_kms( const char *device_name ) {
++	if ( g_sDrmLeaseClientSocket )
++		return drm_lease_client_open();
++
+ 	if ( device_name != nullptr )
+ 	{
+ 		wlserver.wlr.device = wlr_session_open_file( wlserver.wlr.session, device_name );
+@@ -2116,6 +2253,20 @@ int wlsession_open_kms( const char *device_name ) {
+ 
+ void wlsession_close_kms()
+ {
++	if ( g_sDrmLeaseClientSocket )
++	{
++		if ( g_pDrmLeaseEventSource )
++			wl_event_source_remove( g_pDrmLeaseEventSource );
++		if ( g_nDrmLeaseFd >= 0 )
++			close( g_nDrmLeaseFd );
++		if ( g_nDrmLeaseSocketFd >= 0 )
++			close( g_nDrmLeaseSocketFd );
++		g_pDrmLeaseEventSource = nullptr;
++		g_nDrmLeaseFd = -1;
++		g_nDrmLeaseSocketFd = -1;
++		return;
++	}
++
+ 	if ( wlserver.wlr.device )
+ 	{
+ 		wl_list_remove( &wlserver.wlr.device_change_listener.link );
+@@ -2350,7 +2501,7 @@ bool wlserver_init( void ) {
+ 
+ 	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
+ 
+-	if ( GetBackend()->IsSessionBased() )
++	if ( wlserver.wlr.session )
+ 	{
+ #if HAVE_DRM
+ 		wlserver.wlr.libinput_backend = wlr_libinput_backend_create( wlserver.wlr.session );
+-- 
+2.55.0
+
