@@ -532,6 +532,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0309-ASoC-qcom-q6afe-keep-the-lpass-core-hw-vote-handle.patch`
   source: armada
   upstream: local
+- `patches/0310-ASoC-codecs-lpass-macro-release-core-hw-votes-in-runtime-suspend.patch`
+  source: armada
+  upstream: local
 - `patches/0304-ASoC-wcd938x-treat-failed-zdet-ramp-as-floating.patch`
   source: armada
   upstream: local
