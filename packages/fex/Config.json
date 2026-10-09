@@ -1,0 +1,20 @@
+{
+  "Config": {
+    "RootFS": "/usr/share/guestos/fex-mesa",
+    "TSOEnabled": "1",
+    "X87ReducedPrecision": "1",
+    "Multiblock": "0",
+    "VectorTSOEnabled": "0",
+    "MemcpySetTSOEnabled": "0",
+    "HalfBarrierTSOEnabled": "1",
+    "ThunkHostLibs": "/usr/lib64/fex-emu/HostThunks",
+    "ThunkGuestLibs": "/usr/share/fex-emu/GuestThunks"
+  },
+  "ThunksDB": {
+    "Vulkan": 1,
+    "GL": 1,
+    "drm": 1,
+    "WaylandClient": 1,
+    "asound": 1
+  }
+}

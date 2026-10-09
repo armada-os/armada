@@ -51,6 +51,7 @@ for package in \
     armada-jupiter-hw-support \
     armada-splash \
     fex-emu-utils \
+    fex-emu-rootfs-archlinux \
     terra-gamescope \
     terra-gamescope-libs \
     gamescope-session \

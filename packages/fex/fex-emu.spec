@@ -44,6 +44,7 @@ Source3:    fex-sysroot-%{sysroot_version}.tar.gz
 Source4:    toolchain_x86_32.cmake
 Source5:    toolchain_x86_64.cmake
 Source6:    build-fex-sysroot.sh
+Source7:    Config.json
 %global     sysroot_license LGPL-2.1-or-later AND GPL-2.0-or-later AND MIT AND BSD-3-Clause
 SourceLicense: %{fex_license} %{sysroot_license}
 %endif
@@ -265,6 +266,9 @@ sed -i FEXCore/Source/CMakeLists.txt \
 %install
 %cmake_install
 
+# Armada FEX config
+install -Dpm0644 %SOURCE7 %{buildroot}%{_datadir}/fex-emu/Config.json
+
 # These are used to store RootFS and overlays for FEX that will be provided
 # by other packages
 install -Ddpm0755 %{buildroot}%{_datadir}/fex-emu/RootFS/
@@ -304,6 +308,7 @@ fi
 %{_binfmtdir}/FEX-x86.conf
 %{_binfmtdir}/FEX-x86_64.conf
 %endif
+%{_datadir}/fex-emu/Config.json
 %{_datadir}/fex-emu/AppConfig/
 %{_mandir}/man1/FEX.1*
 
