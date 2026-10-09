@@ -190,6 +190,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0309-ASoC-qcom-q6afe-keep-the-lpass-core-hw-vote-handle.patch
 0310-ASoC-codecs-lpass-macro-release-core-hw-votes-in-runtime-suspend.patch
 0311-clk-qcom-camcc-sm8250-keep-gdsc-clk-on-outside-ccf.patch
+0312-drm-msm-dsi-phy-unprepare-iface-clk-across-system-sleep.patch
 0304-ASoC-wcd938x-treat-failed-zdet-ramp-as-floating.patch
 0305-backlight-qcom-wled-always-disable-ovp-irq-at-probe.patch
 

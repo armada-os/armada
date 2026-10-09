@@ -538,6 +538,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0311-clk-qcom-camcc-sm8250-keep-gdsc-clk-on-outside-ccf.patch`
   source: armada
   upstream: local
+- `patches/0312-drm-msm-dsi-phy-unprepare-iface-clk-across-system-sleep.patch`
+  source: armada
+  upstream: local
 - `patches/0304-ASoC-wcd938x-treat-failed-zdet-ramp-as-floating.patch`
   source: armada
   upstream: local
