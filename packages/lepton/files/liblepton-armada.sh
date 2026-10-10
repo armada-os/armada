@@ -141,6 +141,24 @@ if armada_wrap clear_baked_app_data "keeping the baked app after an early exit";
     }
 fi
 
+# Lepton 3 also clears the baked app when it removes the launch prefix, which is every exit.
+if armada_wrap prepare_baked_data_for_removal "keeping the baked app between launches"; then
+    function prepare_baked_data_for_removal()
+    {
+        if [[ "${FUNCNAME[1]:-}" != remove_prefix ]]; then
+            valve_prepare_baked_data_for_removal "$@"
+            return
+        fi
+        local DIR
+        for DIR in "$(app_workdir)" "$(data_workdir)"; do
+            if [[ -d "${DIR}" ]]; then
+                chmod -R 700 "${DIR}"
+                rm -rf "${DIR}"
+            fi
+        done
+    }
+fi
+
 # Split APKs: base.apk plus the splits listed in .armada-apks beside it.
 function get_app_apks()
 {

@@ -33,6 +33,10 @@ printf '%s\n' \
     'function get_apk_path() { [[ -n "$APP_PATH" ]] || APP_PATH="$(compgen -G "$APP_DIR/*.apk")"; printf %s "$APP_PATH"; }' \
     'function extract_app_hash() { echo one-apk; }' \
     'function clear_baked_app_data() { echo "cleared: $1"; }' \
+    'function app_workdir() { echo "$WORK/app_workdir"; }' \
+    'function data_workdir() { echo "$WORK/data_workdir"; }' \
+    'function prepare_baked_data_for_removal() { echo "cleared everything"; }' \
+    'function remove_prefix() { prepare_baked_data_for_removal; }' \
     >"$lepton/liblepton/liblepton.sh"
 printf '%s\n' \
     '    APP_PATH=$(pm path "$package")' \
@@ -135,7 +139,7 @@ done
 touch "$tmp/app/base.apk" "$tmp/app/config.apk" "$tmp/app/other.apk" "$tmp/single/game.apk"
 printf 'base.apk\nconfig.apk\n' >"$tmp/app/.armada-apks"
 hooks() {
-    env PATH="$tmp/bin:$PATH" STEAM_COMPAT_INSTALL_PATH="$tmp/app" \
+    env PATH="$tmp/bin:$PATH" STEAM_COMPAT_INSTALL_PATH="$tmp/app" WORK="$tmp/baked" \
         bash -euo pipefail -c 'source "$1"; shift; "$@"' _ "$derived/liblepton/liblepton.sh" "$@"
 }
 
@@ -175,6 +179,12 @@ printf 'base.apk\nmissing.apk\n' >"$tmp/app/.armada-apks"
 # An early exit keeps the baked app; every other reason still clears it.
 [[ "$(hooks clear_baked_app_data 'early exit' 2>/dev/null)" == 'Keeping baked app data after an early exit' ]]
 [[ "$(hooks clear_baked_app_data 'app or depot changed' 2>/dev/null)" == 'cleared: app or depot changed' ]]
+
+# Removing the launch prefix takes the overlay work directories and leaves the baked app.
+mkdir -p "$tmp/baked/app_workdir" "$tmp/baked/data_workdir" "$tmp/baked/data_overlay"
+[[ -z "$(hooks remove_prefix 2>/dev/null)" ]]
+[[ ! -e "$tmp/baked/app_workdir" && ! -e "$tmp/baked/data_workdir" && -d "$tmp/baked/data_overlay" ]]
+[[ "$(hooks prepare_baked_data_for_removal 2>/dev/null)" == 'cleared everything' ]]
 
 rm -rf "$lepton"
 if run run 2>"$tmp/no-lepton"; then
