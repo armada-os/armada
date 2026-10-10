@@ -50,6 +50,7 @@ export const setRgb = (
   );
 export const getControllerState = () => call<[], CalibrationState>("get_controller_state");
 export const startCalibrationRecording = () => call<[], CalibrationState>("start_calibration_recording");
+export const startOutputCalibrationRecording = () => call<[], CalibrationState>("start_output_calibration_recording");
 export const saveCalibration = () => call<[], CalibrationState>("save_calibration");
 export const resetCalibration = (triggersOnly = false) => call<[boolean], CalibrationState>("reset_calibration", triggersOnly);
 export const beginCalibrationSession = (token: string) => call<[string], boolean>("begin_calibration_session", token);

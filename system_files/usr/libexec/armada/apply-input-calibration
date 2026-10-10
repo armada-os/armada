@@ -80,6 +80,8 @@ def main():
         if name in params:
             (parameters / name).write_text(str(int(params[name])), encoding="utf-8")
     (parameters / "update_params").write_text("1", encoding="utf-8")
+    if policy.uses_mcu(backend):
+        policy.wait_parameters(parameters)
 
 
 if __name__ == "__main__":

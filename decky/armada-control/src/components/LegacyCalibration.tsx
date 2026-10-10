@@ -1,15 +1,16 @@
 import { DialogBody, DialogButton, DialogFooter } from "@decky/ui";
 import { useRef, useState } from "react";
-import { resetCalibration, saveCalibration, startCalibrationRecording } from "../backend";
+import { resetCalibration, saveCalibration, startCalibrationRecording, startOutputCalibrationRecording } from "../backend";
 import { t } from "../i18n";
 import type { CalibrationState } from "../types";
 import { gridTwoCol, StickPlot, TriggerBar } from "./CalibrationPlots";
 
-export function LegacyCalibration({ state, setState, close, triggersOnly = false, back, onBusy, closing }: {
+export function LegacyCalibration({ state, setState, close, triggersOnly = false, sticksOnly = false, back, onBusy, closing }: {
   state: CalibrationState; closing: boolean; setState: (state: CalibrationState) => void; close: () => void;
-  triggersOnly?: boolean; back?: () => void; onBusy: (busy: boolean) => void;
+  triggersOnly?: boolean; sticksOnly?: boolean; back?: () => void; onBusy: (busy: boolean) => void;
 }) {
   const [recording, setRecording] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const inflight = useRef(false);
@@ -25,37 +26,42 @@ export function LegacyCalibration({ state, setState, close, triggersOnly = false
     finally { inflight.current = false; setBusy(false); onBusy(false); }
   };
   const start = () => exclusive(async () => {
-    setState(await startCalibrationRecording());
+    setState(await (sticksOnly ? startOutputCalibrationRecording() : startCalibrationRecording()));
+    setSaved(false);
     setRecording(true);
   });
   const save = () => exclusive(async () => {
     setState(await saveCalibration());
     setRecording(false);
+    setSaved(true);
   });
-  const reset = () => exclusive(async () => { setState(await resetCalibration()); });
-  const description = recording
+  const reset = () => exclusive(async () => { setState(await resetCalibration()); setSaved(false); });
+  const description = sticksOnly
+    ? t(saved ? "calibration.outputSaved" : recording ? "calibration.outputCapture" : "calibration.outputDescription")
+    : recording
     ? t(triggersOnly ? "calibration.triggerCapture" : "calibration.captureDescription")
     : t(state.canApply ? "calibration.startDescription" : "calibration.readOnlyDescription");
   return <>
     <DialogBody>
+      {sticksOnly && <div style={{ textAlign: "center", marginBottom: "12px" }}>{t("calibration.outputStage")}</div>}
       <div style={{ ...gridTwoCol, marginBottom: "10px" }}>
         <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state} progress={triggersOnly ? undefined : progress?.left_stick} />
         <StickPlot title={t("calibration.rightStick")} xName="right_x" yName="right_y" state={state} progress={triggersOnly ? undefined : progress?.right_stick} />
       </div>
-      <div style={{ ...gridTwoCol, marginBottom: "16px" }}>
+      {!sticksOnly && <div style={{ ...gridTwoCol, marginBottom: "16px" }}>
         <TriggerBar title="LT" name="left_trigger" state={state} progress={progress?.left_trigger} />
         <TriggerBar title="RT" name="right_trigger" state={state} progress={progress?.right_trigger} />
-      </div>
+      </div>}
       <div style={{ textAlign: "center" }}>{error || description}</div>
     </DialogBody>
     <DialogFooter>
       <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-        {recording ? <DialogButton disabled={closing || busy || !progress?.ready} onClick={save}>{t("calibration.save")}</DialogButton>
+        {recording ? <DialogButton disabled={closing || busy || !progress?.ready} onClick={save}>{t(sticksOnly ? "calibration.saveOutput" : "calibration.save")}</DialogButton>
           : state.canApply ? <>
             <DialogButton disabled={closing || busy} onClick={start}>
-              {t(triggersOnly ? "calibration.calibrateTriggers" : "calibration.start")}
+              {t(sticksOnly ? "calibration.measureOutput" : triggersOnly ? "calibration.calibrateTriggers" : "calibration.start")}
             </DialogButton>
-            {!triggersOnly && <DialogButton disabled={closing || busy} onClick={reset}>{t("calibration.resetDefaults")}</DialogButton>}
+            {!triggersOnly && !sticksOnly && <DialogButton disabled={closing || busy} onClick={reset}>{t("calibration.resetDefaults")}</DialogButton>}
           </> : null}
         {back && !recording && <DialogButton disabled={closing || busy} onClick={back}>{t("common.back")}</DialogButton>}
         <DialogButton disabled={closing || busy} onClick={close}>{t("common.close")}</DialogButton>

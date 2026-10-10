@@ -161,7 +161,7 @@ calibration.read_controller_state = lambda: dict(state)
 
 
 def save(captured):
-    calibration._recording = SimpleNamespace(capture=lambda: captured)
+    calibration._recording = SimpleNamespace(capture=lambda: captured, sticks_only=False)
     return calibration.save_calibration()
 
 

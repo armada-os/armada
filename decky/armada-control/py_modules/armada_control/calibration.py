@@ -522,9 +522,11 @@ class Hold:
 
 
 class Recording:
-    def __init__(self, params, triggers_only=False):
+    def __init__(self, params, triggers_only=False, sticks_only=False, output_binding=None):
         self.params = params
         self.triggers_only = triggers_only
+        self.sticks_only = sticks_only
+        self.output_binding = output_binding
         self.holds = {name: Hold() for name in (*STICK_KEYS, *TRIGGER_KEYS)}
         self.pushes = {name: {} for name in STICK_KEYS}
         self.rests = {name: [] for name in STICK_KEYS}
@@ -539,6 +541,8 @@ class Recording:
             if all(key in controls for key in keys):
                 self.sample_stick(stick, [controls[key] for key in keys], keys, now, first)
         for name in TRIGGER_KEYS:
+            if self.sticks_only:
+                continue
             if name in controls:
                 self.sample_trigger(name, controls[name], now)
         self.now = now
@@ -598,7 +602,8 @@ class Recording:
         for name in TRIGGER_KEYS:
             done = "max" in self.triggers.get(name, {})
             result[name] = 1.0 if done else self.holds[name].fill(self.now)
-        result["ready"] = bool(self.capture())
+        capture = self.capture()
+        result["ready"] = all(key in capture for key in AXIS_PARAMS) if self.sticks_only else bool(capture)
         return result
 
     def capture(self):
@@ -691,16 +696,33 @@ def start_recording():
     return controller_state()
 
 
+def start_output_recording():
+    global _recording, _ranges_stale
+    _recording = None
+    state = read_controller_state()
+    backend = state.get('backend') if state.get('canApply') else None
+    if not calibration_policy.uses_mcu(backend):
+        raise RuntimeError('Two-stage calibration is unavailable')
+    # Close restores the previous valid trim even if this preparation RPC fails.
+    _ranges_stale = True
+    binding = call('prepare_output_calibration')
+    _recording = Recording(read_calibration_params(backend), sticks_only=True, output_binding=binding)
+    return controller_state()
+
+
 def save_calibration():
     global _ranges_stale, _recording
     state = read_controller_state()
     backend = state.get("backend") if state.get("canApply") else None
     if backend not in CALIBRATION_BACKENDS:
         raise RuntimeError("controller calibration is not supported on this device")
-    if not calibration_policy.capability(backend)["triggers"]:
+    output = bool(_recording and _recording.sticks_only)
+    if not output and not calibration_policy.capability(backend)["triggers"]:
         raise RuntimeError("trigger calibration requires raw trigger support from the driver")
     capture = _recording.capture() if _recording is not None else {}
-    if calibration_policy.uses_mcu(backend):
+    if output and not all(key in capture for key in AXIS_PARAMS):
+        raise RuntimeError('Complete all four held directions on both sticks')
+    if calibration_policy.uses_mcu(backend) and not output:
         capture = {key: value for key, value in capture.items() if key in TRIGGER_KEYS}
     if not capture:
         raise RuntimeError("nothing was calibrated")
@@ -712,7 +734,13 @@ def save_calibration():
     _, stick_deadzone = stick_defaults(event, backend)
     params = calibration_from_capture(capture, current, stick_deadzone, inverted_axes(event, backend))
     params["backend"] = backend
-    params = calibration_policy.clean_config(params)
+    if output:
+        measured = calibration_from_capture(capture)
+        if any(f'{axis}_max' not in measured for axis in AXIS_PARAMS.values()):
+            raise RuntimeError('Insufficient measured stick travel')
+        params[calibration_policy.OUTPUT_KEY] = _recording.output_binding
+    else:
+        params = calibration_policy.clean_config(params)
     params["version"] = CALIBRATION_VERSION
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     _ranges_stale = True
@@ -743,9 +771,10 @@ def end_session(token=None):
 
 
 def mcu_calibration(operation, token, step=None):
-    global _ranges_stale
+    global _ranges_stale, _recording
     # Start prepares the live stick parameters. Refresh consumers when the modal
     # closes even if the RPC response is lost or measurement is cancelled.
     if operation == "start":
         _ranges_stale = True
+        _recording = None
     return call("rsinput_calibration", operation=operation, token=token, step=step)

@@ -767,6 +767,22 @@ class CalibrationManager:
         self.state = "measuring"
         self.capture.start()
 
+    def require_normal_output(self):
+        """Caller holds lock; software settings must not race MCU capture/Apply."""
+        self._snapshot()
+        if self.state in {'measuring', 'measured', 'ready', 'applying'}:
+            raise RuntimeError('Finish or cancel sensor calibration first')
+
+    def close_capture(self):
+        """Caller holds lock. Close may cancel capture, but never an ongoing write."""
+        if self.state == 'applying':
+            raise RuntimeError('Sensor calibration is still applying')
+        if self.capture:
+            self.capture.stop()
+        self.capture, self.results = None, {}
+        if self.state in {'measuring', 'measured', 'ready'}:
+            self.state = 'cancelled'
+
     def _snapshot(self):
         capture = self.capture.snapshot() if self.capture else None
         if self.state == "measuring" and capture and not capture["active"]:

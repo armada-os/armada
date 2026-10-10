@@ -6,8 +6,9 @@ import { centerOverlay, rangeProgress } from "../lib/mcuCalibration";
 import type { CalibrationState, McuCalibrationOperation, McuCalibrationSession } from "../types";
 import { gridTwoCol, StickPlot, TriggerBar, type OverlayBar } from "./CalibrationPlots";
 
-export function McuCalibration({ state, close, onBusy, calibrateTriggers, closing }: {
+export function McuCalibration({ state, close, onBusy, calibrateTriggers, adjustOutput, closing }: {
   state: CalibrationState; closing: boolean; close: () => void; onBusy: (busy: boolean) => void; calibrateTriggers: () => void;
+  adjustOutput: () => void;
 }) {
   const [session, setSession] = useState<McuCalibrationSession | null>(null);
   const [connectionError, setConnectionError] = useState("");
@@ -97,12 +98,13 @@ export function McuCalibration({ state, close, onBusy, calibrateTriggers, closin
   }
   if (session?.state === "ready") description = t("calibration.readyToApply");
   if (applying) description = t("calibration.mcuApplying");
-  if (session?.state === "applied") description = t("calibration.applied");
+  if (session?.state === "applied") description = t("calibration.sensorStageApplied");
   if (session?.state === "failed") description = t("calibration.captureStopped", { error: session.error });
   if (session?.state === "uncertain") description = t("calibration.applyUnknown", { error: session.error });
 
   return <>
     <DialogBody>
+      <div style={{ textAlign: "center", marginBottom: "12px" }}>{t("calibration.sensorStage")}</div>
       <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "22px" }}>
         <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state}
           origin={session?.stick === "left" ? origin : undefined}
@@ -119,12 +121,16 @@ export function McuCalibration({ state, close, onBusy, calibrateTriggers, closin
     </DialogBody>
     <DialogFooter>
       <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-        {actions.includes("start") && <DialogButton disabled={closing || !available || pending || !!connectionError} onClick={() => act("start")}>
+        {session?.state === "applied" && <DialogButton disabled={closing || pending || !!connectionError} onClick={adjustOutput}>
+          {t("calibration.continueOutput")}</DialogButton>}
+        {actions.includes("start") && session?.state !== "applied" && <DialogButton disabled={closing || !available || pending || !!connectionError} onClick={() => act("start")}>
           {t(session ? "calibration.runAgain" : "calibration.calibrateSticks")}</DialogButton>}
         {actions.includes("continue") && <DialogButton disabled={closing || pending || !!connectionError} onClick={() => act("continue")}>
           {t(session!.step + 1 === session!.totalSteps ? "calibration.finishMeasurements" : "common.continue")}</DialogButton>}
         {actions.includes("apply") && <DialogButton disabled={closing || pending || !!connectionError} onClick={() => act("apply")}>{t("calibration.applyCalibration")}</DialogButton>}
         {actions.includes("cancel") && <DialogButton disabled={closing || pending || !!connectionError} onClick={() => act("cancel")}>{t("common.cancel")}</DialogButton>}
+        {!session && <DialogButton disabled={closing || pending || !state.canApply} onClick={adjustOutput}>
+          {t("calibration.adjustOutput")}</DialogButton>}
         {actions.includes("start") && state.calibration?.triggers && <DialogButton disabled={closing || pending || !!connectionError} onClick={calibrateTriggers}>{t("calibration.calibrateTriggers")}</DialogButton>}
         <DialogButton disabled={closing || pending || (applying && !connectionError)} onClick={close}>{t("common.close")}</DialogButton>
       </div>

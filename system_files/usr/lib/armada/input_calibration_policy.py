@@ -1,10 +1,16 @@
 """Shared policy for devices opting in to MCU stick calibration in their DT."""
 
+import hashlib
+import json
 import os
+import time
 from functools import lru_cache
 from pathlib import Path
 
 DEVICE_TREE = Path('/sys/firmware/devicetree/base')
+SOC_SERIAL = Path('/sys/devices/soc0/serial_number')
+JOURNAL_ROOT = Path('/var/lib/armada/calibration')
+OUTPUT_KEY = 'mcuOutput'
 
 
 @lru_cache(maxsize=1)
@@ -50,7 +56,49 @@ def stick_defaults():
 def clean_config(params):
     if not uses_mcu(params.get('backend', 'rsinput')):
         return dict(params)
-    return {key: value for key, value in params.items() if not key.startswith('axis_')}
+    if valid_output(params):
+        return dict(params)
+    return {key: value for key, value in params.items()
+            if not key.startswith('axis_') and key != OUTPUT_KEY}
+
+
+def output_binding():
+    """Bind software measurements to this unit and every durable sensor-write attempt.
+
+    The MCU writer exclusively creates and fsyncs a commit journal before opening
+    the transport. Even an empty/uncertain attempt therefore invalidates old trim.
+    Capture-only sessions do not change this generation. Never delete these journals.
+    """
+    serial = SOC_SERIAL.read_text().strip()
+    if not serial:
+        raise RuntimeError('Cannot identify the controller unit')
+    try:
+        attempts = sorted(p.name for p in JOURNAL_ROOT.iterdir()
+                          if p.name.startswith('commit-') and p.suffix == '.ndjson')
+    except FileNotFoundError:
+        attempts = []
+    identity = [serial, (DEVICE_TREE / 'compatible').read_bytes().hex(), attempts]
+    return {'version': 1, 'generation': hashlib.sha256(
+        json.dumps(identity, separators=(',', ':')).encode()).hexdigest()}
+
+
+def valid_output(params):
+    try:
+        return params.get(OUTPUT_KEY) == output_binding()
+    except (OSError, RuntimeError):
+        return False
+
+
+def restore_sticks(parameters, config):
+    """Restore only a current, unit-bound output trim; otherwise neutral defaults."""
+    values = stick_defaults()
+    if config.exists():
+        params = clean_config(json.loads(config.read_text()))
+        if params.get('backend', 'rsinput') == 'rsinput':
+            values.update({k: v for k, v in params.items() if k in values})
+    for name, value in values.items():
+        (parameters / name).write_text(str(int(value)), encoding='utf-8')
+    (parameters / 'update_params').write_text('1', encoding='utf-8')
 
 
 def prepare_sticks(parameters):
@@ -58,6 +106,15 @@ def prepare_sticks(parameters):
     for name, value in stick_defaults().items():
         (parameters / name).write_text(str(value), encoding='utf-8')
     (parameters / 'update_params').write_text('1', encoding='utf-8')
+
+
+def wait_parameters(parameters):
+    # rsinput applies ABS metadata on its next report, not at the sysfs write.
+    deadline = time.monotonic() + 0.5
+    while (parameters / 'update_params').read_text().strip() != '0':
+        if time.monotonic() >= deadline:
+            raise RuntimeError('Controller did not activate the output measurement ranges')
+        time.sleep(0.01)
 
 
 

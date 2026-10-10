@@ -11,7 +11,7 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
   const [state, setState] = useState<CalibrationState | null>(null);
   const [error, setError] = useState("");
   const [closeError, setCloseError] = useState("");
-  const [triggersOnly, setTriggersOnly] = useState(false);
+  const [stage, setStage] = useState<"sensors" | "output" | "triggers">("sensors");
   const busy = useRef(false);
   const [closing, setClosing] = useState(false);
   const sessionToken = useRef(`${Date.now()}-${Math.random()}`);
@@ -66,12 +66,12 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
       {!state ? <>
         <DialogBody>{error || t("calibration.checking")}</DialogBody>
         <DialogFooter><DialogButton onClick={close}>{t("common.close")}</DialogButton></DialogFooter>
-      </> : state.calibration?.sticks === "mcu" && !triggersOnly ? (
+      </> : state.calibration?.sticks === "mcu" && stage === "sensors" ? (
         <McuCalibration state={state} closing={closing} close={close} onBusy={(value) => { if (!closing) busy.current = value; }}
-          calibrateTriggers={() => setTriggersOnly(true)} />
+          calibrateTriggers={() => setStage("triggers")} adjustOutput={() => setStage("output")} />
       ) : (
-        <LegacyCalibration closing={closing} state={state} setState={setState} close={close} triggersOnly={triggersOnly} onBusy={(value) => { if (!closing) busy.current = value; }}
-          back={triggersOnly ? () => setTriggersOnly(false) : undefined} />
+        <LegacyCalibration key={stage} closing={closing} state={state} setState={setState} close={close} triggersOnly={stage === "triggers"} sticksOnly={stage === "output"} onBusy={(value) => { if (!closing) busy.current = value; }}
+          back={stage !== "sensors" ? () => setStage("sensors") : undefined} />
       )}
     </ModalRoot>
   );

@@ -8,6 +8,7 @@ from armada_control.calibration import (
     reset_calibration_params,
     save_calibration,
     start_recording,
+    start_output_recording,
 )
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
@@ -120,6 +121,9 @@ class Plugin:
 
     async def start_calibration_recording(self):
         return await asyncio.to_thread(start_recording)
+
+    async def start_output_calibration_recording(self):
+        return await asyncio.to_thread(start_output_recording)
 
     async def save_calibration(self):
         return await asyncio.to_thread(save_calibration)
