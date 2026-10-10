@@ -2,7 +2,6 @@ import {
   DialogBody,
   DialogButton,
   DialogFooter,
-  ModalRoot,
   ProgressBar,
   showModal,
 } from "@decky/ui";
@@ -17,6 +16,7 @@ import {
 } from "../backend";
 import { normalizedValue, triggerPercent } from "../lib/calibration";
 import { t } from "../i18n";
+import { ArmadaModalRoot } from "./ArmadaModalRoot";
 import type { CalibrationState, StickProgress, StickSide } from "../types";
 
 type Phase = "idle" | "recording";
@@ -127,20 +127,6 @@ function TriggerBar({ title, name, state, progress }: { title: string; name: str
 
 const gridTwoCol = { display: "grid", gridTemplateColumns: `repeat(2, ${132 + 2 * MARKER_GUTTER}px)`, justifyContent: "center", width: "100%" } as const;
 
-// Modal input capture leaves gamepad focus frozen on the last-touched button.
-const focusStyles = `
-  .armada-cal-footer button.gpfocus,
-  .armada-cal-footer button:focus,
-  .armada-cal-footer button:hover {
-    background-color: rgba(255, 255, 255, 0.1) !important;
-    color: #ffffff !important;
-    box-shadow: none !important;
-    transform: none !important;
-    -webkit-filter: none !important;
-    filter: none !important;
-  }
-`;
-
 function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
   const [state, setState] = useState<CalibrationState | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -242,7 +228,7 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
         : t("calibration.startDescription");
 
   return (
-    <ModalRoot onCancel={close}>
+    <ArmadaModalRoot bAllowFullSize onCancel={close}>
       <DialogBody>
         <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "10px" }}>
           <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state} progress={progress?.left_stick} />
@@ -254,30 +240,27 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
         </div>
         <div style={{ fontSize: "13px", lineHeight: "18px", opacity: 0.72, textAlign: "center" }}>{instructions}</div>
       </DialogBody>
-      <DialogFooter>
-        <style>{focusStyles}</style>
+      <DialogFooter className="armada-control-dialog-footer">
         {!canApply ? (
-          <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
-            <DialogButton onClick={close}>{t("common.close")}</DialogButton>
-          </div>
+          <DialogButton onClick={close}>{t("common.close")}</DialogButton>
         ) : phase === "recording" ? (
-          <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
+          <>
             <DialogButton onClick={save} disabled={!progress?.ready || busy}>{t("calibration.save")}</DialogButton>
             <DialogButton onClick={close} disabled={busy}>
               {closing ? t("calibration.applying") : t("common.close")}
             </DialogButton>
-          </div>
+          </>
         ) : (
-          <div className="armada-cal-footer" style={{ display: "flex", gap: "10px" }}>
+          <>
             <DialogButton onClick={start} disabled={busy}>{t("calibration.start")}</DialogButton>
             <DialogButton onClick={reset} disabled={busy}>{t("calibration.resetDefaults")}</DialogButton>
             <DialogButton onClick={close} disabled={busy}>
               {closing ? t("calibration.applying") : t("common.close")}
             </DialogButton>
-          </div>
+          </>
         )}
       </DialogFooter>
-    </ModalRoot>
+    </ArmadaModalRoot>
   );
 }
 
