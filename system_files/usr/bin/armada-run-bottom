@@ -8,12 +8,32 @@ fail() {
     exit 1
 }
 
+# Check for defaults flag
+defaults=false
+
+if [[ ${1:-} == "--defaults" ]]; then
+		defaults=true
+		shift
+fi
+		
+
 [[ "${1:-}" == -- ]] || fail "usage: armada-run-bottom -- <command> [args...]"
 shift
 (( $# > 0 )) || fail "no command specified"
 
 env_file="${XDG_RUNTIME_DIR:-/run/user/$UID}/armada-bottom-env"
 [[ -r "$env_file" ]] || fail "bottom screen is not running"
+if [[ "$defaults" == true ]]; then
+		set -a
+		XDG_CURRENT_DESKTOP=KDE
+		XDG_SESSION_TYPE=wayland
+		QT_QPA_PLATFORMTHEME=KDE
+		DISABLE_GAMESCOPE_WSI=1
+		XDG_CONFIG_DIRS=/etc/XDG
+		XDG_DATA_DIRS="/usr/share/armada/plasma/bus:/usr/local/share:/usr/share"
+		WAYLAND_DISPLAY=gamescope-secondy
+		DISPLAY="${DISPLAY:-}"
+fi
 set -a
 source "$env_file"
 set +a
