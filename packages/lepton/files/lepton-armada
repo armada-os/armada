@@ -48,10 +48,13 @@ if [[ "$(cat "${tool}/.stamp" 2>/dev/null || true)" != "${stamp}" ]]; then
     ln -s "${lepton}/images/rootfs" "${tool}.new/images/rootfs"
     ln -s "${lepton}/sysbake" "${lepton}/sysbake.xattrs" "${tool}.new/"
     cp -a "${here}/overlay/." "${tool}.new/images/rootfs_overlay/"
-    if ! patch --directory="${tool}.new" --strip=1 --fuzz=0 --no-backup-if-mismatch --quiet < "${here}/launcher.patch"; then
-        echo "lepton-armada: patches do not apply to Lepton $(< "${lepton}/version.txt")" >&2
-        exit 1
-    fi
+    # lepton sources liblepton/liblepton.sh; armada's takes that name and loads Valve's.
+    mv "${tool}.new/liblepton/liblepton.sh" "${tool}.new/liblepton/liblepton.valve.sh"
+    cp "${here}/liblepton.sh" "${tool}.new/liblepton/liblepton.sh"
+    # A split install makes `pm path` print a line per APK and leaves the originals behind.
+    guest=("${tool}.new/images/rootfs_overlay/system/bin/cmd" "${tool}.new/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh")
+    sed -E -i 's#(\$\((pm|cmd_real package) path [^|)]*[^|) ])( *)#\1 | grep "/base.apk$" | head -n 1\3#' "${guest[@]}" || true
+    sed -i '\#^ *mv "${APP_PATH}"/\* /data/steam_app/#i\    find /data/steam_app -maxdepth 1 -type f -name '"'*.apk'"' -delete' "${guest[0]}" || true
     printf '%s\n' "${stamp}" > "${tool}.new/.stamp"
     rm -rf "${tool}"
     mv "${tool}.new" "${tool}"
