@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Observe a configurable controller chord without capturing game input.
+
+This optional worker has no touchscreen, overlay, uinput or D-Bus runtime.
+armada-control owns persistence and starts/stops the actual trackpad workers.
+"""
+
+import json
+import select
+import signal
+import socket
+import sys
+import time
+from pathlib import Path
+
+from evdev import InputDevice, ecodes, ff
+
+sys.path.insert(0, "/usr/lib/armada")
+from armada_virtual_trackpads import SHORTCUT_BUTTONS, ShortcutHold, sanitize_config
+
+CONFIG_PATH = Path("/etc/armada/virtual-trackpads.json")
+CONTROL_SOCKET = "/run/armada/control.sock"
+TRIGGER_AXES = {ecodes.ABS_Z: "L2", ecodes.ABS_RZ: "R2", ecodes.ABS_BRAKE: "L2", ecodes.ABS_GAS: "R2"}
+
+
+def read_config():
+    try:
+        return sanitize_config(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return sanitize_config({})
+
+
+def trigger_down(value, minimum, maximum):
+    return maximum > minimum and value >= minimum + (maximum - minimum) * 0.5
+
+
+def toggle_trackpads():
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(20)
+        client.connect(CONTROL_SOCKET)
+        client.sendall(b'{"action":"toggle_virtual_trackpads"}\n')
+        response = b""
+        while b"\n" not in response:
+            chunk = client.recv(4096)
+            if not chunk or len(response) > 65536:
+                raise RuntimeError("invalid Armada Control response")
+            response += chunk
+    result = json.loads(response.split(b"\n", 1)[0])
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error", "could not toggle trackpads"))
+    return result["result"]
+
+
+class ShortcutListener:
+    def __init__(self):
+        self.running = True
+        self.reload_requested = True
+        self.config = read_config()
+        self.devices = {}
+        self.last_scan = -3.0
+
+    def close_device(self, path):
+        entry = self.devices.pop(path, None)
+        if entry:
+            entry["device"].close()
+
+    def scan(self):
+        paths = {str(path) for path in Path("/dev/input").glob("event*")}
+        for path in list(self.devices):
+            if path not in paths:
+                self.close_device(path)
+        for path in sorted(paths - self.devices.keys()):
+            device = None
+            try:
+                sysfs = (Path("/sys/class/input") / Path(path).name / "device").resolve()
+                if "/virtual/" in str(sysfs):
+                    continue
+                device = InputDevice(path)
+                capabilities = device.capabilities(absinfo=False)
+                keys = capabilities.get(ecodes.EV_KEY, [])
+                if not any(ecodes.BTN_JOYSTICK <= key < ecodes.BTN_DIGI for key in keys):
+                    device.close()
+                    continue
+                axes = {}
+                for code in TRIGGER_AXES:
+                    if code in capabilities.get(ecodes.EV_ABS, []):
+                        axes[code] = device.absinfo(code)
+                self.devices[path] = {
+                    "device": device, "keys": set(device.active_keys()), "axes": axes,
+                    "hold": ShortcutHold(self.config["shortcutHoldSeconds"]),
+                    "rumble": ecodes.FF_RUMBLE in capabilities.get(ecodes.EV_FF, []),
+                }
+                self.update_hold(self.devices[path])
+            except (OSError, ValueError):
+                if device is not None:
+                    device.close()
+
+    def update_hold(self, entry):
+        pressed = {name for name, code in SHORTCUT_BUTTONS.items() if code in entry["keys"]}
+        for code, axis in entry["axes"].items():
+            if trigger_down(axis.value, axis.min, axis.max):
+                pressed.add(TRIGGER_AXES[code])
+        entry["hold"].update_pressed(pressed, self.config["shortcutButtons"], time.monotonic())
+        # Preserve a quick completed chord even if its release arrives in the
+        # same evdev batch; immediate means no minimum press duration.
+        if self.config["shortcutHoldSeconds"] == 0 and entry["hold"].ready(time.monotonic()):
+            entry["pending"] = True
+
+    def read(self, path):
+        entry = self.devices[path]
+        try:
+            for event in entry["device"].read():
+                if event.type == ecodes.EV_KEY:
+                    if event.value:
+                        entry["keys"].add(event.code)
+                    else:
+                        entry["keys"].discard(event.code)
+                elif event.type == ecodes.EV_ABS and event.code in entry["axes"]:
+                    entry["axes"][event.code] = entry["axes"][event.code]._replace(value=event.value)
+                elif event.type == ecodes.EV_SYN and event.code == ecodes.SYN_DROPPED:
+                    # Re-read physical state after an evdev queue overflow.
+                    entry["keys"] = set(entry["device"].active_keys())
+                    for code in entry["axes"]:
+                        entry["axes"][code] = entry["device"].absinfo(code)
+                self.update_hold(entry)
+        except BlockingIOError:
+            pass
+        except OSError:
+            self.close_device(path)
+
+    def notify(self, entry, config):
+        """Three bounded acknowledgement pulses, only on rumble-capable input."""
+        if not entry["rumble"] or not config["hapticStrength"]:
+            return
+        device = entry["device"]
+        effect_id = None
+        try:
+            magnitude = int(0xffff * config["hapticStrength"] / 100)
+            effect = ff.Effect(
+                ecodes.FF_RUMBLE, -1, 0, ff.Trigger(0, 0), ff.Replay(45, 0),
+                ff.EffectType(ff_rumble_effect=ff.Rumble(magnitude, magnitude)),
+            )
+            effect_id = device.upload_effect(effect)
+            for _ in range(3):
+                if not self.running:
+                    break
+                device.write(ecodes.EV_FF, effect_id, 1)
+                time.sleep(0.085)
+        except (OSError, ValueError):
+            # Some drivers advertise FF without accepting uploaded effects.
+            pass
+        finally:
+            if effect_id is not None:
+                try:
+                    device.write(ecodes.EV_FF, effect_id, 0)
+                    device.erase_effect(effect_id)
+                except OSError:
+                    pass
+
+    def run(self):
+        while self.running:
+            if self.reload_requested:
+                self.reload_requested = False
+                self.config = read_config()
+                if not self.config["shortcutEnabled"]:
+                    return
+                for path in list(self.devices):
+                    self.close_device(path)
+                self.last_scan = -3.0
+            now = time.monotonic()
+            if now - self.last_scan >= 3:
+                self.last_scan = now
+                self.scan()
+            timeout = max(0.0, 3.0 - (time.monotonic() - self.last_scan))
+            for entry in self.devices.values():
+                hold = entry["hold"]
+                if entry.get("pending"):
+                    timeout = 0
+                elif hold.armed and hold.started is not None:
+                    timeout = min(timeout, max(0.0, hold.started + hold.seconds - time.monotonic()))
+            readable, _, _ = select.select([entry["device"] for entry in self.devices.values()], [], [], timeout)
+            for path, entry in list(self.devices.items()):
+                if entry["device"] in readable:
+                    self.read(path)
+            for entry in list(self.devices.values()):
+                if entry.pop("pending", False) or entry["hold"].ready(time.monotonic()):
+                    try:
+                        result = toggle_trackpads()
+                        self.notify(entry, result)
+                        print(f"virtual-trackpads-shortcut: {'enabled' if result['enabled'] else 'disabled'}", flush=True)
+                    except (OSError, ValueError, RuntimeError) as error:
+                        print(f"virtual-trackpads-shortcut: {error}", flush=True)
+
+
+def main():
+    listener = ShortcutListener()
+
+    def stop(_signal, _frame):
+        listener.running = False
+
+    def reload_config(_signal, _frame):
+        listener.reload_requested = True
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGHUP, reload_config)
+    try:
+        listener.run()
+    finally:
+        for path in list(listener.devices):
+            listener.close_device(path)
+
+
+if __name__ == "__main__":
+    main()

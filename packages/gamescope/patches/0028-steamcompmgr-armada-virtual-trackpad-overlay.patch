@@ -1,0 +1,294 @@
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 373d697..5384e23 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -1381,7 +1381,7 @@ window_is_limiter_exempt( steamcompmgr_win_t *w )
+ 
+ 	// Under -vrgamepadui the Steam UI panels carry a VR overlay target instead of the Steam appid.
+ 	return window_is_steam( w ) || w->oulTargetVROverlay.has_value() ||
+-		w->isOverlay || w->isExternalOverlay || window_is_vr_scene_app( w );
++		w->isOverlay || w->isExternalOverlay || w->isArmadaOverlay || window_is_vr_scene_app( w );
+ }
+ 
+ gamescope::ConVar<bool> cv_limiter_vr_exempt( "limiter_vr_exempt", true, "Exempt VR app windows from the fps limiter during VR sessions." );
+@@ -1582,6 +1582,7 @@ bool steamcompmgr_window_should_refresh_switch( steamcompmgr_win_t *w )
+ #define STEAM_PROP			"STEAM_BIGPICTURE"
+ #define OVERLAY_PROP		"STEAM_OVERLAY"
+ #define EXTERNAL_OVERLAY_PROP		"GAMESCOPE_EXTERNAL_OVERLAY"
++#define ARMADA_OVERLAY_PROP		"ARMADA_VIRTUAL_TRACKPADS_OVERLAY"
+ #define MANGOAPP_MSG_TYPE_PROP		"GAMESCOPE_MANGOAPP_MSG_TYPE"
+ #define GAMES_RUNNING_PROP 	"STEAM_GAMES_RUNNING"
+ #define SCREEN_SCALE_PROP	"STEAM_SCREEN_SCALE"
+@@ -2746,7 +2747,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
+ 		}
+ 	}
+ 
+-	layer->opacity = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
++	layer->opacity = ( (w->isOverlay || w->isExternalOverlay || w->isArmadaOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
+ 
+ 	layer->scale.x = 1.0 / currentScaleRatio_x;
+ 	layer->scale.y = 1.0 / currentScaleRatio_y;
+@@ -2775,6 +2776,10 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
+ 	{
+ 		layer->zpos = g_zposExternalOverlay;
+ 	}
++	if ( w->isArmadaOverlay )
++	{
++		layer->zpos = g_zposOverlay;
++	}
+ 
+ 	layer->hdr_metadata_blob = nullptr;
+ 	if (lastCommit->feedback)
+@@ -3163,6 +3168,7 @@ paint_all( global_focus_t *pFocus, bool async )
+ 	steamcompmgr_win_t	*overlay;
+ 	steamcompmgr_win_t *externalOverlay;
+ 	steamcompmgr_win_t	*notification;
++	steamcompmgr_win_t	*armadaOverlay;
+ 	steamcompmgr_win_t	*override;
+ 	steamcompmgr_win_t *input;
+ 	steamcompmgr_win_t *fit;
+@@ -3174,6 +3180,7 @@ paint_all( global_focus_t *pFocus, bool async )
+ 	overlay = pFocus->overlayWindow;
+ 	externalOverlay = pFocus->externalOverlayWindow;
+ 	notification = pFocus->notificationWindow;
++	armadaOverlay = pFocus->armadaOverlayWindow;
+ 	override = pFocus->overrideWindow;
+ 	input = pFocus->inputFocusWindow;
+ 	// Decide the fit target once so the window planes and the cursor plane agree.
+@@ -3322,6 +3329,8 @@ paint_all( global_focus_t *pFocus, bool async )
+ 		nReservedLayers++;
+ 	if ( notification && notification->opacity )
+ 		nReservedLayers++;
++	if ( armadaOverlay && armadaOverlay->opacity )
++		nReservedLayers++;
+ 
+ 	if ( w && !w->isSteamStreamingClient && cv_paint_override_redirect_plane )
+ 		paint_override_underlays( pFocus, w, &frameInfo, pFocus->cursor, nReservedLayers );
+@@ -3415,6 +3424,16 @@ paint_all( global_focus_t *pFocus, bool async )
+ 		}
+ 	}
+ 
++	// Armada's virtual trackpads need a stable, non-interactive plane of their
++	// own.  Steam notification windows are transient and must not be allowed to
++	// replace this overlay while a game or the Steam UI is visible.
++	if (armadaOverlay && armadaOverlay->opacity)
++	{
++		paint_window(pFocus, armadaOverlay, armadaOverlay, &frameInfo, pFocus->cursor,
++			PaintWindowFlag::NoScale | PaintWindowFlag::NoFilter |
++			( cv_overlay_unmultiplied_alpha ? PaintWindowFlag::CoverageMode : 0 ));
++	}
++
+ 	if (input)
+ 	{
+ 		// Make sure to un-dirty the texture before we do any painting logic.
+@@ -4326,7 +4345,7 @@ static void pick_decoration_windows( focus_t *pFocus )
+ 		if ( !is_same_app_override_decoration( w, pFocus->focusWindow ) || w == pFocus->overrideWindow )
+ 			continue;
+ 
+-		if ( w->isOverlay || w->isExternalOverlay )
++		if ( w->isOverlay || w->isExternalOverlay || w->isArmadaOverlay )
+ 			continue;
+ 
+ 		if ( w->xwayland().a.map_state != IsViewable || w->xwayland().a.c_class != InputOutput ||
+@@ -4653,7 +4672,7 @@ found:;
+ 	for (steamcompmgr_win_t *w = this->list; w; w = w->xwayland().next)
+ 	{
+ 		// Always skip system tray icons and overlays
+-		if ( w->isSysTrayIcon || w->isOverlay || w->isExternalOverlay )
++		if ( w->isSysTrayIcon || w->isOverlay || w->isExternalOverlay || w->isArmadaOverlay )
+ 		{
+ 			continue;
+ 		}
+@@ -4705,11 +4724,13 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
+ 	steamcompmgr_win_t *prevFocusWindow = ctx->focus.focusWindow;
+ 	ctx->focus.overlayWindow = nullptr;
+ 	ctx->focus.notificationWindow = nullptr;
++	ctx->focus.armadaOverlayWindow = nullptr;
+ 	ctx->focus.overrideWindow = nullptr;
+ 	ctx->focus.externalOverlayWindow = nullptr;
+ 
+ 	unsigned int maxOpacity = 0;
+ 	unsigned int maxOpacityExternal = 0;
++	unsigned int maxOpacityArmada = 0;
+ 	for (steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next)
+ 	{
+ 		if (w->isOverlay)
+@@ -4736,6 +4757,12 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
+ 			}
+ 		}
+ 
++		if (w->isArmadaOverlay && w->opacity >= maxOpacityArmada)
++		{
++			ctx->focus.armadaOverlayWindow = w;
++			maxOpacityArmada = w->opacity;
++		}
++
+ 		if ( gamescope::VirtualConnectorIsSingleOutput() )
+ 		{
+ 			if ( w->isOverlay && w->inputFocusMode )
+@@ -5311,6 +5338,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
+ 	if ( !pFocus->externalOverlayWindow )
+ 		pFocus->externalOverlayWindow = root_ctx->focus.externalOverlayWindow;
+ 	pFocus->notificationWindow = root_ctx->focus.notificationWindow;
++	pFocus->armadaOverlayWindow = root_ctx->focus.armadaOverlayWindow;
+ 
+ 	if ( !pFocus->overlayWindow )
+ 	{
+@@ -5929,11 +5957,12 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
+ 	
+ 	w->isOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.overlayAtom, 0);
+ 	w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0, &w->bHasExternalOverlayProp);
++	w->isArmadaOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.armadaOverlayAtom, 0);
+ 	w->uMangoappMsgType = get_prop(ctx, w->xwayland().id, ctx->atoms.mangoappMsgTypeAtom, 0);
+ 
+ 	// misyl: Disable appID for overlay types, as parts of the code don't expect that focus-wise.
+ 	// Fixes mangoapp usage when nested, and not in SteamOS.
+-	if ( w->isExternalOverlay )
++	if ( w->isExternalOverlay || w->isArmadaOverlay )
+ 		w->appID = 0;
+ 
+ 	w->oulTargetVROverlay = get_u64_prop(ctx, w->xwayland().id, ctx->atoms.steamGamescopeVROverlayTarget);
+@@ -6127,6 +6156,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
+ 
+ 	new_win->isOverlay = false;
+ 	new_win->isExternalOverlay = false;
++	new_win->isArmadaOverlay = false;
+ 	new_win->isSteamLegacyBigPicture = false;
+ 	new_win->isSteamStreamingClient = false;
+ 	new_win->isSteamStreamingClientVideo = false;
+@@ -6155,7 +6185,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
+ 		new_win->appID = id;
+ 	}
+ 
+-	if ( new_win->isExternalOverlay )
++	if ( new_win->isExternalOverlay || new_win->isArmadaOverlay )
+ 		new_win->appID = 0;
+ 
+ 	std::string pid_name = get_name_from_pid( new_win->pid );
+@@ -6412,6 +6442,8 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
+ 		ctx->focus.externalOverlayWindow = nullptr;
+ 	if (x11_win(ctx->focus.notificationWindow) == id && gone)
+ 		ctx->focus.notificationWindow = nullptr;
++	if (x11_win(ctx->focus.armadaOverlayWindow) == id && gone)
++		ctx->focus.armadaOverlayWindow = nullptr;
+ 	if (x11_win(ctx->focus.overrideWindow) == id && gone)
+ 		ctx->focus.overrideWindow = nullptr;
+ 	if (x11_win(ctx->focus.overrideWindowMouse) == id && gone)
+@@ -6433,6 +6465,8 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
+ 			pFocus->externalOverlayWindow = nullptr;
+ 		if (x11_win(pFocus->notificationWindow) == id && gone)
+ 			pFocus->notificationWindow = nullptr;
++		if (x11_win(pFocus->armadaOverlayWindow) == id && gone)
++			pFocus->armadaOverlayWindow = nullptr;
+ 		// These are dereferenced on a later focus pass, and finish_destroy_win frees the window
+ 		// whether or not it is gone, so clear them either way.
+ 		if (x11_win(pFocus->overrideWindow) == id)
+@@ -6999,7 +7033,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 				{
+ 					hasRepaintNonBasePlane = true;
+ 				}
+-				if ( w->isExternalOverlay )
++				if ( w->isExternalOverlay || w->isArmadaOverlay )
+ 				{
+ 					hasRepaint = true;
+ 				}
+@@ -7161,6 +7195,18 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 			MakeFocusDirty();
+ 		}
+ 	}
++	if (ev->atom == ctx->atoms.armadaOverlayAtom)
++	{
++		steamcompmgr_win_t * w = find_win(ctx, ev->window);
++		if (w)
++		{
++			w->isArmadaOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.armadaOverlayAtom, 0);
++			if ( w->isArmadaOverlay )
++				w->appID = 0;
++			hasRepaintNonBasePlane = true;
++			MakeFocusDirty();
++		}
++	}
+ 	if (ev->atom == ctx->atoms.mangoappMsgTypeAtom)
+ 	{
+ 		steamcompmgr_win_t * w = find_win(ctx, ev->window);
+@@ -7770,6 +7815,11 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 					pFocus->notificationWindow->xwayland().ctx == server->ctx.get())
+ 					pFocus->notificationWindow = nullptr;
+ 
++				if (pFocus->armadaOverlayWindow &&
++					pFocus->armadaOverlayWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
++					pFocus->armadaOverlayWindow->xwayland().ctx == server->ctx.get())
++					pFocus->armadaOverlayWindow = nullptr;
++
+ 				if (pFocus->overrideWindow &&
+ 					pFocus->overrideWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
+ 					pFocus->overrideWindow->xwayland().ctx == server->ctx.get())
+@@ -8056,6 +8107,11 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
+ 				if ( w == pFocus->notificationWindow && w->opacity != TRANSLUCENT )
+ 				{
+ 					hasRepaintNonBasePlane = true;
+ 				}
++
++				if ( w == pFocus->armadaOverlayWindow && w->opacity != TRANSLUCENT )
++				{
++					hasRepaintNonBasePlane = true;
++				}
+ 
+ 				// matt: the performance overlay in Steam will interfere with VRR if we let this repaint.
+@@ -9028,6 +9078,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
+ 	ctx->atoms.gameAtom = XInternAtom(ctx->dpy, GAME_PROP, false);
+ 	ctx->atoms.overlayAtom = XInternAtom(ctx->dpy, OVERLAY_PROP, false);
+ 	ctx->atoms.externalOverlayAtom = XInternAtom(ctx->dpy, EXTERNAL_OVERLAY_PROP, false);
++	ctx->atoms.armadaOverlayAtom = XInternAtom(ctx->dpy, ARMADA_OVERLAY_PROP, false);
+ 	ctx->atoms.mangoappMsgTypeAtom = XInternAtom(ctx->dpy, MANGOAPP_MSG_TYPE_PROP, false);
+ 	ctx->atoms.opacityAtom = XInternAtom(ctx->dpy, OPACITY_PROP, false);
+ 	ctx->atoms.gamesRunningAtom = XInternAtom(ctx->dpy, GAMES_RUNNING_PROP, false);
+@@ -10688,6 +10744,7 @@ steamcompmgr_main(int argc, char **argv)
+ 			// HACK: Disable tearing if we have an overlay to avoid stutters right now
+ 			// TODO: Fix properly.
+ 			const bool bHasOverlay = ( pPaintFocus->overlayWindow && pPaintFocus->overlayWindow->opacity ) ||
+ 									( pPaintFocus->externalOverlayWindow && pPaintFocus->externalOverlayWindow->opacity ) ||
++									( pPaintFocus->armadaOverlayWindow && pPaintFocus->armadaOverlayWindow->opacity ) ||
+ 									( pPaintFocus->overrideWindow  && pPaintFocus->focusWindow && !pPaintFocus->focusWindow->isSteamStreamingClient && pPaintFocus->overrideWindow->opacity );
+ 
+diff --git a/src/steamcompmgr_shared.hpp b/src/steamcompmgr_shared.hpp
+index c344d10..3ce6041 100644
+--- a/src/steamcompmgr_shared.hpp
++++ b/src/steamcompmgr_shared.hpp
+@@ -117,6 +117,7 @@ struct steamcompmgr_win_t {
+ 	uint32_t steamAppID = 0;
+ 	bool isOverlay = false;
+ 	bool isExternalOverlay = false;
++	bool isArmadaOverlay = false;
+ 	// mangoapp keeps the property but zeroes it while hidden.
+ 	bool bHasExternalOverlayProp = false;
+ 	// Set by per-connector mangoapp instances.
+@@ -131,7 +132,7 @@ struct steamcompmgr_win_t {
+ 
+ 	bool IsAnyOverlay() const
+ 	{
+-		return isOverlay || isExternalOverlay;
++		return isOverlay || isExternalOverlay || isArmadaOverlay;
+ 	}
+ 
+ 	bool isFullscreen = false;
+diff --git a/src/xwayland_ctx.hpp b/src/xwayland_ctx.hpp
+index 7b39ecb..add52bd 100644
+--- a/src/xwayland_ctx.hpp
++++ b/src/xwayland_ctx.hpp
+@@ -32,6 +32,7 @@ struct focus_t
+ 	steamcompmgr_win_t				*overlayWindow = nullptr;
+ 	steamcompmgr_win_t				*externalOverlayWindow = nullptr;
+ 	steamcompmgr_win_t				*notificationWindow = nullptr;
++	steamcompmgr_win_t				*armadaOverlayWindow = nullptr;
+ 	steamcompmgr_win_t				*overrideWindow = nullptr;
+ 	// Earlier overrides still mapped beneath the current one, oldest first. Global focus only.
+ 	std::vector<steamcompmgr_win_t*>	overrideUnderlayWindows;
+@@ -109,6 +110,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
+ 		Atom gameAtom;
+ 		Atom overlayAtom;
+ 		Atom externalOverlayAtom;
++		Atom armadaOverlayAtom;
+ 		Atom mangoappMsgTypeAtom;
+ 		Atom gamesRunningAtom;
+ 		Atom screenZoomAtom;

@@ -1,0 +1,82 @@
+diff --git a/bindings/dbus-xml/org.shadowblip.Input.CompositeDevice.xml b/bindings/dbus-xml/org.shadowblip.Input.CompositeDevice.xml
+index 051d09e..3850655 100644
+--- a/bindings/dbus-xml/org.shadowblip.Input.CompositeDevice.xml
++++ b/bindings/dbus-xml/org.shadowblip.Input.CompositeDevice.xml
+@@ -80,6 +80,14 @@
+       <arg name="event" type="s" direction="in"/>
+       <arg name="value" type="v" direction="in"/>
+     </method>
++    <method name="SendTouchEvent">
++      <arg name="event" type="s" direction="in"/>
++      <arg name="index" type="u" direction="in"/>
++      <arg name="is_touching" type="b" direction="in"/>
++      <arg name="pressure" type="d" direction="in"/>
++      <arg name="x" type="d" direction="in"/>
++      <arg name="y" type="d" direction="in"/>
++    </method>
+     <method name="SendButtonChord">
+       <arg name="events" type="as" direction="in"/>
+     </method>
+diff --git a/src/dbus/interface/composite_device.rs b/src/dbus/interface/composite_device.rs
+index e3db7ac..b0734e9 100644
+--- a/src/dbus/interface/composite_device.rs
++++ b/src/dbus/interface/composite_device.rs
+@@ -281,12 +281,57 @@ impl CompositeDeviceInterface {
+         let event = NativeEvent::new(cap, val);
+ 
+         self.composite_device
+-            .blocking_write_send_event(event)
++            .write_send_event(event)
++            .await
+             .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+ 
+         Ok(())
+     }
+ 
++    /// Directly write a normalized multi-touch event to the target devices.
++    async fn send_touch_event(
++        &self,
++        event: String,
++        index: u32,
++        is_touching: bool,
++        pressure: f64,
++        x: f64,
++        y: f64,
++        #[zbus(connection)] conn: &Connection,
++        #[zbus(header)] hdr: Header<'_>,
++    ) -> fdo::Result<()> {
++        check_polkit(
++            conn,
++            Some(hdr),
++            "org.shadowblip.Input.CompositeDevice.SendEvent",
++        )
++        .await?;
++        let cap = Capability::from_str(event.as_str()).map_err(|_| {
++            fdo::Error::Failed(format!(
++                "Failed to parse event string {event} into capability."
++            ))
++        })?;
++        if !matches!(cap, Capability::Touchpad(_)) {
++            return Err(fdo::Error::InvalidArgs(
++                "SendTouchEvent only accepts touchpad capabilities".to_string(),
++            ));
++        }
++        let index = u8::try_from(index)
++            .map_err(|_| fdo::Error::InvalidArgs("touch index must fit in a byte".to_string()))?;
++        let value = InputValue::Touch {
++            index,
++            is_touching,
++            pressure: Some(pressure.clamp(0.0, 1.0)),
++            x: Some(x.clamp(0.0, 1.0)),
++            y: Some(y.clamp(0.0, 1.0)),
++        };
++        self.composite_device
++            .write_send_event(NativeEvent::new(cap, value))
++            .await
++            .map_err(|e| fdo::Error::Failed(e.to_string()))?;
++        Ok(())
++    }
++
+     /// Directly write to the composite device's target devices with the given button event list
+     async fn send_button_chord(
+         &self,

@@ -1,0 +1,11 @@
+[Unit]
+Description=Armada virtual trackpad shortcut listener
+After=armada-control.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/virtual-trackpads-shortcut
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=3

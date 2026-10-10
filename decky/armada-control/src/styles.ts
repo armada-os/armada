@@ -1,22 +1,41 @@
-import { gamepadSliderClasses } from "@decky/ui";
+import { gamepadDialogClasses, gamepadSliderClasses, gamepadTabbedPageClasses, quickAccessControlsClasses } from "@decky/ui";
 
 export const styles = `
       .armada-control-tabs {
-        height: 95%;
-        width: 316px;
-        position: fixed;
+        height: var(--armada-menu-height, calc(100vh - 160px));
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        position: relative;
         margin-top: -12px;
-        margin-left: -8px;
-        overflow: hidden;
+        box-sizing: border-box;
+      }
+      .armada-control-tabs .${gamepadTabbedPageClasses.GamepadTabbedPage} {
+        height: 100%;
+        min-height: 0;
       }
       .armada-control-tabs > div > div:first-child::before {
         background: #0D141C;
         box-shadow: none;
         backdrop-filter: none;
       }
-      .armada-control-tabs [role="tabpanel"] {
+      .armada-control-tabs [role="tabpanel"],
+      .armada-control-tabs .${gamepadTabbedPageClasses.TabContentsScroll} {
         padding-left: 0 !important;
         padding-right: 0 !important;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+      }
+      .armada-control-tabs .${gamepadTabbedPageClasses.TabContentsScroll} {
+        scroll-padding-top: 64px;
+        scroll-padding-bottom: 20px;
+        padding-bottom: 16px;
+      }
+      .armada-control-tabs .${gamepadTabbedPageClasses.TabHeaderRowWrapper} {
+        padding-left: 8px;
+        padding-right: 8px;
       }
       .armada-control-tabs [role="tablist"] {
         display: flex;
@@ -38,16 +57,77 @@ export const styles = `
         margin: 0;
       }
       .armada-control-tabs .armada-control-tab-content {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
         padding-bottom: 24px;
       }
-      .armada-control-tabs .armada-slider-field {
-        width: 100%;
-        max-width: none;
-        overflow: hidden;
+      .armada-control-tabs .armada-control-tab-content > * {
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
       }
-      .armada-control-tabs .armada-slider-field * {
-        min-width: 0 !important;
+      .armada-control-tabs .armada-trackpads-tab {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+      }
+      .armada-control-tabs .armada-trackpads-tab > * {
         max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+      }
+      /* Steam's classic Fields normally bleed 16px beyond PanelSectionRow.
+         A nested Tabs page is already bounded by Decky's content column. Give
+         every tab one consistent inset, including fields without a row wrapper,
+         instead of clipping expanded focus backgrounds and slider thumbs. */
+      .armada-control-tabs .armada-control-tab-content .${quickAccessControlsClasses.PanelSection} {
+        padding-left: 0;
+        padding-right: 0;
+        min-width: 0;
+        box-sizing: border-box;
+      }
+      .armada-control-tabs .armada-control-tab-content .${quickAccessControlsClasses.PanelSectionTitle} {
+        padding-left: 12px;
+        padding-right: 12px;
+      }
+      .armada-control-tabs .armada-control-tab-content .${gamepadDialogClasses.Field} {
+        --field-negative-horizontal-margin: 0px !important;
+        margin-inline: 0 !important;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        padding-inline-start: calc(12px + var(--indent-level, 0) * 20px) !important;
+        padding-inline-end: 12px !important;
+        scroll-margin-top: 64px;
+        scroll-margin-bottom: 20px;
+      }
+      .armada-control-tabs .armada-control-tab-content .${gamepadDialogClasses.FieldLabel},
+      .armada-control-tabs .armada-control-tab-content .${gamepadDialogClasses.FieldDescription} {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .armada-control-tabs .armada-control-tab-content .${gamepadDialogClasses.FieldLabelValue} {
+        flex-shrink: 0;
+      }
+      .armada-control-tabs .armada-control-tab-content .${gamepadDialogClasses.FieldChildrenInner} {
+        min-width: 0;
+        max-width: 100%;
+      }
+      .armada-control-tabs .armada-slider-field,
+      .armada-control-tabs .armada-control-tab-content .afc-slider-field {
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        overflow: visible;
+      }
+      .armada-control-tabs .armada-control-tab-content button {
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
       }
       .armada-control-tabs .armada-rgb-hue .${gamepadSliderClasses.SliderTrack} {
         --left-track-color: #0000;
@@ -67,7 +147,7 @@ export const styles = `
         letter-spacing: 0.5px;
         opacity: 0.7;
         margin: 0;
-        padding: 10px 0 2px;
+        padding: 10px 12px 2px;
       }
       .armada-control-tabs .armada-field-note {
         box-sizing: border-box;
@@ -78,6 +158,42 @@ export const styles = `
         line-height: 16px;
         opacity: 0.62;
       }
+      .armada-control-tabs .armada-trackpads-note {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
+        padding: 3px 14px 9px;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        line-height: 16px;
+        opacity: 0.68;
+      }
+      .armada-control-tabs .armada-color-field {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .armada-control-tabs .armada-color-field span {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .armada-control-tabs .armada-color-field input[type="color"] {
+        flex: 0 0 52px;
+        width: 52px;
+        height: 34px;
+        padding: 2px;
+        border: 1px solid rgba(255,255,255,.25);
+        border-radius: 6px;
+        background: transparent;
+      }
+      .armada-control-tabs .armada-control-disabled {
+        opacity: .4;
+      }
       .armada-control-tabs .armada-note-error {
         color: #ff6b6b;
         opacity: 1;
@@ -87,7 +203,7 @@ export const styles = `
         padding-left: 6px;
       }
       .armada-control-tabs .armada-reset-row {
-        padding: 0 14px 8px;
+        padding: 0 0 8px;
       }
       .armada-control-tabs .armada-compat-note {
         box-sizing: border-box;

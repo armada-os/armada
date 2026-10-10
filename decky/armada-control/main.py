@@ -29,6 +29,7 @@ from armada_control.system import (
     set_swipe_gestures_enabled,
 )
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
+from armada_control.trackpads import get_virtual_trackpads, get_virtual_trackpads_state, reset_virtual_trackpads, set_virtual_trackpads
 from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves, save_charging_pwm
 from armada_control.fan_sensors import get_current_temp
 
@@ -99,6 +100,18 @@ class Plugin:
 
     async def set_controller_type(self, value):
         return await asyncio.to_thread(set_controller_type, value)
+
+    async def set_virtual_trackpads(self, config):
+        return await asyncio.to_thread(set_virtual_trackpads, config)
+
+    async def reset_virtual_trackpads(self):
+        return await asyncio.to_thread(reset_virtual_trackpads)
+
+    async def get_virtual_trackpads(self):
+        return await asyncio.to_thread(get_virtual_trackpads)
+
+    async def get_virtual_trackpads_state(self):
+        return await asyncio.to_thread(get_virtual_trackpads_state)
 
     async def get_rgb(self):
         return await asyncio.to_thread(get_rgb)

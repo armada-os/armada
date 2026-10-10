@@ -1,0 +1,282 @@
+diff --git a/src/input/source/evdev.rs b/src/input/source/evdev.rs
+index 8abbba4..9012485 100644
+--- a/src/input/source/evdev.rs
++++ b/src/input/source/evdev.rs
+@@ -1,3 +1,4 @@
++mod armada_virtual_haptics;
+ pub mod blocked;
+ pub mod gamepad;
+ pub mod keyboard;
+diff --git a/src/input/source/evdev/armada_virtual_haptics.rs b/src/input/source/evdev/armada_virtual_haptics.rs
+new file mode 100644
+index 0000000..610f353
+--- /dev/null
++++ b/src/input/source/evdev/armada_virtual_haptics.rs
+@@ -0,0 +1,152 @@
++//! Adapt Steam trackpad haptics, never ordinary game rumble, on virtual pads.
++
++use std::{
++    fs,
++    path::Path,
++    sync::{Mutex, OnceLock},
++    time::{Duration, Instant},
++};
++
++const OWNER: &str = "/run/armada/virtual-trackpads-haptics-owner.json";
++const ACK: &str = "/run/armada/virtual-trackpads-native-haptics";
++const LEASE: Duration = Duration::from_secs(3);
++const REFRESH: Duration = Duration::from_millis(250);
++
++#[derive(Clone)]
++pub(super) struct Settings {
++    token: String,
++    strength: f64,
++}
++
++impl Settings {
++    pub(super) fn should_skip(&self, off: bool, rumble_until: Option<Instant>, now: Instant) -> bool {
++        self.strength <= 0.0 || off || rumble_until.is_some_and(|until| until > now)
++    }
++
++    pub(super) fn shape(&self, native_gain: u16, native_length: u16) -> (u16, u16) {
++        if self.strength <= 0.0 || native_gain == 0 || native_length == 0 {
++            return (0, 0);
++        }
++        // Preserve Steam's gain envelope without mapping every Tick into the
++        // old 50 ms rumble. Separate short pulses can follow its true cadence.
++        let envelope = (native_gain as f64 / u16::MAX as f64).sqrt();
++        let gain = self.strength.powf(1.7) * envelope * u16::MAX as f64;
++        let click_scale = if native_length > 50 { 1.5 } else { 1.0 };
++        let length = (2.0 + 8.0 * self.strength.powf(1.25))
++            * (0.35 + 0.65 * envelope)
++            * click_scale;
++        (gain.round() as u16, length.round().max(1.0) as u16)
++    }
++
++    pub(super) fn acknowledge(&self) {
++        static ACKNOWLEDGED: OnceLock<Mutex<String>> = OnceLock::new();
++        let Ok(mut token) = ACKNOWLEDGED.get_or_init(|| Mutex::new(String::new())).lock() else {
++            return;
++        };
++        if *token != self.token && fs::write(ACK, &self.token).is_ok() {
++            token.clone_from(&self.token);
++        }
++    }
++}
++
++fn parse_settings(data: &str) -> Option<Settings> {
++    let value: serde_json::Value = serde_json::from_str(data).ok()?;
++    let token = value.get("token")?.as_str()?;
++    let strength = value.get("strength")?.as_f64()?;
++    if token.is_empty() || token.len() > 100 || !strength.is_finite() {
++        return None;
++    }
++    Some(Settings {
++        token: token.to_owned(),
++        strength: strength.clamp(0.0, 100.0) / 100.0,
++    })
++}
++
++fn read_settings(path: &Path) -> Option<Settings> {
++    // A crash must not leave normal physical-controller haptics modified.
++    let age = path.metadata().ok()?.modified().ok()?.elapsed().ok()?;
++    if age > LEASE {
++        return None;
++    }
++    parse_settings(&fs::read_to_string(path).ok()?)
++}
++
++pub(super) fn settings() -> Option<Settings> {
++    static CACHE: OnceLock<Mutex<(Instant, Option<Settings>)>> = OnceLock::new();
++    let cache = CACHE.get_or_init(|| Mutex::new((Instant::now() - REFRESH, None)));
++    let Ok(mut cache) = cache.lock() else {
++        return None;
++    };
++    if cache.0.elapsed() >= REFRESH {
++        cache.1 = read_settings(Path::new(OWNER));
++        cache.0 = Instant::now();
++    }
++    cache.1.clone()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn profile(strength: f64) -> Settings {
++        Settings { token: "test".to_owned(), strength }
++    }
++
++    #[test]
++    fn virtual_haptics_zero_really_stops() {
++        assert_eq!(profile(0.0).shape(u16::MAX, 50), (0, 0));
++        assert_eq!(profile(1.0).shape(0, 50), (0, 0));
++        assert_eq!(profile(1.0).shape(u16::MAX, 0), (0, 0));
++    }
++
++    #[test]
++    fn virtual_haptics_never_overwrites_or_stops_game_rumble() {
++        let now = Instant::now();
++        let playing = Some(now + Duration::from_secs(60));
++        let expired = Some(now - Duration::from_millis(1));
++        assert!(profile(1.0).should_skip(false, playing, now));
++        assert!(profile(0.0).should_skip(false, None, now));
++        assert!(profile(1.0).should_skip(true, None, now));
++        assert!(!profile(1.0).should_skip(false, expired, now));
++        assert!(!profile(1.0).should_skip(false, None, now));
++    }
++
++    #[test]
++    fn virtual_haptics_slider_has_wide_monotonic_range() {
++        let low = profile(0.05).shape(u16::MAX, 50);
++        let medium = profile(0.5).shape(u16::MAX, 50);
++        let high = profile(1.0).shape(u16::MAX, 50);
++        assert!(low.0 < medium.0 && medium.0 < high.0);
++        assert!(high.0 as u32 > low.0 as u32 * 100);
++        assert!(low.1 < medium.1 && medium.1 < high.1);
++        assert_eq!(high.1, 10);
++    }
++
++    #[test]
++    fn virtual_haptics_preserves_fade_but_shortens_pulses() {
++        let profile = profile(1.0);
++        let fast = profile.shape(u16::MAX, 50);
++        let fading = profile.shape(u16::MAX / 16, 50);
++        assert!(fading.0 < fast.0 && fading.1 < fast.1);
++        assert!(profile.shape(u16::MAX, 150).1 <= 15);
++    }
++
++    #[test]
++    fn virtual_haptics_rejects_invalid_or_missing_lease() {
++        assert!(parse_settings("{}").is_none());
++        assert!(parse_settings(r#"{"token":"","strength":35}"#).is_none());
++        assert!(read_settings(Path::new("/nonexistent/armada-haptics-lease")).is_none());
++        assert_eq!(parse_settings(r#"{"token":"test","strength":500}"#).unwrap().strength, 1.0);
++    }
++
++    #[test]
++    fn virtual_haptics_lease_expires_after_daemon_crash() {
++        let path = std::env::temp_dir().join(format!("armada-haptic-lease-{}", std::process::id()));
++        fs::write(&path, r#"{"token":"test","strength":35}"#).unwrap();
++        assert!(read_settings(&path).is_some());
++        let expired = std::time::SystemTime::now() - LEASE - Duration::from_secs(1);
++        fs::File::options().write(true).open(&path).unwrap().set_modified(expired).unwrap();
++        assert!(read_settings(&path).is_none());
++        fs::remove_file(path).unwrap();
++    }
++}
+diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
+index 321eed9..3e480c4 100644
+--- a/src/input/source/evdev/gamepad.rs
++++ b/src/input/source/evdev/gamepad.rs
+@@ -114,6 +114,7 @@ pub struct GamepadEventDevice {
+     ff_effects: HashMap<i16, FFEffect>,
+     ff_effects_dualsense: Option<i16>,
+     ff_effects_deck: Option<i16>,
++    deck_rumble_until: Option<std::time::Instant>,
+     ff_effects_rumble: Option<i16>,
+     hat_state: HashMap<AbsoluteAxisCode, i32>,
+ }
+@@ -159,6 +160,7 @@ impl GamepadEventDevice {
+             ff_effects: HashMap::new(),
+             ff_effects_dualsense: None,
+             ff_effects_deck: None,
++            deck_rumble_until: None,
+             ff_effects_rumble: None,
+             hat_state: HashMap::new(),
+         })
+@@ -289,6 +291,12 @@ impl GamepadEventDevice {
+ 
+     // Process Steam Deck FFB events.
+     fn process_deck_ff(&mut self, report: PackedRumbleReport) -> Result<(), Box<dyn Error>> {
++        self.deck_rumble_until =
++            if report.left_speed.to_primitive() == 0 && report.right_speed.to_primitive() == 0 {
++                None
++            } else {
++                Some(std::time::Instant::now() + std::time::Duration::from_secs(60))
++            };
+         // If no effect was uploaded to handle Steam Deck force feedback, upload one.
+         if self.ff_effects_deck.is_none() {
+             let effect_data = FFEffectData {
+@@ -419,6 +427,19 @@ impl GamepadEventDevice {
+ 
+     // Process Steam Deck Haptic events.
+     fn process_haptic_ff(&mut self, report: PackedHapticReport) -> Result<(), Box<dyn Error>> {
++        let virtual_haptics = super::armada_virtual_haptics::settings();
++        if let Some(profile) = &virtual_haptics {
++            // A trackpad pulse, including zero/Off, must never stop or
++            // overwrite a game's rumble in the RP6's shared effect slot.
++            if profile.should_skip(
++                report.cmd_type == CommandType::Off,
++                self.deck_rumble_until,
++                std::time::Instant::now(),
++            ) {
++                profile.acknowledge();
++                return Ok(());
++            }
++        }
+         // If no effect was uploaded to handle Steam Deck force feedback, upload one.
+         if self.ff_effects_deck.is_none() {
+             let effect_data = FFEffectData {
+@@ -452,6 +473,18 @@ impl GamepadEventDevice {
+         let new_gain = normalized_gain * u16::MAX as f64;
+         let new_gain = new_gain as u16;
+ 
++        // Steam owns the timing (including trackball coast). Adapt only its
++        // trackpad pulses while Armada's virtual-pad daemon holds a live lease.
++        // Ordinary SteamDeckRumble and game force feedback are not changed.
++        let length = match report.cmd_type {
++            CommandType::Off => 0,
++            CommandType::Tick => 50,
++            CommandType::Click => 150,
++        };
++        let (new_gain, length) = virtual_haptics
++            .as_ref()
++            .map_or((new_gain, length), |profile| profile.shape(new_gain, length));
++
+         let left_speed = match report.side {
+             PadSide::Left => new_gain,
+             PadSide::Right => 0,
+@@ -476,18 +509,16 @@ impl GamepadEventDevice {
+             CommandType::Click => right_speed,
+         };
+ 
+-        let length = match report.cmd_type {
+-            CommandType::Off => 0,
+-            CommandType::Tick => 50,
+-            CommandType::Click => 150,
+-        };
+-
+         log::trace!("Got FF event data, Left Speed: {left_speed}, Right Speed: {right_speed}, Length: {length}");
+ 
+         // Stop playing the effect if values are set to zero
+         if left_speed == 0 && right_speed == 0 {
+             log::trace!("Stopping FF effect");
+-            effect.stop()?;
++            if let Some(profile) = &virtual_haptics {
++                profile.acknowledge();
++            } else {
++                effect.stop()?;
++            }
+             return Ok(());
+         }
+ 
+@@ -509,6 +540,10 @@ impl GamepadEventDevice {
+         log::trace!("Playing effect with data: {:?}", effect_data);
+         effect.play(1)?;
+ 
++        if let Some(profile) = &virtual_haptics {
++            profile.acknowledge();
++        }
++
+         Ok(())
+     }
+ }
+@@ -809,6 +844,7 @@ impl SourceOutputDevice for GamepadEventDevice {
+         self.ff_effects.clear();
+         self.ff_effects_dualsense = None;
+         self.ff_effects_deck = None;
++        self.deck_rumble_until = None;
+         self.ff_effects_rumble = None;
+         Ok(())
+     }

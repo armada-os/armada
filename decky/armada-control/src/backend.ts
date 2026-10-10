@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import type { CalibrationState, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, PowerConfig, RgbConfig, Tweaks } from "./types";
+import type { CalibrationState, CompatAppliedState, Config, CurvesState, EditableTrackpadsConfig, FanCurve, FanSettings, InstalledGame, PowerConfig, RgbConfig, Tweaks, VirtualTrackpadsConfig, VirtualTrackpadsState } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
@@ -30,6 +30,12 @@ export const setSleepLogsEnabled = (enabled: boolean) => call<[boolean], boolean
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
 export const restartGameMode = () => call<[], boolean>("restart_game_mode");
 export const setControllerType = (value: string) => call<[string], string>("set_controller_type", value);
+export const setVirtualTrackpads = (config: EditableTrackpadsConfig) =>
+  call<[EditableTrackpadsConfig], VirtualTrackpadsConfig & { controllerType?: string }>("set_virtual_trackpads", config);
+export const resetVirtualTrackpads = () =>
+  call<[], VirtualTrackpadsConfig & { controllerType?: string }>("reset_virtual_trackpads");
+export const getVirtualTrackpads = () => call<[], VirtualTrackpadsConfig>("get_virtual_trackpads");
+export const getVirtualTrackpadsState = () => call<[], VirtualTrackpadsState>("get_virtual_trackpads_state");
 export const getRgb = () => call<[], RgbConfig | null>("get_rgb");
 export const setRgb = (
   enabled: boolean,

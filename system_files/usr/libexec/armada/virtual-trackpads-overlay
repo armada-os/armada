@@ -1,0 +1,409 @@
+#!/usr/bin/python3
+"""Draw the virtual trackpads in Gamescope's non-interactive overlay plane."""
+
+import ctypes
+import json
+import math
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, "/usr/lib/armada")
+from armada_overlay_session import discover_gamescope_environment, screen_for_device
+from armada_virtual_trackpads import SCREEN_MODES, sanitize_config, trackpad_rect
+
+
+CONFIG_PATH = Path(os.environ.get("ARMADA_VIRTUAL_TRACKPADS_CONFIG_PATH", "/etc/armada/virtual-trackpads.json"))
+STATE_PATH = Path("/run/armada/virtual-trackpads-state.json")
+NOTICE_PATH = Path(os.environ.get("ARMADA_VIRTUAL_TRACKPADS_NOTICE_PATH", "/run/armada/virtual-trackpads-notice.json"))
+
+
+def read_device_environment():
+    try:
+        output = subprocess.check_output(
+            [os.environ.get("ARMADA_DEVICE_ENV", "/usr/libexec/armada/device-env")],
+            text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    result = {}
+    for line in output.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            result[key] = value.strip().strip("'\"")
+    return result
+
+
+def load_json(path, fallback):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else fallback
+    except (OSError, ValueError, TypeError):
+        return fallback
+
+
+def overlay_enabled(config):
+    return bool(config.get("enabled") and not config.get("blockTouchscreen") and
+                (config.get("leftEnabled") or config.get("rightEnabled")))
+
+
+def overlay_config(device_values):
+    config = sanitize_config(load_json(CONFIG_PATH, {}))
+    config["screen"] = screen_for_device(config.get("screen", "primary"), device_values)
+    return config
+
+
+def current_notice(now=None):
+    """Accept only a short-lived, successful shortcut event from the manager."""
+    notice = load_json(NOTICE_PATH, {})
+    now = time.time() if now is None else now
+    try:
+        created, expires = float(notice["created"]), float(notice["expires"])
+        if (type(notice["enabled"]) is not bool or
+                notice.get("screen") not in ("primary", "secondary") or
+                not math.isfinite(created) or not math.isfinite(expires) or
+                not created <= now < expires or not 0 < expires - created <= 3):
+            return {}
+    except (KeyError, ValueError, TypeError, OverflowError):
+        return {}
+    return dict(notice, created=created, expires=expires)
+
+
+def overlay_screen(config, notice):
+    if overlay_enabled(config) and config.get("mode") not in SCREEN_MODES:
+        return config.get("screen", "primary")
+    return notice.get("screen")
+
+# Importing Gtk initializes it, including a cached success/failure flag inside
+# PyGObject. A service starts before Steam, so discover the session FIRST.
+if __name__ == "__main__":
+    device_values = read_device_environment()
+    initial_config = overlay_config(device_values)
+    screen = overlay_screen(initial_config, current_notice())
+    if screen is None:
+        sys.exit(0)
+    display_name = discover_gamescope_environment(screen=screen)
+    print(f"virtual-trackpads-overlay: using {screen} display {display_name}", flush=True)
+
+import cairo
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+gi.require_version("GdkX11", "4.0")
+gi.require_foreign("cairo")
+from gi.repository import Gdk, GdkX11, GLib, Gtk
+
+
+FADE_SECONDS = 0.28
+FRAME_MS = 16
+
+
+def clamp(value, minimum=0.0, maximum=1.0):
+    return max(minimum, min(maximum, value))
+
+
+def white(opacity):
+    return 1.0, 1.0, 1.0, clamp(opacity, 0.0, 50.0) / 100.0
+
+
+def rounded_rectangle(context, x, y, width, height, radius):
+    radius = min(radius, width / 2.0, height / 2.0)
+    context.new_sub_path()
+    context.arc(x + width - radius, y + radius, radius, -math.pi / 2, 0)
+    context.arc(x + width - radius, y + height - radius, radius, 0, math.pi / 2)
+    context.arc(x + radius, y + height - radius, radius, math.pi / 2, math.pi)
+    context.arc(x + radius, y + radius, radius, math.pi, math.pi * 1.5)
+    context.close_path()
+
+
+class X11Overlay:
+    XA_CARDINAL = 6
+    PROP_MODE_REPLACE = 0
+    SHAPE_INPUT = 2
+
+    def __init__(self):
+        self.x11 = ctypes.CDLL("libX11.so.6")
+        self.xfixes = ctypes.CDLL("libXfixes.so.3")
+        self.x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        self.x11.XOpenDisplay.restype = ctypes.c_void_p
+        self.x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        self.x11.XInternAtom.restype = ctypes.c_ulong
+        self.x11.XMoveResizeWindow.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int,
+            ctypes.c_uint, ctypes.c_uint,
+        ]
+        self.x11.XChangeProperty.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_int,
+        ]
+        self.x11.XDeleteProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong]
+        self.x11.XFlush.argtypes = [ctypes.c_void_p]
+        self.xfixes.XFixesCreateRegion.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+        self.xfixes.XFixesCreateRegion.restype = ctypes.c_ulong
+        self.xfixes.XFixesSetWindowShapeRegion.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_ulong,
+        ]
+        self.xfixes.XFixesDestroyRegion.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self.display = self.x11.XOpenDisplay(None)
+        self.window = 0
+
+    def attach(self, surface, width, height):
+        # GDK creates this window on a different X connection. Flush and wait
+        # for it before setting the marker/shape through our Xlib connection.
+        surface.get_display().sync()
+        self.window = int(GdkX11.X11Surface.get_xid(surface))
+        if not self.display or not self.window:
+            raise RuntimeError("overlay did not create an X11 window")
+        self.x11.XMoveResizeWindow(self.display, self.window, 0, 0, width, height)
+        atom = self.x11.XInternAtom(
+            self.display, b"ARMADA_VIRTUAL_TRACKPADS_OVERLAY", False
+        )
+        value = ctypes.c_ulong(1)
+        self.x11.XChangeProperty(
+            self.display,
+            self.window,
+            atom,
+            self.XA_CARDINAL,
+            32,
+            self.PROP_MODE_REPLACE,
+            ctypes.cast(ctypes.pointer(value), ctypes.POINTER(ctypes.c_ubyte)),
+            1,
+        )
+        region = self.xfixes.XFixesCreateRegion(self.display, None, 0)
+        self.xfixes.XFixesSetWindowShapeRegion(
+            self.display, self.window, self.SHAPE_INPUT, 0, 0, region
+        )
+        self.xfixes.XFixesDestroyRegion(self.display, region)
+        self.x11.XFlush(self.display)
+        print(f"virtual-trackpads-overlay: mapped xid={self.window:#x}, size={width}x{height}", flush=True)
+
+class TrackpadOverlay(Gtk.Application):
+    def __init__(self, screen=None, device_values=None):
+        super().__init__(application_id="dev.armada.VirtualTrackpadsOverlay")
+        self.window = None
+        self.area = None
+        self.xoverlay = X11Overlay()
+        self.width = 1920
+        self.height = 1080
+        self.device_values = device_values if device_values is not None else read_device_environment()
+        self.config = overlay_config(self.device_values)
+        self.notice = current_notice()
+        # Bind the process to the screen whose credentials initialized GTK.
+        # A setting can change while discovery waits for Steam to start.
+        self.screen = screen or overlay_screen(self.config, self.notice) or self.config.get("screen", "primary")
+        self.state = {}
+        self.last_active = {"left": 0.0, "right": 0.0}
+        self.fade = {"left": 0.0, "right": 0.0}
+        self.last_frame = time.monotonic()
+        self.config_stamp = None
+        self.preview_until = 0.0
+        self.had_visual = False
+        self.reported_frame = False
+
+    def do_activate(self):
+        display = Gdk.Display.get_default()
+        if display is None:
+            self.quit()
+            return
+        monitors = display.get_monitors()
+        monitor = monitors.get_item(0) if monitors.get_n_items() else None
+        if monitor is not None:
+            geometry = monitor.get_geometry()
+            self.width, self.height = geometry.width, geometry.height
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"window { background: transparent; box-shadow: none; }")
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        self.window = Gtk.ApplicationWindow(application=self)
+        self.window.set_title("Armada Virtual Trackpads Overlay")
+        self.window.set_decorated(False)
+        self.window.set_focusable(False)
+        self.window.set_can_focus(False)
+        self.window.set_default_size(self.width, self.height)
+        self.area = Gtk.DrawingArea()
+        self.area.set_content_width(self.width)
+        self.area.set_content_height(self.height)
+        self.area.set_draw_func(self.draw)
+        self.window.set_child(self.area)
+        self.window.connect("map", self.on_map)
+        self.window.present()
+        GLib.timeout_add(FRAME_MS, self.tick)
+
+    def on_map(self, window):
+        surface = window.get_surface()
+        if surface is not None:
+            self.xoverlay.attach(surface, self.width, self.height)
+
+    def tick(self):
+        now = time.monotonic()
+        elapsed = min(0.1, now - self.last_frame)
+        self.last_frame = now
+        try:
+            next_stamp = CONFIG_PATH.stat().st_mtime_ns
+        except OSError:
+            next_stamp = None
+        config_changed = self.config_stamp is not None and next_stamp != self.config_stamp
+        self.config_stamp = next_stamp
+        self.config = overlay_config(self.device_values)
+        self.notice = current_notice()
+        if overlay_screen(self.config, self.notice) != self.screen:
+            # The existing Armada Control service owns this process's lifetime.
+            # Exiting also destroys the surface and removes the overlay plane.
+            # It will start a new process with fresh GTK credentials on screen
+            # changes; a GDK display cannot be retargeted after initialization.
+            self.quit()
+            return GLib.SOURCE_REMOVE
+        if config_changed:
+            self.preview_until = now + float(self.config.get("hideDelay", 1))
+        self.state = load_json(STATE_PATH, {})
+        enabled = overlay_enabled(self.config) and self.config.get("mode") not in SCREEN_MODES
+        previewing = enabled and now < self.preview_until
+        auto_hide = bool(self.config.get("autoHide", True))
+        hold_seconds = float(self.config.get("hideDelay", 1))
+        anything_visible = False
+        for side in ("left", "right"):
+            active = enabled and bool(self.config.get(f"{side}Enabled")) and bool(
+                self.state.get(f"{side}Active")
+            )
+            if active:
+                self.last_active[side] = now
+            held = enabled and now - self.last_active[side] <= hold_seconds
+            target = 1.0 if (enabled and self.config.get(f"{side}Enabled") and
+                             (not auto_hide or active or held or previewing)) else 0.0
+            speed = elapsed / FADE_SECONDS
+            if target > self.fade[side]:
+                self.fade[side] = min(target, self.fade[side] + speed)
+            else:
+                self.fade[side] = max(target, self.fade[side] - speed)
+            anything_visible |= self.fade[side] > 0.001
+        center_visible = enabled and bool(self.config.get("centerDotEnabled")) and self.config.get("mode") != "floating"
+        has_visual = anything_visible or center_visible or previewing or bool(self.notice)
+        # Queue one final transparent frame after the fade reaches zero so an
+        # old pad image cannot remain in Gamescope's dedicated overlay plane.
+        if self.area is not None and (has_visual or self.had_visual):
+            self.area.queue_draw()
+        self.had_visual = has_visual
+        return GLib.SOURCE_CONTINUE
+
+    def pad_rect(self, side, zone):
+        return trackpad_rect(
+            side, zone, self.config,
+            float(self.state.get(f"{side}X", 0.25 if side == "left" else 0.75)),
+            float(self.state.get(f"{side}Y", 0.5)),
+            aspect_ratio=self.width / self.height, pixel_height=self.height,
+        )
+
+    def zones(self, side):
+        mode = self.config.get("mode", "simple")
+        if mode == "corners":
+            return ("top", "bottom")
+        if mode == "floating":
+            return ("floating",)
+        return ("bottom",)
+
+    def draw_dots(self, context, rect, alpha):
+        x, y, width, height = rect
+        dot_size = max(1.0, float(self.config.get("dotSize", 1)))
+        spacing = dot_size + max(2.0, float(self.config.get("dotGap", 11)))
+        red, green, blue, opacity = white(float(self.config.get("backgroundOpacity", 12)))
+        context.set_source_rgba(red, green, blue, opacity * alpha)
+        base_x = spacing / 2
+        while base_x < width:
+            base_y = spacing / 2
+            while base_y < height:
+                context.arc(x + base_x, y + base_y, dot_size / 2.0, 0, math.tau)
+                context.fill()
+                base_y += spacing
+            base_x += spacing
+
+    def draw_pad(self, context, side, zone, alpha):
+        rect = self.pad_rect(side, zone)
+        x, y, width, height = rect
+        radius = min(width, height) / 2.0 * clamp(float(self.config.get("borderRadius", 28)) / 100.0)
+        context.save()
+        rounded_rectangle(context, x, y, width, height, radius)
+        context.clip()
+        background = self.config.get("backgroundStyle", "dots")
+        if background == "dots":
+            self.draw_dots(context, rect, alpha)
+        elif background == "solid":
+            red, green, blue, opacity = white(float(self.config.get("backgroundOpacity", 12)))
+            context.set_source_rgba(red, green, blue, opacity * alpha)
+            context.paint()
+        context.restore()
+        red, green, blue, opacity = white(float(self.config.get("borderOpacity", 20)))
+        context.set_source_rgba(red, green, blue, opacity * alpha)
+        border_width = float(self.config.get("borderWidth", 1))
+        context.set_line_width(border_width)
+        rounded_rectangle(context, x - border_width / 2, y - border_width / 2,
+                          width + border_width, height + border_width,
+                          radius + border_width / 2)
+        context.stroke()
+
+    def draw_center(self, context, side, zone):
+        x, y, width, height = self.pad_rect(side, zone)
+        size = max(1.0, float(self.config.get("centerDotSize", 8)))
+        red, green, blue, opacity = white(float(self.config.get("centerDotOpacity", 35)))
+        context.set_source_rgba(red, green, blue, opacity)
+        context.arc(x + width / 2, y + height / 2, size / 2, 0, math.tau)
+        context.fill()
+
+    def draw(self, _area, context, _width, _height):
+        if not self.reported_frame:
+            print("virtual-trackpads-overlay: first GTK/Cairo frame rendered", flush=True)
+            self.reported_frame = True
+        if not overlay_enabled(self.config) or self.config.get("mode") in SCREEN_MODES:
+            self.draw_notice(context)
+            return
+        previewing = time.monotonic() < self.preview_until
+        for side in ("left", "right"):
+            if not self.config.get(f"{side}Enabled"):
+                continue
+            selected = self.state.get(f"{side}Zone", "bottom")
+            for zone in self.zones(side):
+                if self.fade[side] > 0.001 and (previewing or not self.config.get("autoHide", True) or selected == zone):
+                    self.draw_pad(context, side, zone, self.fade[side])
+                if self.config.get("centerDotEnabled") and zone != "floating":
+                    self.draw_center(context, side, zone)
+        self.draw_notice(context)
+
+    def draw_notice(self, context):
+        notice = self.notice
+        now = time.time()
+        if not notice or notice.get("screen") != self.screen or now >= notice["expires"]:
+            return
+        text = "Virtual trackpads enabled" if notice["enabled"] else "Virtual trackpads disabled"
+        alpha = clamp((now - notice["created"]) / 0.1) * clamp((notice["expires"] - now) / 0.2)
+        font_size = clamp(self.height * 0.024, 16, 30)
+        context.save()
+        context.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        context.set_font_size(font_size)
+        extents = context.text_extents(text)
+        padding_x, padding_y = font_size, font_size * 0.65
+        width, height = extents.width + padding_x * 2, font_size + padding_y * 2
+        x, y = (self.width - width) / 2, max(16, self.height * 0.045)
+        rounded_rectangle(context, x, y, width, height, height / 2)
+        context.set_source_rgba(0.055, 0.07, 0.09, 0.92 * alpha)
+        context.fill()
+        context.set_source_rgba(1, 1, 1, alpha)
+        context.move_to(x + padding_x - extents.x_bearing,
+                        y + (height - extents.height) / 2 - extents.y_bearing)
+        context.show_text(text)
+        context.restore()
+
+
+if __name__ == "__main__":
+    display = Gdk.Display.get_default()
+    if display is None:
+        raise RuntimeError(f"GTK could not initialize validated display {display_name}")
+    print(
+        f"virtual-trackpads-overlay: connected to Gamescope display {display_name}",
+        flush=True,
+    )
+    TrackpadOverlay(screen=screen, device_values=device_values).run(None)

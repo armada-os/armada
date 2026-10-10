@@ -71,6 +71,19 @@ export const tabIcons = {
       }
     />
   ),
+  Trackpads: (
+    <Icon
+      size={TAB_ICON_SIZE}
+      path={
+        <>
+          <rect x="3" y="4" width="7" height="16" rx="2" />
+          <rect x="14" y="4" width="7" height="16" rx="2" />
+          <circle cx="6.5" cy="15.5" r="0.75" fill="currentColor" stroke="none" />
+          <circle cx="17.5" cy="15.5" r="0.75" fill="currentColor" stroke="none" />
+        </>
+      }
+    />
+  ),
   Advanced: (
     <Icon
       size={TAB_ICON_SIZE}

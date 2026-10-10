@@ -97,11 +97,15 @@ systemctl enable armada-installer-visibility.service
 systemctl enable armada-steamapps.service
 systemctl enable armada-powerd.service
 systemctl enable armada-control.service
+# armada-control starts the optional workers from saved configuration.
+systemctl disable armada-virtual-trackpads.service || true
+systemctl disable armada-virtual-trackpads-shortcut.service || true
 systemctl enable steamos-manager.service
 systemctl --global enable steamos-manager.service
 systemctl --global enable steamos-manager-session-cleanup.service
 systemctl --global enable armada-steam-default-session.service
 systemctl --global enable armada-steam-charging-eta.service
+systemctl --global disable armada-virtual-trackpads-overlay.service || true
 systemctl enable armada-bootimg-sync.service
 systemctl enable armada-esp-rename.service
 systemctl enable armada-boot-hotkeys.service

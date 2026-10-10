@@ -1,0 +1,12 @@
+[Unit]
+Description=Armada touchscreen virtual Steam Deck trackpads
+After=inputplumber.service armada-device-quirks.service
+Requires=inputplumber.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/virtual-trackpads
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5

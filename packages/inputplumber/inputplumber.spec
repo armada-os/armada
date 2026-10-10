@@ -19,6 +19,8 @@ Patch1:         0001-fix-gamepad-share-raw-input.patch
 Patch2:         0002-fix-force-feedback-reset-effects-when-replacing-targets.patch
 Patch3:         0003-feat-Hardware-Support-Add-AYN-Thor-Lite.patch
 Patch4:         0004-fix-AyaneoHaptics-sleep-between-polls.patch
+Patch5:         0005-add-dbus-touch-events.patch
+Patch6:         0006-native-virtual-trackpad-haptics.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust
@@ -55,6 +57,8 @@ make build BUILD_TYPE=release
 set -o pipefail
 cargo test --locked --release --target %{_target_cpu}-unknown-linux-gnu --bin inputplumber 2>&1 | tee tests.log
 grep -Eq '^test result: ok\. [1-9][0-9]* passed; 0 failed;' tests.log
+cargo test --locked --release --target %{_target_cpu}-unknown-linux-gnu --bin inputplumber armada_virtual_haptics::tests -- --nocapture 2>&1 | tee virtual-haptics-tests.log
+grep -Eq '^test result: ok\. 6 passed; 0 failed;' virtual-haptics-tests.log
 
 %install
 make install PREFIX=%{buildroot}%{_prefix}

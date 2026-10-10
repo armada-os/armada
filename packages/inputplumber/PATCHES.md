@@ -13,3 +13,9 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   notes: AYN Thor Lite support
 - `patches/0004-fix-AyaneoHaptics-sleep-between-polls.patch`
   source: armada
+- `patches/0005-add-dbus-touch-events.patch`
+  source: armada
+  notes: Adds a polkit-protected D-Bus method for injecting normalized multitouch values into Steam Deck touchpad targets.
+- `patches/0006-native-virtual-trackpad-haptics.patch`
+  source: armada
+  notes: Uses Steam's native trackpad pulse timing with configurable amplitude and short finite effects while the virtual-pad service holds a live lease. Zero suppresses trackpad pulses without stopping game rumble, which has priority in the shared effect slot. Includes six package tests for scaling, fade, mute, game-rumble priority and lease expiry.

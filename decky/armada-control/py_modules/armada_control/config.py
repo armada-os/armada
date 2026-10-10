@@ -25,6 +25,7 @@ from .tweaks import (
     load_tweaks,
     turnip_drivers,
 )
+from .trackpads import get_virtual_trackpads
 
 
 def build_config(include_games=True):
@@ -70,4 +71,5 @@ def build_config(include_games=True):
         "controllerTypes": [
             {"data": key, "label": CONTROLLER_TYPES[key]} for key in inputplumber_targets(env)
         ],
+        "virtualTrackpads": get_virtual_trackpads(),
     }

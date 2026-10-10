@@ -119,6 +119,58 @@ export interface RgbConfig {
   saturation: number;
 }
 
+export type TrackpadShortcutButton = "A" | "B" | "X" | "Y" | "L1" | "R1" | "L2" | "R2" | "L3" | "R3" | "Select" | "Start" | "Steam";
+
+export interface VirtualTrackpadsConfig {
+  supported: boolean;
+  secondaryAvailable?: boolean;
+  enabled: boolean;
+  blockTouchscreen: boolean;
+  gameModeOnly: boolean;
+  shortcutEnabled: boolean;
+  shortcutButtons: TrackpadShortcutButton[];
+  shortcutHoldSeconds: 0 | 3;
+  screen: "primary" | "secondary";
+  leftEnabled: boolean;
+  rightEnabled: boolean;
+  mode: "simple" | "corners" | "floating" | "halves" | "fullLeft" | "fullRight";
+  tapToClick: boolean;
+  limitToBounds: boolean;
+  leftSize: number;
+  rightSize: number;
+  edgeGap: number;
+  hapticStrength: number;
+  borderOpacity: number;
+  borderWidth: number;
+  backgroundStyle: "dots" | "solid" | "none";
+  backgroundOpacity: number;
+  autoHide: boolean;
+  hideDelay: number;
+  borderRadius: number;
+  dotSize: number;
+  dotGap: number;
+  centerDotEnabled: boolean;
+  centerDotSize: number;
+  centerDotOpacity: number;
+}
+
+export type EditableTrackpadsConfig = Omit<VirtualTrackpadsConfig, "supported" | "secondaryAvailable">;
+
+export interface VirtualTrackpadsState {
+  leftActive: boolean;
+  rightActive: boolean;
+  leftZone: "top" | "bottom" | "floating" | "half";
+  rightZone: "top" | "bottom" | "floating" | "half";
+  leftX: number;
+  leftY: number;
+  rightX: number;
+  rightY: number;
+  leftTouchX: number;
+  leftTouchY: number;
+  rightTouchX: number;
+  rightTouchY: number;
+}
+
 export interface GameRef {
   appid: string;
   name: string;
@@ -162,6 +214,7 @@ export interface Config {
   sleepModes: DropdownChoice[];
   controllerType: string;
   controllerTypes: DropdownChoice[];
+  virtualTrackpads: VirtualTrackpadsConfig;
   calibration?: CalibrationState;
   game?: GameRef | null;
   selectedGame?: GameRef | null;

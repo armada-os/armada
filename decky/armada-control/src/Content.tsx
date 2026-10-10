@@ -1,5 +1,5 @@
 import { Field, PanelSection, Tabs } from "@decky/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getConfig, getInstalledGames, savePowerConfig, saveTweaks } from "./backend";
 import { RgbLighting } from "./components/RgbLighting";
@@ -13,6 +13,7 @@ import { Compatibility } from "./tabs/Compatibility";
 import { Fans } from "./tabs/Fans";
 import { Power } from "./tabs/Power";
 import { Settings } from "./tabs/Settings";
+import { Trackpads } from "./tabs/Trackpads";
 import type { Config } from "./types";
 
 export function Content() {
@@ -23,6 +24,7 @@ export function Content() {
   const savedPowerSnapshot = useRef("");
   const savedTweaksSnapshot = useRef("");
   const installedGamesRequested = useRef(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const load = useCallback(async () => {
     try {
       const next = await getConfig();
@@ -80,26 +82,51 @@ export function Content() {
   }, [!!config]);
   useDebouncedSave({ config, field: "power", snapshot: savedPowerSnapshot, save: savePowerConfig, setConfig, onError: load });
   useDebouncedSave({ config, field: "tweaks", snapshot: savedTweaksSnapshot, save: saveTweaks, setConfig, onError: load });
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    const view = menu?.ownerDocument.defaultView;
+    if (!menu || !view) return;
+    const measure = () => {
+      const rect = menu.getBoundingClientRect();
+      if (!rect.width || !menu.offsetWidth) return;
+      const scale = rect.width / menu.offsetWidth;
+      // The QAM reserves 40 logical pixels for the controller footer. Measure
+      // from this plugin's actual top so tabs cannot extend underneath it.
+      const height = Math.max(0, Math.floor((view.innerHeight - rect.top) / scale - 40));
+      menu.style.setProperty("--armada-menu-height", `${height}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (menu.parentElement) observer.observe(menu.parentElement);
+    view.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      view.removeEventListener("resize", measure);
+    };
+  }, [!!config]);
   if (!config) return <PanelSection title="Armada Control"><Field label={message === "Loading" ? t("common.loading") : message} /></PanelSection>;
   const tabContent = (content: ReactNode) => (
     <div className="armada-control-tab-content">{content}</div>
   );
   return (
-    <div className="armada-control-tabs">
-      <style>{styles}</style>
-      <Tabs
-        activeTab={tab}
-        onShowTab={setTab}
-        tabs={[
-          { id: "Compatibility", title: tabIcons.Compatibility, content: tabContent(<Compatibility config={config} setConfig={setConfig} />) },
-          { id: "Power", title: tabIcons.Power, content: tabContent(<Power config={config} setConfig={setConfig} />) },
-          { id: "Fans", title: tabIcons.Fans, content: tabContent(<Fans setConfig={setConfig} />) },
-          ...(config.rgbSupported ? [
-            { id: "RGB", title: tabIcons.RGB, content: tabContent(<RgbLighting />) },
-          ] : []),
-          { id: "Advanced", title: tabIcons.Advanced, content: tabContent(<Settings config={config} setConfig={setConfig} />) },
-        ]}
-      />
-    </div>
+    <>
+      <div className="armada-control-tabs" ref={menuRef}>
+        <style>{styles}</style>
+        <Tabs
+          activeTab={tab}
+          onShowTab={setTab}
+          tabs={[
+            { id: "Compatibility", title: tabIcons.Compatibility, content: tabContent(<Compatibility config={config} setConfig={setConfig} />) },
+            { id: "Power", title: tabIcons.Power, content: tabContent(<Power config={config} setConfig={setConfig} />) },
+            { id: "Fans", title: tabIcons.Fans, content: tabContent(<Fans setConfig={setConfig} />) },
+            ...(config.rgbSupported ? [
+              { id: "RGB", title: tabIcons.RGB, content: tabContent(<RgbLighting />) },
+            ] : []),
+            { id: "Trackpads", title: tabIcons.Trackpads, content: tabContent(<Trackpads config={config} setConfig={setConfig} />) },
+            { id: "Advanced", title: tabIcons.Advanced, content: tabContent(<Settings config={config} setConfig={setConfig} />) },
+          ]}
+        />
+      </div>
+    </>
   );
 }
