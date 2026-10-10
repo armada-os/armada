@@ -324,7 +324,7 @@ export function Content() {
       if (installed && app.installType !== "system") {
         items.push(
           <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut), () => { refreshCatalog().catch(() => {}); })}>
-            {app.installType === "android" ? "Remove from store" : "Uninstall"}
+            {app.imported ? "Remove from Store" : "Uninstall"}
           </MenuItem>,
         );
       }
