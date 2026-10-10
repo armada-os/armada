@@ -1,0 +1,202 @@
+From: seilent <github@seilent.net>
+Subject: [PATCH] HID: add AYANEO Pocket MICRO 2 force feedback driver
+
+Add rumble support for the AYANEO Pocket MICRO 2 built in controller
+(4001:0428). Input is handled by the generic HID mapping. Rumble is a 7
+byte output report 08 00 strong weak 00 00 00 on the interrupt OUT
+endpoint, taken from the hid-ayaneo driver built into the stock Android
+kernel (4.19.157). Other AYANEO pads share the USB id, so the driver
+binds everywhere and enables rumble only on the Pocket MICRO 2.
+
+---
+diff --git a/drivers/hid/Kconfig b/drivers/hid/Kconfig
+--- a/drivers/hid/Kconfig
++++ b/drivers/hid/Kconfig
+@@ -205,6 +205,14 @@
+ 	help
+ 	Support for Aureal Cy se W-01RN Remote Controller and other Aureal derived remotes.
+ 
++config HID_AYANEO
++	tristate "AYANEO controller force feedback support"
++	depends on USB_HID
++	select INPUT_FF_MEMLESS
++	help
++	  Say Y here if you want to enable force feedback support for the
++	  AYANEO Pocket MICRO 2 built in controller.
++
+ config HID_BELKIN
+ 	tristate "Belkin Flip KVM and Wireless keyboard"
+ 	help
+diff --git a/drivers/hid/Makefile b/drivers/hid/Makefile
+--- a/drivers/hid/Makefile
++++ b/drivers/hid/Makefile
+@@ -35,6 +35,7 @@
+ obj-$(CONFIG_HID_CREATIVE_SB0540)	+= hid-creative-sb0540.o
+ obj-$(CONFIG_HID_ASUS)		+= hid-asus.o
+ obj-$(CONFIG_HID_AUREAL)	+= hid-aureal.o
++obj-$(CONFIG_HID_AYANEO)	+= hid-ayaneo.o
+ obj-$(CONFIG_HID_BELKIN)	+= hid-belkin.o
+ obj-$(CONFIG_HID_BETOP_FF)	+= hid-betopff.o
+ obj-$(CONFIG_HID_BIGBEN_FF)	+= hid-bigbenff.o
+diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -260,6 +260,9 @@
+ #define USB_VENDOR_ID_AXENTIA		0x12cf
+ #define USB_DEVICE_ID_AXENTIA_FM_RADIO	0x7111
+ 
++#define USB_VENDOR_ID_AYANEO		0x4001
++#define USB_DEVICE_ID_AYANEO_POCKET_MICRO2	0x0428
++
+ #define USB_VENDOR_ID_BAANTO		0x2453
+ #define USB_DEVICE_ID_BAANTO_MT_190W2	0x0100
+ 
+diff --git a/drivers/hid/hid-ayaneo.c b/drivers/hid/hid-ayaneo.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/hid/hid-ayaneo.c
+@@ -0,0 +1,144 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <linux/hid.h>
++#include <linux/input.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/slab.h>
++#include <linux/spinlock.h>
++#include <linux/workqueue.h>
++
++#include "hid-ids.h"
++
++#define AYANEO_RUMBLE_CMD	0x08
++#define AYANEO_RUMBLE_LEN	7
++
++struct ayaneo_device {
++	struct hid_device *hdev;
++	struct work_struct rumble_work;
++	spinlock_t lock;
++	bool removed;
++	u8 strong;
++	u8 weak;
++	u8 *buf;
++};
++
++static void ayaneo_rumble_work(struct work_struct *work)
++{
++	struct ayaneo_device *aya = container_of(work, struct ayaneo_device,
++						 rumble_work);
++	unsigned long flags;
++	int ret;
++
++	memset(aya->buf, 0, AYANEO_RUMBLE_LEN);
++	aya->buf[0] = AYANEO_RUMBLE_CMD;
++
++	spin_lock_irqsave(&aya->lock, flags);
++	aya->buf[2] = aya->strong;
++	aya->buf[3] = aya->weak;
++	spin_unlock_irqrestore(&aya->lock, flags);
++
++	ret = hid_hw_output_report(aya->hdev, aya->buf, AYANEO_RUMBLE_LEN);
++	if (ret < 0)
++		hid_warn(aya->hdev, "failed to send rumble report: %d\n", ret);
++}
++
++static int ayaneo_play(struct input_dev *dev, void *data,
++		       struct ff_effect *effect)
++{
++	struct ayaneo_device *aya = data;
++	unsigned long flags;
++
++	if (effect->type != FF_RUMBLE)
++		return 0;
++
++	spin_lock_irqsave(&aya->lock, flags);
++	aya->strong = effect->u.rumble.strong_magnitude >> 8;
++	aya->weak = effect->u.rumble.weak_magnitude >> 8;
++	if (!aya->removed)
++		schedule_work(&aya->rumble_work);
++	spin_unlock_irqrestore(&aya->lock, flags);
++
++	return 0;
++}
++
++static int ayaneo_input_configured(struct hid_device *hdev,
++				   struct hid_input *hidinput)
++{
++	struct ayaneo_device *aya = hid_get_drvdata(hdev);
++	struct input_dev *input = hidinput->input;
++
++	if (!of_machine_is_compatible("ayaneo,pocket-micro2"))
++		return 0;
++
++	input_set_capability(input, EV_FF, FF_RUMBLE);
++
++	return input_ff_create_memless(input, aya, ayaneo_play);
++}
++
++static int ayaneo_probe(struct hid_device *hdev, const struct hid_device_id *id)
++{
++	struct ayaneo_device *aya;
++	int ret;
++
++	aya = devm_kzalloc(&hdev->dev, sizeof(*aya), GFP_KERNEL);
++	if (!aya)
++		return -ENOMEM;
++
++	aya->buf = devm_kzalloc(&hdev->dev, AYANEO_RUMBLE_LEN, GFP_KERNEL);
++	if (!aya->buf)
++		return -ENOMEM;
++
++	aya->hdev = hdev;
++	spin_lock_init(&aya->lock);
++	INIT_WORK(&aya->rumble_work, ayaneo_rumble_work);
++	hid_set_drvdata(hdev, aya);
++
++	hdev->quirks |= HID_QUIRK_INPUT_PER_APP;
++
++	ret = hid_parse(hdev);
++	if (ret) {
++		hid_err(hdev, "parse failed\n");
++		return ret;
++	}
++
++	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
++	if (ret) {
++		hid_err(hdev, "hw start failed\n");
++		return ret;
++	}
++
++	return 0;
++}
++
++static void ayaneo_remove(struct hid_device *hdev)
++{
++	struct ayaneo_device *aya = hid_get_drvdata(hdev);
++	unsigned long flags;
++
++	spin_lock_irqsave(&aya->lock, flags);
++	aya->removed = true;
++	spin_unlock_irqrestore(&aya->lock, flags);
++
++	cancel_work_sync(&aya->rumble_work);
++	hid_hw_stop(hdev);
++}
++
++static const struct hid_device_id ayaneo_devices[] = {
++	{ HID_USB_DEVICE(USB_VENDOR_ID_AYANEO,
++			 USB_DEVICE_ID_AYANEO_POCKET_MICRO2) },
++	{ }
++};
++MODULE_DEVICE_TABLE(hid, ayaneo_devices);
++
++static struct hid_driver ayaneo_driver = {
++	.name = "ayaneo",
++	.id_table = ayaneo_devices,
++	.probe = ayaneo_probe,
++	.remove = ayaneo_remove,
++	.input_configured = ayaneo_input_configured,
++};
++module_hid_driver(ayaneo_driver);
++
++MODULE_DESCRIPTION("Force feedback support for AYANEO controllers");
++MODULE_LICENSE("GPL");

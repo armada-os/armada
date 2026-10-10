@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP audio, fix PCIe WAKE# polarity
+Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP audio, fix PCIe WAKE# polarity, keep the Wi-Fi PMU rails on
 
 --- a/arch/arm64/boot/dts/qcom/cq8725s-ayn-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/cq8725s-ayn-common.dtsi
@@ -34,7 +34,47 @@ Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP 
  	};
  
  	pmic-glink {
-@@ -982,7 +997,7 @@
+@@ -287,6 +302,7 @@
+ 		wlan-enable-gpios = <&tlmm 16 GPIO_ACTIVE_HIGH>;
+ 		bt-enable-gpios = <&pm8550ve_f_gpios 3 GPIO_ACTIVE_HIGH>;
+ 
++		/* Re-enabling these four rails at resume can hang the SoC. */
+ 		vddio-supply = <&vreg_l3f_1p8>;
+ 		vddio1p2-supply = <&vreg_l2f_1p2>;
+ 		vddaon-supply = <&vreg_s4d_0p85>;
+@@ -565,6 +581,7 @@
+ 			regulator-name = "vreg_s4d_0p85";
+ 			regulator-min-microvolt = <852000>;
+ 			regulator-max-microvolt = <1036000>;
++			regulator-always-on;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+ 		};
+ 
+@@ -613,6 +630,7 @@
+ 			regulator-name = "vreg_s5f_0p85";
+ 			regulator-min-microvolt = <852000>;
+ 			regulator-max-microvolt = <1000000>;
++			regulator-always-on;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+ 		};
+ 
+@@ -630,6 +648,7 @@
+ 			regulator-name = "vreg_l2f_1p2";
+ 			regulator-min-microvolt = <1200000>;
+ 			regulator-max-microvolt = <1200000>;
++			regulator-always-on;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+ 			regulator-allow-set-load;
+ 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+@@ -640,6 +659,7 @@
+ 			regulator-name = "vreg_l3f_1p8";
+ 			regulator-min-microvolt = <1800000>;
+ 			regulator-max-microvolt = <1800000>;
++			regulator-always-on;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+ 			regulator-allow-set-load;
+ 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+@@ -982,7 +1002,7 @@
  };
  
  &pcieport0 {
@@ -43,7 +83,7 @@ Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP 
  	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
  
  	wifi@0 {
-@@ -1390,6 +1405,8 @@
+@@ -1390,6 +1410,8 @@
  
  	gamepad {
  		compatible = "gamepad,rsinput";

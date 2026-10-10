@@ -18,3 +18,5 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: https://github.com/ROCKNIX/distribution/blob/7e83d3c918fa52a241ce1e589d629c220af40e1a/projects/ROCKNIX/packages/apps/mangohud/patches/SM8750/0002-SM8750-Battery.patch
 - `patches/0007-gpu_fdinfo-skip-unreadable-fdinfo.patch`
   source: armada
+- `patches/0008-mangoapp-show-active-upscaler.patch`
+  source: armada

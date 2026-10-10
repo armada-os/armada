@@ -17,7 +17,7 @@ cat >/etc/rpm/macros.armada <<EOF
 EOF
 cp /work/protontricks.spec ~/rpmbuild/SPECS/
 sed -i "s/^Version:.*/Version:        ${VERSION}/" ~/rpmbuild/SPECS/protontricks.spec
-cp /work/patches/*.patch ~/rpmbuild/SOURCES/
+cp /work/patches/*.patch ~/rpmbuild/SOURCES/ || echo "No patches to apply!"
 spectool -g -R --define "commit ${COMMIT}" ~/rpmbuild/SPECS/protontricks.spec
 dnf -y builddep --define "commit ${COMMIT}" ~/rpmbuild/SPECS/protontricks.spec
 rpmbuild -bb --define "commit ${COMMIT}" ~/rpmbuild/SPECS/protontricks.spec

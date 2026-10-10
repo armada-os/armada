@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_BOTTOM="$ROOT/system_files/usr/bin/armada-run-bottom"
-BOTTOM_SESSION="$ROOT/system_files/usr/libexec/armada/bottom-screen-session"
 BOTTOM_GAMESCOPE="$ROOT/system_files/usr/libexec/armada/bottom-gamescope"
 BOTTOM_READY="$ROOT/system_files/usr/libexec/armada/bottom-gamescope-ready"
 BOTTOM_SERVICE="$ROOT/system_files/usr/lib/systemd/user/armada-bottom-screen.service"
@@ -77,103 +76,6 @@ for i in "${!expected[@]}"; do
     [[ "${actual[$i]}" == "${expected[$i]}" ]]
 done
 [[ "$(<"$env_file")" == $'unset\nunset\nunset' ]]
-
-dbus_run_session="$tmp/dbus-run-session"
-inner_args="$tmp/inner-args"
-inner_env="$tmp/inner-env"
-printf '%s\n' \
-    '#!/usr/bin/env bash' \
-    '[[ "$(readlink "$XDG_CONFIG_HOME/plasmashellrc")" == plasmashellrc.mobile ]] || exit 1' \
-    '[[ -f "$XDG_CONFIG_HOME/plasmashellrc.mobile" ]] || exit 1' \
-    'printf '\''%s\n'\'' "${XDG_CURRENT_DESKTOP-unset}" "${XDG_CONFIG_DIRS-unset}" "${QT_QPA_PLATFORMTHEME-unset}" "${QT_QUICK_CONTROLS_STYLE-unset}" "${QT_QUICK_CONTROLS_MOBILE-unset}" "${PLASMA_INTEGRATION_USE_PORTAL-unset}" "${PLASMA_PLATFORM-unset}" "${DISABLE_GAMESCOPE_WSI-unset}" "${GAMESCOPE_WAYLAND_DISPLAY-unset}" "${GAMESCOPE_LIMITER_FILE-unset}" >"$INNER_ENV"' \
-    'printf '\''%s\0'\'' "$@" >"$INNER_ARGS"' \
-    >"$dbus_run_session"
-chmod +x "$dbus_run_session"
-envmanager="$tmp/plasma-mobile-envmanager"
-envmanager_args="$tmp/envmanager-args"
-printf '%s\n' \
-    '#!/usr/bin/env bash' \
-    'printf '\''%s\n'\'' "$*" "$PLASMA_PLATFORM" "$QT_QPA_PLATFORM" >"$ENVMANAGER_ARGS"' \
-    >"$envmanager"
-chmod +x "$envmanager"
-config_dir="$tmp/config"
-mkdir -p "$config_dir"
-printf 'saved desktop settings\n' >"$config_dir/plasmashellrc.desktop"
-printf 'saved mobile settings\n' >"$config_dir/plasmashellrc.mobile"
-ln -s plasmashellrc.desktop "$config_dir/plasmashellrc"
-run_bottom_session() {
-env \
-    DISPLAY=gamescope-1 \
-    HOME=/test/home \
-    XDG_CONFIG_HOME="$config_dir" \
-    XDG_CONFIG_DIRS=/test/config \
-    DISABLE_GAMESCOPE_WSI=0 \
-    GAMESCOPE_WAYLAND_DISPLAY=gamescope-1 \
-    GAMESCOPE_LIMITER_FILE=/test/gamescope-limiter \
-    ARMADA_DBUS_RUN_SESSION="$dbus_run_session" \
-    ARMADA_KWIN_WAYLAND=/test/kwin_wayland \
-    ARMADA_PLASMA_MOBILE_ENVMANAGER="$envmanager" \
-    ENVMANAGER_ARGS="$envmanager_args" \
-    INNER_ARGS="$inner_args" \
-    INNER_ENV="$inner_env" \
-    "$BOTTOM_SESSION"
-}
-run_bottom_session
-[[ "$(<"$envmanager_args")" == $'--apply-settings\nphone:handset\noffscreen' ]]
-mapfile -d '' -t actual <"$inner_args"
-expected=(
-    /test/kwin_wayland
-    --x11-display gamescope-1
-    --fullscreen
-    --no-lockscreen
-    --xwayland
-    --exit-with-session '/usr/bin/plasmashell -p org.kde.plasma.mobileshell'
-    /usr/libexec/kf6/polkit-kde-authentication-agent-1
-)
-[[ "${#actual[@]}" == "${#expected[@]}" ]]
-for i in "${!expected[@]}"; do
-    [[ "${actual[$i]}" == "${expected[$i]}" ]]
-done
-[[ "$(<"$inner_env")" == $'KDE\n/test/home/.config/plasma-mobile:/etc/xdg:/test/config\nKDE\norg.kde.breeze\ntrue\n1\nphone:handset\n1\nunset\nunset' ]]
-[[ ! " ${actual[*]} " =~ ' --width ' ]]
-[[ ! " ${actual[*]} " =~ ' --height ' ]]
-
-# Starting from Desktop or restarting Mobile must preserve both saved configs.
-run_bottom_session
-[[ "$(<"$config_dir/plasmashellrc.desktop")" == 'saved desktop settings' ]]
-[[ "$(<"$config_dir/plasmashellrc.mobile")" == 'saved mobile settings' ]]
-
-# Older installations may still have a regular active desktop config.
-config_dir="$tmp/legacy-config"
-mkdir -p "$config_dir"
-printf 'legacy desktop settings\n' >"$config_dir/plasmashellrc"
-run_bottom_session
-[[ "$(<"$config_dir/plasmashellrc.desktop")" == 'legacy desktop settings' ]]
-[[ ! -s "$config_dir/plasmashellrc.mobile" ]]
-
-# A fresh profile must also be ready before Plasma launches.
-config_dir="$tmp/fresh-config"
-run_bottom_session
-[[ ! -s "$config_dir/plasmashellrc.mobile" ]]
-
-# Refuse ambiguous migration rather than discarding either desktop config.
-config_dir="$tmp/conflicting-config"
-mkdir -p "$config_dir"
-printf 'active settings\n' >"$config_dir/plasmashellrc"
-printf 'saved settings\n' >"$config_dir/plasmashellrc.desktop"
-if run_bottom_session 2>"$tmp/config-conflict"; then
-    echo 'conflicting desktop configs unexpectedly succeeded' >&2
-    exit 1
-fi
-grep -q 'refusing to overwrite' "$tmp/config-conflict"
-[[ "$(<"$config_dir/plasmashellrc")" == 'active settings' ]]
-[[ "$(<"$config_dir/plasmashellrc.desktop")" == 'saved settings' ]]
-
-if env -u DISPLAY "$BOTTOM_SESSION" 2>"$tmp/no-display"; then
-    echo 'bottom session started without DISPLAY' >&2
-    exit 1
-fi
-grep -q 'nested Gamescope did not provide an X11 display' "$tmp/no-display"
 
 if env \
     TEST_SECONDARY_CONNECTOR= \
@@ -304,13 +206,17 @@ grep -Fxq 'Restart=always' "$GAMESCOPE_SERVICE"
 grep -Fxq 'PartOf=armada-bottom-gamescope.service' "$BOTTOM_SERVICE"
 grep -Fxq 'WantedBy=gamescope-session-plus@steam.service' "$BOTTOM_SERVICE"
 grep -Fxq 'After=armada-bottom-gamescope.service' "$BOTTOM_SERVICE"
-grep -Fxq 'ExecStart=/usr/bin/armada-run-bottom -- /usr/libexec/armada/bottom-screen-session' "$BOTTOM_SERVICE"
+grep -Fxq 'ExecStart=/usr/bin/armada-run-bottom -- /usr/libexec/armada/armada-plasma-session bottom' "$BOTTOM_SERVICE"
 grep -Fxq 'Restart=always' "$BOTTOM_SERVICE"
 grep -Fxq 'ExecStartPre=/usr/bin/touch %t/armada-bottom-screen-active' "$BOTTOM_SERVICE"
 grep -Fxq 'ExecStopPost=/usr/bin/rm -f %t/armada-bottom-screen-active' "$BOTTOM_SERVICE"
 grep -Fq '/run/user/1000/armada-bottom-screen-active' "$WAYDROID_INPUT_SETUP"
 grep -Fq 'each_gamescope gamescopectl drm_sleep_internal_screen 1' "$FAKE_SUSPEND"
 grep -Fq 'each_gamescope gamescopectl drm_sleep_internal_screen 0' "$FAKE_SUSPEND"
+grep -Fq 'timeout 5 /usr/bin/armada-rgb sleep' "$FAKE_SUSPEND"
+grep -Fq 'timeout 5 /usr/bin/armada-rgb wake' "$FAKE_SUSPEND"
+grep -A1 '^    display_off ' "$FAKE_SUSPEND" | grep -Fxq '    lights_off'
+grep -B1 -Fx '    display_on' "$FAKE_SUSPEND" | grep -Fxq '    lights_on'
 
-bash -n "$RUN_BOTTOM" "$BOTTOM_GAMESCOPE" "$BOTTOM_SESSION" "$BOTTOM_READY" "$FAKE_SUSPEND"
+bash -n "$RUN_BOTTOM" "$BOTTOM_GAMESCOPE" "$BOTTOM_READY" "$FAKE_SUSPEND"
 printf 'bottom-screen session tests passed\n'

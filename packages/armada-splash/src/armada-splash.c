@@ -42,6 +42,7 @@ static void install_signal(int sig) {
 static int SW, SH;
 static uint32_t *shadow;      // SW*SH ARGB8888
 static uint32_t bg = 0xFF000000;
+static const float splash_rgb_gain = 0.5f;
 
 static uint32_t *img;
 static int img_w, img_h;
@@ -297,6 +298,14 @@ static void compose(const char *status) {
         if (g_ttf_ok) tt_draw_centered(g_lines[i], ty + ascent_px, g_linecol[i]);
         else draw_text_centered(g_lines[i], ty, text_scale, g_linecol[i]);
         ty += line_h;
+    }
+
+    for (int i = 0; i < SW * SH; i++) {
+        uint32_t pixel = shadow[i];
+        uint32_t r = ((pixel >> 16) & 255) * splash_rgb_gain + 0.5f;
+        uint32_t g = ((pixel >> 8) & 255) * splash_rgb_gain + 0.5f;
+        uint32_t b = (pixel & 255) * splash_rgb_gain + 0.5f;
+        shadow[i] = (pixel & 0xFF000000) | (r << 16) | (g << 8) | b;
     }
 }
 

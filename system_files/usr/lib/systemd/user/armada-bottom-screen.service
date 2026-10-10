@@ -1,5 +1,5 @@
 [Unit]
-Description=Armada bottom-screen Plasma Mobile
+Description=Armada Plasma session on the bottom screen
 PartOf=armada-bottom-gamescope.service
 Wants=armada-bottom-gamescope.service
 After=armada-bottom-gamescope.service
@@ -7,10 +7,13 @@ StartLimitIntervalSec=0
 
 [Service]
 ExecStartPre=/usr/bin/touch %t/armada-bottom-screen-active
-ExecStart=/usr/bin/armada-run-bottom -- /usr/libexec/armada/bottom-screen-session
+ExecStart=/usr/bin/armada-run-bottom -- /usr/libexec/armada/armada-plasma-session bottom
 ExecStopPost=/usr/bin/rm -f %t/armada-bottom-screen-active
 Restart=always
 RestartSec=1
+RestartSteps=5
+RestartMaxDelaySec=30
+TimeoutStopSec=10
 
 [Install]
 WantedBy=gamescope-session-plus@steam.service

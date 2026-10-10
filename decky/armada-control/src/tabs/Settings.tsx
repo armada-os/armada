@@ -16,6 +16,7 @@ import {
   setSleepMode as applySleepMode,
   setSleepLogsEnabled as applySleepLogsEnabled,
   setSshEnabled as applySshEnabled,
+  setSwipeGesturesEnabled as applySwipeGesturesEnabled,
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
 import { SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
@@ -32,6 +33,7 @@ export function Settings({ config, setConfig }: {
   config: Config;
   setConfig: Dispatch<SetStateAction<Config | null>>;
 }) {
+  const [swipeGesturesSaving, setSwipeGesturesSaving] = useState(false);
   const [sleepLogsEnabled, setSleepLogsEnabled] = useState<boolean | null>(null);
   const [sleepLogsSaving, setSleepLogsSaving] = useState(false);
   const setBottomScreenBrightness = useDebouncedApply(
@@ -126,6 +128,18 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, ablAutoEnabled: !enabled } : current));
     }
   };
+  const setSwipeGesturesEnabled = async (enabled: boolean) => {
+    if (swipeGesturesSaving) return;
+    setSwipeGesturesSaving(true);
+    try {
+      const applied = await applySwipeGesturesEnabled(enabled);
+      setConfig((current) => (current ? { ...current, swipeGesturesEnabled: applied } : current));
+    } catch (error) {
+      toaster.toast({ title: t("settings.swipeGesturesError"), body: String(error) });
+    } finally {
+      setSwipeGesturesSaving(false);
+    }
+  };
   const setBottomScreenEnabled = async (enabled: boolean) => {
     if (enabled === !!config.bottomScreenEnabled) {
       return;
@@ -186,6 +200,13 @@ export function Settings({ config, setConfig }: {
         <ButtonItem layout="below" onClick={openCalibration}>{t("calibration.launch")}</ButtonItem>
       </PanelSection>
       <PanelSection title={t("settings.system")}>
+        <ToggleRow
+          label={t("settings.swipeGestures")}
+          description={t("settings.swipeGesturesDescription")}
+          value={config.swipeGesturesEnabled}
+          disabled={swipeGesturesSaving}
+          onChange={setSwipeGesturesEnabled}
+        />
         <SelectEdit
           label={t("settings.sleepMode")}
           value={config.sleepMode || "s2idle"}

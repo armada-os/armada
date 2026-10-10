@@ -21,6 +21,7 @@ case "$model" in
     "AYANEO Pocket ACE") profile=ayaneo-pocket-ace ;;
     "AYANEO Pocket DMG") profile=ayaneo-pocket-dmg ;;
     "AYANEO Pocket DS") profile=ayaneo-pocket-ds ;;
+    "AYANEO Pocket MICRO 2") profile=ayaneo-pocket-micro2 ;;
     "AYANEO Pocket S 1K") profile=ayaneo-pocket-s1k ;;
     "AYANEO Pocket S 2K") profile=ayaneo-pocket-s2k ;;
     "AYANEO Pocket S2") profile=ayaneo-pocket-s2 ;;
@@ -67,7 +68,7 @@ fi
 if [[ "${ARMADA_SOC_CLASS:-}" == SM8250 ]]; then
     ARMADA_PROTON_DEFAULTS=proton-cachyos-11.0-arm64
 else
-    ARMADA_PROTON_DEFAULTS=proton-experimental-arm64:proton_11-arm64:proton-cachyos-11.0-arm64
+    ARMADA_PROTON_DEFAULTS=proton_11-arm64:proton-experimental-arm64:proton-cachyos-11.0-arm64
 fi
 
 # CPU topology by SoC (device conf may override). Cpulists are ordered:
@@ -87,8 +88,7 @@ case "${ARMADA_SOC_CLASS:-}" in
         : "${ARMADA_LITTLE_CORES=0-2}"
         : "${ARMADA_BIG_CORES=3-7}"
         : "${ARMADA_PRIME_CORES=7}"
-        # The A740 GMU wedges if a GPU interrupt wakes CPU 0-2 out of power collapse
-        : "${ARMADA_IRQ_CORES=3-7}"
+        : "${ARMADA_IRQ_CORES=0-2}"
         ;;
     SM8650)
         : "${ARMADA_LITTLE_CORES=0-1}"

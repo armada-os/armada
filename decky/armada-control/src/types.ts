@@ -26,6 +26,7 @@ export interface GameTweak {
   name?: string;
   fexProfile?: string;
   fexConfig?: Record<string, string>;
+  turnipDriver?: string;
   thunks?: Record<string, boolean>;
   [key: string]: any;
 }
@@ -49,6 +50,12 @@ export interface InstalledGame {
 export interface FexProfile {
   label: string;
   config?: Record<string, string>;
+}
+
+export interface TurnipDriver {
+  id: string;
+  label: string;
+  version: string;
 }
 
 // A text in env-presets.json is either one string or one string per locale, so a
@@ -87,11 +94,26 @@ export interface CalibrationState {
   backend?: string;
   saved?: boolean;
   params?: Record<string, number>;
+  progress?: CalibrationProgress;
+}
+
+export type StickSide = "left" | "right" | "up" | "down";
+
+export type StickProgress = Record<StickSide, number>;
+
+export interface CalibrationProgress {
+  left_stick: StickProgress;
+  right_stick: StickProgress;
+  left_trigger: number;
+  right_trigger: number;
+  ready: boolean;
 }
 
 export interface RgbConfig {
   version: number;
   enabled: boolean;
+  linkBrightness: boolean;
+  maxBrightness: number;
   brightness: number;
   color: string;
   saturation: number;
@@ -116,6 +138,7 @@ export interface Config {
   tweaks: Tweaks;
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
+  turnipDrivers?: TurnipDriver[];
   envPresets: EnvPreset[];
   perf?: PerfInfo;
   cpuDeviceClass: string;
@@ -131,6 +154,7 @@ export interface Config {
   bottomScreenBrightness: number;
   chargingFanPwm: number;
   sshEnabled: boolean;
+  swipeGesturesEnabled: boolean;
   mtpEnabled: boolean;
   desktopMode: string;
   desktopModes: DropdownChoice[];
@@ -142,8 +166,6 @@ export interface Config {
   game?: GameRef | null;
   selectedGame?: GameRef | null;
 }
-
-export type Capture = Record<string, { center: number; min: number; max: number; range: number }>;
 
 export interface DropdownChoice {
   data: string;

@@ -1,0 +1,68 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+LEPTON_APPID=3029110
+here="${BASH_SOURCE[0]%/*}"
+steam_root="${HOME}/.local/share/Steam"
+tool="${XDG_DATA_HOME:-${HOME}/.local/share}/lepton-armada/tool"
+
+find_lepton() {
+    local library libraries=("${steam_root}")
+    local vdf="${steam_root}/steamapps/libraryfolders.vdf"
+    if [[ -f "${vdf}" ]]; then
+        while IFS= read -r library; do
+            libraries+=("${library}")
+        done < <(sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${vdf}")
+    fi
+    for library in "${libraries[@]}"; do
+        library="${library}/steamapps/common/Lepton"
+        if [[ -x "${library}/lepton" && -d "${library}/images/rootfs" && -d "${library}/sysbake" ]]; then
+            printf '%s\n' "${library}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if ! lepton="$(find_lepton)"; then
+    echo "lepton-armada: Steam's Lepton (app ${LEPTON_APPID}) is not installed" >&2
+    if [[ -p "${HOME}/.steam/steam.pipe" ]]; then
+        timeout 2 bash -c 'printf "steam://install/%s\n" "$1" > "$2"' _ \
+            "${LEPTON_APPID}" "${HOME}/.steam/steam.pipe" || true
+    fi
+    exit 1
+fi
+
+# Simultaneous first launches would otherwise build the copy on top of each other.
+mkdir -p "${tool%/*}"
+exec {lock}>"${tool%/*}/.lock"
+flock "${lock}"
+
+# Only the launcher scripts are copied; the Android image stays in Steam's install.
+stamp="${lepton} $(< "${lepton}/version.txt") $(< "${lepton}/images/version.txt") $(find "${here}" -type f -exec sha256sum {} + | sort | sha256sum)"
+if [[ "$(cat "${tool}/.stamp" 2>/dev/null || true)" != "${stamp}" ]]; then
+    rm -rf "${tool}.new"
+    mkdir -p "${tool}.new/images"
+    cp -a "${lepton}/lepton" "${lepton}/liblepton" "${lepton}/version.txt" "${tool}.new/"
+    cp -a "${lepton}/images/rootfs_overlay" "${lepton}/images/version.txt" "${tool}.new/images/"
+    ln -s "${lepton}/images/rootfs" "${tool}.new/images/rootfs"
+    ln -s "${lepton}/sysbake" "${lepton}/sysbake.xattrs" "${tool}.new/"
+    cp -a "${here}/overlay/." "${tool}.new/images/rootfs_overlay/"
+    # lepton sources liblepton/liblepton.sh; armada's takes that name and loads Valve's.
+    mv "${tool}.new/liblepton/liblepton.sh" "${tool}.new/liblepton/liblepton.valve.sh"
+    cp "${here}/liblepton.sh" "${tool}.new/liblepton/liblepton.sh"
+    # A split install makes `pm path` print a line per APK and leaves the originals behind.
+    guest=("${tool}.new/images/rootfs_overlay/system/bin/cmd" "${tool}.new/images/rootfs_overlay/vendor/bin/fix_obb_symlink.sh")
+    sed -E -i 's#(\$\((pm|cmd_real package) path [^|)]*[^|) ])( *)#\1 | grep "/base.apk$" | head -n 1\3#' "${guest[@]}" || true
+    sed -i '\#^ *mv "${APP_PATH}"/\* /data/steam_app/#i\    find /data/steam_app -maxdepth 1 -type f -name '"'*.apk'"' -delete' "${guest[0]}" || true
+    printf '%s\n' "${stamp}" > "${tool}.new/.stamp"
+    rm -rf "${tool}"
+    mv "${tool}.new" "${tool}"
+fi
+exec {lock}>&-
+
+if [[ -z "${ARMADA_EXT_WAYLAND_DISPLAY+set}" && -S "${XDG_RUNTIME_DIR}/gamescope-secondary" ]]; then
+    export ARMADA_EXT_WAYLAND_DISPLAY=gamescope-secondary
+fi
+
+exec "${tool}/lepton" "$@"

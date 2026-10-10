@@ -10,6 +10,8 @@
         "Retroid Pocket 5 Visionox",
         "Retroid Pocket Flip2",
         "Retroid Pocket Flip2 Visionox",
+        "Retroid Pocket Mini",
+        "Retroid Pocket Mini V2",
         "Retroid Pocket 6",
         "Retroid Pocket 6 TOP-DPAD",
         "Retroid Pocket Nova"
@@ -40,6 +42,13 @@
           "right-joystick",
           "right-side"
         ]
+      }
+    },
+    {
+      "models": ["AYANEO Pocket MICRO 2"],
+      "backend": {
+        "type": "serial",
+        "device": "ttyHS2"
       }
     },
     {

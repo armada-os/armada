@@ -1,0 +1,41 @@
+From 19028ee37d5b4d0e7d204747be3bf3f9165d7562 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 8 Oct 2026 17:21:57 -0400
+Subject: [PATCH] fix(AyaneoHaptics): sleep between polls
+
+The AYANEO haptics source is output-only and its poll() returns
+immediately, so the zero poll rate it was registered with leaves the
+source loop with nothing to wait on and one core at 100%. Use the
+default driver options instead so the thread sleeps between polls.
+---
+ src/input/source/hidraw.rs | 13 ++-----------
+ 1 file changed, 2 insertions(+), 11 deletions(-)
+
+diff --git a/src/input/source/hidraw.rs b/src/input/source/hidraw.rs
+index 01d011f..ec5fb0d 100644
+--- a/src/input/source/hidraw.rs
++++ b/src/input/source/hidraw.rs
+@@ -328,18 +328,9 @@ impl HidRawDevice {
+         match driver_type {
+             DriverType::Unknown => Err("No driver for hidraw interface found".into()),
+             DriverType::AyaneoHaptics => {
+-                let options = SourceDriverOptions {
+-                    poll_rate: Duration::from_millis(0),
+-                    buffer_size: 1024,
+-                };
+                 let device = AyaneoHaptics::new(device_info.clone())?;
+-                let source_device = SourceDriver::new_with_options(
+-                    composite_device,
+-                    device,
+-                    device_info.into(),
+-                    options,
+-                    conf,
+-                );
++                let source_device =
++                    SourceDriver::new(composite_device, device, device_info.into(), conf);
+                 Ok(Self::AyaneoHaptics(source_device))
+             }
+             DriverType::Blocked => {
+-- 
+2.56.0
+

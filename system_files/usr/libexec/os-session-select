@@ -6,6 +6,20 @@ set -euo pipefail
 
 steamosctl=${ARMADA_STEAMOSCTL:-/usr/bin/steamosctl}
 
+# Steam waits for all nested processes before closing the app.
+if [[ -n "${ARMADA_PLASMA_NESTED:-}" && "${1:-gamescope}" == gamescope ]]; then
+    source "${ARMADA_PLASMA_SESSION_LIB:-/usr/lib/armada/plasma-session-lib}"
+    for pid in $(armada_plasma_nested_pids "${ARMADA_PLASMA_NESTED}"); do
+        [[ "${pid}" == "$$" ]] || kill "${pid}" 2>/dev/null || true
+    done
+    exit 0
+fi
+
+# steamos-manager is on the user's bus, not the nested desktop's own.
+if [[ -n "${ARMADA_PLASMA_NESTED:-}" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/${UID}}/bus"
+fi
+
 case "${1:-gamescope}" in
     desktop|plasma) exec "${steamosctl}" switch-to-desktop-mode ;;
     gamescope)      exec "${steamosctl}" switch-to-game-mode ;;

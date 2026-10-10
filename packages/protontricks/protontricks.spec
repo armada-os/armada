@@ -14,7 +14,6 @@ Summary:        Simple wrapper for running Winetricks commands for Proton-enable
 License:        GPL-3.0-only
 URL:            %{forgeurl}
 Source0:        %{forgeurl}/archive/%{commit}/%{name}-%{commit}.tar.gz
-Patch1:         0001-Add-support-for-ARM64-Proton.patch
 
 BuildArch:      noarch
 

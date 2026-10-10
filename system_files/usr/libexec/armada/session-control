@@ -33,10 +33,11 @@ logout_plasma() {
         "${qdbus}" org.kde.Shutdown /Shutdown org.kde.Shutdown.logout
 }
 
+source "${ARMADA_PLASMA_SESSION_LIB:-/usr/lib/armada/plasma-session-lib}"
+
 desktop_session=armada-plasma.desktop
-if [[ -r "${STEAMOS_MANAGER_STATE}" ]]; then
-    state_session=$(sed -n 's/^desktop_session[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "${STEAMOS_MANAGER_STATE}")
-    [[ "${state_session}" == armada-plasma-mobile.desktop ]] && desktop_session=armada-plasma-mobile.desktop
+if [[ "$(armada_plasma_shell "${STEAMOS_MANAGER_STATE}")" == mobile ]]; then
+    desktop_session=armada-plasma-mobile.desktop
 fi
 
 case "${1:-}" in

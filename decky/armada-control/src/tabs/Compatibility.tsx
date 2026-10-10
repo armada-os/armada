@@ -42,7 +42,7 @@ import {
   specifyCompatTool,
 } from "../lib/steamCompat";
 import type { CompatTool } from "../lib/steamCompat";
-import type { Config, EnvPreset } from "../types";
+import type { Config, EnvPreset, TurnipDriver } from "../types";
 
 const PERF_KEYS = [
   "cores", "wineTopology", "nice", "gamescopeCores",
@@ -265,6 +265,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
   const [showThunks, setShowThunks] = useState(false);
   const [showPerf, setShowPerf] = useState(false);
   const [showEnv, setShowEnv] = useState(false);
+  const [showDrivers, setShowDrivers] = useState(false);
   const [customCores, setCustomCores] = useState(false);
   const [customGsCores, setCustomGsCores] = useState(false);
   const [coresDraft, setCoresDraft] = useState<string | null>(null);
@@ -606,6 +607,19 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     patchSettings({ fexProfile: id });
   };
   const setKnob = (key: string, on: boolean) => patchSettings({ fexProfile: "custom", fexConfig: { ...fexConfig, [key]: on ? "1" : "0" } });
+  const turnipDrivers = config.turnipDrivers || [];
+  const turnipLabel = (driver: TurnipDriver) => {
+    const name = driver.id === "stable" ? t("compatibility.turnipStable") : driver.label;
+    return driver.version ? `${name} (${driver.version})` : name;
+  };
+  const turnipOptions = [
+    ...(editingDefault ? [] : [{ data: "", label: t("common.useDefault") }]),
+    ...turnipDrivers.map((driver) => ({ data: driver.id, label: turnipLabel(driver) })),
+  ];
+  const ownTurnip = editingDefault ? tweaks.global.turnipDriver : gameSettings.turnipDriver;
+  const knownTurnip = (id: unknown) => turnipDrivers.some((driver) => driver.id === id);
+  // A saved driver that is no longer installed launches on Stable, so show Stable.
+  const turnipValue = knownTurnip(ownTurnip) ? String(ownTurnip) : editingDefault || ownTurnip ? "stable" : "";
   const thunks: Record<string, boolean> = values.thunks || {};
   const setThunk = (module: string, on: boolean) => patchSettings({ thunks: { ...thunks, [module]: on } });
 
@@ -907,6 +921,17 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
           {showEnv ? t("compatibility.hideEnvironment") : t("compatibility.environment")}
         </ButtonItem>
         {showEnv ? <div className="armada-advanced-group">{envControls}</div> : null}
+        {turnipDrivers.length > 1 ? (
+          <ButtonItem layout="below" onClick={() => setShowDrivers((value) => !value)}>
+            {showDrivers ? t("compatibility.hideDrivers") : t("compatibility.drivers")}
+          </ButtonItem>
+        ) : null}
+        {showDrivers && turnipDrivers.length > 1 ? (
+          <div className="armada-advanced-group">
+            <SelectEdit label="Turnip" value={turnipValue} options={turnipOptions} onChange={(id: any) => patchSettings({ turnipDriver: String(id) || undefined })} />
+            {turnipValue ? <div className="armada-compat-note">{t(turnipValue.startsWith("user:") ? "compatibility.turnipUserNote" : "compatibility.turnipBuiltinNote")}</div> : null}
+          </div>
+        ) : null}
       </PanelSection>
       {!editingDefault ? (
         <PanelSection>

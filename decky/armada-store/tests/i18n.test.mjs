@@ -136,6 +136,9 @@ assert.equal(translate("zh-CN", "jobs.resolving"), "正在查找版本");
 assert.equal(translate("en", "actions.replaceVersion", { kind: "Flatpak" }), "Replace Flatpak version");
 assert.equal(translate("zh-CN", "actions.replaceVersion", { kind: "Flatpak" }), "替换 Flatpak 版本");
 assert.equal(translate("en", "actions.replaceVersion", { kind: 0 }), "Replace 0 version");
+// The Android pager label interpolates the page number in both locales, including zero.
+assert.equal(translate("en", "android.page", { page: 0 }), "Page 0");
+assert.equal(translate("zh-CN", "android.page", { page: 1 }), "第 1 页");
 
 const probeKey = "__interpolate_probe";
 localeStrings.en[probeKey] = "{a} + {a} = {b}";

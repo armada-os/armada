@@ -14,6 +14,8 @@ fex-sysroot-macros.inc
 *.cpio
 *.img
 *.so
+# built by hand and checked by hash, see lepton/build-android.sh
+!lepton/prebuilt/**/*.so
 
 # ccache for build-local.sh runs
 .ccache/

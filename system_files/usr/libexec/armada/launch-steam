@@ -30,6 +30,9 @@ if [[ -d "${steam_runtime_bin}" ]]; then
     export PATH="${steam_runtime_bin}:${PATH}"
 fi
 export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
+# Steam restores these for compat tools, which otherwise start with no PATH
+export SYSTEM_PATH="${PATH}"
+export SYSTEM_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 
 # prune the Proton 11 registration earlier releases wrote; the internal-name
 # match keeps user-created tool dirs safe

@@ -1,0 +1,11 @@
+{
+    "file_format_version": "1.0.0",
+    "layer": {
+        "name": "VK_LAYER_fossilize",
+        "type": "GLOBAL",
+        "library_path": "/usr/share/guestos/android/vendor/vulkan_layers/libVkLayer_fossilize.so",
+        "api_version": "1.3.136",
+        "implementation_version": "1",
+        "description": "Fossilize capture layer for Lepton's Android container"
+    }
+}
