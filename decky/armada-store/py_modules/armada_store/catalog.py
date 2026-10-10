@@ -206,6 +206,7 @@ def catalog_payload():
             "icon": app.get("icon") or "",
             "note": app.get("note") or "",
             "installType": install.get("type") or "",
+            "imported": bool(install.get("path")),
             "canInstall": app.get("canInstall", True),
             "desktopOnly": bool(app.get("desktopOnly")),
             "hasConfig": bool(app.get("config")),
