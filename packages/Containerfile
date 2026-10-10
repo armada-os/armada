@@ -37,6 +37,13 @@ RUN ./build.sh && /src/scrub-scratch.sh
 FROM scratch AS out-armada-splash
 COPY --from=pkg-armada-splash /work/out/ /rpms/
 
+FROM builder-base AS pkg-armada-logos
+COPY armada-logos/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-armada-logos
+COPY --from=pkg-armada-logos /work/out/ /rpms/
 
 FROM builder-base AS pkg-gamescope
 COPY TERRA.env /src/
