@@ -67,11 +67,15 @@ export function McuCalibration({ state, close, onBusy, calibrateTriggers, closin
   const measuring = session?.state === "measuring" || session?.state === "measured";
   const overlay = measuring && session.phase === "center"
     ? centerOverlay(session.progress.coveredDirections, session.progress.pendingDirection) : undefined;
+  // The resting reference belongs to calibration-mode reports, not normal output
+  // after the backend ends capture (including the measured/Continue screen).
+  const origin = session?.state === "measuring" && session.phase === "center"
+    ? session.progress.physicalReference : undefined;
   let bar: OverlayBar | undefined;
   if (measuring) {
     const p = session.progress;
     if (session.phase === "center") {
-      const settling = !!p.pendingDirection;
+      const settling = p.stage === "reference" || !!p.pendingDirection;
       const value = settling ? p.stableSamples || 0 : p.directionCount || 0;
       const goal = settling ? p.stableGoal || 30 : p.directionGoal || 8;
       bar = { label: settling ? t("calibration.returnProgress", { stable: value, goal })
@@ -88,6 +92,9 @@ export function McuCalibration({ state, close, onBusy, calibrateTriggers, closin
     : state.calibration?.triggers ? "calibration.chooseSticksOrTriggers" : "calibration.sticksOnly");
   if (measuring) description = t(session.phase === "center" ? "calibration.centerStep" : "calibration.rangeStep",
     { step: session.step + 1, total: session.totalSteps });
+  if (measuring && session.phase === "center" && session.progress.stage === "reference") {
+    description = t("calibration.centerReference");
+  }
   if (session?.state === "ready") description = t("calibration.readyToApply");
   if (applying) description = t("calibration.mcuApplying");
   if (session?.state === "applied") description = t("calibration.applied");
@@ -98,8 +105,10 @@ export function McuCalibration({ state, close, onBusy, calibrateTriggers, closin
     <DialogBody>
       <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "22px" }}>
         <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state}
+          origin={session?.stick === "left" ? origin : undefined}
           overlay={session?.stick === "left" ? overlay : undefined} bar={session?.stick === "left" ? bar : undefined} />
         <StickPlot title={t("calibration.rightStick")} xName="right_x" yName="right_y" state={state}
+          origin={session?.stick === "right" ? origin : undefined}
           overlay={session?.stick === "right" ? overlay : undefined} bar={session?.stick === "right" ? bar : undefined} />
       </div>
       {!measuring && <div style={{ ...gridTwoCol, marginBottom: "16px" }}>

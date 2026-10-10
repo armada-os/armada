@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { centerOverlay, rangeProgress } from "../src/lib/mcuCalibration.ts";
+import { normalizedValue } from "../src/lib/calibration.ts";
+import type { CalibrationState } from "../src/types.ts";
+
+test("centre display uses the measured physical reference without altering normal display", () => {
+  const state = { controls: { right_x: { value: -190, min: -1024, max: 1024 } } } as unknown as CalibrationState;
+  assert.equal(normalizedValue(state, "right_x", -190), 0);
+  assert.equal(normalizedValue(state, "right_x"), -190 / 1024);
+  state.controls.right_x.value = 410;
+  assert.equal(normalizedValue(state, "right_x", -190), 600 / 1024);
+});
 
 test("centerOverlay renders physical directions from either stick without remapping", () => {
   const overlay = centerOverlay(["up", "left"], "down-right");

@@ -121,6 +121,8 @@ export interface McuCalibrationSession {
   stick: "left" | "right";
   phase: "center" | "range";
   progress: {
+    stage?: "reference" | "excursion" | "settling";
+    physicalReference?: [number, number] | null;
     coveredDirections?: string[];
     directionCount?: number;
     directionGoal?: number;

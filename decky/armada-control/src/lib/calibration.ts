@@ -12,9 +12,9 @@ export function controlRange(state: CalibrationState | null, name: string): { mi
   return { min, max };
 }
 
-export function normalizedValue(state: CalibrationState | null, name: string): number {
+export function normalizedValue(state: CalibrationState | null, name: string, origin = 0): number {
   const { min, max } = controlRange(state, name);
-  const value = controlValue(state, name);
+  const value = controlValue(state, name) - origin;
   const side = value < 0 ? Math.abs(min) : max;
   if (!side) return 0;
   return Math.max(-1, Math.min(1, value / side));

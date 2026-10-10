@@ -149,6 +149,9 @@ class CenterTracker:
         self.trace = []
         self.logical_min = [None, None]
         self.logical_max = [None, None]
+        self.reference_window = []
+        self.logical_reference = None
+        self.raw_reference = None
 
     def observe(self, sample):
         self.trace.append(dict(sample))
@@ -156,7 +159,25 @@ class CenterTracker:
             value = sample[key]
             self.logical_min[axis] = value if self.logical_min[axis] is None else min(self.logical_min[axis], value)
             self.logical_max[axis] = value if self.logical_max[axis] is None else max(self.logical_max[axis], value)
-        direction = reached_direction(self.stick, sample["logicalX"], sample["logicalY"])
+        if self.logical_reference is None:
+            # Establish the excursion origin at rest, not at the old calibration's
+            # logical zero. This reference never becomes the sensor centre candidate.
+            if any(abs(sample[key]) > CENTER_RETURN_MAX for key in ("logicalX", "logicalY")):
+                self.reference_window.clear()
+                return
+            self.reference_window.append(dict(sample))
+            while any(max(r[key] for r in self.reference_window) - min(r[key] for r in self.reference_window)
+                      > CENTER_STABLE_RAW_SPREAD for key in ("rawX", "rawY")):
+                self.reference_window.pop(0)
+            if len(self.reference_window) >= CENTER_STABLE_SAMPLE_GOAL:
+                self.logical_reference = tuple(sum(r[key] for r in self.reference_window) // len(self.reference_window)
+                                               for key in ("logicalX", "logicalY"))
+                self.raw_reference = tuple(sum(r[key] for r in self.reference_window) // len(self.reference_window)
+                                           for key in ("rawX", "rawY"))
+                self.reference_window.clear()
+            return
+        direction = reached_direction(self.stick, sample["logicalX"] - self.logical_reference[0],
+                                      sample["logicalY"] - self.logical_reference[1])
         if direction and direction not in self.covered and self.pending is None:
             self.pending = direction
             self.stable = 0
@@ -190,9 +211,12 @@ class CenterTracker:
             "directionCount": len(self.covered),
             "directionGoal": len(CENTER_DIRECTIONS),
             "pendingDirection": self.pending,
-            "stableSamples": self.stable,
+            "stableSamples": self.stable if self.logical_reference is not None else len(self.reference_window),
             "stableGoal": CENTER_STABLE_SAMPLE_GOAL,
-            "stage": "settling" if self.pending else "excursion",
+            "stage": "reference" if self.logical_reference is None else "settling" if self.pending else "excursion",
+            "logicalReference": list(self.logical_reference) if self.logical_reference is not None else None,
+            "physicalReference": list(physical_axes(self.stick, *self.logical_reference))
+                                 if self.logical_reference is not None else None,
             "logicalMinimum": list(self.logical_min),
             "logicalMaximum": list(self.logical_max),
             "thresholds": {"cardinalExclusive": CENTER_CARDINAL_MIN,
@@ -210,6 +234,7 @@ class CenterTracker:
         center = (sum(value[0] for value in self.returns) // len(self.returns),
                   sum(value[1] for value in self.returns) // len(self.returns))
         return {"centerWords": list(center), "centerHex": "".join(f"{word:04X}" for word in center),
+                "excursionReference": {"logical": list(self.logical_reference), "raw": list(self.raw_reference)},
                 "returnSpread": [spread_x, spread_y],
                 "returns": [list(value) for value in self.returns]}
 
@@ -477,13 +502,18 @@ class CaptureSession:
             return f"{self.stick} {self.phase}: no 26-byte raw reports received"
         progress = self.tracker.progress()
         if self.phase == "center":
+            if progress["stage"] == "reference":
+                return (f"{self.stick} center: resting reference did not settle "
+                        f"({progress['stableSamples']}/{CENTER_STABLE_SAMPLE_GOAL} stable reports); "
+                        f"logical X/Y min {progress['logicalMinimum']}, max {progress['logicalMaximum']}")
             if progress["pendingDirection"]:
                 return (f"{self.stick} center: return did not settle after {progress['pendingDirection']} "
                         f"({progress['stableSamples']}/{CENTER_STABLE_SAMPLE_GOAL} stable reports)")
             return (f"{self.stick} center: excursion coverage incomplete "
                     f"({progress['directionCount']}/8); logical X/Y min {progress['logicalMinimum']}, "
                     f"max {progress['logicalMaximum']}; requires >{CENTER_CARDINAL_MIN} cardinal "
-                    f"or >{CENTER_DIAGONAL_MIN} on both diagonal axes")
+                    f"or >{CENTER_DIAGONAL_MIN} on both diagonal axes relative to resting reference "
+                    f"{progress['logicalReference']}")
         return (f"{self.stick} range: coverage incomplete; {progress['turns']}/{RANGE_TURN_GOAL} turns, "
                 f"{progress['coveredSectors']}/{RANGE_BIN_COUNT} sectors, "
                 f"{progress['coveredHeadings']}/8 headings")

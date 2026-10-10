@@ -7,28 +7,31 @@ export type OverlayBar = { label: string; fraction: number };
 
 const COMPASS_ANGLES = [270, 315, 0, 45, 90, 135, 180, 225];
 
-function RimDots({ overlay }: { overlay: StickOverlay }) {
+function RimDirections({ overlay }: { overlay: StickOverlay }) {
   return (
     <>
       {overlay.dots.map((filled, index) => {
         const angle = (COMPASS_ANGLES[index] * Math.PI) / 180;
         const pending = overlay.pendingIndex === index;
         return (
-          <div
+          <svg
             key={index}
+            viewBox="0 0 14 14"
+            aria-hidden="true"
             style={{
               position: "absolute",
-              width: "10px",
-              height: "10px",
-              margin: "-5px 0 0 -5px",
-              borderRadius: "50%",
-              background: filled ? "#2677d8" : "rgba(255,255,255,0.10)",
-              border: pending ? "2px solid #ffffff" : "1px solid rgba(255,255,255,0.35)",
+              width: "14px",
+              height: "14px",
+              margin: "-7px 0 0 -7px",
+              transform: `rotate(${COMPASS_ANGLES[index]}deg)`,
               left: `${50 + 47 * Math.cos(angle)}%`,
               top: `${50 + 47 * Math.sin(angle)}%`,
               animation: pending ? "armada-cal-pulse 1.1s ease-in-out infinite" : undefined,
             }}
-          />
+          >
+            <path d="M2 2 L12 7 L2 12 Z" fill={filled ? "#2677d8" : "rgba(255,255,255,0.10)"}
+              stroke={pending ? "#fff" : "rgba(255,255,255,0.6)"} strokeWidth={pending ? 2 : 1} />
+          </svg>
         );
       })}
     </>
@@ -90,9 +93,9 @@ function Marker({ progress, style }: { progress: number; style?: React.CSSProper
   );
 }
 
-export function StickPlot({ title, xName, yName, state, progress, overlay, bar }: { title: string; xName: string; yName: string; state: CalibrationState | null; progress?: StickProgress; overlay?: StickOverlay; bar?: OverlayBar }) {
-  const x = normalizedValue(state, xName);
-  const y = normalizedValue(state, yName);
+export function StickPlot({ title, xName, yName, state, progress, overlay, bar, origin }: { title: string; xName: string; yName: string; state: CalibrationState | null; progress?: StickProgress; overlay?: StickOverlay; bar?: OverlayBar; origin?: [number, number] | null }) {
+  const x = normalizedValue(state, xName, origin?.[0]);
+  const y = normalizedValue(state, yName, origin?.[1]);
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ marginBottom: "4px", fontSize: "15px", fontWeight: 600, opacity: 0.9, textAlign: "center" }}>{title}</div>
@@ -130,7 +133,7 @@ export function StickPlot({ title, xName, yName, state, progress, overlay, bar }
             top: `${50 + y * 44}%`,
           }}
         />
-        {overlay && <RimDots overlay={overlay} />}
+        {overlay && <RimDirections overlay={overlay} />}
       </div>
       </div>
       {bar && <OverlayBar bar={bar} />}

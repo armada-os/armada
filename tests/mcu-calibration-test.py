@@ -18,6 +18,53 @@ import input_calibration_policy as policy
 
 class CalculationTests(unittest.TestCase):
     @staticmethod
+    def settle_reference(tracker, logical=(0, 0), raw=(32768, 32768)):
+        for _ in range(rsinput_calibration.CENTER_STABLE_SAMPLE_GOAL):
+            tracker.observe(dict(logicalX=logical[0], logicalY=logical[1], rawX=raw[0], rawY=raw[1]))
+
+    def test_center_excursions_are_translation_invariant(self):
+        directions = [(-800, 0), (800, 0), (0, -800), (0, 800),
+                      (-600, -600), (600, -600), (-600, 600), (600, 600)]
+        for stick in ('left', 'right'):
+            results = []
+            for origin in ((0, 0), (190, -130), (-120, 280)):
+                tracker = rsinput_calibration.CenterTracker(stick)
+                self.settle_reference(tracker, origin, (32961, 32638))
+                self.assertEqual(tracker.progress()['directionCount'], 0)
+                for dx, dy in directions:
+                    tracker.observe(dict(logicalX=origin[0]+dx, logicalY=origin[1]+dy,
+                                         rawX=32961+dx, rawY=32638+dy))
+                    self.assertIsNotNone(tracker.pending)
+                    self.settle_reference(tracker, origin, (32961, 32638))
+                self.assertTrue(tracker.complete)
+                results.append(tracker.result()['centerWords'])
+            self.assertEqual(results, [[32961, 32638]]*3)
+
+    def test_odin_offset_does_not_block_upper_right_excursion(self):
+        tracker = rsinput_calibration.CenterTracker('right')
+        # Physical rest (-190,+130); a (+600,-600) excursion formerly missed X.
+        self.settle_reference(tracker, (190, -130), (32961, 32638))
+        with patch.object(policy, 'mcu_node', return_value=None):
+            self.assertNotEqual(rsinput_calibration.reached_direction('right', -410, 470), 'up-right')
+            tracker.observe(dict(logicalX=-410, logicalY=470, rawX=32400, rawY=33200))
+            self.assertEqual(tracker.pending, 'up-right')
+            self.assertEqual(tracker.progress()['physicalReference'], [-190, 130])
+        self.settle_reference(tracker, (190, -130), (32961, 32638))
+        self.assertEqual(tracker.returns, [(32961, 32638)])
+
+    def test_reference_rejects_deflection_and_movement_and_never_counts_a_return(self):
+        tracker = rsinput_calibration.CenterTracker('right')
+        self.settle_reference(tracker, (800, 0), (34000, 32768))
+        self.assertIsNone(tracker.logical_reference)
+        for i in range(100):
+            tracker.observe(dict(logicalX=100, logicalY=-50, rawX=32768+i*2, rawY=32768))
+        self.assertIsNone(tracker.logical_reference)
+        self.settle_reference(tracker, (100, -50), (32961, 32638))
+        self.assertEqual(tracker.logical_reference, (100, -50))
+        self.assertEqual(tracker.returns, [])
+        self.assertFalse(tracker.complete)
+
+    @staticmethod
     def range_sample(degree, radius, index=0):
         angle = math.radians(degree)
         return {"timestampNs": index * 4_000_000, "generation": index + 1,
@@ -60,6 +107,7 @@ class CalculationTests(unittest.TestCase):
 
     def test_moving_center_is_rejected_then_settled_window_is_averaged(self):
         tracker = rsinput_calibration.CenterTracker('left')
+        self.settle_reference(tracker)
         with patch.object(policy, 'mcu_node', return_value=None):
             tracker.observe(dict(logicalX=800, logicalY=0, rawX=33568, rawY=32768))
             for i in range(120):
@@ -76,6 +124,7 @@ class CalculationTests(unittest.TestCase):
 
     def test_center_drift_and_leaving_center_restart_settling(self):
         tracker = rsinput_calibration.CenterTracker('left')
+        self.settle_reference(tracker)
         with patch.object(policy, 'mcu_node', return_value=None):
             tracker.observe(dict(logicalX=800, logicalY=0, rawX=33568, rawY=32768))
             for i in range(100):
@@ -102,6 +151,7 @@ class CalculationTests(unittest.TestCase):
         assert decoded["generation"] == 2 and decoded["dropped"] == 7
 
         center = rsinput_calibration.CenterTracker("left")
+        self.settle_reference(center)
         physical_directions = {
             "left": (-800, 0), "right": (800, 0), "up": (0, -800), "down": (0, 800),
             "up-left": (-600, -600), "up-right": (600, -600),
@@ -403,8 +453,12 @@ class CaptureTests(unittest.TestCase):
             payload = bytearray(26)
             rsinput_calibration.struct.pack_into('<hh', payload, 6, 500, 0)
             rsinput_calibration.struct.pack_into('<HHH', payload, 14, 34000, 32768, 40000)
-            records = [rsinput_calibration.SAMPLE.pack(i * 4_000_000, generation, i, 26, payload, 0, 1, 0)
-                       for i, generation in ((1, 0xffffffff), (2, 0))]
+            rest = bytearray(26)
+            rsinput_calibration.struct.pack_into('<HHH', rest, 14, 32768, 32768, 40000)
+            records = [rsinput_calibration.SAMPLE.pack(i * 4_000_000, 0xffffffe1+i, i+1, 26, rest, 0, 1, 0)
+                       for i in range(30)]
+            records += [rsinput_calibration.SAMPLE.pack(i * 4_000_000, generation, i+1, 26, payload, 0, 1, 0)
+                        for i, generation in ((30, 0xffffffff), (31, 0))]
             with patch.object(policy, 'device_path', return_value='/dev/test'), \
                  patch.object(policy, 'capture_configuration', return_value={'kernel': 'fixture'}), \
                  patch.object(rsinput_calibration, 'sync_directory'), \
@@ -412,7 +466,7 @@ class CaptureTests(unittest.TestCase):
                  patch.object(rsinput_calibration.os, 'read', side_effect=records), \
                  patch.object(rsinput_calibration.os, 'write', return_value=64) as write, \
                  patch.object(rsinput_calibration.os, 'close'), \
-                 patch.object(rsinput_calibration.time, 'monotonic', side_effect=[0, 0, 0, 121]), \
+                 patch.object(rsinput_calibration.time, 'monotonic', side_effect=[0] * 33 + [121]), \
                  patch.object(rsinput_calibration.select, 'poll') as poll:
                 poll.return_value.poll.return_value = [(99, 1)]
                 capture._run()
@@ -427,7 +481,7 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(artifact['abiRecordsHex'], [raw.hex() for raw in records])
             self.assertEqual(artifact['configuration'], {'kernel': 'fixture'})
             self.assertEqual(artifact['state']['error'], state['error'])
-            self.assertEqual(len(artifact['trace']), 2)
+            self.assertEqual(len(artifact['trace']), rsinput_calibration.CENTER_STABLE_SAMPLE_GOAL + 2)
             self.assertIsNone(artifact['result'])
             self.assertEqual([rsinput_calibration.COMMAND.unpack(c.args[1])[1] for c in write.call_args_list],
                              [0xA0, 0xA0])
@@ -436,6 +490,8 @@ class CaptureTests(unittest.TestCase):
         capture = rsinput_calibration.CaptureSession('test', 'left', 'center')
         self.assertIn('no 26-byte', capture.timeout_reason())
         capture.state['rawSampleCount'] = 1
+        self.assertIn('resting reference did not settle', capture.timeout_reason())
+        CalculationTests.settle_reference(capture.tracker)
         capture.tracker.observe(dict(logicalX=800, logicalY=0, rawX=34000, rawY=32768))
         self.assertIn('return did not settle', capture.timeout_reason())
         capture = rsinput_calibration.CaptureSession('test', 'right', 'range', (32768, 32768))
