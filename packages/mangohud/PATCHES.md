@@ -20,3 +20,5 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0008-mangoapp-show-active-upscaler.patch`
   source: armada
+- `patches/0009-mangoapp-skip-the-focus-query-while-hidden.patch`
+  source: armada
