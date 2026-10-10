@@ -106,6 +106,22 @@ def read_text(path):
         return ""
 
 
+def native_resolution(drm=Path("/sys/class/drm")):
+    """The built-in panel's preferred mode as [width, height], landscape."""
+    for connector in sorted(drm.glob("card*-*")):
+        if not any(kind in connector.name for kind in ("-DSI-", "-eDP-")):
+            continue
+        try:
+            if (connector / "status").read_text().strip() != "connected":
+                continue
+            mode = (connector / "modes").read_text().split("\n", 1)[0].strip()
+            width, height = (int(value) for value in mode.split("x", 1))
+        except (OSError, ValueError):
+            continue
+        return [max(width, height), min(width, height)]
+    return None
+
+
 def swipe_gestures_enabled():
     try:
         return bool(call("get_swipe_gestures_enabled")["enabled"])

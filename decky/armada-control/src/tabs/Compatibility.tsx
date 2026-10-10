@@ -68,12 +68,28 @@ function cpulistError(text: string, cpuCount: number): string {
   return seen.size ? "" : t("compatibility.enterCores");
 }
 
-const resolutionOptions = [
-  { data: "Default", label: "Default" },
-  { data: "Native", label: "Native" },
+const fixedResolutionOptions = [
   { data: "1280x720", label: "1280x720" },
   { data: "960x540", label: "960x540" },
 ];
+
+// A panel that is not 16:9 also gets lower resolutions with its own aspect
+// ratio (e.g. 1920x1200 and 1280x800 for 2560x1600), ahead of the 16:9 ones.
+export function resolutionOptions(native?: [number, number] | null) {
+  const options = [
+    { data: "Default", label: "Default" },
+    { data: "Native", label: "Native" },
+  ];
+  if (native && native[0] > 0 && native[1] > 0 && Math.abs(native[0] / native[1] - 16 / 9) > 0.01) {
+    const aspect = native[0] / native[1];
+    for (const height of [1200, 900, 800, 600]) {
+      if (height >= native[1]) continue;
+      const value = `${Math.round((height * aspect) / 2) * 2}x${height}`;
+      options.push({ data: value, label: value });
+    }
+  }
+  return [...options, ...fixedResolutionOptions.filter((fixed) => !options.some((option) => option.data === fixed.data))];
+}
 const fexKnobs = [
   { key: "TSOEnabled", label: "TSO Enabled" },
   { key: "X87ReducedPrecision", label: "X87 Reduced Precision" },
@@ -886,12 +902,12 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
                 }}
               />
             )}
-            <SelectEdit label={t("compatibility.gameResolution")} value={defaultResolution} options={resolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamDefaultResolution} />
+            <SelectEdit label={t("compatibility.gameResolution")} value={defaultResolution} options={resolutionOptions(config.nativeResolution).map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamDefaultResolution} />
           </>
         ) : (
           <>
             <SelectEdit labelBelow label={t("compatibility.tool")} value={currentTool} options={perGameToolOptions} onChange={onSelectPerGameTool} />
-            <SelectEdit label={t("compatibility.gameResolution")} value={resolution} options={resolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamResolution} />
+            <SelectEdit label={t("compatibility.gameResolution")} value={resolution} options={resolutionOptions(config.nativeResolution).map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamResolution} />
           </>
         )}
         {resolutionMessage ? <Field label={t("common.status")} description={resolutionMessage} /> : null}
