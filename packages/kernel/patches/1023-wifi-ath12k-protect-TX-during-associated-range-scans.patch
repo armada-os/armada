@@ -1,0 +1,183 @@
+From: danyi <308664957+mydanyi@users.noreply.github.com>
+Subject: [PATCH] wifi: ath12k: protect TX during associated range scans
+
+Run associated range scans as one-channel batches. Existing TX is
+paused and drained before the scan starts, and the existing
+min_rest_time settle is kept before waking the device into the
+communication window.
+
+The host timeout covers the wait periods, and recovery owns the pause
+state.
+
+---
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -7,6 +7,7 @@
+ #include <net/mac80211.h>
+ #include <net/cfg80211.h>
+ #include <linux/etherdevice.h>
++#include <linux/delay.h>
+ 
+ #include "mac.h"
+ #include "core.h"
+@@ -5357,11 +5358,55 @@
+ 	return i;
+ }
+ 
++static void ath12k_mac_scan_range_tx_resume(struct ath12k *ar)
++{
++	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
++
++	if (!ar->scan.range_tx_paused)
++		return;
++
++	/* completion may precede firmware home-channel return */
++	msleep(ar->scan.range_req->min_rest_time);
++
++	ar->scan.range_tx_paused = false;
++	ieee80211_wake_queues(ath12k_ar_to_hw(ar));
++}
++
++static int ath12k_mac_scan_range_tx_pause(struct ath12k *ar)
++{
++	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
++	long time_left;
++
++	lockdep_assert_wiphy(hw->wiphy);
++
++	if (!ar->scan.arvif->is_up)
++		return 0;
++
++	if (ieee80211_queue_stopped(hw, 0))
++		return -EBUSY;
++
++	ar->scan.range_tx_paused = true;
++	ieee80211_stop_queues(hw);
++	synchronize_net();
++
++	time_left = wait_event_timeout(ar->dp.tx_empty_waitq,
++				       atomic_read(&ar->dp.num_tx_pending) == 0,
++				       ATH12K_FLUSH_TIMEOUT);
++	if (!time_left) {
++		ath12k_mac_scan_range_tx_resume(ar);
++		return -ETIMEDOUT;
++	}
++
++	return 0;
++}
++
+ static void ath12k_mac_scan_range_free(struct ath12k *ar)
+ {
+ 	struct ath12k_wmi_scan_req_arg *req;
+ 
+ 	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
++
++	ath12k_mac_scan_range_tx_resume(ar);
+ 
+ 	spin_lock_bh(&ar->data_lock);
+ 	req = ar->scan.range_req;
+@@ -5394,6 +5439,10 @@
+ 					arg->num_chan - next,
+ 					ar->scan.range_split_freq);
+ 
++	/* Associated firmware batches need bounded off-channel time. */
++	if (ar->scan.arvif->is_up)
++		n = 1;
++
+ 	part = kzalloc_flex(*part, chan_list, n);
+ 	if (!part)
+ 		return -ENOMEM;
+@@ -5405,7 +5454,17 @@
+ 
+ 	ar->scan.range_next = next + n;
+ 
+-	ret = ath12k_start_scan(ar, part);
++	/* Firmware needs home-channel rest between associated batches. */
++	if (next && ar->scan.arvif->is_up)
++		msleep(arg->min_rest_time);
++
++	ret = ath12k_mac_scan_range_tx_pause(ar);
++	if (!ret) {
++		ret = ath12k_start_scan(ar, part);
++		if (ret)
++			ath12k_mac_scan_range_tx_resume(ar);
++	}
++
+ 	kfree(part);
+ 
+ 	return ret;
+@@ -5563,6 +5622,8 @@
+ 
+ 	lockdep_assert_wiphy(wiphy);
+ 
++	ath12k_mac_scan_range_tx_resume(ar);
++
+ 	arvif = ar->scan.arvif;
+ 
+ 	/* The scan vdev has already been deleted. This can occur when a
+@@ -5987,9 +6048,13 @@
+ 	max_scan_time = arg->max_scan_time;
+ 	split_freq = ath12k_mac_scan_split_freq(ar);
+ 	if (split_freq &&
+-	    ath12k_mac_scan_range_count(arg->chan_list, arg->num_chan,
+-					split_freq) < arg->num_chan)
++	    (ath12k_mac_scan_range_count(arg->chan_list, arg->num_chan,
++					 split_freq) < arg->num_chan ||
++	     arvif->is_up))
+ 		split_scan = true;
++
++	if (split_scan && arvif->is_up)
++		max_scan_time += 2 * arg->min_rest_time * arg->num_chan;
+ 
+ 	if (split_scan) {
+ 		spin_lock_bh(&ar->data_lock);
+diff --git a/drivers/net/wireless/ath/ath12k/core.c b/drivers/net/wireless/ath/ath12k/core.c
+--- a/drivers/net/wireless/ath/ath12k/core.c
++++ b/drivers/net/wireless/ath/ath12k/core.c
+@@ -1461,6 +1461,7 @@
+ 	struct ath12k *ar;
+ 	struct ath12k_hw *ah;
+ 	int i, j;
++	bool scan_tx_paused;
+ 
+ 	spin_lock_bh(&ab->base_lock);
+ 	ab->stats.fw_crash_counter++;
+@@ -1477,12 +1478,25 @@
+ 
+ 		wiphy_lock(ah->hw->wiphy);
+ 
++		scan_tx_paused = false;
++		for (j = 0; j < ah->num_radio; j++) {
++			ar = &ah->radio[j];
++			if (ar->scan.range_tx_paused) {
++				/* Recovery now owns the TX pause; keep the
++				 * queues stopped until the normal recovery
++				 * wake.
++				 */
++				ar->scan.range_tx_paused = false;
++				scan_tx_paused = true;
++			}
++		}
++
+ 		/* If queue 0 is stopped, it is safe to assume that all
+ 		 * other queues are stopped by driver via
+ 		 * ieee80211_stop_queues() below. This means, there is
+ 		 * no need to stop it again and hence continue
+ 		 */
+-		if (ieee80211_queue_stopped(ah->hw, 0)) {
++		if (ieee80211_queue_stopped(ah->hw, 0) && !scan_tx_paused) {
+ 			wiphy_unlock(ah->hw->wiphy);
+ 			continue;
+ 		}
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -640,6 +640,7 @@
+ 		struct delayed_work timeout;
+ 		enum ath12k_scan_state state;
+ 		bool is_roc;
++		bool range_tx_paused;
+ 		int roc_freq;
+ 		bool roc_notify;
+ 		struct wiphy_work vdev_clean_wk;

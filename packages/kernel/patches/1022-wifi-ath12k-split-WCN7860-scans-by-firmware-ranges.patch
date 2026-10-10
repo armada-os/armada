@@ -1,0 +1,367 @@
+From: danyi <308664957+mydanyi@users.noreply.github.com>
+Subject: [PATCH] wifi: ath12k: split WCN7860 scans by firmware ranges
+
+WCN7860 firmware can describe two PHY frequency ranges even when the
+driver exposes one pdev and one logical radio in DBS_OR_SBS mode. Split
+requests at the firmware-derived range boundary only for this hardware
+configuration; leave other hardware modes on their existing scan path.
+
+Channel, SSID and IE order is preserved, exactly one final completion
+is reported, and aborted or failed scans are cleaned up.
+
+---
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -5290,6 +5290,127 @@
+ 	return NULL;
+ }
+ 
++static int ath12k_start_scan(struct ath12k *ar,
++			     struct ath12k_wmi_scan_req_arg *arg);
++
++static u32 ath12k_mac_scan_split_freq(struct ath12k *ar)
++{
++	struct ath12k_base *ab = ar->ab;
++	u32 low[2] = { 0 }, high[2] = { 0 };
++	u32 boundary;
++	int i;
++
++	if (ab->hw_rev != ATH12K_HW_WCN7860_HW20 ||
++	    ab->num_radios != 1 || ar->ah->num_radio != 1 ||
++	    !ab->hw_params->single_pdev_only ||
++	    ab->wmi_ab.preferred_hw_mode != WMI_HOST_HW_MODE_DBS_OR_SBS)
++		return 0;
++
++	for (i = 0; i < ARRAY_SIZE(ab->wmi_ab.svc_ext_info.mac_phy_info); i++) {
++		struct ath12k_svc_ext_mac_phy_info *info =
++			&ab->wmi_ab.svc_ext_info.mac_phy_info[i];
++		u32 phy_id = info->phy_id;
++
++		if (info->hw_mode_config_type != WMI_HOST_HW_MODE_DBS_OR_SBS ||
++		    phy_id >= 2 ||
++		    !(info->supported_bands & WMI_HOST_WLAN_5GHZ_CAP))
++			continue;
++
++		low[phy_id] = info->hw_freq_range.low_5ghz_freq;
++		high[phy_id] = info->hw_freq_range.high_5ghz_freq;
++	}
++
++	if (!low[0] || !low[1] || low[0] >= high[0] || low[1] >= high[1] ||
++	    high[0] == high[1])
++		return 0;
++
++	boundary = min(high[0], high[1]);
++	if (boundary <= max(low[0], low[1]) || boundary >= 5925)
++		return 0;
++
++	return boundary;
++}
++
++static u32 ath12k_mac_scan_range_class(u32 freq, u32 split_freq)
++{
++	if (freq < 3000)
++		return 0;
++	if (freq < 5925)
++		return freq <= split_freq ? 1 : 2;
++	return 3;
++}
++
++static u32 ath12k_mac_scan_range_count(const u32 *freqs, u32 n_freqs,
++				       u32 split_freq)
++{
++	u32 cls, i;
++
++	if (!split_freq || !n_freqs)
++		return n_freqs;
++
++	cls = ath12k_mac_scan_range_class(freqs[0], split_freq);
++	for (i = 1; i < n_freqs; i++) {
++		if (ath12k_mac_scan_range_class(freqs[i], split_freq) != cls)
++			break;
++	}
++
++	return i;
++}
++
++static void ath12k_mac_scan_range_free(struct ath12k *ar)
++{
++	struct ath12k_wmi_scan_req_arg *req;
++
++	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
++
++	spin_lock_bh(&ar->data_lock);
++	req = ar->scan.range_req;
++	ar->scan.range_req = NULL;
++	ar->scan.range_next = 0;
++	ar->scan.range_split_freq = 0;
++	spin_unlock_bh(&ar->data_lock);
++
++	if (!req)
++		return;
++
++	kfree(req->extraie.ptr);
++	kfree(req);
++}
++
++static int ath12k_mac_scan_range_start(struct ath12k *ar)
++{
++	struct ath12k_wmi_scan_req_arg *arg = ar->scan.range_req;
++	struct ath12k_wmi_scan_req_arg *part;
++	u32 next = ar->scan.range_next;
++	u32 n;
++	int ret;
++
++	lockdep_assert_wiphy(ath12k_ar_to_hw(ar)->wiphy);
++
++	if (!arg || next >= arg->num_chan)
++		return -EINVAL;
++
++	n = ath12k_mac_scan_range_count(arg->chan_list + next,
++					arg->num_chan - next,
++					ar->scan.range_split_freq);
++
++	part = kzalloc_flex(*part, chan_list, n);
++	if (!part)
++		return -ENOMEM;
++
++	memcpy(part, arg, sizeof(*part));
++	part->num_chan = n;
++	memcpy(part->chan_list, arg->chan_list + next,
++	       n * sizeof(*part->chan_list));
++
++	ar->scan.range_next = next + n;
++
++	ret = ath12k_start_scan(ar, part);
++	kfree(part);
++
++	return ret;
++}
++
+ void __ath12k_mac_scan_finish(struct ath12k *ar)
+ {
+ 	struct ieee80211_hw *hw = ath12k_ar_to_hw(ar);
+@@ -5305,7 +5426,13 @@
+ 			ieee80211_remain_on_channel_expired(hw);
+ 		fallthrough;
+ 	case ATH12K_SCAN_STARTING:
+-		cancel_delayed_work(&ar->scan.timeout);
++		/* Keep a single overall request timeout across all range
++		 * batches: only cancel for the last batch (or a non-range scan).
++		 */
++		if (!(ar->scan.range_req &&
++		      ar->scan.state == ATH12K_SCAN_RUNNING &&
++		      ar->scan.range_next < ar->scan.range_req->num_chan))
++			cancel_delayed_work(&ar->scan.timeout);
+ 		complete_all(&ar->scan.completed);
+ 		wiphy_work_queue(ar->ah->hw->wiphy, &ar->scan.vdev_clean_wk);
+ 		break;
+@@ -5315,6 +5442,8 @@
+ void ath12k_mac_scan_finish(struct ath12k *ar)
+ {
+ 	spin_lock_bh(&ar->data_lock);
++	if (ar->scan.range_req && ar->scan.state != ATH12K_SCAN_IDLE)
++		ar->scan.state = ATH12K_SCAN_ABORTING;
+ 	__ath12k_mac_scan_finish(ar);
+ 	spin_unlock_bh(&ar->data_lock);
+ }
+@@ -5430,6 +5559,7 @@
+ 					 scan.vdev_clean_wk);
+ 	struct ath12k_hw *ah = ar->ah;
+ 	struct ath12k_link_vif *arvif;
++	int ret;
+ 
+ 	lockdep_assert_wiphy(wiphy);
+ 
+@@ -5442,7 +5572,46 @@
+ 	 * arvif is already deleted. Alternatively, if the scan vdev is not
+ 	 * being used as an actual vdev, then do not delete it.
+ 	 */
+-	if (!arvif || arvif->is_started)
++	if (!arvif)
++		goto work_complete;
++
++	/* Range scan: an intermediate batch finished. Keep the scan vdev and
++	 * the owned request and start the next range instead of tearing the
++	 * vdev down. The single overall request timer keeps running.
++	 */
++	if (ar->scan.range_req) {
++		bool start_next = false;
++
++		spin_lock_bh(&ar->data_lock);
++		if (ar->scan.range_req &&
++		    ar->scan.state == ATH12K_SCAN_RUNNING &&
++		    ar->scan.range_next < ar->scan.range_req->num_chan) {
++			reinit_completion(&ar->scan.started);
++			reinit_completion(&ar->scan.completed);
++			ar->scan.state = ATH12K_SCAN_STARTING;
++			start_next = true;
++		}
++		spin_unlock_bh(&ar->data_lock);
++
++		if (start_next) {
++			ret = ath12k_mac_scan_range_start(ar);
++			if (!ret)
++				return;
++
++			ath12k_warn(ar->ab,
++				    "failed to start next scan range: %d\n",
++				    ret);
++
++			/* The start timeout may have re-queued this work. */
++			wiphy_work_cancel(wiphy, &ar->scan.vdev_clean_wk);
++
++			spin_lock_bh(&ar->data_lock);
++			ar->scan.state = ATH12K_SCAN_ABORTING;
++			spin_unlock_bh(&ar->data_lock);
++		}
++	}
++
++	if (arvif->is_started)
+ 		goto work_complete;
+ 
+ 	ath12k_dbg(ar->ab, ATH12K_DBG_MAC, "mac clean scan vdev (link id %u)",
+@@ -5452,6 +5621,21 @@
+ 	ath12k_mac_unassign_link_vif(arvif);
+ 
+ work_complete:
++	if (ar->scan.range_req) {
++		cancel_delayed_work(&ar->scan.timeout);
++
++		/* If the owned request still has unscanned channels, the scan
++		 * did not finish and must not be reported as a success.
++		 */
++		spin_lock_bh(&ar->data_lock);
++		if (ar->scan.range_req &&
++		    ar->scan.range_next < ar->scan.range_req->num_chan)
++			ar->scan.state = ATH12K_SCAN_ABORTING;
++		spin_unlock_bh(&ar->data_lock);
++
++		ath12k_mac_scan_range_free(ar);
++	}
++
+ 	spin_lock_bh(&ar->data_lock);
+ 	ar->scan.arvif = NULL;
+ 	if (!ar->scan.is_roc) {
+@@ -5681,9 +5865,11 @@
+ 	struct ath12k_link_vif *arvif;
+ 	struct cfg80211_scan_request *req = &hw_req->req;
+ 	struct ath12k_wmi_scan_req_arg *arg = NULL;
++	u32 split_freq, max_scan_time;
+ 	u8 link_id;
+ 	int ret;
+ 	int i;
++	bool split_scan = false;
+ 	bool create = true;
+ 
+ 	lockdep_assert_wiphy(hw->wiphy);
+@@ -5798,7 +5984,28 @@
+ 	for (i = 0; i < arg->num_chan; i++)
+ 		arg->chan_list[i] = chan_list[i]->center_freq;
+ 
+-	ret = ath12k_start_scan(ar, arg);
++	max_scan_time = arg->max_scan_time;
++	split_freq = ath12k_mac_scan_split_freq(ar);
++	if (split_freq &&
++	    ath12k_mac_scan_range_count(arg->chan_list, arg->num_chan,
++					split_freq) < arg->num_chan)
++		split_scan = true;
++
++	if (split_scan) {
++		spin_lock_bh(&ar->data_lock);
++		ar->scan.range_req = arg;
++		ar->scan.range_next = 0;
++		ar->scan.range_split_freq = split_freq;
++		spin_unlock_bh(&ar->data_lock);
++
++		/* Ownership of the request moves to ar->scan.range_req; the
++		 * local pointer must not be freed on the success path.
++		 */
++		arg = NULL;
++		ret = ath12k_mac_scan_range_start(ar);
++	} else {
++		ret = ath12k_start_scan(ar, arg);
++	}
+ 	if (ret) {
+ 		if (ret == -EBUSY)
+ 			ath12k_dbg(ar->ab, ATH12K_DBG_MAC,
+@@ -5806,6 +6013,9 @@
+ 		else
+ 			ath12k_warn(ar->ab, "failed to start hw scan: %d\n", ret);
+ 
++		if (split_scan)
++			ath12k_mac_scan_range_free(ar);
++
+ 		spin_lock_bh(&ar->data_lock);
+ 		ar->scan.state = ATH12K_SCAN_IDLE;
+ 		spin_unlock_bh(&ar->data_lock);
+@@ -5816,7 +6026,7 @@
+ 
+ 	/* Add a margin to account for event/command processing */
+ 	ieee80211_queue_delayed_work(ath12k_ar_to_hw(ar), &ar->scan.timeout,
+-				     msecs_to_jiffies(arg->max_scan_time +
++				     msecs_to_jiffies(max_scan_time +
+ 						      ATH12K_MAC_SCAN_TIMEOUT_MSECS));
+ 
+ exit:
+@@ -5897,6 +6107,7 @@
+ 			ar = arvif->ar;
+ 			if (ar->scan.arvif == arvif) {
+ 				wiphy_work_cancel(hw->wiphy, &ar->scan.vdev_clean_wk);
++				ath12k_mac_scan_range_free(ar);
+ 				spin_lock_bh(&ar->data_lock);
+ 				ar->scan.arvif = NULL;
+ 				ar->scan.state = ATH12K_SCAN_IDLE;
+@@ -10070,6 +10281,7 @@
+ 
+ 	cancel_delayed_work_sync(&ar->scan.timeout);
+ 	wiphy_work_cancel(ath12k_ar_to_hw(ar)->wiphy, &ar->scan.vdev_clean_wk);
++	ath12k_mac_scan_range_free(ar);
+ 	cancel_work_sync(&ar->regd_channel_update_work);
+ 	cancel_work_sync(&ar->regd_update_work);
+ 	cancel_work_sync(&ar->ab->rfkill_work);
+@@ -11073,6 +11285,7 @@
+ 		 */
+ 		if (ar->scan.arvif == arvif) {
+ 			wiphy_work_cancel(hw->wiphy, &ar->scan.vdev_clean_wk);
++			ath12k_mac_scan_range_free(ar);
+ 
+ 			spin_lock_bh(&ar->data_lock);
+ 			ar->scan.arvif = NULL;
+diff --git a/drivers/net/wireless/ath/ath12k/core.h b/drivers/net/wireless/ath/ath12k/core.h
+--- a/drivers/net/wireless/ath/ath12k/core.h
++++ b/drivers/net/wireless/ath/ath12k/core.h
+@@ -644,6 +644,9 @@
+ 		bool roc_notify;
+ 		struct wiphy_work vdev_clean_wk;
+ 		struct ath12k_link_vif *arvif;
++		struct ath12k_wmi_scan_req_arg *range_req;
++		u32 range_next;
++		u32 range_split_freq;
+ 	} scan;
+ 
+ 	struct {
+diff --git a/drivers/net/wireless/ath/ath12k/wmi.c b/drivers/net/wireless/ath/ath12k/wmi.c
+--- a/drivers/net/wireless/ath/ath12k/wmi.c
++++ b/drivers/net/wireless/ath/ath12k/wmi.c
+@@ -7515,6 +7515,10 @@
+ 		ath12k_wmi_event_scan_started(ar);
+ 		break;
+ 	case WMI_SCAN_EVENT_COMPLETED:
++		if (ar->scan.range_req &&
++		    ar->scan.state == ATH12K_SCAN_RUNNING &&
++		    le32_to_cpu(scan_ev.reason) != WMI_SCAN_REASON_COMPLETED)
++			ar->scan.state = ATH12K_SCAN_ABORTING;
+ 		ath12k_wmi_event_scan_completed(ar);
+ 		break;
+ 	case WMI_SCAN_EVENT_BSS_CHANNEL:
+@@ -7528,6 +7532,9 @@
+ 		ath12k_wmi_event_scan_start_failed(ar);
+ 		break;
+ 	case WMI_SCAN_EVENT_DEQUEUED:
++		if (ar->scan.range_req &&
++		    ar->scan.state == ATH12K_SCAN_RUNNING)
++			ar->scan.state = ATH12K_SCAN_ABORTING;
+ 		__ath12k_mac_scan_finish(ar);
+ 		break;
+ 	case WMI_SCAN_EVENT_PREEMPTED:

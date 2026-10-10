@@ -808,3 +808,16 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0505a-arm64-unaligned-atomics-cover-the-load128-store-exclusive.patch`
   source: armada
   upstream: local
+
+- `patches/1021-wifi-ath12k-fix-single-pdev-frequency-ranges.patch`
+  source: https://lore.kernel.org/r/20260715065218.41232-1-gsh20040816@gmail.com
+  upstream: https://lore.kernel.org/r/20260715065218.41232-1-gsh20040816@gmail.com
+  notes: Backports Shenghan Gao's proposed single-pdev range fix to Linux 7.2.6. The upstream discussion identifies this as a local workaround pending a per-radio regulatory-state redesign; it is not a merged upstream architectural fix.
+- `patches/1022-wifi-ath12k-split-WCN7860-scans-by-firmware-ranges.patch`
+  source: armada
+  upstream: local
+  notes: Splits firmware scan requests only for WCN7860 hw2.0 with a single pdev, a single logical radio and valid DBS_OR_SBS PHY ranges. Tested on KONKR Pocket FIT Elite; retains the original channel order and one final completion.
+- `patches/1023-wifi-ath12k-protect-TX-during-associated-range-scans.patch`
+  source: armada
+  upstream: local
+  notes: Uses single-channel associated batches with TX drain, home-channel settle and communication windows, balanced queue ownership and a host timeout budget. Tested on KONKR Pocket FIT Elite; leaves other hardware modes on their original scan path.
