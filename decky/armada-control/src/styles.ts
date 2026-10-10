@@ -1,22 +1,29 @@
-import { gamepadSliderClasses } from "@decky/ui";
+import { gamepadSliderClasses, gamepadTabbedPageClasses } from "@decky/ui";
 
 export const styles = `
       .armada-control-tabs {
-        height: 95%;
-        width: 316px;
-        position: fixed;
-        margin-top: -12px;
-        margin-left: -8px;
-        overflow: hidden;
+        width: 100%;
+        height: 95vh;
+        min-width: 0;
+        min-height: 0;
+      }
+      .armada-control-tabs > div {
+        height: 100%;
+        min-height: 0;
       }
       .armada-control-tabs > div > div:first-child::before {
         background: #0D141C;
         box-shadow: none;
         backdrop-filter: none;
       }
-      .armada-control-tabs [role="tabpanel"] {
-        padding-left: 0 !important;
-        padding-right: 0 !important;
+      .armada-control-tabs .${gamepadTabbedPageClasses.TabContents},
+      .armada-control-tabs .${gamepadTabbedPageClasses.TabContentsScroll},
+      .armada-control-tabs .armada-control-tab-content {
+        min-width: 0;
+      }
+      .armada-control-tabs .${gamepadTabbedPageClasses.TabContentsScroll} {
+        padding-left: 0;
+        padding-right: 0;
       }
       .armada-control-tabs [role="tablist"] {
         display: flex;
@@ -27,9 +34,9 @@ export const styles = `
         flex: 0 1 auto;
         min-width: 0;
         box-sizing: border-box;
-        padding-left: 6px !important;
-        padding-right: 6px !important;
-        display: flex !important;
+        padding-left: 6px;
+        padding-right: 6px;
+        display: flex;
         align-items: center;
         justify-content: center;
       }
@@ -39,15 +46,6 @@ export const styles = `
       }
       .armada-control-tabs .armada-control-tab-content {
         padding-bottom: 24px;
-      }
-      .armada-control-tabs .armada-slider-field {
-        width: 100%;
-        max-width: none;
-        overflow: hidden;
-      }
-      .armada-control-tabs .armada-slider-field * {
-        min-width: 0 !important;
-        max-width: 100% !important;
       }
       .armada-control-tabs .armada-rgb-hue .${gamepadSliderClasses.SliderTrack} {
         --left-track-color: #0000;
@@ -83,11 +81,7 @@ export const styles = `
         opacity: 1;
       }
       .armada-control-tabs .armada-advanced-group {
-        margin-left: 6px;
-        padding-left: 6px;
-      }
-      .armada-control-tabs .armada-reset-row {
-        padding: 0 14px 8px;
+        margin: 0 8px;
       }
       .armada-control-tabs .armada-compat-note {
         box-sizing: border-box;
@@ -125,17 +119,9 @@ export const styles = `
       .afc-scope .afc-reset-row {
         padding: 0 14px 8px;
       }
-      .afc-scope .afc-control-inset {
-        box-sizing: border-box;
-        width: 100%;
+      .armada-control-panel-content,
+      .afc-scope .armada-control-panel-content {
         padding: 0 8px;
-      }
-      .afc-scope .afc-control-inset > * {
-        min-width: 0;
-        max-width: 100%;
-      }
-      .afc-scope .afc-control-inset button {
-        width: 100% !important;
       }
       .afc-scope .afc-error {
         box-sizing: border-box;
@@ -145,32 +131,6 @@ export const styles = `
         line-height: 16px;
         color: #ff6b6b;
       }
-      /* Unscoped: DialogFooter is a sibling of DialogBody, not a descendant. */
-      .afc-modal-footer {
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 8px;
-      }
-      .afc-modal-footer-row {
-        display: flex;
-        flex-direction: row;
-        flex-wrap: nowrap;
-        gap: 8px;
-        width: 100%;
-      }
-      .afc-modal-footer-half {
-        flex: 1;
-        min-width: 0;
-      }
-      .afc-modal-footer-full {
-        width: 100%;
-      }
-      .afc-scope .afc-modal-title {
-        margin: 0;
-        padding: 4px 0 10px;
-        font-size: 20px;
-        font-weight: 600;
-      }
       .afc-scope .afc-modal-error {
         box-sizing: border-box;
         width: 100%;
@@ -179,14 +139,16 @@ export const styles = `
         line-height: 16px;
         color: #ff6b6b;
       }
-      .afc-scope .afc-slider-field {
-        width: 100%;
-        max-width: none;
-        overflow: hidden;
+      .armada-control-dialog-footer {
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
       }
-      .afc-scope .afc-slider-field * {
-        min-width: 0 !important;
-        max-width: 100% !important;
+      .armada-control-dialog-footer > button {
+        flex: 1 1 0;
+        min-width: 0;
+        width: auto;
+        margin: 0;
       }
       .afc-scope .afc-graph-focusable {
         display: block;
@@ -229,13 +191,13 @@ export const styles = `
         width: 40px;
       }
       .afc-scope .afc-point-row-header button {
-        min-width: 0 !important;
-        max-width: 100% !important;
+        min-width: 0;
+        max-width: 100%;
       }
       .afc-scope .afc-point-row-header > *:last-child button {
-        width: 100% !important;
-        padding-left: 0 !important;
-        padding-right: 0 !important;
+        width: 100%;
+        padding-left: 0;
+        padding-right: 0;
       }
       .afc-scope .afc-collapse {
         overflow: hidden;
@@ -253,19 +215,5 @@ export const styles = `
         font-size: 11px;
         line-height: 15px;
         color: #ffd166;
-      }
-      .afc-scope .afc-min-warning-button {
-        border-left: 2px solid rgba(255, 209, 102, 0.6);
-        background: rgba(255, 209, 102, 0.08);
-        border-radius: 4px;
-      }
-      .afc-scope .afc-min-warning-hidden {
-        display: none;
-      }
-      .afc-scope button:disabled,
-      .afc-scope button[disabled] {
-        opacity: 0.35 !important;
-        filter: grayscale(70%) !important;
-        cursor: not-allowed !important;
       }
     `;
