@@ -8,6 +8,7 @@
 // Status file: one line per row centered below the image; leading '!' = red.
 
 #define _GNU_SOURCE
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
@@ -27,6 +28,8 @@
 
 #include "font8x8_basic.h"
 #include "stb_truetype.h"   // declarations only; implementation in stb_impl.c
+
+#include "splash-i18n.h"
 
 static volatile sig_atomic_t running = 1;
 static void on_signal(int s) { (void)s; running = 0; }
@@ -51,6 +54,10 @@ static int text_scale = 2;
 
 static char g_cur[512];
 static char g_shown[512];
+
+// Display locale for status lines, resolved once in main() before the first
+// compose(); the draw path only reads it and never re-reads the environment.
+static SplashLocale g_locale = SPLASH_LOCALE_EN;
 
 static void put_shadow(int x, int y, uint32_t c) {
     if (x >= 0 && x < SW && y >= 0 && y < SH) shadow[y * SW + x] = c;
@@ -141,8 +148,13 @@ static int load_font(const char *path, int px) {
     size_t off = 0; ssize_t r;
     while (off < (size_t)st.st_size && (r = read(fd, g_ttf_buf + off, st.st_size - off)) > 0) off += r;
     close(fd);
-    if (off != (size_t)st.st_size ||
-        !stbtt_InitFont(&g_ttf, g_ttf_buf, stbtt_GetFontOffsetForIndex(g_ttf_buf, 0))) {
+    if (off != (size_t)st.st_size) { free(g_ttf_buf); g_ttf_buf = NULL; return 0; }
+    // A CJK collection carries many faces; select the Simplified-Chinese
+    // monospace face by name, else fall back to face 0 (a single-face .ttf).
+    int fontstart = stbtt_FindMatchingFont(g_ttf_buf, "Noto Sans Mono CJK SC",
+                                           STBTT_MACSTYLE_NONE);
+    if (fontstart < 0) fontstart = stbtt_GetFontOffsetForIndex(g_ttf_buf, 0);
+    if (!stbtt_InitFont(&g_ttf, g_ttf_buf, fontstart)) {
         free(g_ttf_buf); g_ttf_buf = NULL; return 0;
     }
     g_ttf_scale = stbtt_ScaleForPixelHeight(&g_ttf, (float)px);
@@ -255,7 +267,10 @@ static void compose(const char *status) {
         if (*p) {
             uint32_t col = 0xFFFFFFFF;
             if (*p == '!') { col = 0xFFFF4040; p++; }
-            n = wrap(p, col, maxw, n);
+            // Translate only the drawn text; the raw status line is untouched.
+            char translated[512];
+            splash_translate_line(g_locale, p, translated, sizeof translated);
+            n = wrap(translated, col, maxw, n);
         }
         if (!nl) break;
         p = nl + 1;
@@ -759,6 +774,41 @@ static const char *arg(int argc, char **argv, const char *k, const char *def) {
     return def;
 }
 
+static int nonblank(const char *s) {
+    for (; s && *s; s++) if (!isspace((unsigned char)*s)) return 1;
+    return 0;
+}
+
+// Resolve the display locale before the first compose(). Priority: --language
+// (else ARMADA_SPLASH_LANGUAGE; "auto"/blank means detect), then the Steam
+// registry language, then the process environment. Read-only: no cache, no
+// daemon, no external commands.
+static void resolve_locale(int argc, char **argv) {
+    const char *override = arg(argc, argv, "--language", NULL);
+    if (!override) override = getenv("ARMADA_SPLASH_LANGUAGE");
+
+    // The Steam registry lives under the account home that owns the session;
+    // as root (or without HOME) that is the Armada default account.
+    char regpath[512];
+    const char *regenv = getenv("ARMADA_SPLASH_STEAM_REGISTRY");
+    if (nonblank(regenv)) {
+        snprintf(regpath, sizeof regpath, "%s", regenv);
+    } else {
+        const char *home = getenv("HOME");
+        if (getuid() == 0 || !nonblank(home)) home = "/home/armada";
+        snprintf(regpath, sizeof regpath, "%s/.steam/registry.vdf", home);
+    }
+
+    const char *syslang = NULL;
+    static const char *const vars[] = { "LC_ALL", "LC_MESSAGES", "LANG" };
+    for (size_t i = 0; i < sizeof vars / sizeof vars[0] && !syslang; i++) {
+        const char *v = getenv(vars[i]);
+        if (nonblank(v)) syslang = v;
+    }
+
+    g_locale = splash_resolve_locale(override, regpath, syslang);
+}
+
 int main(int argc, char **argv) {
     const char *image = arg(argc, argv, "--image", NULL);
     const char *status = arg(argc, argv, "--status", NULL);
@@ -831,6 +881,7 @@ int main(int argc, char **argv) {
     g_logo_px_req = atoi(arg(argc, argv, "--logo-height", "0"));
     scale_logo(g_logo_px_req > 0 ? g_logo_px_req : auto_logo_px(text_ref));
 
+    resolve_locale(argc, argv);
     read_status(status, g_cur, sizeof g_cur);
     compose(g_cur);
     strcpy(g_shown, g_cur);
