@@ -68,7 +68,7 @@ fi
 if [[ "${ARMADA_SOC_CLASS:-}" == SM8250 ]]; then
     ARMADA_PROTON_DEFAULTS=proton-cachyos-11.0-arm64
 else
-    ARMADA_PROTON_DEFAULTS=proton-experimental-arm64:proton_11-arm64:proton-cachyos-11.0-arm64
+    ARMADA_PROTON_DEFAULTS=proton_11-arm64:proton-experimental-arm64:proton-cachyos-11.0-arm64
 fi
 
 # CPU topology by SoC (device conf may override). Cpulists are ordered:
