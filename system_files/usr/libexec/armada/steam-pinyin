@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# steam-pinyin -- start the system IBus pinyin daemon for the ACTIVE Steam
+# gaming-mode session.
+#
+# This is the ExecStart of armada-steam-pinyin.service. It is a foreground
+# launcher: ibus-daemon runs as the unit's main process so systemd owns its
+# lifetime. It does not modify the user's Steam files, the desktop session,
+# global GTK_IM_MODULE / QT_IM_MODULE, any default input setting, and it never
+# launches an XIM or a panel.
+#
+# Runtime requirements (all shipped by the image): bash, coreutils, pgrep
+# (procps-ng), ibus + ibus-pinyin + pyzy-db-android. No other dependency is
+# added.
+
+set -euo pipefail
+
+PROFILE="/usr/share/armada/ibus/profile"
+WAIT_SECONDS=45
+STEAM_SERVICE="gamescope-session-plus@steam.service"
+
+log() { printf 'steam-pinyin: %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+SELF_UID="$(id -u)"
+
+# ---------- guards ----------
+# The daemon must be the system one; a private prefix is deliberately not used.
+command -v ibus-daemon >/dev/null 2>&1 || die "ibus-daemon not found"
+# Fixed /usr/share profile: a pre-existing /etc without an ibus profile must not
+# switch the daemon's config backend. Checked before the wait so a missing
+# profile fails fast instead of stalling the session.
+[ -r "${PROFILE}" ] || die "ibus dconf profile is missing or not readable: ${PROFILE}"
+
+# ---------- locate the active gaming-mode Steam process -------------------
+# One pass over /proc/PID/environ per candidate, field by field. Only the fields
+# we are allowed to copy are read; Steam's LD_LIBRARY_PATH is deliberately never
+# read, and nothing here is eval'ed.
+cap_display=""
+cap_xauthority=""
+cap_wayland_display=""
+cap_dbus_session_bus_address=""
+cap_xdg_runtime_dir=""
+cap_current_desktop=""
+FOUND_PID=""
+
+read_steam_env() {
+    local pid="$1" field=""
+    cap_display=""
+    cap_xauthority=""
+    cap_wayland_display=""
+    cap_dbus_session_bus_address=""
+    cap_xdg_runtime_dir=""
+    cap_current_desktop=""
+    # -d '' makes read treat NUL as the field separator (environ is NUL-packed);
+    # IFS= and -r keep each field verbatim (no splitting, no backslash handling).
+    # A candidate that exits mid-read must not abort the scan: keep whatever was
+    # seen and let the caller move on to the next candidate.
+    while IFS= read -r -d '' field; do
+        case "${field}" in
+            DISPLAY=*)                  cap_display="${field#DISPLAY=}" ;;
+            XAUTHORITY=*)               cap_xauthority="${field#XAUTHORITY=}" ;;
+            WAYLAND_DISPLAY=*)          cap_wayland_display="${field#WAYLAND_DISPLAY=}" ;;
+            DBUS_SESSION_BUS_ADDRESS=*) cap_dbus_session_bus_address="${field#DBUS_SESSION_BUS_ADDRESS=}" ;;
+            XDG_RUNTIME_DIR=*)          cap_xdg_runtime_dir="${field#XDG_RUNTIME_DIR=}" ;;
+            XDG_CURRENT_DESKTOP=*)      cap_current_desktop="${field#XDG_CURRENT_DESKTOP=}" ;;
+            *)                          : ;;
+        esac
+    done < "/proc/${pid}/environ" 2>/dev/null || true
+}
+
+# A candidate is a NATIVE process named "steam" (exe basename == steam, so a
+# shell/python 'steam' wrapper script is rejected), owned by the current UID,
+# whose environ carries XDG_CURRENT_DESKTOP=gamescope and a non-empty DISPLAY.
+# pgrep narrows the scan to current-UID processes whose comm is exactly "steam";
+# the readlink/environ guards below still reject a non-native wrapper and apply
+# the gamescope/DISPLAY requirements.
+find_gaming_steam() {
+    local pid exe
+    for pid in $(pgrep -u "${SELF_UID}" -x steam 2>/dev/null || true); do
+        exe="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+        [ "${exe##*/}" = "steam" ] || continue
+        [ -r "/proc/${pid}/environ" ] || continue
+        read_steam_env "${pid}"
+        [ "${cap_current_desktop}" = "gamescope" ] || continue
+        [ -n "${cap_display}" ] || continue
+        FOUND_PID="${pid}"
+        return 0
+    done
+    return 1
+}
+
+log "waiting up to ${WAIT_SECONDS}s for the gaming-mode Steam process (${STEAM_SERVICE})"
+SECONDS=0
+while ! find_gaming_steam; do
+    if [ "${SECONDS}" -ge "${WAIT_SECONDS}" ]; then
+        die "no gaming-mode Steam process (native 'steam', XDG_CURRENT_DESKTOP=gamescope, DISPLAY set) within ${WAIT_SECONDS}s; refusing to start a desktop IME"
+    fi
+    sleep 0.5
+done
+log "found gaming-mode Steam pid=${FOUND_PID} DISPLAY=${cap_display:-<unset>} WAYLAND_DISPLAY=${cap_wayland_display:-<unset>}"
+
+# Fall back to the normal per-user runtime dir when Steam did not export one.
+if [ -z "${cap_xdg_runtime_dir}" ]; then
+    cap_xdg_runtime_dir="/run/user/${SELF_UID}"
+fi
+[ -d "${cap_xdg_runtime_dir}" ] || die "XDG_RUNTIME_DIR does not exist: ${cap_xdg_runtime_dir}"
+
+# ---------- start the system daemon in the foreground ---------------------
+# Drop loader/schema overrides the session launcher may have inherited so the
+# system daemon uses the image's own libs and settings schemas.
+unset LD_LIBRARY_PATH LD_PRELOAD GSETTINGS_SCHEMA_DIR
+unset DISPLAY XAUTHORITY WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR
+
+# Only the captured session variables cross into the daemon. GTK_IM_MODULE /
+# QT_IM_MODULE and every other input setting are intentionally left alone, and
+# the systemd user manager is never modified. DCONF_PROFILE is an absolute
+# profile path IBus honours, so set_global_engine's config write stays writable.
+export DCONF_PROFILE="${PROFILE}"
+if [ -n "${cap_display}" ]; then                  export DISPLAY="${cap_display}"; fi
+if [ -n "${cap_xauthority}" ]; then               export XAUTHORITY="${cap_xauthority}"; fi
+if [ -n "${cap_wayland_display}" ]; then          export WAYLAND_DISPLAY="${cap_wayland_display}"; fi
+if [ -n "${cap_dbus_session_bus_address}" ]; then export DBUS_SESSION_BUS_ADDRESS="${cap_dbus_session_bus_address}"; fi
+export XDG_RUNTIME_DIR="${cap_xdg_runtime_dir}"
+
+# Foreground, no --replace (no other daemon of this instance exists), no --xim,
+# no --daemonize: systemd owns the lifetime. --panel disable and
+# --emoji-extension disable keep the Steam UI untouched. Engine selection is
+# left to Steam; the launcher never switches engines itself.
+log "starting ibus-daemon (foreground)"
+exec ibus-daemon --panel disable --config default --emoji-extension disable
