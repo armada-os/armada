@@ -218,6 +218,15 @@ FROM scratch AS out-extest
 COPY --from=pkg-extest /work/out/libextest.so /
 
 
+FROM builder-base AS pkg-steam-v4l2-shim
+COPY steam-v4l2-shim/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-steam-v4l2-shim
+COPY --from=pkg-steam-v4l2-shim /work/out/libsteam-v4l2-shim.so /
+
+
 FROM ${BUILDER_IMAGE} AS pkg-steam-bootstrap-builder
 COPY steam-bootstrap/install-builder-deps.sh /tmp/
 RUN /tmp/install-builder-deps.sh

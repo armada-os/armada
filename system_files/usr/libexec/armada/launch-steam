@@ -42,6 +42,15 @@ if grep -q '"proton11_arm64"' "${proton11_reg}/compatibilitytool.vdf" 2>/dev/nul
     rmdir "${proton11_reg}" 2>/dev/null || true
 fi
 
+# Remote Play hardware decoding on V4L2 decoders (Qualcomm iris): on a source
+# change restart only the capture queue, and give SDL the decoder's YUV
+# colorspace (Steam passes none). The library stays only in Steam's own binaries.
+export STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1
+steam_v4l2_shim=/usr/lib/steam-v4l2-shim/libsteam-v4l2-shim.so
+if [[ -f "${steam_v4l2_shim}" ]]; then
+    export LD_PRELOAD="${steam_v4l2_shim}${LD_PRELOAD:+:${LD_PRELOAD}}"
+fi
+
 touch "${steam_root}/.cef-enable-remote-debugging"
 cd "${steam_arm_dir}"
 exec "${steam_arm}" \
