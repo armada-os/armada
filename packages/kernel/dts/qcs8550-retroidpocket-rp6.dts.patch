@@ -1,9 +1,64 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware
+Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and LRA haptics
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
-@@ -379,15 +379,15 @@
+@@ -129,6 +129,54 @@
+ 
+ &gamepad {
+ 	axis-range = <1024>;
++};
++
++&pm8550b_hv_haptics {
++	/*
++	 * The RP6 has an LRA (~170 Hz), not an ERM. Driving it as an ERM feeds it
++	 * flat DC, so it only ticks at start and stop. Values match the stock
++	 * Android overlay for this board (board-id 0x1001f).
++	 */
++	/delete-property/ qcom,use-erm;
++	qcom,vmax-mv = <1300>;
++
++	effect_0 {
++		qcom,wf-pattern-data = <0x11f 0x00 0x00>,
++				       <0x13f 0x00 0x00>,
++				       <0x15f 0x00 0x00>,
++				       <0x17f 0x00 0x00>,
++				       <0x17f 0x00 0x00>,
++				       <0x15f 0x00 0x00>,
++				       <0x13f 0x00 0x00>,
++				       <0x11f 0x00 0x00>;
++		qcom,wf-vmax-mv = <1300>;
++		qcom,wf-auto-res-disable;
++	};
++
++	effect_1 {
++		qcom,wf-vmax-mv = <1300>;
++		qcom,wf-auto-res-disable;
++	};
++
++	effect_2 {
++		qcom,wf-vmax-mv = <1300>;
++		qcom,wf-auto-res-disable;
++	};
++
++	effect_3 {
++		qcom,wf-vmax-mv = <1300>;
++		qcom,wf-auto-res-disable;
++	};
++
++	effect_4 {
++		qcom,wf-vmax-mv = <1300>;
++		qcom,wf-auto-res-disable;
++	};
++
++	effect_5 {
++		qcom,wf-vmax-mv = <1300>;
++		qcom,wf-auto-res-disable;
++	};
+ };
+ 
+ &{/gpio-keys} {
+@@ -377,15 +425,15 @@
  };
  
  &remoteproc_adsp {
