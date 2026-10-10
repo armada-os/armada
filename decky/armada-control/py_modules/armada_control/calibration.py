@@ -2,6 +2,7 @@ import copy
 import fcntl
 import json
 import struct
+import sys
 import subprocess
 import time
 from pathlib import Path
@@ -9,6 +10,9 @@ from pathlib import Path
 from .privileged import call
 from .proc import clean_env
 from .system import read_text
+
+sys.path.insert(0, "/usr/lib/armada")
+import input_calibration_policy as calibration_policy
 
 INPUT_CALIBRATION_CONFIG = Path("/etc/armada/input-calibration.json")
 CALIBRATION_BACKENDS = {
@@ -337,6 +341,7 @@ def build_state(event, controls):
         "event": event,
         "canApply": bool(backend),
         "backend": backend or "tester",
+        "calibration": calibration_policy.capability(backend),
     }
 
 
@@ -450,20 +455,24 @@ def stick_defaults(event, backend):
     return axis_range, axis_deadzone
 
 
-def reset_calibration_params():
+def reset_calibration_params(triggers_only=False):
     global _ranges_stale, _recording
     _recording = None
     event = calibration_event()
     backend = calibration_backend(event)
     if backend is None:
         raise RuntimeError("controller calibration is not supported on this device")
-    params = {}
+    if triggers_only and not calibration_policy.capability(backend)["triggers"]:
+        raise RuntimeError("trigger calibration requires raw trigger support from the driver")
+    if not triggers_only and calibration_policy.uses_mcu(backend):
+        raise RuntimeError("stick calibration is managed by the MCU on this device")
+    params = read_calibration_params(backend) if triggers_only else {}
     axis_range, axis_deadzone = stick_defaults(event, backend)
     trigger_deadzone = {"trigger_left": 0, "trigger_right": 0}
     if backend == "rsinput":
         trigger_deadzone["trigger_left"] = device_tree_u32(event, "trigger-left-deadzone") or 0
         trigger_deadzone["trigger_right"] = device_tree_u32(event, "trigger-right-deadzone") or 0
-    for axis in ("axis_leftx", "axis_lefty", "axis_rightx", "axis_righty"):
+    for axis in (() if triggers_only else ("axis_leftx", "axis_lefty", "axis_rightx", "axis_righty")):
         params[f"{axis}_min"] = -axis_range
         params[f"{axis}_center"] = 0
         params[f"{axis}_max"] = axis_range
@@ -474,6 +483,7 @@ def reset_calibration_params():
         params[f"{trigger}_deadzone"] = trigger_deadzone[trigger]
         params[f"{trigger}_antideadzone"] = 0
     params["backend"] = backend
+    params = calibration_policy.clean_config(params)
     params["version"] = CALIBRATION_VERSION
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     _ranges_stale = True
@@ -512,8 +522,9 @@ class Hold:
 
 
 class Recording:
-    def __init__(self, params):
+    def __init__(self, params, triggers_only=False):
         self.params = params
+        self.triggers_only = triggers_only
         self.holds = {name: Hold() for name in (*STICK_KEYS, *TRIGGER_KEYS)}
         self.pushes = {name: {} for name in STICK_KEYS}
         self.rests = {name: [] for name in STICK_KEYS}
@@ -523,6 +534,8 @@ class Recording:
     def sample(self, controls, now):
         first = self.now is None
         for stick, keys in STICK_KEYS.items():
+            if self.triggers_only:
+                continue
             if all(key in controls for key in keys):
                 self.sample_stick(stick, [controls[key] for key in keys], keys, now, first)
         for name in TRIGGER_KEYS:
@@ -672,7 +685,9 @@ def start_recording():
     backend = state.get("backend") if state.get("canApply") else None
     if backend not in CALIBRATION_BACKENDS:
         raise RuntimeError("controller calibration is not supported on this device")
-    _recording = Recording(read_calibration_params(backend))
+    if not calibration_policy.capability(backend)["triggers"]:
+        raise RuntimeError("trigger calibration requires raw trigger support from the driver")
+    _recording = Recording(read_calibration_params(backend), calibration_policy.uses_mcu(backend))
     return controller_state()
 
 
@@ -682,7 +697,11 @@ def save_calibration():
     backend = state.get("backend") if state.get("canApply") else None
     if backend not in CALIBRATION_BACKENDS:
         raise RuntimeError("controller calibration is not supported on this device")
+    if not calibration_policy.capability(backend)["triggers"]:
+        raise RuntimeError("trigger calibration requires raw trigger support from the driver")
     capture = _recording.capture() if _recording is not None else {}
+    if calibration_policy.uses_mcu(backend):
+        capture = {key: value for key, value in capture.items() if key in TRIGGER_KEYS}
     if not capture:
         raise RuntimeError("nothing was calibrated")
     current = read_calibration_params(backend)
@@ -693,6 +712,7 @@ def save_calibration():
     _, stick_deadzone = stick_defaults(event, backend)
     params = calibration_from_capture(capture, current, stick_deadzone, inverted_axes(event, backend))
     params["backend"] = backend
+    params = calibration_policy.clean_config(params)
     params["version"] = CALIBRATION_VERSION
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     _ranges_stale = True
@@ -711,7 +731,6 @@ def end_session(token=None):
     global _calibration_session_token, _ranges_stale, _recording
     if _calibration_session_token != str(token or "default"):
         return False
-    _calibration_session_token = None
     _recording = None
     close_session_device()
     ended = end_calibration_intercept()
@@ -719,4 +738,14 @@ def end_session(token=None):
         # Restarting InputPlumber any earlier would drop the calibration intercept.
         call("reload_input_ranges")
         _ranges_stale = False
+    _calibration_session_token = None
     return ended
+
+
+def mcu_calibration(operation, token, step=None):
+    global _ranges_stale
+    # Start prepares the live stick parameters. Refresh consumers when the modal
+    # closes even if the RPC response is lost or measurement is cancelled.
+    if operation == "start":
+        _ranges_stale = True
+    return call("rsinput_calibration", operation=operation, token=token, step=step)

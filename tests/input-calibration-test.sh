@@ -386,7 +386,7 @@ except RuntimeError:
 else:
     raise AssertionError("failed range reload was reported as success")
 calibration.call = record
-calibration.begin_session("modal")
+# A failed Close must retry without needing to open a new modal.
 calibration.end_session("modal")
 assert calls[-1][0] == "reload_input_ranges"
 reloads = len(calls)
@@ -547,5 +547,8 @@ except ValueError:
 else:
     raise AssertionError("unknown calibration backend was accepted")
 PYEOF
+
+python3 -B "$ROOT/tests/input-calibration-policy-test.py"
+python3 -B "$ROOT/tests/mcu-calibration-test.py"
 
 echo "Input calibration tests passed"
