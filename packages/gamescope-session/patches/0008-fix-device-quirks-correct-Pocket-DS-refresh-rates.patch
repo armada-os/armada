@@ -1,0 +1,30 @@
+From 26b96ae696e2f953e5d91f46d821a1c89605423f Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Fri, 18 Sep 2026 21:13:41 +0200
+Subject: [PATCH] fix(device-quirks): correct Pocket DS refresh rates
+
+---
+ usr/share/gamescope-session-plus/device-quirks | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/usr/share/gamescope-session-plus/device-quirks b/usr/share/gamescope-session-plus/device-quirks
+index 1ec9fef..8f3f18e 100644
+--- a/usr/share/gamescope-session-plus/device-quirks
++++ b/usr/share/gamescope-session-plus/device-quirks
+@@ -265,11 +265,11 @@ fi
+ 
+ if [[ ":AYANEO Pocket DS:" =~ ":$SYS_ID:" ]]; then
+   ORIENTATION=left
+-  CUSTOM_REFRESH_RATES=60,120
++  CUSTOM_REFRESH_RATES=60,120,144,160
+   # Prefer top screen
+   OUTPUT_CONNECTOR='*,DSI-1,DSI-2'
+ 
+-  export STEAM_DISPLAY_REFRESH_LIMITS=60,120
++  export STEAM_DISPLAY_REFRESH_LIMITS=60,120,144,160
+ fi
+ 
+ if [[ ":AYANEO Pocket EVO:" =~ ":$SYS_ID:" ]]; then
+-- 
+2.55.0
+
