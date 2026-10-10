@@ -2,11 +2,13 @@ import asyncio
 
 from armada_control.calibration import (
     begin_session,
+    mcu_calibration,
     controller_state,
     end_session,
     reset_calibration_params,
     save_calibration,
     start_recording,
+    start_output_recording,
 )
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
@@ -120,17 +122,23 @@ class Plugin:
     async def start_calibration_recording(self):
         return await asyncio.to_thread(start_recording)
 
+    async def start_output_calibration_recording(self):
+        return await asyncio.to_thread(start_output_recording)
+
     async def save_calibration(self):
         return await asyncio.to_thread(save_calibration)
 
-    async def reset_calibration(self):
-        return await asyncio.to_thread(reset_calibration_params)
+    async def reset_calibration(self, triggers_only=False):
+        return await asyncio.to_thread(reset_calibration_params, triggers_only)
 
     async def begin_calibration_session(self, token=None):
         return await asyncio.to_thread(begin_session, token)
 
     async def end_calibration_session(self, token=None):
         return await asyncio.to_thread(end_session, token)
+
+    async def mcu_calibration(self, operation, token, step=None):
+        return await asyncio.to_thread(mcu_calibration, operation, token, step)
 
     async def get_fans_state(self):
         return await asyncio.to_thread(get_fans_state)

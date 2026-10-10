@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import type { CalibrationState, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, PowerConfig, RgbConfig, Tweaks } from "./types";
+import type { CalibrationState, McuCalibrationOperation, McuCalibrationSession, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, PowerConfig, RgbConfig, Tweaks } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
@@ -50,8 +50,9 @@ export const setRgb = (
   );
 export const getControllerState = () => call<[], CalibrationState>("get_controller_state");
 export const startCalibrationRecording = () => call<[], CalibrationState>("start_calibration_recording");
+export const startOutputCalibrationRecording = () => call<[], CalibrationState>("start_output_calibration_recording");
 export const saveCalibration = () => call<[], CalibrationState>("save_calibration");
-export const resetCalibration = () => call<[], CalibrationState>("reset_calibration");
+export const resetCalibration = (triggersOnly = false) => call<[boolean], CalibrationState>("reset_calibration", triggersOnly);
 export const beginCalibrationSession = (token: string) => call<[string], boolean>("begin_calibration_session", token);
 export const endCalibrationSession = (token: string) => call<[string], boolean>("end_calibration_session", token);
 export const setChargingFanPwm = (pwm: number) => call<[number], number>("set_charging_fan_pwm", pwm);
@@ -59,3 +60,6 @@ export const getFansState = () => call<[], CurvesState>("get_fans_state");
 export const saveFanCurves = (fanCurves: Record<string, FanCurve>, fanSettings: FanSettings) =>
   call<[Record<string, FanCurve>, FanSettings], CurvesState>("save_fan_curves", fanCurves, fanSettings);
 export const getCurrentTemp = () => call<[], number | null>("get_current_temp");
+
+export const mcuCalibration = (operation: McuCalibrationOperation, token: string, step?: number) =>
+  call<[McuCalibrationOperation, string, number | undefined], McuCalibrationSession>("mcu_calibration", operation, token, step);

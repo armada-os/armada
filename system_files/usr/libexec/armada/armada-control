@@ -17,6 +17,8 @@ from pathlib import Path
 sys.path.insert(0, "/usr/lib/armada")
 import armada_game_tweaks
 import armada_perf
+import rsinput_calibration
+import input_calibration_policy as calibration_policy
 
 SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
@@ -91,16 +93,26 @@ CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
+RSINPUT_CALIBRATION = rsinput_calibration.CalibrationManager()
 
 
-def atomic_write(path, text):
+def atomic_write(path, text, durable=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
+            if durable:
+                f.flush()
+                os.fsync(f.fileno())
         os.chmod(tmp, 0o644)
         os.replace(tmp, path)
+        if durable:
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         try:
             os.unlink(tmp)
@@ -663,17 +675,38 @@ def action_inputplumber_intercept(request):
     return {"ok": True}
 
 
+def action_rsinput_calibration(request):
+    return RSINPUT_CALIBRATION.dispatch(
+        request.get("operation"), request.get("token"), request.get("step"))
+
+
 def unit_active(unit):
     return subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", unit], check=False, timeout=2).returncode == 0
 
 
 def action_reload_input_ranges(_request):
+    if calibration_policy.uses_mcu():
+        with RSINPUT_CALIBRATION.lock:
+            RSINPUT_CALIBRATION.close_capture()
+            calibration_policy.restore_sticks(CALIBRATION_BACKENDS['rsinput'], CONFIG_PATHS['calibration'])
+            calibration_policy.wait_parameters(CALIBRATION_BACKENDS['rsinput'])
     # InputPlumber reads evdev ranges only when it opens the controller.
     if unit_active("inputplumber.service"):
         run(["/usr/bin/systemctl", "restart", "inputplumber.service"], timeout=10)
         # Joins the start job the restart queued, so this returns once the controller type is applied.
         run(["/usr/bin/systemctl", "start", "armada-controller-type.service"], timeout=15)
     return {"ok": True}
+
+
+def action_prepare_output_calibration(_request):
+    if not calibration_policy.uses_mcu():
+        raise ValueError('Two-stage calibration is unavailable')
+    with RSINPUT_CALIBRATION.lock:
+        RSINPUT_CALIBRATION.require_normal_output()
+        binding = calibration_policy.output_binding()
+        calibration_policy.prepare_sticks(CALIBRATION_BACKENDS['rsinput'])
+        calibration_policy.wait_parameters(CALIBRATION_BACKENDS['rsinput'])
+        return binding
 
 
 def action_write_config(request):
@@ -693,6 +726,10 @@ def action_write_config(request):
             raise ValueError("invalid calibration backend")
         if not parameters.exists():
             raise RuntimeError("controller calibration is not supported on this device")
+        if calibration_policy.uses_mcu(backend):
+            with RSINPUT_CALIBRATION.lock:
+                RSINPUT_CALIBRATION.require_normal_output()
+                return write_mcu_output_config(params)
         for param in CALIBRATION_PARAMS:
             if param in params:
                 (parameters / param).write_text(str(int(params[param])), encoding="utf-8")
@@ -703,6 +740,37 @@ def action_write_config(request):
     if name == "tweaks":
         PERF.refresh(keep_override=True)
     return {"ok": True}
+
+
+def write_mcu_output_config(params):
+    """Called with manager lock; old axis settings cannot become a new output trim."""
+    path = CONFIG_PATHS['calibration']
+    if calibration_policy.OUTPUT_KEY in params:
+        if not calibration_policy.valid_output(params):
+            raise ValueError('Sensor calibration changed; measure output again')
+        axes = calibration_policy.stick_defaults()
+        if any(name not in params or type(params[name]) is not int for name in axes):
+            raise ValueError('Complete measured stick settings are required')
+        for axis in ('leftx', 'lefty', 'rightx', 'righty'):
+            prefix = f'axis_{axis}_'
+            lo, hi, dz, adz = (params[prefix + k] for k in ('min', 'max', 'deadzone', 'antideadzone'))
+            if not -32768 <= lo < 0 < hi <= 32767 or not 0 <= adz <= dz < min(-lo, hi):
+                raise ValueError('Invalid output range or deadzone')
+            if not -32767 <= params[prefix + 'center'] <= 32767:
+                raise ValueError('Invalid output centre')
+    else:
+        # Trigger-only saves retain a valid output trim, ignoring supplied axis fields.
+        previous = calibration_policy.clean_config(json.loads(path.read_text())) if path.exists() else {}
+        params = {k: v for k, v in params.items() if not k.startswith('axis_')}
+        params.update({k: v for k, v in previous.items()
+                       if k.startswith('axis_') or k == calibration_policy.OUTPUT_KEY})
+    text = json.dumps(params, indent=2, sort_keys=True) + '\n'
+    atomic_write(path, text, durable=True)
+    for name in CALIBRATION_PARAMS:
+        if name in params:
+            (CALIBRATION_BACKENDS['rsinput'] / name).write_text(str(int(params[name])), encoding='utf-8')
+    (CALIBRATION_BACKENDS['rsinput'] / 'update_params').write_text('1', encoding='utf-8')
+    return {'ok': True}
 
 
 class PerfManager:
@@ -882,6 +950,8 @@ ACTIONS = {
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
+    "rsinput_calibration": action_rsinput_calibration,
+    "prepare_output_calibration": action_prepare_output_calibration,
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_bottom_screen_enabled": action_set_bottom_screen_enabled,

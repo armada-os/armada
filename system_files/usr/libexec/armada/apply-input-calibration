@@ -1,9 +1,12 @@
 #!/usr/bin/python3
 import json
+import sys
 from pathlib import Path
 
 
 CONFIG = Path("/etc/armada/input-calibration.json")
+sys.path.insert(0, "/usr/lib/armada")
+import input_calibration_policy as policy
 CALIBRATION_BACKENDS = {
     "mangmi": Path("/sys/module/mangmi_pocket_max/parameters"),
     "rsinput": Path("/sys/module/rsinput/parameters"),
@@ -72,11 +75,13 @@ def main():
         return
     if not parameters.exists():
         return
-    params = migrate(params, backend)
+    params = policy.clean_config(migrate(params, backend))
     for name in PARAM_NAMES:
         if name in params:
             (parameters / name).write_text(str(int(params[name])), encoding="utf-8")
     (parameters / "update_params").write_text("1", encoding="utf-8")
+    if policy.uses_mcu(backend):
+        policy.wait_parameters(parameters)
 
 
 if __name__ == "__main__":
