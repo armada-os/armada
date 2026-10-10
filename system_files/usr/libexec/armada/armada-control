@@ -499,6 +499,18 @@ def action_set_swipe_gestures_enabled(request):
     return {"enabled": enabled}
 
 
+def action_suspend_swipe_gestures(request):
+    # Armada Control turns the gestures off while a Steam side menu is open,
+    # so a drag inside the menu (a slider toward the edge) cannot close it.
+    # Runtime only: the saved setting stays as the user chose it.
+    suspended = request.get("suspended")
+    if not isinstance(suspended, bool):
+        raise ValueError("invalid swipe gestures suspended state")
+    if action_get_swipe_gestures_enabled({})["enabled"]:
+        gamescope_swipe_gestures(not suspended)
+    return {"suspended": suspended}
+
+
 def action_set_abl_auto_enabled(request):
     atomic_write(ABL_CONFIG, f"auto_update_enabled={int(bool(request.get('enabled')))}\n")
     return {"enabled": abl_auto_enabled()}
@@ -870,6 +882,7 @@ def action_restart_game_mode(request):
 ACTIONS = {
     "get_swipe_gestures_enabled": action_get_swipe_gestures_enabled,
     "set_swipe_gestures_enabled": action_set_swipe_gestures_enabled,
+    "suspend_swipe_gestures": action_suspend_swipe_gestures,
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
