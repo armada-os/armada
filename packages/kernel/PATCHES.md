@@ -646,6 +646,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0532-hwmon-pwm-fan-optionally-run-the-fan-while-charging-in-s2idle.patch`
   source: armada
   upstream: local
+- `patches/0538-hwmon-pwm-fan-only-count-tach-pulses-while-the-rpm-is-read.patch`
+  source: armada
+  upstream: local
 - `patches/0540-arm64-signal-reapply-the-ssbs-policy-on-sigreturn.patch`
   source: armada
   upstream: local

@@ -58,7 +58,9 @@ XML = f"""
     <property name="CpuScalingGovernor" type="s" access="readwrite"/>
     <property name="FanMode" type="s" access="read"/>
     <property name="FanPwm" type="u" access="read"/>
-    <property name="FanRpm" type="u" access="read"/>
+    <property name="FanRpm" type="u" access="read">
+      <annotation name="org.freedesktop.DBus.Property.EmitsChangedSignal" value="false"/>
+    </property>
     <property name="Temperature" type="u" access="read"/>
   </interface>
   <interface name="{IFACE_PROFILE}">
@@ -249,6 +251,7 @@ class ArmadaPower:
         self.suspended = False
         self.suspend_save = {}
         self.connection = None
+        self.emitted = {}
         self.scx_child = None
         self.scx_spec = None
         self.scx_failed = None
@@ -845,7 +848,9 @@ class ArmadaPower:
                 sd_notify("WATCHDOG=1")
                 return True
             if self.fan_enable and self.fan_enable.exists():
-                write_text(self.fan_enable, fan_enable_mode(self.fan_hwmon))
+                mode = fan_enable_mode(self.fan_hwmon)
+                if read_text(self.fan_enable) != mode:
+                    write_text(self.fan_enable, mode)
 
             if self.suspended:
                 temp = self.read_temp_max()
@@ -867,15 +872,17 @@ class ArmadaPower:
                     next_pwm = max(target, self.last_pwm - self.fan_config["ramp_down"])
                 self.last_pwm = clamp(next_pwm, self.fan_config["min_pwm"], self.fan_config["max_pwm"])
 
-            write_text(self.fan_pwm, self.last_pwm)
-            if self.connection:
-                self.emit_properties(
-                    {
-                        "FanPwm": GLib.Variant("u", self.last_pwm),
-                        "FanRpm": GLib.Variant("u", self.fan_rpm_value()),
-                        "Temperature": GLib.Variant("u", temp),
-                    }
-                )
+            if read_text(self.fan_pwm) != str(self.last_pwm):
+                write_text(self.fan_pwm, self.last_pwm)
+            # FanRpm is read on demand: polling fan1_input keeps the tach IRQ on.
+            changed = {
+                name: GLib.Variant("u", value)
+                for name, value in (("FanPwm", self.last_pwm), ("Temperature", temp))
+                if self.emitted.get(name) != value
+            }
+            if self.connection and changed:
+                self.emit_properties(changed)
+                self.emitted.update({name: variant.unpack() for name, variant in changed.items()})
             sd_notify("WATCHDOG=1")
         except Exception as exc:
             print(f"armada-powerd: fan tick failed: {exc}", file=sys.stderr)
