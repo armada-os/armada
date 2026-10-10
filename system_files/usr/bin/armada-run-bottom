@@ -23,6 +23,8 @@ shift
 
 env_file="${XDG_RUNTIME_DIR:-/run/user/$UID}/armada-bottom-env"
 [[ -r "$env_file" ]] || fail "bottom screen is not running"
+
+# Setup a basic environment. This assumes KDE is installed.
 if [[ "$defaults" == true ]]; then
 		set -a
 		XDG_CURRENT_DESKTOP=KDE
