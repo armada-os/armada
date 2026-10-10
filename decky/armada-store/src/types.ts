@@ -15,6 +15,7 @@ export interface CatalogApp {
   icon: string;
   note: string;
   installType: "flatpak" | "appimage" | "deckyplugin" | "system" | "android" | "";
+  imported: boolean;
   canInstall?: boolean;
   desktopOnly: boolean;
   hasConfig: boolean;
