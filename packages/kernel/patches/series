@@ -99,6 +99,7 @@
 0620-drm-msm-a6xx-hfi-irq-clears-only-the-cm3-fault.patch
 0621-drm-msm-a6xx-bound-the-gmu-wait-for-a-fault-devcoredump.patch
 0622-drm-msm-a6xx-mask-the-hfi-interrupt-before-booting-the-gmu.patch
+0623-drm-msm-a6xx-drop-the-boot-bandwidth-vote-once-the-gmu-votes.patch
 
 # ============== LED / RGB ==============
 0030-leds-Add-driver-for-HEROIC-HTR3212.patch
