@@ -3,6 +3,8 @@ Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
+@@ -130,0 +131 @@
++	mcu-calibration;
 @@ -379,15 +379,15 @@
  };
  
