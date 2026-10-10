@@ -128,6 +128,39 @@ class CalculationTests(unittest.TestCase):
             self.assertTrue(all(i >= 360 for i in selected))
             self.assertTrue(all(tracker.trace[i]['rawRadius'] < 1001 for i in selected))
 
+    def test_identical_paths_with_different_angular_dwell_are_repeatable(self):
+        for direction in (-1, 1):
+            tracker = rsinput_calibration.RangeTracker('left', (32768, 32768))
+            index = 0
+            for degree in range(1443):
+                angle = math.radians(direction * degree)
+                radius = 1100 / math.sqrt(math.cos(angle)**2 + (.52 * math.sin(angle))**2)
+                lap = min(degree // 360, 3)
+                # Identical geometry on all four turns; only time spent at a
+                # heading changes. Time-weighted sector quartiles reject this.
+                repeats = 30 if degree % 15 == (2 if lap == 2 else 12) else 1
+                for _ in range(repeats):
+                    tracker.observe(self.range_sample(direction * degree, radius, index))
+                    index += 1
+            result = tracker.result()
+            self.assertIsNotNone(result)
+            self.assertEqual(result['quality']['repeatability']['comparisonSampling'], 'uniform-angle-linear')
+            for index, triple in zip(result['rawSpaceCandidate']['selectedTraceIndices'],
+                                    result['rawSpaceCandidate']['triples']):
+                self.assertEqual(triple, [tracker.trace[index][key] for key in ('rawX', 'rawY', 'rawZ')])
+
+    def test_uniform_angle_comparison_does_not_bridge_unobserved_arcs(self):
+        tracker = rsinput_calibration.RangeTracker('left', (32768, 32768))
+        for degree in range(1443):
+            # Each 15-degree bin still has >=2 real samples, but the missing
+            # 16-degree arc must not be silently filled by interpolation.
+            if 364 <= degree <= 378:
+                continue
+            tracker.observe(self.range_sample(degree, 1000, degree))
+        self.assertTrue(tracker.complete)
+        with self.assertRaisesRegex(RuntimeError, 'too fast or uneven'):
+            tracker.result()
+
     def test_larger_or_drifting_laps_cannot_dominate_the_candidate(self):
         for radii in ((1000, 1000, 1400, 1000), (1000, 1000, 1090, 1190)):
             with self.assertRaisesRegex(RuntimeError, 'rotations disagree'):

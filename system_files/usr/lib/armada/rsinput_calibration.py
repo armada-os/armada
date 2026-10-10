@@ -1,5 +1,6 @@
 """Privileged rsinput MCU calibration capture and explicit commit transport."""
 
+import bisect
 import hashlib
 import json
 import math
@@ -44,6 +45,9 @@ MAX_RADIAL_RATIO = 2.2
 RANGE_REPEAT_BINS = 24
 MIN_REPEAT_SAMPLES = 2
 MAX_REPEAT_RATIO = 1.10
+# Quality comparison only: never interpolate the XYZ payload sent to a sensor.
+REPEAT_ANGLE_STEP = 1.0
+MAX_REPEAT_ANGLE_GAP = 15.0
 MAX_CAPTURE_GAP_NS = 100_000_000
 MAX_SESSION_SECONDS = 120
 JOURNAL_ROOT = Path("/var/lib/armada/calibration")
@@ -340,6 +344,39 @@ class RangeTracker:
             raise RuntimeError("raw Hall range is zero")
         return row["rawRadius"], z, ratio
 
+    @classmethod
+    def _angular_profile(cls, lap):
+        # Reports are sampled in time. Comparing time-weighted quartiles confuses
+        # pauses at different angles with a change in the rim's shape. Collapse
+        # identical headings, then compare the same angular grid in every lap.
+        grouped = {}
+        for row in lap:
+            grouped.setdefault(row["rawAngle"], []).append(cls._hall_metrics(row))
+        angles = sorted(grouped)
+        values = [tuple(cls._percentile([v[axis] for v in grouped[angle]], 0.75)
+                        for axis in range(3)) for angle in angles]
+        if len(angles) < 2:
+            raise RuntimeError("range rotations were too fast or uneven; retry with slower complete circles")
+        return ([angles[-1] - 360, *angles, angles[0] + 360],
+                [values[-1], *values, values[0]])
+
+    @classmethod
+    def _angular_quartiles(cls, profile, start, width):
+        angles, values = profile
+        samples = []
+        for offset in range(round(width / REPEAT_ANGLE_STEP)):
+            target = (start + (offset + 0.5) * REPEAT_ANGLE_STEP) % 360
+            index = bisect.bisect_right(angles, target)
+            low, high = angles[index - 1], angles[index]
+            gap = high - low
+            if gap > MAX_REPEAT_ANGLE_GAP:
+                raise RuntimeError("range rotations were too fast or uneven; retry with slower complete circles")
+            fraction = (target - low) / gap
+            samples.append(tuple(a + (b - a) * fraction
+                                 for a, b in zip(values[index - 1], values[index])))
+        return [cls._percentile([sample[axis] for sample in samples], 0.75)
+                for axis in range(3)]
+
     def _repeat_measurements(self):
         laps, current = [], []
         previous, travel, direction = None, 0.0, 0
@@ -368,15 +405,18 @@ class RangeTracker:
         if len(laps) < RANGE_TURN_GOAL:
             raise RuntimeError("range rotations were interrupted; retry with four continuous circles in one direction")
         measured = laps[1:RANGE_TURN_GOAL]
-        summaries = []
+        summaries, profiles = [], []
         for lap in measured:
             bins = [[] for _ in range(RANGE_REPEAT_BINS)]
             for row in lap:
                 bins[int(row["rawAngle"] // (360 / RANGE_REPEAT_BINS)) % RANGE_REPEAT_BINS].append(row)
             if min(map(len, bins)) < MIN_REPEAT_SAMPLES:
                 raise RuntimeError("range rotations were too fast or uneven; retry with slower complete circles")
-            summaries.append([[self._percentile([self._hall_metrics(r)[axis] for r in rows], 0.75)
-                               for axis in range(3)] for rows in bins])
+            profile = self._angular_profile(lap)
+            profiles.append(profile)
+            width = 360 / RANGE_REPEAT_BINS
+            summaries.append([self._angular_quartiles(profile, sector * width, width)
+                              for sector in range(RANGE_REPEAT_BINS)])
         spreads = [[max(lap[sector][axis] for lap in summaries) /
                     min(lap[sector][axis] for lap in summaries)
                     for axis in range(3)] for sector in range(RANGE_REPEAT_BINS)]
@@ -385,9 +425,12 @@ class RangeTracker:
         quality = {"comparedRotations": len(measured), "sectorDegrees": 360 / RANGE_REPEAT_BINS,
                    "minimumSamplesPerSector": MIN_REPEAT_SAMPLES, "maximumAllowedRatio": MAX_REPEAT_RATIO,
                    "metrics": ["radius", "hallZOffset", "hallXYOverZ"],
+                   "comparisonSampling": "uniform-angle-linear",
+                   "angleStepDegrees": REPEAT_ANGLE_STEP,
+                   "maximumBracketDegrees": MAX_REPEAT_ANGLE_GAP,
                    "lapSectorQuartiles": summaries, "sectorRatios": spreads,
                    "traceIntervals": [[lap[0]["traceIndex"], lap[-1]["traceIndex"]] for lap in measured]}
-        return measured, quality
+        return measured, quality, profiles
 
     def result(self):
         if not self.complete:
@@ -402,14 +445,14 @@ class RangeTracker:
             raise RuntimeError("weak outer-gate contact")
         if max(bin_outer) / min(bin_outer) > MAX_RADIAL_RATIO:
             raise RuntimeError("inconsistent outer-gate radii")
-        laps, repeat_quality = self._repeat_measurements()
+        laps, repeat_quality, profiles = self._repeat_measurements()
         triples, selected = [], []
         for raw_target in RIGHT_SLOT_ANGLES:
             by_lap = [[r for r in lap if self.distance(r["rawAngle"], raw_target) <= 5] for lap in laps]
             if any(not rows for rows in by_lap):
                 raise RuntimeError("sparse repeated range heading; retry with slower complete circles")
-            quartiles = [[self._percentile([self._hall_metrics(r)[axis] for r in rows], 0.75)
-                          for axis in range(3)] for rows in by_lap]
+            quartiles = [self._angular_quartiles(profile, raw_target - 5, 10)
+                         for profile in profiles]
             if any(max(q[axis] for q in quartiles) / min(q[axis] for q in quartiles) > MAX_REPEAT_RATIO
                    for axis in range(3)):
                 raise RuntimeError("range headings disagree; retry with light, steady rim contact")
@@ -429,7 +472,7 @@ class RangeTracker:
                                                 abs(r["rawRadius"] - target_radius), r["traceIndex"]))
             triples.append((chosen["rawX"], chosen["rawY"], chosen["rawZ"]))
             selected.append(chosen["traceIndex"])
-        proposed = self._candidate(triples, selected, "raw-space-repeatable-outer-quartile")
+        proposed = self._candidate(triples, selected, "raw-space-angle-repeatable-outer-quartile")
         trace_json = json.dumps(self.trace, sort_keys=True, separators=(",", ":")).encode()
         return {
             "stick": self.stick,
