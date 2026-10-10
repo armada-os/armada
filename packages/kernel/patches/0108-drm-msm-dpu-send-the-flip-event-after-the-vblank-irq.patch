@@ -1,0 +1,41 @@
+From: PortareOS <hello@portare.org>
+Subject: [PATCH] drm/msm/dpu: send the flip event after the vblank irq in video mode
+
+In video mode the commit thread waits for the CTL flush register to
+clear and then sends the page-flip event with the last vblank count and
+timestamp. The register can clear before the vblank irq of the frame
+that took the flush has run. On fixed refresh that is rare, 1 flip in
+2700 on the Nova. With AVR it is common: a commit made during a held
+front porch starts its frame within a tenth of a millisecond, and 37 of
+2700 flips carried the previous frame's count and time, so two flips in
+a row reported the same vblank.
+
+Wait for pending_kickoff_cnt as well. The vblank irq counts it down
+only once the hardware has taken this kickoff's flush bits, which stay
+in the software mask until the next commit, and only after it has
+updated the vblank count and timestamp.
+
+Source: https://github.com/portare-ch/portareos/blob/be06100b6d127692ed99401d23980fc04888ae01/projects/PortareOS/devices/SM8550/patches/linux/1098-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch
+---
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+@@ -607,8 +607,18 @@
+ 	if (!hw_ctl)
+ 		return 0;
+ 
++	/*
++	 * Wait for the vblank irq to count the kickoff down, not only for the
++	 * flush register to clear. The irq updates the vblank count and
++	 * timestamp first, so the flip event sent after this wait carries the
++	 * frame that took the flush. The register alone can clear before that
++	 * irq has run: with AVR a commit made during a held front porch starts
++	 * its frame at once, and 37 of 2700 flips went out with the previous
++	 * frame's count and time.
++	 */
+ 	ret = wait_event_timeout(phys_enc->pending_kickoff_wq,
+-		(hw_ctl->ops.get_flush_register(hw_ctl) == 0),
++		(hw_ctl->ops.get_flush_register(hw_ctl) == 0 &&
++		 atomic_read(&phys_enc->pending_kickoff_cnt) == 0),
+ 		msecs_to_jiffies(50));
+ 	if (ret <= 0) {
+ 		DPU_ERROR("vblank timeout: %x\n", hw_ctl->ops.get_flush_register(hw_ctl));

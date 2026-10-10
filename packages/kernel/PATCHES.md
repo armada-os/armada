@@ -99,6 +99,14 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0106-drm-panel-il97680a-luminance-linear-backlight-scale.patch`
   source: armada
   upstream: not submitted
+- `patches/0107-drm-msm-dpu-AVR-variable-refresh-on-DSI-video-mode.patch`
+  source: https://github.com/portare-ch/portareos/blob/67ed458421d919aba9c687c3f72d7678954b6902/projects/PortareOS/devices/SM8550/patches/linux/1097-drm-msm-dpu-AVR-variable-refresh-on-DSI-video-mode.patch
+  upstream: unknown
+  notes: Rebased onto Armada’s Linux 7.2.6 display stack and panel driver, retaining its 60/120 Hz modes and luminance-linear backlight; the range is 80–120 Hz, following PortareOS #601.
+- `patches/0108-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch`
+  source: https://github.com/portare-ch/portareos/blob/be06100b6d127692ed99401d23980fc04888ae01/projects/PortareOS/devices/SM8550/patches/linux/1098-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch
+  upstream: unknown
+  notes: Companion flip-event ordering fix for AVR; refreshed offsets for Armada and added the source link to the patch header.
 - `patches/0062-gpu-drm-panel-add-wt0630-panel.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0062-gpu-drm-panel-add-wt0630-panel.patch
   upstream: https://lore.kernel.org/r/20260625-topic-sm8650-ayaneo-pocket-s2-r63419-v8-2-8570e692143e@linaro.org
