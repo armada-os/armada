@@ -39,6 +39,11 @@ MIN_BIN_SAMPLES = 3
 MIN_SLOT_SAMPLES = 8
 MIN_OUTER_RADIUS = 600
 MAX_RADIAL_RATIO = 2.2
+# Compare 15-degree sectors across three complete revolutions after the first
+# approach-to-rim revolution. These are agreement limits, not proof of rim contact.
+RANGE_REPEAT_BINS = 24
+MIN_REPEAT_SAMPLES = 2
+MAX_REPEAT_RATIO = 1.10
 MAX_CAPTURE_GAP_NS = 100_000_000
 MAX_SESSION_SECONDS = 120
 JOURNAL_ROOT = Path("/var/lib/armada/calibration")
@@ -325,6 +330,65 @@ class RangeTracker:
                 "selectedTraceIndices": list(selected), "derivedWords": list(derived),
                 "tableWords": words, "tableHex": "".join(f"{word:04X}" for word in words)}
 
+    @staticmethod
+    def _hall_metrics(row):
+        z = row["rawZ"] - 32768
+        if z <= 0:
+            raise RuntimeError("raw Hall Z is outside the calibration domain")
+        ratio = math.hypot(row["rawX"] - 32768, row["rawY"] - 32768) / z
+        if ratio <= 0:
+            raise RuntimeError("raw Hall range is zero")
+        return row["rawRadius"], z, ratio
+
+    def _repeat_measurements(self):
+        laps, current = [], []
+        previous, travel, direction = None, 0.0, 0
+        for row in self.trace:
+            if row["rawRadius"] < MIN_OUTER_RADIUS:
+                laps, current, previous, travel, direction = [], [], None, 0.0, 0
+                continue
+            angle = row["rawAngle"]
+            delta = 0 if previous is None else (angle - previous + 180) % 360 - 180
+            if abs(delta) >= 30:
+                laps, current, travel, direction = [], [], 0.0, 0
+                delta = 0
+            previous = angle
+            current.append(row)
+            travel += delta
+            if abs(travel) >= 360 - 1e-9:
+                next_direction = 1 if travel > 0 else -1
+                if direction and next_direction != direction:
+                    laps = []
+                direction = next_direction
+                laps.append(current)
+                # Retain the observed boundary; carry angular overshoot without
+                # inventing an interpolated XYZ sample.
+                current = [row]
+                travel -= direction * 360
+        if len(laps) < RANGE_TURN_GOAL:
+            raise RuntimeError("range rotations were interrupted; retry with four continuous circles in one direction")
+        measured = laps[1:RANGE_TURN_GOAL]
+        summaries = []
+        for lap in measured:
+            bins = [[] for _ in range(RANGE_REPEAT_BINS)]
+            for row in lap:
+                bins[int(row["rawAngle"] // (360 / RANGE_REPEAT_BINS)) % RANGE_REPEAT_BINS].append(row)
+            if min(map(len, bins)) < MIN_REPEAT_SAMPLES:
+                raise RuntimeError("range rotations were too fast or uneven; retry with slower complete circles")
+            summaries.append([[self._percentile([self._hall_metrics(r)[axis] for r in rows], 0.75)
+                               for axis in range(3)] for rows in bins])
+        spreads = [[max(lap[sector][axis] for lap in summaries) /
+                    min(lap[sector][axis] for lap in summaries)
+                    for axis in range(3)] for sector in range(RANGE_REPEAT_BINS)]
+        if max(max(values) for values in spreads) > MAX_REPEAT_RATIO:
+            raise RuntimeError("range rotations disagree; retry with light, steady rim contact without pressing harder")
+        quality = {"comparedRotations": len(measured), "sectorDegrees": 360 / RANGE_REPEAT_BINS,
+                   "minimumSamplesPerSector": MIN_REPEAT_SAMPLES, "maximumAllowedRatio": MAX_REPEAT_RATIO,
+                   "metrics": ["radius", "hallZOffset", "hallXYOverZ"],
+                   "lapSectorQuartiles": summaries, "sectorRatios": spreads,
+                   "traceIntervals": [[lap[0]["traceIndex"], lap[-1]["traceIndex"]] for lap in measured]}
+        return measured, quality
+
     def result(self):
         if not self.complete:
             return None
@@ -338,9 +402,26 @@ class RangeTracker:
             raise RuntimeError("weak outer-gate contact")
         if max(bin_outer) / min(bin_outer) > MAX_RADIAL_RATIO:
             raise RuntimeError("inconsistent outer-gate radii")
+        laps, repeat_quality = self._repeat_measurements()
         triples, selected = [], []
         for raw_target in RIGHT_SLOT_ANGLES:
-            nearby = [r for r in outer_trace if self.distance(r["rawAngle"], raw_target) <= 5]
+            by_lap = [[r for r in lap if self.distance(r["rawAngle"], raw_target) <= 5] for lap in laps]
+            if any(not rows for rows in by_lap):
+                raise RuntimeError("sparse repeated range heading; retry with slower complete circles")
+            quartiles = [[self._percentile([self._hall_metrics(r)[axis] for r in rows], 0.75)
+                          for axis in range(3)] for rows in by_lap]
+            if any(max(q[axis] for q in quartiles) / min(q[axis] for q in quartiles) > MAX_REPEAT_RATIO
+                   for axis in range(3)):
+                raise RuntimeError("range headings disagree; retry with light, steady rim contact")
+            # An isolated spike can be invisible to lap quartiles yet win the
+            # angle-first selection. Require each actual selected observation to
+            # agree with every lap's local radius, Z and gain-ratio quartiles.
+            nearby = list({r["traceIndex"]: r for rows in by_lap for r in rows
+                           if all(max(q[axis] for q in quartiles) / MAX_REPEAT_RATIO <= value <=
+                                  min(q[axis] for q in quartiles) * MAX_REPEAT_RATIO
+                                  for axis, value in enumerate(self._hall_metrics(r)))}.values())
+            if not nearby:
+                raise RuntimeError("no repeatable outer-range sample; retry with light, steady rim contact")
             cutoff = self._percentile([r["rawRadius"] for r in nearby], 0.75)
             outer = [r for r in nearby if r["rawRadius"] >= cutoff]
             target_radius = self._percentile([r["rawRadius"] for r in outer], 0.5)
@@ -348,7 +429,7 @@ class RangeTracker:
                                                 abs(r["rawRadius"] - target_radius), r["traceIndex"]))
             triples.append((chosen["rawX"], chosen["rawY"], chosen["rawZ"]))
             selected.append(chosen["traceIndex"])
-        proposed = self._candidate(triples, selected, "raw-space-outer-quartile")
+        proposed = self._candidate(triples, selected, "raw-space-repeatable-outer-quartile")
         trace_json = json.dumps(self.trace, sort_keys=True, separators=(",", ":")).encode()
         return {
             "stick": self.stick,
@@ -356,6 +437,7 @@ class RangeTracker:
             "slotRawAngles": list(RIGHT_SLOT_ANGLES), "traceSampleCount": len(self.trace),
             "traceSha256": hashlib.sha256(trace_json).hexdigest(),
             "quality": {"turns": self.turns, "sectorCounts": list(self.bin_counts),
+                        "repeatability": repeat_quality,
                         "outerRadiusPerSector": bin_outer, "minimumOuterRadius": min(bin_outer),
                         "maximumOuterRadius": max(bin_outer),
                         "outerRadiusRatio": max(bin_outer) / min(bin_outer)},

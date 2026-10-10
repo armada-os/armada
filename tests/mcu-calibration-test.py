@@ -105,6 +105,86 @@ class CalculationTests(unittest.TestCase):
             tracker.observe(self.range_sample(degree, radius, i))
         self.assertAlmostEqual(tracker.turns * 360, 20, delta=0.1)
 
+    def repeated_range(self, radii=(1000, 1000, 1000, 1000), direction=1, start=17,
+                       z_offsets=None, spike=False):
+        tracker = rsinput_calibration.RangeTracker('right', (32768, 32768))
+        for degree in range(1443):
+            lap = min(degree // 360, 3)
+            row = self.range_sample(start + direction * degree, radii[lap], degree)
+            if z_offsets:
+                row['rawZ'] = 32768 + z_offsets[lap]
+            if spike and degree == 720 + 90:
+                row = self.range_sample(start + direction * degree, 1700, degree)
+            tracker.observe(row)
+        self.assertTrue(tracker.complete)
+        return tracker
+
+    def test_repeatability_accepts_both_directions_and_excludes_approach_lap(self):
+        for direction in (-1, 1):
+            tracker = self.repeated_range((1500, 1000, 1000, 1000), direction)
+            result = tracker.result()
+            self.assertEqual(result['quality']['repeatability']['comparedRotations'], 3)
+            selected = result['rawSpaceCandidate']['selectedTraceIndices']
+            self.assertTrue(all(i >= 360 for i in selected))
+            self.assertTrue(all(tracker.trace[i]['rawRadius'] < 1001 for i in selected))
+
+    def test_larger_or_drifting_laps_cannot_dominate_the_candidate(self):
+        for radii in ((1000, 1000, 1400, 1000), (1000, 1000, 1090, 1190)):
+            with self.assertRaisesRegex(RuntimeError, 'rotations disagree'):
+                self.repeated_range(radii).result()
+        # Provisional measured agreement policy, not an arbitrary-radius detector.
+        self.assertIsNotNone(self.repeated_range((1000, 1000, 1040, 1090)).result())
+        with self.assertRaisesRegex(RuntimeError, 'rotations disagree'):
+            self.repeated_range((1000, 1000, 1040, 1110)).result()
+
+    def test_z_only_changes_are_rejected_even_with_identical_xy_travel(self):
+        with self.assertRaisesRegex(RuntimeError, 'rotations disagree'):
+            self.repeated_range(z_offsets=(7000, 7000, 5400, 7000)).result()
+        with self.assertRaisesRegex(RuntimeError, 'calibration domain'):
+            self.repeated_range(z_offsets=(7000, 0, 7000, 7000)).result()
+        with self.assertRaisesRegex(RuntimeError, 'range is zero'):
+            rsinput_calibration.RangeTracker._hall_metrics(
+                {'rawX':32768, 'rawY':32768, 'rawZ':40000, 'rawRadius':1000})
+
+    def test_isolated_large_sample_is_retained_but_never_selected(self):
+        tracker = self.repeated_range(start=0, spike=True)
+        result = tracker.result()
+        self.assertGreater(tracker.trace[810]['rawRadius'], 1600)
+        self.assertNotIn(810, result['rawSpaceCandidate']['selectedTraceIndices'])
+        self.assertTrue(all(tracker.trace[i]['rawRadius'] < 1001
+                            for i in result['rawSpaceCandidate']['selectedTraceIndices']))
+
+    def test_interrupted_sweeps_cannot_supply_repeatability(self):
+        for interruption in ('centre', 'angular-jump'):
+            tracker = rsinput_calibration.RangeTracker('left', (32768, 32768))
+            for degree in range(1801):
+                if degree == 720:
+                    tracker.observe(self.range_sample(degree + 80,
+                                    5 if interruption == 'centre' else 1000, degree))
+                tracker.observe(self.range_sample(degree, 1000, degree))
+            self.assertTrue(tracker.complete)
+            with self.assertRaisesRegex(RuntimeError, 'rotations were interrupted'):
+                tracker.result()
+
+    def test_sparse_individual_laps_fail_even_when_total_coverage_passes(self):
+        tracker = rsinput_calibration.RangeTracker('left', (32768, 32768))
+        for degree in range(1443):
+            # One measured lap skips most of a 15-degree sector; other laps
+            # still satisfy the old aggregate heading and 72-sector gates.
+            if 366 <= degree <= 374:
+                continue
+            if 376 <= degree <= 389:
+                continue
+            tracker.observe(self.range_sample(degree, 1000, degree))
+        self.assertTrue(tracker.complete)
+        with self.assertRaisesRegex(RuntimeError, 'too fast or uneven'):
+            tracker.result()
+
+    def test_consistency_alone_does_not_prove_physical_rim_contact(self):
+        # A repeatable undersized circle above the independent 600-count floor
+        # is indistinguishable from a smaller physical gate using this signal.
+        self.assertIsNotNone(self.repeated_range((650,)*4).result())
+
     def test_moving_center_is_rejected_then_settled_window_is_averaged(self):
         tracker = rsinput_calibration.CenterTracker('left')
         self.settle_reference(tracker)
@@ -447,6 +527,44 @@ class SessionTests(unittest.TestCase):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_inconsistent_range_is_saved_but_cannot_advance_or_apply(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(rsinput_calibration, 'JOURNAL_ROOT', Path(temp)):
+            capture = rsinput_calibration.CaptureSession('uneven-range', 'left', 'range', (32768, 32768))
+            records = []
+            for degree in range(1803):
+                row = CalculationTests.range_sample(degree, 1400 if 720 <= degree < 1080 else 1000, degree)
+                payload = bytearray(26)
+                rsinput_calibration.struct.pack_into('<HHH', payload, 14, row['rawX'], row['rawY'], row['rawZ'])
+                records.append(rsinput_calibration.SAMPLE.pack(row['timestampNs'], row['generation'],
+                               row['sequence'], 26, payload, 0, 1, 0))
+            with patch.object(policy, 'device_path', return_value='/dev/test'), \
+                 patch.object(policy, 'capture_configuration', return_value={'kernel':'fixture'}), \
+                 patch.object(rsinput_calibration, 'sync_directory'), \
+                 patch.object(rsinput_calibration.os, 'open', return_value=99), \
+                 patch.object(rsinput_calibration.os, 'read', side_effect=records), \
+                 patch.object(rsinput_calibration.os, 'write', return_value=64) as write, \
+                 patch.object(rsinput_calibration.os, 'close'), \
+                 patch.object(rsinput_calibration.select, 'poll') as poll:
+                poll.return_value.poll.return_value = [(99, 1)]
+                capture._run()
+            state = capture.snapshot()
+            self.assertIn('rotations disagree', state['error'])
+            self.assertFalse(state['active'])
+            artifact = json.loads(Path(state['capturePath']).read_text())
+            self.assertIsNone(artifact['result'])
+            self.assertEqual(artifact['abiRecordsHex'], [r.hex() for r in records[:state['sampleCount']]])
+            self.assertGreater(len(artifact['trace']), 1400)
+            self.assertEqual([rsinput_calibration.COMMAND.unpack(c.args[1])[1] for c in write.call_args_list],
+                             [0xA0, 0xA0])
+            manager = rsinput_calibration.CalibrationManager()
+            manager.token, manager.state, manager.step, manager.capture = 'uneven-range', 'measuring', 1, capture
+            with patch.object(rsinput_calibration, 'write_calibration') as persistent_write:
+                status = manager.dispatch('apply', 'uneven-range')
+                self.assertEqual(status['state'], 'failed')
+                self.assertNotIn('continue', status['actions'])
+                self.assertNotIn('apply', status['actions'])
+                persistent_write.assert_not_called()
+
     def test_failed_low_logical_travel_retains_original_reports_and_stage(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(rsinput_calibration, 'JOURNAL_ROOT', Path(temp)):
             capture = rsinput_calibration.CaptureSession('short-travel', 'left', 'center')
