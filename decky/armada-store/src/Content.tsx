@@ -7,15 +7,24 @@ import { AppRow, TERMINAL_PHASES } from "./components/AppRow";
 import { categoryIcons, searchIcon } from "./icons";
 import { addToSteam, launchShortcut, removeFromSteam } from "./lib/shortcuts";
 import { AndroidPages } from "./lib/android";
-import { styles } from "./styles";
+import { SIMPLIFIED_CHINESE_FONT_FAMILY, styles } from "./styles";
 import type { Catalog, CatalogApp, Job, Status } from "./types";
+import { t, type TranslationKey } from "./i18n";
+import { useLocale } from "./hooks/useLocale";
 
 const SECTIONS = [
-  { key: "emulators", title: "Emulators" },
-  { key: "applications", title: "Applications" },
-  { key: "android", title: "Android Apps" },
-  { key: "plugins", title: "Decky Plugins" },
-];
+  { key: "emulators", title: "categories.emulators" },
+  { key: "applications", title: "categories.applications" },
+  { key: "android", title: "categories.android" },
+  { key: "plugins", title: "categories.plugins" },
+] as const;
+
+// Only these two backend-authored notes are localized; any other note is shown
+// verbatim so unknown backend text is never mislabeled.
+const NOTE_LABELS: Record<string, TranslationKey> = {
+  "Paid apps are not supported": "notes.paidAppsUnsupported",
+  "Unavailable for this device or anonymous session": "notes.deviceOrSessionUnavailable",
+};
 
 // The QAM unmounts the panel whenever a menu or modal takes focus, so
 // per-render state cannot survive a drill-down.
@@ -30,22 +39,32 @@ const createdShortcuts = new Map<string, number>();
 let androidText = "";
 let androidScreen: "home" | "category" | "search" = "home";
 const androidFeeds = [
-  { data: "APPLICATION", label: "Popular" },
-  { data: "GAME", label: "Games" },
-  { data: "TOOLS", label: "Tools" },
-  { data: "VIDEO_PLAYERS", label: "Media" },
-  { data: "COMMUNICATION", label: "Communication" },
-  { data: "added", label: "Installed Apps" },
-];
+  { data: "APPLICATION", label: "android.popular" },
+  { data: "GAME", label: "android.games" },
+  { data: "TOOLS", label: "android.tools" },
+  { data: "VIDEO_PLAYERS", label: "android.media" },
+  { data: "COMMUNICATION", label: "android.communication" },
+  { data: "added", label: "android.installedApps" },
+] as const;
 const androidCache = new Map<string, AndroidPages>();
 let androidSearch = { query: "", category: "APPLICATION", pager: new AndroidPages(), loaded: false, busy: false, message: "" };
 
 export function Content() {
+  const locale = useLocale();
+  const fontClass = locale === "zh-CN" ? "armada-store-zh-cn" : undefined;
+  // Context menus render outside this tree, and the QAM unmounts Content while
+  // a menu has focus, so the zh class never reaches MenuItem text. Inline the
+  // family on just the visible label.
+  const menuText = (text: string) => (
+    <span lang={locale} style={locale === "zh-CN" ? { fontFamily: SIMPLIFIED_CHINESE_FONT_FAMILY } : undefined}>
+      {text}
+    </span>
+  );
   const [catalog, setCatalogState] = useState<Catalog | null>(cachedCatalog);
   const [status, setStatus] = useState<Status | null>(null);
   const [updates, setUpdates] = useState<Record<string, { latest: string }>>({});
   const [view, setViewState] = useState<string | null>(rememberedView);
-  const [message, setMessage] = useState("Loading");
+  const [message, setMessage] = useState<string | null>(null);
   const [searchText, setSearchText] = useState(androidText);
   const [, redrawAndroid] = useState(0);
   const setCatalog = useCallback((next: Catalog | null) => {
@@ -115,13 +134,13 @@ export function Content() {
       const app = catalog.apps.find((entry) => entry.id === job.appId);
       if (!app) continue;
       if (job.phase === "error") {
-        toast(app.name, job.error || "Failed");
+        toast(app.name, job.error || t("common.failed"));
       } else if (job.phase === "done") {
         if (job.action !== "uninstall") {
           installFinished = true;
-          toast(app.name, "Installed");
+          toast(app.name, t("common.installed"));
         } else {
-          toast(app.name, "Uninstalled");
+          toast(app.name, t("common.uninstalled"));
         }
       }
     }
@@ -206,7 +225,7 @@ export function Content() {
       }
       if (autoAddAttempted.has(app.id)) continue;
       autoAddAttempted.add(app.id);
-      run(addToSteamFlow(app), () => toast(app.name, "Added to Steam"));
+      run(addToSteamFlow(app), () => toast(app.name, t("notifications.addedToSteam")));
     }
   }, [status, catalog]);
 
@@ -238,10 +257,10 @@ export function Content() {
     const shortcut = status?.shortcuts?.[app.id];
     const items: ReactNode[] = [];
     if (active) {
-      items.push(<MenuItem key="cancel" onSelected={() => run(backend.cancelJob(app.id))}>Cancel</MenuItem>);
+      items.push(<MenuItem key="cancel" onSelected={() => run(backend.cancelJob(app.id))}>{menuText(t("common.cancel"))}</MenuItem>);
     } else {
       if (job?.phase === "error") {
-        items.push(<MenuItem key="dismiss" onSelected={() => run(backend.dismissJob(app.id))}>Dismiss error</MenuItem>);
+        items.push(<MenuItem key="dismiss" onSelected={() => run(backend.dismissJob(app.id))}>{menuText(t("actions.dismissError"))}</MenuItem>);
       }
       // A desktop-only tool must not be launched from game mode even if an
       // older install left a Steam shortcut behind.
@@ -258,14 +277,14 @@ export function Content() {
               }
             }}
           >
-            Launch
+            {menuText(t("actions.launch"))}
           </MenuItem>,
         );
       }
       if (shortcut == null && app.launch && launchable) {
         items.push(
-          <MenuItem key="add-steam" onSelected={() => run(addToSteamFlow(app), () => toast(app.name, "Added to Steam"))}>
-            Add to Steam
+          <MenuItem key="add-steam" onSelected={() => run(addToSteamFlow(app), () => toast(app.name, t("notifications.addedToSteam")))}>
+            {menuText(t("actions.addToSteam"))}
           </MenuItem>,
         );
       }
@@ -276,7 +295,7 @@ export function Content() {
         const kind = conflicts[0].type === "appimage" ? "AppImage" : "Flatpak";
         items.push(
           <MenuItem key="replace" onSelected={() => run(backend.replaceApp(app.id))}>
-            {`Replace ${kind} version`}
+            {menuText(t("actions.replaceVersion", { kind }))}
           </MenuItem>,
         );
       } else if ((!installed || update) && app.canInstall !== false) {
@@ -284,17 +303,17 @@ export function Content() {
         // and no version is shown to compare against anyway.
         items.push(
           <MenuItem key="install" onSelected={() => run(backend.installApp(app.id))}>
-            {installed ? "Update to latest" : "Install"}
+            {menuText(installed ? t("actions.updateLatest") : t("actions.install"))}
           </MenuItem>,
         );
       }
       if (!installed && app.canInstall === false && app.note) {
-        items.push(<MenuItem key="unavailable" disabled>{app.note}</MenuItem>);
+        items.push(<MenuItem key="unavailable" disabled>{menuText(NOTE_LABELS[app.note] ? t(NOTE_LABELS[app.note]) : app.note)}</MenuItem>);
       }
       if (app.desktopOnly && installed) {
         items.push(
           <MenuItem key="desktop" onSelected={() => run(backend.switchToDesktop())}>
-            Switch to Desktop
+            {menuText(t("actions.switchToDesktop"))}
           </MenuItem>,
         );
       }
@@ -304,9 +323,9 @@ export function Content() {
         items.push(
           <MenuItem
             key="remove-steam"
-            onSelected={() => run(removeFromSteamFlow(app, shortcut), () => toast(app.name, "Removed from Steam"))}
+            onSelected={() => run(removeFromSteamFlow(app, shortcut), () => toast(app.name, t("notifications.removedFromSteam")))}
           >
-            Remove from Steam
+            {menuText(t("actions.removeFromSteam"))}
           </MenuItem>,
         );
       }
@@ -315,16 +334,16 @@ export function Content() {
           <MenuItem
             key="reset-config"
             tone="destructive"
-            onSelected={() => run(backend.resetConfig(app.id), () => toast(app.name, "Configuration reset, previous kept as .bak"))}
+            onSelected={() => run(backend.resetConfig(app.id), () => toast(app.name, t("notifications.configurationReset")))}
           >
-            Reset Configuration
+            {menuText(t("actions.resetConfiguration"))}
           </MenuItem>,
         );
       }
       if (installed && app.installType !== "system") {
         items.push(
           <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut), () => { refreshCatalog().catch(() => {}); })}>
-            {app.imported ? "Remove from Store" : "Uninstall"}
+            {menuText(app.imported ? t("actions.removeFromStore") : t("actions.uninstall"))}
           </MenuItem>,
         );
       }
@@ -341,8 +360,8 @@ export function Content() {
         const path = result.realpath || result.path;
         if (!path) return;
         backend.prepareShortcut(path)
-          .then((launch) => addToSteam(launch).then(() => toast(launch.name, "Added to Steam")))
-          .catch((error) => toast("Could not add", String(error)));
+          .then((launch) => addToSteam(launch).then(() => toast(launch.name, t("notifications.addedToSteam"))))
+          .catch((error) => toast(t("notifications.couldNotAdd"), String(error)));
       })
       .catch(() => {});
   };
@@ -378,7 +397,7 @@ export function Content() {
     const page = next ? androidSearch.pager.cursors[0] : undefined;
     if (next && !page) return;
     androidSearch = { ...androidSearch, category, query, pager: next ? androidSearch.pager : new AndroidPages(),
-      loaded: false, busy: true, message: category ? "Loading…" : "Searching…" };
+      loaded: false, busy: true, message: category ? t("android.loading") : t("android.searching") };
     redrawAndroid((value) => value + 1);
     try {
       const result = await backend.searchAndroid(query, page, category || undefined);
@@ -387,7 +406,7 @@ export function Content() {
       pager.append(result.ids, result.pages, page);
       if (next && pager.pages.length > previousLength) pager.index = previousLength;
       androidSearch = { ...androidSearch, category, query, pager, loaded: true,
-        message: result.ids.length ? "" : "No matching apps" };
+        message: result.ids.length ? "" : t("android.noMatchingApps") };
       if (category) androidCache.set(category, pager);
       await refreshCatalog();
     } catch (error) {
@@ -427,11 +446,14 @@ export function Content() {
 
   if (!catalog) {
     return (
-      <PanelSection title="Armada Store">
-        <PanelSectionRow>
-          <div>{message}</div>
-        </PanelSectionRow>
-      </PanelSection>
+      <div className={fontClass} lang={locale}>
+        <style>{styles}</style>
+        <PanelSection title="Armada Store">
+          <PanelSectionRow>
+            <div>{message ?? t("common.loading")}</div>
+          </PanelSectionRow>
+        </PanelSection>
+      </div>
     );
   }
 
@@ -445,30 +467,31 @@ export function Content() {
       : (androidSearch.category === "added" ? androidApps.filter((app) => status?.installed?.[app.id]?.installed || status?.shortcuts?.[app.id] != null)
         : androidIds.map((id) => androidApps.find((app) => app.id === id)).filter((app): app is CatalogApp => !!app))
         .filter((app) => !filtering || app.name.toLocaleLowerCase().includes(searchText.trim().toLocaleLowerCase()));
-    const androidTitle = androidScreen === "home" ? section.title : androidScreen === "search" ? "Search results"
-      : androidFeeds.find((feed) => feed.data === androidSearch.category)?.label;
+    const androidFeed = androidFeeds.find((entry) => entry.data === androidSearch.category);
+    const androidTitle = androidScreen === "home" ? t(section.title) : androidScreen === "search" ? t("android.searchResults")
+      : androidFeed ? t(androidFeed.label) : undefined;
     return (
-      <>
+      <div className={fontClass} lang={locale}>
         <style>{styles}</style>
         <Focusable onButtonDown={(event) => {
           if (section.key === "android" && event.detail.button === GamepadButton.BUMPER_LEFT) {
             event.stopPropagation();
             if (!event.detail.is_repeat) androidBack();
           }
-        }} actionDescriptionMap={section.key === "android" ? { [GamepadButton.BUMPER_LEFT]: "Back" } : undefined}>
+        }} actionDescriptionMap={section.key === "android" ? { [GamepadButton.BUMPER_LEFT]: t("common.back") } : undefined}>
           {section.key === "android" && <PanelSection>
-            <PanelSectionRow><ButtonItem layout="below" onClick={androidBack}>Back</ButtonItem></PanelSectionRow>
+            <PanelSectionRow><ButtonItem layout="below" onClick={androidBack}>{t("common.back")}</ButtonItem></PanelSectionRow>
           </PanelSection>}
-          <PanelSection title={section.key === "android" ? androidTitle : section.title}>
+          <PanelSection title={section.key === "android" ? androidTitle : t(section.title)}>
             {section.key !== "android" && <PanelSectionRow>
-              <ButtonItem layout="below" onClick={() => setView(null)}>Back</ButtonItem>
+              <ButtonItem layout="below" onClick={() => setView(null)}>{t("common.back")}</ButtonItem>
             </PanelSectionRow>}
             {section.key === "android" && <>
               <PanelSectionRow>
                 <div className="armada-store-search">
                   <span aria-hidden="true">{searchIcon}</span>
-                  <TextField {...{ placeholder: "Search" }}
-                    aria-label={androidScreen === "category" ? "Filter this list" : "Search apps"}
+                  <TextField {...{ placeholder: t("android.searchPlaceholder") }}
+                    aria-label={androidScreen === "category" ? t("android.filterList") : t("android.searchApps")}
                     value={searchText} onChange={(event) => {
                       androidText = event.target.value;
                       setSearchText(androidText);
@@ -479,12 +502,12 @@ export function Content() {
               </PanelSectionRow>
               {androidScreen === "home" ? <PanelSectionRow>
                 <ButtonItem layout="below" disabled={androidSearch.busy}
-                  onClick={addLocalApk}>+ Add local .apk</ButtonItem>
+                  onClick={addLocalApk}>{t("android.addLocalApk")}</ButtonItem>
               </PanelSectionRow> : androidSearch.message && <PanelSectionRow><div>{androidSearch.message}</div></PanelSectionRow>}
-              {filtering && !apps.length && <PanelSectionRow><div>No matching apps in this list</div></PanelSectionRow>}
+              {filtering && !apps.length && <PanelSectionRow><div>{t("android.noMatchesInList")}</div></PanelSectionRow>}
               {filtering && <PanelSectionRow>
                 <ButtonItem layout="below" disabled={androidSearch.busy}
-                  onClick={() => searchAndroid(false)}>Search all apps</ButtonItem>
+                  onClick={() => searchAndroid(false)}>{t("android.searchAll")}</ButtonItem>
               </PanelSectionRow>}
             </>}
             {apps.map((app) => (
@@ -500,26 +523,26 @@ export function Content() {
             {section.key === "android" && androidScreen !== "home" && !filtering && androidSearch.category !== "added" && androidSearch.loaded &&
               <PanelSectionRow><Focusable style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <Button style={{ flex: 1 }} disabled={androidSearch.busy || androidSearch.pager.index === 0}
-                  onClick={() => { androidSearch.pager.previous(); androidSearch.message = ""; redrawAndroid((value) => value + 1); }}>Previous</Button>
-                <span>Page {androidSearch.pager.index + 1}</span>
+                  onClick={() => { androidSearch.pager.previous(); androidSearch.message = ""; redrawAndroid((value) => value + 1); }}>{t("android.previous")}</Button>
+                <span>{t("android.page", { page: androidSearch.pager.index + 1 })}</span>
                 <Button style={{ flex: 1 }} disabled={androidSearch.busy || !androidSearch.pager.canNext}
-                  onClick={() => searchAndroid(true, androidSearch.category)}>Next</Button>
+                  onClick={() => searchAndroid(true, androidSearch.category)}>{t("android.next")}</Button>
               </Focusable></PanelSectionRow>}
           </PanelSection>
-          {section.key === "android" && androidScreen === "home" && <PanelSection title="Categories">
-            <PanelSectionRow><div style={{ opacity: 0.65 }}>Browse per category</div></PanelSectionRow>
+          {section.key === "android" && androidScreen === "home" && <PanelSection title={t("android.categories")}>
+            <PanelSectionRow><div style={{ opacity: 0.65 }}>{t("android.browseByCategory")}</div></PanelSectionRow>
             {androidFeeds.map((feed) => <PanelSectionRow key={feed.data}>
               <ButtonItem layout="below" disabled={androidSearch.busy}
-                onClick={() => searchAndroid(false, feed.data)}>{feed.label}</ButtonItem>
+                onClick={() => searchAndroid(false, feed.data)}>{t(feed.label)}</ButtonItem>
             </PanelSectionRow>)}
           </PanelSection>}
         </Focusable>
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className={fontClass} lang={locale}>
       <style>{styles}</style>
       <PanelSection title="Armada Store">
         {SECTIONS.map(({ key, title }) => {
@@ -534,7 +557,7 @@ export function Content() {
                 <div className="armada-store-row">
                   {categoryIcons[key] || categoryIcons.applications}
                   <div className="armada-store-row-text">
-                    <div className="armada-store-row-name">{title}</div>
+                    <div className="armada-store-row-name">{t(title)}</div>
                   </div>
                   {state && <div className="armada-store-row-state">{state}</div>}
                 </div>
@@ -547,12 +570,12 @@ export function Content() {
             <div className="armada-store-row">
               {categoryIcons.add}
               <div className="armada-store-row-text">
-                <div className="armada-store-row-name">Add Non-Steam Game</div>
+                <div className="armada-store-row-name">{t("actions.addNonSteamGame")}</div>
               </div>
             </div>
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
-    </>
+    </div>
   );
 }
