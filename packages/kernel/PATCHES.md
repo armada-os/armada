@@ -535,6 +535,18 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Rumble report format from the stock Android kernel's hid-ayaneo. Binds on every AYANEO 4001:0428 pad, rumble only on the Pocket MICRO 2.
+- `patches/0309-ASoC-qcom-q6afe-keep-the-lpass-core-hw-vote-handle.patch`
+  source: armada
+  upstream: local
+- `patches/0310-ASoC-codecs-lpass-macro-release-core-hw-votes-in-runtime-suspend.patch`
+  source: armada
+  upstream: local
+- `patches/0311-clk-qcom-camcc-sm8250-keep-gdsc-clk-on-outside-ccf.patch`
+  source: armada
+  upstream: local
+- `patches/0312-drm-msm-dsi-phy-unprepare-iface-clk-across-system-sleep.patch`
+  source: armada
+  upstream: local
 - `patches/0304-ASoC-wcd938x-treat-failed-zdet-ramp-as-floating.patch`
   source: armada
   upstream: local

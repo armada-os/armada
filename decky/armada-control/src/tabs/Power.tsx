@@ -3,15 +3,12 @@ import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { SelectEdit, SliderEdit } from "../components/widgets";
 import { t, translateLabel } from "../i18n";
-import { clone, titleCase, update } from "../lib/util";
-import type { Config, PowerProfile } from "../types";
+import type { TranslationKey } from "../i18n";
+import { clusterRoles, derivedKhz, indexAtMost, isOverclocked, presetKhz } from "../lib/freq";
+import { titleCase, update } from "../lib/util";
+import type { Config, CpuPolicy, PowerProfile } from "../types";
 
-const underclocks = [
-  { data: "none", label: "None" },
-  { data: "small", label: "Small" },
-  { data: "medium", label: "Medium" },
-  { data: "large", label: "Large" },
-];
+const policyKey = (policy: CpuPolicy) => `cpu_max_policy${policy.id}` as const;
 
 export function Power({ config, setConfig }: { config: Config; setConfig: Dispatch<SetStateAction<Config | null>> }) {
   const [profile, setProfile] = useState(config.power.general.default_profile || "balanced");
@@ -27,28 +24,57 @@ export function Power({ config, setConfig }: { config: Config; setConfig: Dispat
   const setProfileValue = (name: string, value: any) => {
     setConfig((current) => (current ? update(current, ["power", "profiles", profile, name], value) : current));
   };
-  const setGpuValue = (name: string, value: any) => {
+  const defaults = config.powerDefaults?.profiles?.[profile];
+  const presets = config.power.underclocks?.[config.cpuDeviceClass];
+  const presetClass = !!presets;
+  const underclockLevel = (p.cpu_underclock || "").toLowerCase();
+  const underclockOptions = [...new Set(["none", ...Object.keys(presets ?? {}), "custom"])].map((level) => ({
+    data: level,
+    label: translateLabel(titleCase(level)),
+  }));
+  const cpuPolicies = config.freqLimits?.cpuPolicies ?? [];
+  const cpuRoles = clusterRoles(cpuPolicies).map((role) => (/^big\d+$/.test(role) ? t("cpu.bigN", { n: role.slice(3) }) : t(`cpu.${role}` as TranslationKey)));
+  const clearedCpuCaps = Object.fromEntries(cpuPolicies.map((policy) => [policyKey(policy), null]));
+  const displayKhz = (policy: CpuPolicy, current: PowerProfile) => {
+    const preset = presetKhz(presets, current.cpu_underclock || "", policyKey(policy));
+    return current[policyKey(policy)] ?? derivedKhz(policy.khz[policy.khz.length - 1], preset, Number(current.cpu_max), presetClass);
+  };
+  const snappedCpuCaps = (current: PowerProfile) =>
+    Object.fromEntries(cpuPolicies.map((policy) => [policyKey(policy), policy.khz[indexAtMost(policy.khz, displayKhz(policy, current))]]));
+  const setUnderclock = (level: string) => {
     setConfig((current) => {
       if (!current) return current;
-      const next = clone(current);
-      const target: any = next.power.profiles[profile];
-      target[name] = value;
-      if (name === "gpu_min" && Number(value) > Number(target.gpu_max || 0)) {
-        target.gpu_max = value;
-      }
-      if (name === "gpu_max" && Number(value) < Number(target.gpu_min || 0)) {
-        target.gpu_min = value;
-      }
-      return next;
+      const currentProfile = current.power.profiles[profile];
+      const caps = level === "custom" ? snappedCpuCaps(currentProfile) : clearedCpuCaps;
+      return update(current, ["power", "profiles", profile], { ...currentProfile, cpu_underclock: level, ...caps });
+    });
+  };
+  const setCpuMax = (policy: CpuPolicy, index: number) => {
+    setConfig((current) => {
+      if (!current) return current;
+      const currentProfile = current.power.profiles[profile];
+      return update(current, ["power", "profiles", profile], { ...currentProfile, ...snappedCpuCaps(currentProfile), [policyKey(policy)]: policy.khz[index], ...(presetClass ? { cpu_underclock: "custom" } : {}) });
     });
   };
   const resetProfile = () => {
-    const defaults = config.powerDefaults?.profiles?.[profile];
     if (!defaults) return;
-    setConfig((current) => (current ? update(current, ["power", "profiles", profile], defaults) : current));
+    const reset = { ...defaults, gpu_max_mhz: null, gpu_min_mhz: null, ...clearedCpuCaps };
+    setConfig((current) => (current ? update(current, ["power", "profiles", profile], reset) : current));
   };
-  const underclockLevel = p.cpu_underclock || "";
-  const supportsUnderclockPresets = !!config.power.underclocks?.[config.cpuDeviceClass];
+  const gpuMhz = config.freqLimits?.gpuMhz ?? [];
+  const gpuStockMaxMhz = config.freqLimits?.gpuStockMaxMhz ?? 0;
+  const gpuIndex = indexAtMost(gpuMhz, p.gpu_max_mhz ?? defaults?.gpu_max_mhz ?? Infinity);
+  const gpuMaxMhz = gpuMhz[gpuIndex];
+  const gpuMinIndex = indexAtMost(gpuMhz, p.gpu_min_mhz ?? defaults?.gpu_min_mhz ?? 0);
+  const gpuMinMhz = gpuMhz[gpuMinIndex];
+  const setGpuMax = (mhz: number) => {
+    setConfig((current) => {
+      if (!current) return current;
+      const currentProfile = current.power.profiles[profile];
+      const minMhz = gpuMhz[indexAtMost(gpuMhz, currentProfile.gpu_min_mhz ?? defaults?.gpu_min_mhz ?? 0)];
+      return update(current, ["power", "profiles", profile], { ...currentProfile, ...(mhz < minMhz ? { gpu_max_mhz: mhz, gpu_min_mhz: mhz } : { gpu_max_mhz: mhz }) });
+    });
+  };
   return (
     <>
       <PanelSection title={t("power.editProfile")}>
@@ -64,13 +90,30 @@ export function Power({ config, setConfig }: { config: Config; setConfig: Dispat
             onChange={(v) => setProfileValue("cpu_governor", v)}
           />
         ) : null}
-        {supportsUnderclockPresets ? (
-          <SelectEdit label={t("power.cpuUnderclock")} value={underclockLevel} options={underclocks.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={(v) => setProfileValue("cpu_underclock", v)} />
-        ) : (
-          <SliderEdit label={t("power.cpuMax")} value={Math.round(Number(p.cpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setProfileValue("cpu_max", (v / 100).toFixed(2))} />
-        )}
-        <SliderEdit label={t("power.gpuMin")} value={Math.round(Number(p.gpu_min || 0) * 100)} min={0} max={100} step={1} onChange={(v) => setGpuValue("gpu_min", (v / 100).toFixed(2))} />
-        <SliderEdit label={t("power.gpuMax")} value={Math.round(Number(p.gpu_max || 0) * 100)} min={35} max={100} step={1} onChange={(v) => setGpuValue("gpu_max", (v / 100).toFixed(2))} />
+        {presetClass ? (
+          <SelectEdit label={t("power.cpuUnderclock")} value={underclockLevel} options={underclockOptions} onChange={setUnderclock} />
+        ) : null}
+        {cpuPolicies.map((policy, i) => {
+          const index = indexAtMost(policy.khz, displayKhz(policy, p));
+          return (
+            <SliderEdit key={policy.id} label={t("power.cpuCluster", { role: cpuRoles[i], cpus: policy.cpus, mhz: policy.mhz[index] })} value={index} min={0} max={policy.khz.length - 1} step={1} showValue={false} onChange={(i) => setCpuMax(policy, i)} />
+          );
+        })}
+        {gpuMhz.length > 0 ? (
+          <SliderEdit label={t("power.gpuMin", { mhz: gpuMinMhz })} value={gpuMinIndex} min={0} max={gpuMhz.length - 1} step={1} showValue={false} onChange={(i) => setProfileValue("gpu_min_mhz", Math.min(gpuMhz[i], gpuMaxMhz))} />
+        ) : null}
+        {gpuMhz.length > 0 ? (
+          <SliderEdit
+            label={t("power.gpuMax", { mhz: gpuMaxMhz })}
+            description={isOverclocked(gpuMaxMhz, gpuStockMaxMhz) ? t("power.gpuOverclocked", { mhz: gpuStockMaxMhz }) : undefined}
+            value={gpuIndex}
+            min={0}
+            max={gpuMhz.length - 1}
+            step={1}
+            showValue={false}
+            onChange={(i) => setGpuMax(gpuMhz[i])}
+          />
+        ) : null}
         <div className="armada-reset-row">
           <ButtonItem layout="below" onClick={resetProfile}>{t("common.resetToDefault")}</ButtonItem>
         </div>

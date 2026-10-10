@@ -4,6 +4,7 @@
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/interconnect/qcom,icc.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
@@ -429,45 +430,44 @@
 	};
 };
 
-&cluster_pd {
-	/delete-property/ domain-idle-states;
+&cpu0 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
-&cpu7_opp_table {
-	/delete-node/ opp-2745600000;
-	/delete-node/ opp-2841600000;
+&cpu1 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
-&cpu_pd0 {
-	/delete-property/ domain-idle-states;
+&cpu2 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
-&cpu_pd1 {
-	/delete-property/ domain-idle-states;
+&cpu3 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
-&cpu_pd2 {
-	/delete-property/ domain-idle-states;
+&cpu4 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
-&cpu_pd3 {
-	/delete-property/ domain-idle-states;
+&cpu5 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
-&cpu_pd4 {
-	/delete-property/ domain-idle-states;
+&cpu6 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
-&cpu_pd5 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd6 {
-	/delete-property/ domain-idle-states;
-};
-
-&cpu_pd7 {
-	/delete-property/ domain-idle-states;
+&cpu7 {
+	interconnects = <&gem_noc MASTER_AMPSS_M0 QCOM_ICC_TAG_ACTIVE_ONLY &mc_virt SLAVE_EBI_CH0 QCOM_ICC_TAG_ACTIVE_ONLY>,
+			<&epss_l3 MASTER_OSM_L3_APPS &epss_l3 SLAVE_OSM_L3>;
 };
 
 &gmu {
@@ -476,18 +476,6 @@
 
 &gpu {
 	status = "okay";
-};
-
-&gpu_opp_table {
-	/delete-node/ opp-925000000;
-	/delete-node/ opp-905000000;
-	/delete-node/ opp-855000000;
-	/delete-node/ opp-800000000;
-	/delete-node/ opp-750000000;
-	/delete-node/ opp-725000000;
-	/delete-node/ opp-700000000;
-	/delete-node/ opp-670000000;
-	/delete-node/ opp-650000000;
 };
 
 &gpu_zap_shader {

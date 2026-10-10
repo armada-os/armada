@@ -280,5 +280,87 @@ def reapply_perf():
     return call("reapply_perf")
 
 
+def at_most(freqs, target):
+    below = [freq for freq in freqs if freq <= target]
+    return below[-1] if below else freqs[0] if freqs else 0
+
+
+def freq_list(path):
+    return sorted(int(v) for v in read_text(path).split() if v.isdigit())
+
+
+def gpu_devfreq(sysfs):
+    devfreq = sysfs / "class" / "devfreq"
+    for path in sorted(devfreq.glob("*.gpu")):
+        if (path / "available_frequencies").exists():
+            return path
+    for path in sorted(devfreq.glob("*")):
+        if "gpu" in path.name.lower() and (path / "governor").exists() and (path / "available_frequencies").exists():
+            return path
+    return None
+
+
+def cpu_policy_freqs(policy):
+    freqs = freq_list(policy / "scaling_available_frequencies")
+    if freqs:
+        return freqs
+    low = read_text(policy / "cpuinfo_min_freq")
+    high = read_text(policy / "cpuinfo_max_freq")
+    if low.isdigit() and high.isdigit():
+        return [int(low), int(high)]
+    return []
+
+
+def cpu_list_text(cpus):
+    if cpus == list(range(cpus[0], cpus[-1] + 1)):
+        return str(cpus[0]) if len(cpus) == 1 else f"{cpus[0]}-{cpus[-1]}"
+    return ",".join(str(cpu) for cpu in cpus)
+
+
+def cpu_policy_cpus(policy, policy_id):
+    for name in ("related_cpus", "affected_cpus"):
+        cpus = sorted(int(v) for v in read_text(policy / name).split() if v.isdigit())
+        if cpus:
+            return cpu_list_text(cpus)
+    return str(policy_id)
+
+
+def cpu_policies(sysfs):
+    policies = []
+    for policy in (sysfs / "devices" / "system" / "cpu" / "cpufreq").glob("policy*"):
+        suffix = policy.name.removeprefix("policy")
+        if not suffix.isdigit():
+            continue
+        khz = sorted(cpu_policy_freqs(policy))
+        if khz:
+            policy_id = int(suffix)
+            policies.append({
+                "id": policy_id,
+                "cpus": cpu_policy_cpus(policy, policy_id),
+                "khz": khz,
+                "mhz": [k // 1000 for k in khz],
+            })
+    return sorted(policies, key=lambda policy: policy["id"])
+
+
+def freq_limits(env=None, sysfs=Path("/sys")):
+    env = device_env() if env is None else env
+    gpu = gpu_devfreq(sysfs)
+    gpu_hz = freq_list(gpu / "available_frequencies") if gpu else []
+    stock = str(env.get("ARMADA_GPU_STOCK_MAX_MHZ", "")).strip()
+    stock_hz = 0
+    if gpu_hz:
+        stock_hz = gpu_hz[-1]
+        if stock.isdigit() and int(stock) > 0:
+            stock_hz = at_most(gpu_hz, int(stock) * 1_000_000 + 999_999)
+    return {
+        "gpuMhz": list(dict.fromkeys(hz // 1_000_000 for hz in gpu_hz)),
+        "gpuStockMaxMhz": stock_hz // 1_000_000,
+        "gpuStockHz": stock_hz,
+        "gpuHz": gpu_hz,
+        "cpuPolicies": cpu_policies(sysfs),
+    }
+
+
 def restart_game_mode():
     return bool(call("restart_game_mode").get("ok"))

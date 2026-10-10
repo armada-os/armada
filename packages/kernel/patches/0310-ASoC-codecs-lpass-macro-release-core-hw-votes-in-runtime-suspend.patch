@@ -1,0 +1,314 @@
+From: seilent <github@seilent.net>
+Subject: [PATCH] ASoC: codecs: lpass-macro: release core HW votes in runtime suspend on Pocket MICRO 2
+
+The rx, tx, wsa and va macros take the macro and dcodec LPASS core
+votes at probe and hold them for the device lifetime, so the ADSP never
+power collapses. On the AYANEO Pocket MICRO 2 drop them in runtime
+suspend and take them again in runtime resume.
+
+---
+diff --git a/sound/soc/codecs/lpass-rx-macro.c b/sound/soc/codecs/lpass-rx-macro.c
+index e9e557e03..48d3807aa 100644
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -13,6 +13,7 @@
+ #include <sound/pcm_params.h>
+ #include <sound/soc-dapm.h>
+ #include <sound/tlv.h>
++#include <linux/of.h>
+ #include <linux/of_clk.h>
+ #include <linux/clk-provider.h>
+ 
+@@ -666,6 +667,7 @@ struct rx_macro {
+ 	struct clk *npl;
+ 	struct clk *macro;
+ 	struct clk *dcodec;
++	bool drop_core_votes;
+ 	struct clk *fsgen;
+ 	struct clk_hw hw;
+ };
+@@ -3913,6 +3915,7 @@ static int rx_macro_probe(struct platform_device *pdev)
+ 		return PTR_ERR(rx->regmap);
+ 
+ 	dev_set_drvdata(dev, rx);
++	rx->drop_core_votes = of_machine_is_compatible("ayaneo,pocket-micro2");
+ 
+ 	rx->dev = dev;
+ 
+@@ -4030,6 +4033,11 @@ static int rx_macro_runtime_suspend(struct device *dev)
+ 	clk_disable_unprepare(rx->npl);
+ 	clk_disable_unprepare(rx->mclk);
+ 
++	if (rx->drop_core_votes) {
++		clk_disable_unprepare(rx->dcodec);
++		clk_disable_unprepare(rx->macro);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -4038,10 +4046,20 @@ static int rx_macro_runtime_resume(struct device *dev)
+ 	struct rx_macro *rx = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	if (rx->drop_core_votes) {
++		ret = clk_prepare_enable(rx->macro);
++		if (ret)
++			return ret;
++
++		ret = clk_prepare_enable(rx->dcodec);
++		if (ret)
++			goto err_dcodec;
++	}
++
+ 	ret = clk_prepare_enable(rx->mclk);
+ 	if (ret) {
+ 		dev_err(dev, "unable to prepare mclk\n");
+-		return ret;
++		goto err_mclk;
+ 	}
+ 
+ 	ret = clk_prepare_enable(rx->npl);
+@@ -4063,6 +4081,12 @@ static int rx_macro_runtime_resume(struct device *dev)
+ 	clk_disable_unprepare(rx->npl);
+ err_npl:
+ 	clk_disable_unprepare(rx->mclk);
++err_mclk:
++	if (rx->drop_core_votes)
++		clk_disable_unprepare(rx->dcodec);
++err_dcodec:
++	if (rx->drop_core_votes)
++		clk_disable_unprepare(rx->macro);
+ 
+ 	return ret;
+ }
+diff --git a/sound/soc/codecs/lpass-tx-macro.c b/sound/soc/codecs/lpass-tx-macro.c
+index 0cbf50647..a4a44c2d0 100644
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -11,6 +11,7 @@
+ #include <sound/soc.h>
+ #include <sound/soc-dapm.h>
+ #include <sound/tlv.h>
++#include <linux/of.h>
+ #include <linux/of_clk.h>
+ #include <linux/clk-provider.h>
+ 
+@@ -277,6 +278,7 @@ struct tx_macro {
+ 	struct clk *npl;
+ 	struct clk *macro;
+ 	struct clk *dcodec;
++	bool drop_core_votes;
+ 	struct clk *fsgen;
+ 	struct clk_hw hw;
+ 	bool dec_active[NUM_DECIMATORS];
+@@ -2306,6 +2308,7 @@ static int tx_macro_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	dev_set_drvdata(dev, tx);
++	tx->drop_core_votes = of_machine_is_compatible("ayaneo,pocket-micro2");
+ 
+ 	tx->dev = dev;
+ 
+@@ -2410,6 +2413,11 @@ static int tx_macro_runtime_suspend(struct device *dev)
+ 	clk_disable_unprepare(tx->npl);
+ 	clk_disable_unprepare(tx->mclk);
+ 
++	if (tx->drop_core_votes) {
++		clk_disable_unprepare(tx->dcodec);
++		clk_disable_unprepare(tx->macro);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -2418,10 +2426,20 @@ static int tx_macro_runtime_resume(struct device *dev)
+ 	struct tx_macro *tx = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	if (tx->drop_core_votes) {
++		ret = clk_prepare_enable(tx->macro);
++		if (ret)
++			return ret;
++
++		ret = clk_prepare_enable(tx->dcodec);
++		if (ret)
++			goto err_dcodec;
++	}
++
+ 	ret = clk_prepare_enable(tx->mclk);
+ 	if (ret) {
+ 		dev_err(dev, "unable to prepare mclk\n");
+-		return ret;
++		goto err_mclk;
+ 	}
+ 
+ 	ret = clk_prepare_enable(tx->npl);
+@@ -2444,6 +2462,12 @@ static int tx_macro_runtime_resume(struct device *dev)
+ 	clk_disable_unprepare(tx->npl);
+ err_npl:
+ 	clk_disable_unprepare(tx->mclk);
++err_mclk:
++	if (tx->drop_core_votes)
++		clk_disable_unprepare(tx->dcodec);
++err_dcodec:
++	if (tx->drop_core_votes)
++		clk_disable_unprepare(tx->macro);
+ 
+ 	return ret;
+ }
+diff --git a/sound/soc/codecs/lpass-va-macro.c b/sound/soc/codecs/lpass-va-macro.c
+index 58a579882..058ff4708 100644
+--- a/sound/soc/codecs/lpass-va-macro.c
++++ b/sound/soc/codecs/lpass-va-macro.c
+@@ -7,6 +7,7 @@
+ #include <linux/init.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/of_clk.h>
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+@@ -216,6 +217,7 @@ struct va_macro {
+ 	struct clk *npl;
+ 	struct clk *macro;
+ 	struct clk *dcodec;
++	bool drop_core_votes;
+ 	struct clk *fsgen;
+ 	struct clk_hw hw;
+ 	struct lpass_macro *pds;
+@@ -1588,6 +1590,7 @@ static int va_macro_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	dev_set_drvdata(dev, va);
++	va->drop_core_votes = of_machine_is_compatible("ayaneo,pocket-micro2");
+ 
+ 	data = of_device_get_match_data(dev);
+ 	va->has_swr_master = data->has_swr_master;
+@@ -1725,6 +1728,11 @@ static int va_macro_runtime_suspend(struct device *dev)
+ 
+ 	clk_disable_unprepare(va->mclk);
+ 
++	if (va->drop_core_votes) {
++		clk_disable_unprepare(va->dcodec);
++		clk_disable_unprepare(va->macro);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1733,18 +1741,27 @@ static int va_macro_runtime_resume(struct device *dev)
+ 	struct va_macro *va = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	if (va->drop_core_votes) {
++		ret = clk_prepare_enable(va->macro);
++		if (ret)
++			return ret;
++
++		ret = clk_prepare_enable(va->dcodec);
++		if (ret)
++			goto err_dcodec;
++	}
++
+ 	ret = clk_prepare_enable(va->mclk);
+ 	if (ret) {
+ 		dev_err(va->dev, "unable to prepare mclk\n");
+-		return ret;
++		goto err_mclk;
+ 	}
+ 
+ 	if (va->has_npl_clk) {
+ 		ret = clk_prepare_enable(va->npl);
+ 		if (ret) {
+-			clk_disable_unprepare(va->mclk);
+ 			dev_err(va->dev, "unable to prepare npl\n");
+-			return ret;
++			goto err_npl;
+ 		}
+ 	}
+ 
+@@ -1752,6 +1769,16 @@ static int va_macro_runtime_resume(struct device *dev)
+ 	regcache_sync(va->regmap);
+ 
+ 	return 0;
++err_npl:
++	clk_disable_unprepare(va->mclk);
++err_mclk:
++	if (va->drop_core_votes)
++		clk_disable_unprepare(va->dcodec);
++err_dcodec:
++	if (va->drop_core_votes)
++		clk_disable_unprepare(va->macro);
++
++	return ret;
+ }
+ 
+ 
+diff --git a/sound/soc/codecs/lpass-wsa-macro.c b/sound/soc/codecs/lpass-wsa-macro.c
+index af521e098..e681b482a 100644
+--- a/sound/soc/codecs/lpass-wsa-macro.c
++++ b/sound/soc/codecs/lpass-wsa-macro.c
+@@ -418,6 +418,7 @@ struct wsa_macro {
+ 	struct clk *npl;
+ 	struct clk *macro;
+ 	struct clk *dcodec;
++	bool drop_core_votes;
+ 	struct clk *fsgen;
+ 	struct clk_hw hw;
+ };
+@@ -2767,6 +2768,7 @@ static int wsa_macro_probe(struct platform_device *pdev)
+ 		return PTR_ERR(wsa->regmap);
+ 
+ 	dev_set_drvdata(dev, wsa);
++	wsa->drop_core_votes = of_machine_is_compatible("ayaneo,pocket-micro2");
+ 
+ 	wsa->dev = dev;
+ 
+@@ -2860,6 +2862,11 @@ static int wsa_macro_runtime_suspend(struct device *dev)
+ 	clk_disable_unprepare(wsa->npl);
+ 	clk_disable_unprepare(wsa->mclk);
+ 
++	if (wsa->drop_core_votes) {
++		clk_disable_unprepare(wsa->dcodec);
++		clk_disable_unprepare(wsa->macro);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -2868,10 +2875,20 @@ static int wsa_macro_runtime_resume(struct device *dev)
+ 	struct wsa_macro *wsa = dev_get_drvdata(dev);
+ 	int ret;
+ 
++	if (wsa->drop_core_votes) {
++		ret = clk_prepare_enable(wsa->macro);
++		if (ret)
++			return ret;
++
++		ret = clk_prepare_enable(wsa->dcodec);
++		if (ret)
++			goto err_dcodec;
++	}
++
+ 	ret = clk_prepare_enable(wsa->mclk);
+ 	if (ret) {
+ 		dev_err(dev, "unable to prepare mclk\n");
+-		return ret;
++		goto err_mclk;
+ 	}
+ 
+ 	ret = clk_prepare_enable(wsa->npl);
+@@ -2894,6 +2911,12 @@ static int wsa_macro_runtime_resume(struct device *dev)
+ 	clk_disable_unprepare(wsa->npl);
+ err_npl:
+ 	clk_disable_unprepare(wsa->mclk);
++err_mclk:
++	if (wsa->drop_core_votes)
++		clk_disable_unprepare(wsa->dcodec);
++err_dcodec:
++	if (wsa->drop_core_votes)
++		clk_disable_unprepare(wsa->macro);
+ 
+ 	return ret;
+ }

@@ -1,0 +1,34 @@
+From: seilent <github@seilent.net>
+Subject: [PATCH] clk: qcom: camcc-sm8250: keep gdsc clk on outside CCF on Pocket MICRO 2
+
+cam_cc_gdsc_clk is a CLK_IS_CRITICAL branch below the non-AO bi_tcxo,
+so CCF holds the RPMh XO vote for as long as camcc is bound and XO
+cannot shut down in suspend. On the AYANEO Pocket MICRO 2 leave the
+clock out of CCF and enable its CBCR once at probe, as camcc-sm8150
+does.
+
+---
+diff --git a/drivers/clk/qcom/camcc-sm8250.c b/drivers/clk/qcom/camcc-sm8250.c
+index 21e942367..4c3fb1208 100644
+--- a/drivers/clk/qcom/camcc-sm8250.c
++++ b/drivers/clk/qcom/camcc-sm8250.c
+@@ -5,6 +5,7 @@
+ 
+ #include <linux/clk-provider.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+ 
+@@ -2435,6 +2436,11 @@ static int cam_cc_sm8250_probe(struct platform_device *pdev)
+ 	clk_lucid_pll_configure(&cam_cc_pll3, regmap, &cam_cc_pll3_config);
+ 	clk_lucid_pll_configure(&cam_cc_pll4, regmap, &cam_cc_pll4_config);
+ 
++	if (of_machine_is_compatible("ayaneo,pocket-micro2")) {
++		cam_cc_sm8250_clocks[CAM_CC_GDSC_CLK] = NULL;
++		qcom_branch_set_clk_en(regmap, 0xc16c);
++	}
++
+ 	return qcom_cc_really_probe(&pdev->dev, &cam_cc_sm8250_desc, regmap);
+ }
+ 
