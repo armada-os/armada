@@ -17,6 +17,47 @@ import input_calibration_policy as policy
 
 
 class CalculationTests(unittest.TestCase):
+    @staticmethod
+    def range_sample(degree, radius, index=0):
+        angle = math.radians(degree)
+        return {"timestampNs": index * 4_000_000, "generation": index + 1,
+                "sequence": index % 255 + 1, "length": 26, "dropped": 0,
+                "logicalX": 0, "logicalY": 0,
+                "rawX": 32768 + round(math.cos(angle) * radius),
+                "rawY": 32768 + round(math.sin(angle) * radius), "rawZ": 40000}
+
+    def test_rest_noise_cannot_supply_range_turns_or_coverage(self):
+        tracker = rsinput_calibration.RangeTracker('right', (32768, 32768))
+        for degree in range(1801):
+            tracker.observe(self.range_sample(degree, 10, degree))
+        self.assertEqual(len(tracker.trace), 1801)
+        self.assertEqual(tracker.turns, 0)
+        self.assertEqual(tracker.progress()['coveredSectors'], 0)
+        self.assertEqual(tracker.progress()['coveredHeadings'], 0)
+        self.assertFalse(tracker.complete)
+        self.assertIsNone(tracker.result())
+
+    def test_waiting_at_rest_does_not_poison_outer_percentiles(self):
+        tracker = rsinput_calibration.RangeTracker('right', (32768, 32768))
+        # More rest samples than gate samples in one sector, as in the Odin trace.
+        for i in range(1000):
+            tracker.observe(self.range_sample(90, 5, i))
+        for degree in range(1801):
+            tracker.observe(self.range_sample(degree, 1000, 1000 + degree))
+        self.assertTrue(tracker.complete)
+        result = tracker.result()
+        self.assertGreater(result['quality']['minimumOuterRadius'], 990)
+        indices = result['rawSpaceCandidate']['selectedTraceIndices']
+        self.assertTrue(all(i >= 1000 for i in indices))
+        self.assertEqual(len(tracker.trace), 2801)
+
+    def test_range_rotation_does_not_bridge_a_return_to_centre(self):
+        tracker = rsinput_calibration.RangeTracker('right', (32768, 32768))
+        for i, (degree, radius) in enumerate([(0, 1000), (10, 1000), (20, 5),
+                                              (30, 1000), (40, 1000)]):
+            tracker.observe(self.range_sample(degree, radius, i))
+        self.assertAlmostEqual(tracker.turns * 360, 20, delta=0.1)
+
     def test_moving_center_is_rejected_then_settled_window_is_averaged(self):
         tracker = rsinput_calibration.CenterTracker('left')
         with patch.object(policy, 'mcu_node', return_value=None):
@@ -114,13 +155,8 @@ class CalculationTests(unittest.TestCase):
         # Coverage alone is insufficient without firm gate contact.
         weak = rsinput_calibration.RangeTracker("left", (32768, 32768))
         sweep(weak, radius_x=400, radius_y=400)
-        assert weak.complete and weak.progress()["coveredSectors"] == 72
-        try:
-            weak.result()
-        except RuntimeError as error:
-            assert "weak outer-gate contact" in str(error)
-        else:
-            raise AssertionError("weak full-coverage sweep was accepted")
+        assert not weak.complete and weak.progress()["coveredSectors"] == 0
+        assert weak.turns == 0 and weak.result() is None
 
         malformed = rsinput_calibration.RangeTracker("left", (32768, 32768))
         try:

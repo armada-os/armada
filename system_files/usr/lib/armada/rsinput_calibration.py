@@ -247,6 +247,12 @@ class RangeTracker:
         record.update({"traceIndex": len(self.trace), "rawRadius": radius,
                        "rawAngle": raw_angle})
         self.trace.append(record)
+        # Near centre, tiny Hall noise can sweep through arbitrary angles. Retain
+        # it as evidence, but count only sufficiently deflected samples toward
+        # outer coverage/turns, and never bridge an excursion through the centre.
+        if radius < MIN_OUTER_RADIUS:
+            self.previous_angle = None
+            return
         angle = raw_angle
         self.bin_counts[int(angle // (360 / RANGE_BIN_COUNT)) % RANGE_BIN_COUNT] += 1
         for slot, raw_target in enumerate(RIGHT_SLOT_ANGLES):
@@ -297,9 +303,10 @@ class RangeTracker:
     def result(self):
         if not self.complete:
             return None
+        outer_trace = [r for r in self.trace if r["rawRadius"] >= MIN_OUTER_RADIUS]
         bin_outer = []
         for sector in range(RANGE_BIN_COUNT):
-            radii = [r["rawRadius"] for r in self.trace
+            radii = [r["rawRadius"] for r in outer_trace
                      if int(r["rawAngle"] // 5) % RANGE_BIN_COUNT == sector]
             bin_outer.append(self._percentile(radii, 0.75))
         if min(bin_outer) < MIN_OUTER_RADIUS:
@@ -308,7 +315,7 @@ class RangeTracker:
             raise RuntimeError("inconsistent outer-gate radii")
         triples, selected = [], []
         for raw_target in RIGHT_SLOT_ANGLES:
-            nearby = [r for r in self.trace if self.distance(r["rawAngle"], raw_target) <= 5]
+            nearby = [r for r in outer_trace if self.distance(r["rawAngle"], raw_target) <= 5]
             cutoff = self._percentile([r["rawRadius"] for r in nearby], 0.75)
             outer = [r for r in nearby if r["rawRadius"] >= cutoff]
             target_radius = self._percentile([r["rawRadius"] for r in outer], 0.5)
