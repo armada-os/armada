@@ -91,6 +91,7 @@ export interface CalibrationState {
   controls: Record<string, AbsControl>;
   event: any;
   canApply?: boolean;
+  calibration?: { sticks: "mcu" | "software"; available: boolean; triggers: boolean };
   backend?: string;
   saved?: boolean;
   params?: Record<string, number>;
@@ -107,6 +108,32 @@ export interface CalibrationProgress {
   left_trigger: number;
   right_trigger: number;
   ready: boolean;
+}
+
+export type McuCalibrationOperation = "start" | "continue" | "cancel" | "apply" | "status";
+
+export interface McuCalibrationSession {
+  state: "idle" | "measuring" | "measured" | "ready" | "applying" | "applied" | "uncertain" | "failed" | "cancelled";
+  actions: McuCalibrationOperation[];
+  error: string;
+  step: number;
+  totalSteps: number;
+  stick: "left" | "right";
+  phase: "center" | "range";
+  progress: {
+    coveredDirections?: string[];
+    directionCount?: number;
+    directionGoal?: number;
+    pendingDirection?: string | null;
+    stableSamples?: number;
+    stableGoal?: number;
+    turns?: number;
+    turnGoal?: number;
+    coveredHeadings?: number;
+    headingGoal?: number;
+    coveredSectors?: number;
+    sectorGoal?: number;
+  };
 }
 
 export interface RgbConfig {
