@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+
+step='acquiring boot sync lock'
+trap 'status=$?; echo "armada-boot-update: ${step} failed (status ${status})" >&2; exit "${status}"' ERR
+exec 8>"${SYNC_LOCK:-/run/armada-boot-sync.lock}"
+flock -w 30 8
+step='ABL boot sync'
+"${BOOTIMG:-/usr/libexec/armada/armada-bootimg-update}" "$@"
+step='EFI boot sync'
+"${EFIUPDATE:-/usr/libexec/armada/armada-efi-update}"

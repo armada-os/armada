@@ -88,6 +88,13 @@ def abl_auto_enabled():
         return False
 
 
+def boot_backend():
+    try:
+        return str(call("get_boot_backend").get("backend") or "unknown")
+    except Exception:
+        return "unknown"
+
+
 def os_version():
     return read_text(OS_VERSION_PATH) or "unknown"
 
@@ -95,6 +102,13 @@ def os_version():
 def abl_version():
     try:
         return str(call("get_abl_version").get("version") or "unknown")
+    except Exception:
+        return "unknown"
+
+
+def efi_version():
+    try:
+        return str(call("get_efi_version").get("version") or "unknown")
     except Exception:
         return "unknown"
 

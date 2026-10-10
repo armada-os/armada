@@ -55,6 +55,7 @@ export const en = {
   "settings.enableSsh": "Enable SSH",
   "settings.osVersion": "OS Version",
   "settings.ablVersion": "ABL Version",
+  "settings.efiVersion": "EFI Version",
   "common.unknown": "unknown",
   "settings.experimental": "Experimental",
   "settings.diagnostics": "Diagnostics",

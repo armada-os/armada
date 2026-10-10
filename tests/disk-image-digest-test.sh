@@ -64,30 +64,43 @@ import sys
 import textwrap
 
 workflow = (Path(sys.argv[1]) / '.github/workflows/build-disk.yml').read_text()
-# Extraction depends on the step name and the following step boundary.
-step = workflow.split('      - name: Inspect disk source image\n', 1)[1]
-script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0])
+build_workflow = (Path(sys.argv[1]) / '.github/workflows/build.yml').read_text()
+channel_workflow = (Path(sys.argv[1]) / '.github/workflows/publish-channel-disk.yml').read_text()
+step = workflow.split('      - name: Resolve container source\n', 1)[1]
+script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('\n\n  build:', 1)[0])
 root = Path(sys.argv[2])
-(root/'bin/sudo').write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$INSPECTION"\n')
+(root/'bin/skopeo').write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$INSPECTION"\n')
+(root/'bin/skopeo').chmod(0o755)
 digest = 'sha256:' + 'a'*64
 revision = 'b'*40
-for case in ['pinned', 'mismatch', 'manual', 'missing-revision', 'artifact']:
-    labels = {} if case in ('missing-revision', 'artifact') else {'org.opencontainers.image.revision': revision}
+for case in ['pinned', 'digest-mismatch', 'revision-mismatch', 'manual', 'missing-revision']:
+    labels = {} if case == 'missing-revision' else {'org.opencontainers.image.revision': revision}
     output = root / ('inspect-' + case)
-    env = dict(os.environ, IMAGE_REGISTRY='ghcr.io/armada-os', IMAGE_NAME='armada',
-               CONTAINER_TAG='testing', EXPECTED_DIGEST='sha256:'+'c'*64 if case == 'mismatch' else digest,
-               PUBLISH_R2='false' if case == 'artifact' else 'true', GITHUB_OUTPUT=str(output),
-               INSPECTION=json.dumps([{'Digest': digest, 'Config': {'Labels': labels}}]))
-    if case in ('manual', 'artifact'):
+    env = dict(os.environ, GITHUB_REPOSITORY='armada-os/armada', CONTAINER_TAG='testing',
+               EXPECTED_DIGEST='sha256:'+'c'*64 if case == 'digest-mismatch' else digest,
+               EXPECTED_REVISION='c'*40 if case == 'revision-mismatch' else revision,
+               GITHUB_OUTPUT=str(output),
+               INSPECTION=json.dumps({'Digest': digest, 'Labels': labels}))
+    if case == 'manual':
         env['EXPECTED_DIGEST'] = ''
     result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
-    if case in ('mismatch', 'missing-revision'):
+    if case in ('digest-mismatch', 'revision-mismatch', 'missing-revision'):
         assert result.returncode != 0 and not output.exists(), case
     else:
         assert result.returncode == 0, result.stderr
         assert f'digest={digest}\n' in output.read_text()
-        assert f'revision={revision if labels else ""}\n' in output.read_text()
-    print(f'PASS: Disk source inspection {case}')
+        assert f'revision={revision}\n' in output.read_text()
+    print(f'PASS: Disk source resolution {case}')
+
+assert 'ref: ${{ needs.prepare.outputs.revision }}' in workflow
+assert 'ARMADA_IMAGE_DIGEST: ${{ needs.prepare.outputs.digest }}' in workflow
+assert 'CONTAINER_DIGEST: ${{ needs.prepare.outputs.digest }}' in workflow
+assert 'BUILD_COMMIT: ${{ needs.prepare.outputs.revision }}' in workflow
+assert 'EXPECTED_REVISION: ${{ inputs.source_ref || github.sha }}' in workflow
+assert workflow.count('persist-credentials: false') == 2
+assert 'podman login ghcr.io' not in workflow
+assert 'actions: read\n      contents: read\n      packages: read\n    uses: ./.github/workflows/build-disk.yml' in build_workflow
+assert 'permissions:\n  actions: read\n  contents: read\n  packages: read' in channel_workflow
 PY
 
 echo 'Disk image digest tests passed'

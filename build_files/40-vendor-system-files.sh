@@ -30,6 +30,20 @@ sha256sum -c <<'EOF'
 1bb1feec68a13da18d581aa2c631798f86f6bc10b55d587b2dd31446a0f8a203  /usr/libexec/armada/gki/generate_gki_certificate.py
 EOF
 
+source /ctx/efi/release.env
+driver=/usr/lib/armada/efi/drivers/adtbloaderaa64.efi
+install -d "${driver%/*}"
+curl --connect-timeout 30 --retry 3 -fsSL -o "${driver}" \
+    "https://github.com/armada-os/adtbloader/releases/download/${ARMADA_ADTBLOADER_VERSION}/adtbloader.efi"
+echo "${ARMADA_ADTBLOADER_SHA256}  ${driver}" | sha256sum -c -
+install -Dpm 0644 /ctx/efi/LICENSE.dtbloader /usr/share/licenses/armada-adtbloader/LICENSE
+
+bootloader=/usr/lib/armada/efi/armada-boot.efi
+curl --connect-timeout 30 --retry 3 -fsSL -o "${bootloader}" \
+    "https://github.com/armada-os/armada-efi/releases/download/${ARMADA_BOOT_VERSION}/armada-boot-${ARMADA_BOOT_VERSION}.efi"
+echo "${ARMADA_BOOT_SHA256}  ${bootloader}" | sha256sum -c -
+printf '%s\n' "${ARMADA_BOOT_VERSION}" > "${bootloader%/*}/version"
+
 source /ctx/abl/release.env
 abl_releases=/ctx/abl/releases.tsv
 abl_src=/ctx/abl

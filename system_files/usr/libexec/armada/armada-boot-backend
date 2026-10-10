@@ -1,0 +1,10 @@
+#!/bin/bash
+set -euo pipefail
+
+backend=unknown
+if grep -Eq '(^| )armada\.device=[^ ]+' "${CMDLINE:-/proc/cmdline}"; then
+    backend=efi
+elif [ -s "${ESP:-/boot/efi}/KERNEL" ]; then
+    backend=abl
+fi
+printf '%s\n' "${backend}"

@@ -26,6 +26,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  boot-tests:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/boot-tests.yml
+
   resolve:
     name: Resolve packages
     runs-on: ubuntu-24.04
@@ -176,10 +181,11 @@ jobs:
 
   image:
     name: Container image
-    needs: [resolve, cross]
+    needs: [resolve, cross, boot-tests]
     if: >-
       !cancelled() &&
       needs.resolve.result == 'success' &&
+      needs.boot-tests.result == 'success' &&
       (needs.cross.result == 'success' || needs.cross.result == 'skipped')
     runs-on: ubuntu-24.04-arm
     permissions:
@@ -218,7 +224,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends containernetworking-plugins
+          sudo apt-get install -y --no-install-recommends containernetworking-plugins device-tree-compiler
 
       - name: Install just
         uses: ublue-os/just-action@30ab4659369934b65b655bf8d2fa4ddd6547d384 # v3

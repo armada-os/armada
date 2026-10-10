@@ -57,6 +57,7 @@ export const ptPT = {
   "settings.enableSsh": "Ativar SSH",
   "settings.osVersion": "Versão do SO",
   "settings.ablVersion": "Versão do ABL",
+  "settings.efiVersion": "Versão do EFI",
   "common.unknown": "desconhecido",
   "settings.experimental": "Experimental",
   "settings.diagnostics": "Diagnósticos",

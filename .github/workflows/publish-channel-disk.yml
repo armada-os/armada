@@ -11,6 +11,7 @@ on:
         default: preview
 
 permissions:
+  actions: read
   contents: read
   packages: read
 

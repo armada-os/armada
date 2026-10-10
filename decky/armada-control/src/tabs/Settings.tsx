@@ -215,7 +215,11 @@ export function Settings({ config, setConfig }: {
         />
         <ToggleRow label={t("settings.enableSsh")} value={!!config.sshEnabled} onChange={setSshEnabled} />
         <Field label={t("settings.osVersion")} description={config.osVersion || t("common.unknown")} />
-        <Field label={t("settings.ablVersion")} description={config.ablVersion || t("common.unknown")} />
+        {config.bootBackend === "efi" ? (
+          <Field label={t("settings.efiVersion")} description={config.efiVersion || t("common.unknown")} />
+        ) : (
+          <Field label={t("settings.ablVersion")} description={config.ablVersion || t("common.unknown")} />
+        )}
       </PanelSection>
       <PanelSection title={t("settings.experimental")}>
         {config.bottomScreenSupported && (
@@ -263,12 +267,14 @@ export function Settings({ config, setConfig }: {
           value={!!config.mtpEnabled}
           onChange={setMtpEnabled}
         />
-        <ToggleRow
-          label={t("settings.automaticAblUpdates")}
-          description={t("settings.updatesDuringShutdown")}
-          value={!!config.ablAutoEnabled}
-          onChange={setAblAutoEnabled}
-        />
+        {config.bootBackend !== "efi" && (
+          <ToggleRow
+            label={t("settings.automaticAblUpdates")}
+            description={t("settings.updatesDuringShutdown")}
+            value={!!config.ablAutoEnabled}
+            onChange={setAblAutoEnabled}
+          />
+        )}
       </PanelSection>
       <PanelSection title={t("settings.diagnostics")}>
         <ToggleRow

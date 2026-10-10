@@ -5,10 +5,12 @@ from .steam import installed_games
 from .system import (
     abl_auto_enabled,
     abl_version,
+    boot_backend,
     bottom_screen_brightness,
     bottom_screen_active,
     bottom_screen_enabled,
     device_env,
+    efi_version,
     mtp_enabled,
     os_version,
     perf_info,
@@ -32,6 +34,7 @@ def build_config(include_games=True):
     env = device_env()
     secondary_brightness = bottom_screen_brightness()
     power = parse_power()
+    backend = boot_backend()
     return {
         "power": power,
         "powerDefaults": factory_power_defaults(),
@@ -48,9 +51,11 @@ def build_config(include_games=True):
             for default in env.get("ARMADA_PROTON_DEFAULTS", "").split(":")
             if default.strip()
         ],
+        "bootBackend": backend,
         "osVersion": os_version(),
-        "ablVersion": abl_version(),
-        "ablAutoEnabled": abl_auto_enabled(),
+        "ablVersion": abl_version() if backend != "efi" else "",
+        "efiVersion": efi_version() if backend == "efi" else "",
+        "ablAutoEnabled": abl_auto_enabled() if backend != "efi" else False,
         "bottomScreenSupported": bool(
             env.get("ARMADA_SECONDARY_CONNECTOR") and env.get("ARMADA_SECONDARY_TOUCHSCREEN")
         ),

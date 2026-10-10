@@ -1,0 +1,38 @@
+---
+name: Boot integration tests
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends device-tree-compiler jq
+
+      - name: Test boot integration and image publication
+        run: |
+          set -euo pipefail
+          for suite in boot-backend boot-sync bootimg-regen efi-assets efi-image efi-update \
+              installer abl-update esp-rename armada-control-settings build-channel \
+              disk-branch-tag disk-image-digest channel-image-publication channel-image-retention; do
+            echo "Running ${suite}"
+            bash "tests/${suite}-test.sh"
+          done
+          node --test workers/downloads/worker.test.mjs

@@ -44,6 +44,7 @@ armada_default_bls_entry() {
     local f v
     for f in "$1"/loader/entries/*.conf; do
         [ -f "$f" ] || continue
+        case "$f" in *-dtb-*.conf) continue ;; esac
         v=$(sed -n 's/^version //p' "$f" | head -1)
         printf '%s\t%s\n' "${v:-0}" "$f"
     done | sort -rn | head -1 | cut -f2
