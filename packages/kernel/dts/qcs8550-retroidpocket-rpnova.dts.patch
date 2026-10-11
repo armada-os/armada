@@ -2,7 +2,7 @@ diff --git a/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rpnova.dts b/arch/ar
 index b21c84b..0345a26 100644
 --- a/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rpnova.dts
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rpnova.dts
-@@ -12,9 +12,14 @@
+@@ -12,9 +12,15 @@
  	compatible = "retroidpocket,rpnova", "qcom,qcs8550", "qcom,sm8550";
  };
  
@@ -13,6 +13,7 @@ index b21c84b..0345a26 100644
  &mdss_dsi0 {
  	panel@0 {
  		compatible = "il97680a,rpnova";
++		armada,dpu-8bpc-dither;
 +		/delete-property/ backlight;
  		/delete-property/ rotation;
  	};
