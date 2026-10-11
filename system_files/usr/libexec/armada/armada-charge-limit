@@ -1,9 +1,15 @@
 #!/bin/bash
 
+# This is a stopgap solution until kernel patches allow us to set charge
+# limits. Currently it uses the lowest possible limit I've found for charging
+# when above the charge threshhold set in the config file.
+
 set -u
 
-# This is hard coded to where the decky plugin uses it. If you use it in your own project, change the config
-CONFIG_FILE="/var/home/armada/.config/armada/power-limit.conf"
+# This config file is currently user-editable since the daemon cannot be
+# used otherwise. This should be handled in the standard configs
+# if this is implemented into Decky.
+CONFIG_FILE="/var/home/armada/.config/armada/charge-limit.conf"
 
 # Create the config file if it doesn't exist, set it to 100 for default.
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -18,6 +24,8 @@ LOWER_LIMIT=100000
 # Error handling first
 if  [[ $CHARGE_EXTENSION_NUM == 0 ]] ; then
     printf 'Error: no battery found under %s\n' "$POWER_SUPPLY_PATH" >&2
+	# Exit 0 needs to be used here in order to prevent the service from
+	# restarting should these failures be met.
     exit 0
 elif [[ $CHARGE_EXTENSION_NUM > 1 ]]; then
     printf 'Error: found %d batteries under %s; refusing to choose one\n' "$CHARGE_EXTENSION_NUM" "$POWER_SUPPLY_PATH" >&2
@@ -27,7 +35,7 @@ fi
 BAT_PATH="$POWER_SUPPLY_PATH$CHARGE_EXTENSION"
 BATTERY_CHARGE="$BAT_PATH/capacity"
 CHARGE_CURRENT_MAX="$BAT_PATH/constant_charge_current_max"
-POLL_INTERVAL="30"
+POLL_INTERVAL="5"
 CURRENT_LIMIT=$(cat "$CONFIG_FILE")
 
 # Error handling second
@@ -44,7 +52,7 @@ while true; do
     battery=$(cat "$BATTERY_CHARGE") || true
 
     if [[ "$limit" =~ ^[0-9]+$ && "$battery" =~ ^[0-9]+$ ]]; then
-        resume=$(( limit - 10 ))
+        resume=$(( limit - 10 )) # Setting the charge at the limit minus 10.
         if (( limited && battery <= resume  )); then
             cat $BAT_PATH/constant_charge_current_max | tee $BAT_PATH/constant_charge_current
             limited=0
