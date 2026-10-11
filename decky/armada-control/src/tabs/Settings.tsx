@@ -1,36 +1,62 @@
 import { toaster } from "@decky/api";
-import { ButtonItem, Field, PanelSection } from "@decky/ui";
-import { useEffect, useRef } from "react";
+import { Field, PanelSection } from "@decky/ui";
+import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import {
   getBottomScreenActive,
+  getConfig,
+  getSleepLogsEnabled,
   setAblAutoEnabled as applyAblAutoEnabled,
   setBottomScreenBrightness as applyBottomScreenBrightness,
   setBottomScreenEnabled as applyBottomScreenEnabled,
+  setChargingFanPwm as applyChargingFanPwm,
   setControllerType as applyControllerType,
   setMtpEnabled as applyMtpEnabled,
   setDesktopMode as applyDesktopMode,
   setSleepMode as applySleepMode,
+  setSleepLogsEnabled as applySleepLogsEnabled,
   setSshEnabled as applySshEnabled,
+  setSwipeGesturesEnabled as applySwipeGesturesEnabled,
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
-import { SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
+import { ButtonRow, SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
+import { useDebouncedApply } from "../hooks/useDebouncedApply";
 import { t, translateLabel } from "../i18n";
+import { percentToPwm, pwmToPercent } from "../lib/fanCurve";
 import type { Config } from "../types";
 
 const BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS: number = 150;
+// Each apply reloads armada-powerd.
+const CHARGING_FAN_DELAY_MS: number = 500;
 
 export function Settings({ config, setConfig }: {
   config: Config;
   setConfig: Dispatch<SetStateAction<Config | null>>;
 }) {
-  const bottomScreenBrightnessTimer = useRef<number | undefined>(undefined);
-  const bottomScreenBrightnessRequest = useRef<number>(0);
-  const appliedBottomScreenBrightness = useRef<number>(config.bottomScreenBrightness);
+  const [swipeGesturesSaving, setSwipeGesturesSaving] = useState(false);
+  const [sleepLogsEnabled, setSleepLogsEnabled] = useState<boolean | null>(null);
+  const [sleepLogsSaving, setSleepLogsSaving] = useState(false);
+  const setBottomScreenBrightness = useDebouncedApply(
+    async () => (await getConfig()).bottomScreenBrightness,
+    (value) => setConfig((current) => (current ? { ...current, bottomScreenBrightness: value } : current)),
+    applyBottomScreenBrightness,
+    t("settings.bottomScreenBrightnessError"),
+    BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS,
+  );
+  const setChargingFanPwm = useDebouncedApply(
+    async () => (await getConfig()).chargingFanPwm,
+    (value) => setConfig((current) => (current ? { ...current, chargingFanPwm: value } : current)),
+    applyChargingFanPwm,
+    t("settings.chargingFanSpeedError"),
+    CHARGING_FAN_DELAY_MS,
+  );
 
-  useEffect(() => () => {
-    window.clearTimeout(bottomScreenBrightnessTimer.current);
-    bottomScreenBrightnessRequest.current += 1;
+  useEffect(() => {
+    let cancelled = false;
+    getSleepLogsEnabled()
+      .then((enabled) => { if (!cancelled) setSleepLogsEnabled(enabled); })
+      .catch(() => { if (!cancelled) setSleepLogsEnabled(false); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -102,6 +128,18 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, ablAutoEnabled: !enabled } : current));
     }
   };
+  const setSwipeGesturesEnabled = async (enabled: boolean) => {
+    if (swipeGesturesSaving) return;
+    setSwipeGesturesSaving(true);
+    try {
+      const applied = await applySwipeGesturesEnabled(enabled);
+      setConfig((current) => (current ? { ...current, swipeGesturesEnabled: applied } : current));
+    } catch (error) {
+      toaster.toast({ title: t("settings.swipeGesturesError"), body: String(error) });
+    } finally {
+      setSwipeGesturesSaving(false);
+    }
+  };
   const setBottomScreenEnabled = async (enabled: boolean) => {
     if (enabled === !!config.bottomScreenEnabled) {
       return;
@@ -114,26 +152,6 @@ export function Settings({ config, setConfig }: {
       setConfig((current) => (current ? { ...current, bottomScreenEnabled: !enabled } : current));
       toaster.toast({ title: t("settings.bottomScreenError"), body: String(error) });
     }
-  };
-  const setBottomScreenBrightness = (brightness: number) => {
-    setConfig((current) => (current ? { ...current, bottomScreenBrightness: brightness } : current));
-    window.clearTimeout(bottomScreenBrightnessTimer.current);
-    const request = ++bottomScreenBrightnessRequest.current;
-    bottomScreenBrightnessTimer.current = window.setTimeout(async () => {
-      try {
-        const applied = await applyBottomScreenBrightness(brightness);
-        if (request !== bottomScreenBrightnessRequest.current) return;
-        appliedBottomScreenBrightness.current = applied;
-        setConfig((current) => (current ? { ...current, bottomScreenBrightness: applied } : current));
-      } catch (error) {
-        if (request !== bottomScreenBrightnessRequest.current) return;
-        setConfig((current) => (current ? {
-          ...current,
-          bottomScreenBrightness: appliedBottomScreenBrightness.current,
-        } : current));
-        toaster.toast({ title: t("settings.bottomScreenBrightnessError"), body: String(error) });
-      }
-    }, BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS);
   };
   const setDesktopMode = async (value: string) => {
     const previous = config.desktopMode || "desktop";
@@ -157,6 +175,19 @@ export function Settings({ config, setConfig }: {
       toaster.toast({ title: t("settings.sleepModeError"), body: String(error) });
     }
   };
+  const setSleepLogs = async (enabled: boolean) => {
+    const previous = sleepLogsEnabled ?? false;
+    setSleepLogsEnabled(enabled);
+    setSleepLogsSaving(true);
+    try {
+      setSleepLogsEnabled(await applySleepLogsEnabled(enabled));
+    } catch (error) {
+      setSleepLogsEnabled(previous);
+      toaster.toast({ title: t("settings.sleepLogsError"), body: String(error) });
+    } finally {
+      setSleepLogsSaving(false);
+    }
+  };
   return (
     <>
       <PanelSection title={t("settings.controller")}>
@@ -166,9 +197,16 @@ export function Settings({ config, setConfig }: {
           options={(config.controllerTypes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
           onChange={setControllerType}
         />
-        <ButtonItem layout="below" onClick={openCalibration}>{t("calibration.launch")}</ButtonItem>
+        <ButtonRow layout="below" onClick={openCalibration}>{t("calibration.launch")}</ButtonRow>
       </PanelSection>
       <PanelSection title={t("settings.system")}>
+        <ToggleRow
+          label={t("settings.swipeGestures")}
+          description={t("settings.swipeGesturesDescription")}
+          value={config.swipeGesturesEnabled}
+          disabled={swipeGesturesSaving}
+          onChange={setSwipeGesturesEnabled}
+        />
         <SelectEdit
           label={t("settings.sleepMode")}
           value={config.sleepMode || "s2idle"}
@@ -200,6 +238,17 @@ export function Settings({ config, setConfig }: {
             )}
           </>
         )}
+        {/* SM8250 only sees charger changes on resume */}
+        {config.cpuDeviceClass !== "SM8250" && (
+          <SliderEdit
+            label={t("settings.chargingFanSpeed")}
+            value={pwmToPercent(config.chargingFanPwm)}
+            min={0}
+            max={100}
+            step={1}
+            onChange={(percent) => setChargingFanPwm(percentToPwm(percent))}
+          />
+        )}
         {(config.desktopModes?.length || 0) > 1 && (
           <SelectEdit
             label={t("settings.desktopMode")}
@@ -219,6 +268,14 @@ export function Settings({ config, setConfig }: {
           description={t("settings.updatesDuringShutdown")}
           value={!!config.ablAutoEnabled}
           onChange={setAblAutoEnabled}
+        />
+      </PanelSection>
+      <PanelSection title={t("settings.diagnostics")}>
+        <ToggleRow
+          label={t("settings.sleepLogs")}
+          value={sleepLogsEnabled ?? false}
+          disabled={sleepLogsEnabled === null || sleepLogsSaving}
+          onChange={(enabled) => { void setSleepLogs(enabled); }}
         />
       </PanelSection>
     </>

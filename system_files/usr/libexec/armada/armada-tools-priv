@@ -1,0 +1,80 @@
+#!/usr/bin/python3
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/lib/armada")
+import armada_os
+
+
+def export_steam():
+    import gi
+
+    gi.require_version("OSTree", "1.0")
+    from gi.repository import OSTree
+
+    sysroot = OSTree.Sysroot.new_default()
+    sysroot.load(None)
+    deployment = sysroot.get_booted_deployment()
+    if deployment is None:
+        raise RuntimeError("No booted OSTree deployment")
+    _, repo = sysroot.get_repo(None)
+    checksum = deployment.get_csum()
+    _, _, state = repo.load_commit(checksum)
+    if state:
+        raise RuntimeError("The booted deployment's commit is incomplete")
+    print(f"Factory Steam source: {checksum}", file=sys.stderr, flush=True)
+    subprocess.run([
+        "/usr/bin/ostree", "export", f"--repo={os.path.realpath(repo.get_path().get_path())}",
+        "--no-xattrs", "--subpath=/var/home/armada/.local/share/Steam", checksum,
+    ], check=True)
+
+
+
+def request(arguments):
+    if len(arguments) == 2 and arguments[0] == "rollback-os":
+        return armada_os.execute("rollback", arguments[1])
+    if len(arguments) != 1:
+        raise ValueError("Unsupported Armada Tools request")
+    action = arguments[0]
+    if action == "get-os":
+        return armada_os.status()
+    if action == "update-os":
+        return armada_os.execute("update")
+    if action == "restart-os":
+        return armada_os.restart()
+    if action in {"channel-stable", "channel-beta", "channel-preview"}:
+        return armada_os.select_channel(action.removeprefix("channel-"))
+    if action not in {"get-ssh", "enable-ssh", "disable-ssh"}:
+        raise ValueError("Unsupported Armada Tools request")
+    if action != "get-ssh":
+        armada_os.command(["/usr/bin/systemctl", action.removesuffix("-ssh"), "--now", "sshd"], timeout=30)
+    result = subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", "sshd"],
+                            timeout=5, check=False, capture_output=True, text=True)
+    if result.returncode not in {0, 3}:
+        raise RuntimeError(result.stderr.strip() or "Could not read SSH service status")
+    return {"active": result.returncode == 0}
+
+
+def main():
+    if os.geteuid() != 0:
+        raise RuntimeError("This helper must be invoked through pkexec")
+    if sys.argv[1:] == ["export-steam"]:
+        export_steam()
+    else:
+        result = request(sys.argv[1:])
+        if sys.argv[1] in {"update-os", "rollback-os"}:
+            print(result["message"], flush=True)
+        else:
+            print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        sys.exit(error.returncode)
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)

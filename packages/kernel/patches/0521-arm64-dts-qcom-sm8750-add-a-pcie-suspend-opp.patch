@@ -1,0 +1,32 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: sm8750: add a PCIe suspend OPP
+
+Give pcie0 a suspend-only OPP so pcie-qcom keeps a nonzero DDR/LLCC
+sleep-set contract once the CPU subsystem collapses in s2idle. Without
+it pcie-qcom votes 0/0 on the PCIe memory path during suspend. When no
+other subsystem holds a DDR vote (for example the ADSP with no audio
+stream open), the device does not resume from the collapse and resets
+instead of waking.
+
+Same floor as the SM8550 companion: 1000 kBps peak, of the same order
+as the vendor kernel's 800 kBps PCIe suspend vote.
+---
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -5620,6 +5620,16 @@
+ 					opp-peak-kBps = <1969000 1>;
+ 				};
+ 
++				/*
++				 * Suspend-only: the synthetic opp-hz and missing opp-level
++				 * keep link-speed matching from selecting it.
++				 */
++				opp-suspend-1 {
++					opp-hz = /bits/ 64 <1>;
++					required-opps = <&rpmhpd_opp_low_svs>;
++					opp-peak-kBps = <1000 1>;
++					opp-suspend;
++				};
+ 			};
+ 
+ 			pcieport0: pcie@0 {

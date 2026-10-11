@@ -60,6 +60,8 @@ for package in \
     mesa-vulkan-drivers \
     NetworkManager \
     powerdevil \
+    protontricks \
+    steamos-manager \
     umtp-responder; do
     case "$(rpm -q --qf '%{release}' "$package" 2>/dev/null)" in
         *armada*) ;;

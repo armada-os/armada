@@ -1,4 +1,4 @@
-From 4215560a7797f4e416c36f61e0306bc3ee8638e7 Mon Sep 17 00:00:00 2001
+From d9e9845751e0ff3a4b3253d4472b26334bbcd2fb Mon Sep 17 00:00:00 2001
 From: virtudude <virtudude@protonmail.com>
 Date: Wed, 5 Aug 2026 18:11:45 -0400
 Subject: [PATCH] fix(force-feedback): reset effects when replacing targets
@@ -16,7 +16,7 @@ Reset and erase source effects before target replacement and suspend, but leave 
  6 files changed, 113 insertions(+), 6 deletions(-)
 
 diff --git a/src/input/composite_device/mod.rs b/src/input/composite_device/mod.rs
-index c8316c4..f62235e 100644
+index 14a5af7..78202e1 100644
 --- a/src/input/composite_device/mod.rs
 +++ b/src/input/composite_device/mod.rs
 @@ -383,6 +383,17 @@ impl CompositeDevice {
@@ -63,7 +63,7 @@ index c8316c4..f62235e 100644
      /// that this composite device is managing
      fn get_source_device_paths(&self) -> Vec<String> {
 diff --git a/src/input/composite_device/targets.rs b/src/input/composite_device/targets.rs
-index ab2c5b7..47a35c8 100644
+index f433c3a..89d5b6b 100644
 --- a/src/input/composite_device/targets.rs
 +++ b/src/input/composite_device/targets.rs
 @@ -189,7 +189,17 @@ impl CompositeDeviceTargets {
@@ -178,10 +178,10 @@ index e65905d..825143b 100644
      SetEventFilter(Vec<Capability>),
      Stop,
 diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
-index 3d159a7..96b636e 100644
+index 2bee6d3..321eed9 100644
 --- a/src/input/source/evdev/gamepad.rs
 +++ b/src/input/source/evdev/gamepad.rs
-@@ -722,6 +722,19 @@ impl SourceOutputDevice for GamepadEventDevice {
+@@ -799,6 +799,19 @@ impl SourceOutputDevice for GamepadEventDevice {
          self.ff_effects.remove(&effect_id);
          Ok(())
      }
@@ -202,7 +202,7 @@ index 3d159a7..96b636e 100644
  
  impl Debug for GamepadEventDevice {
 diff --git a/src/input/source/mod.rs b/src/input/source/mod.rs
-index ab8f3c2..5ed2fdd 100644
+index da26e2b..1fa397e 100644
 --- a/src/input/source/mod.rs
 +++ b/src/input/source/mod.rs
 @@ -170,6 +170,11 @@ pub trait SourceOutputDevice {
@@ -217,7 +217,7 @@ index ab8f3c2..5ed2fdd 100644
      /// Stop the source device.
      fn stop(&mut self) -> Result<(), OutputError> {
          Ok(())
-@@ -509,6 +514,18 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+@@ -517,6 +522,18 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
                              log::error!("Failed to send erase result: {:?}", err);
                          }
                      }
@@ -238,3 +238,4 @@ index ab8f3c2..5ed2fdd 100644
                          implementation.write_event(event)?;
 -- 
 2.55.0
+

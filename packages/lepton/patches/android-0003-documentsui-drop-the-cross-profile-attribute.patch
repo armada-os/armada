@@ -1,0 +1,23 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] DocumentsUI: drop the cross-profile attribute
+
+Lepton's image disables CrossProfileAppsService, and system_server
+dereferences it whenever an app marked android:crossProfile comes to the
+foreground, so opening the picker kills the container. The image has no
+work profiles to cross.
+
+---
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 552d596..9bbe724 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -44,8 +44,7 @@
+         android:allowBackup="true"
+         android:backupAgent=".prefs.BackupAgent"
+         android:appCategory="productivity"
+-        android:fullBackupOnly="false"
+-        android:crossProfile="true">
++        android:fullBackupOnly="false">
+ 
+         <meta-data
+             android:name="com.google.android.backup.api_key"

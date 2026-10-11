@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Armada Desktop
 Comment=Plasma Desktop for Armada
-Exec=/usr/libexec/armada/start-plasma-mobile
+Exec=/usr/libexec/armada/armada-plasma-session standalone mobile
 TryExec=/usr/bin/startplasma-wayland
 Type=Application

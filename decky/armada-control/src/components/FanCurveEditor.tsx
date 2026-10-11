@@ -1,9 +1,10 @@
-import { ButtonItem, Field, PanelSection, PanelSectionRow } from "@decky/ui";
+import { ButtonItem, DialogButton, DialogControlsSection, DialogControlsSectionHeader, Dropdown, Field, PanelSection, PanelSectionRow } from "@decky/ui";
 import { useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { AnimatedCollapse } from "./AnimatedCollapse";
 import { NumberEdit, PseudoDropdown, SliderEdit, ToggleEdit } from "./fanWidgets";
 import { FanCurveGraph } from "./FanCurveGraph";
+import { ButtonRow } from "./widgets";
 import { useSelectedFanCurve } from "../hooks/useSelectedFanCurve";
 import type { SelectedFanCurve } from "../hooks/useSelectedFanCurve";
 import { t, translateLabel } from "../i18n";
@@ -239,13 +240,9 @@ export function FanCurveEditor({
         <div className="afc-field-note">{t("fanCurve.minimumSpeedDescription")}</div>
       </PanelSection>
       <PanelSection title={t("fanCurve.manage")}>
-        <PanelSectionRow>
-          <div className="afc-control-inset">
-            <ButtonItem layout="below" onClick={onOpenCreateCurve} disabled={!onOpenCreateCurve}>
-              {t("fanCurve.create")}
-            </ButtonItem>
-          </div>
-        </PanelSectionRow>
+        <ButtonRow layout="below" onClick={onOpenCreateCurve} disabled={!onOpenCreateCurve}>
+          {t("fanCurve.create")}
+        </ButtonRow>
         {deletableNames.length ? (
           <>
             <PseudoDropdown
@@ -260,13 +257,9 @@ export function FanCurveEditor({
                 setConfirmDelete(false);
               }}
             />
-            <PanelSectionRow>
-              <div className="afc-control-inset">
-                <ButtonItem layout="below" onClick={handleDeleteClick} disabled={!deleteTargetName}>
-                  {confirmDelete ? t("fanCurve.confirmDelete") : t("fanCurve.delete")}
-                </ButtonItem>
-              </div>
-            </PanelSectionRow>
+            <ButtonRow layout="below" onClick={handleDeleteClick} disabled={!deleteTargetName}>
+              {confirmDelete ? t("fanCurve.confirmDelete") : t("fanCurve.delete")}
+            </ButtonRow>
           </>
         ) : (
           <div className="afc-note">
@@ -290,61 +283,53 @@ export function FanCurveGraphEditor({ state, setState, selected, onSelectedChang
 
   return (
     <>
-      <PanelSection title={t("fanCurve.edit")}>
+      <DialogControlsSection>
+        <DialogControlsSectionHeader>{t("fanCurve.edit")}</DialogControlsSectionHeader>
         {names.length ? (
-          <PseudoDropdown
-            label={t("fanCurve.curve")}
-            value={curveName}
-            options={names.map((name) => ({ data: name, label: translateLabel(state.fanCurves[name]?.label || titleCase(name)) }))}
-            onChange={onSelectedChange}
-          />
+          <Field label={t("fanCurve.curve")} childrenLayout="below">
+            <Dropdown
+              selectedOption={curveName}
+              rgOptions={names.map((name) => ({ data: name, label: translateLabel(state.fanCurves[name]?.label || titleCase(name)) }))}
+              onChange={(option) => onSelectedChange(String(option.data))}
+            />
+          </Field>
         ) : (
-          <PanelSectionRow>
-            <Field label={t("fanCurve.noneFound")} />
-          </PanelSectionRow>
+          <Field label={t("fanCurve.noneFound")} />
         )}
-      </PanelSection>
+      </DialogControlsSection>
       {curve ? (
-        <PanelSection title={t("fanCurve.points")}>
-          <PanelSectionRow>
+        <DialogControlsSection>
+          <DialogControlsSectionHeader>{t("fanCurve.points")}</DialogControlsSectionHeader>
+          <div className="armada-control-panel-content">
             <FanCurveGraph points={points} onChange={commitPoints} currentTemp={currentTemp} />
-          </PanelSectionRow>
-          <MinPwmWarningButton onFix={fixMinPwm} visible={belowMinPoint} />
+          </div>
+          {belowMinPoint ? (
+            <DialogButton onClick={fixMinPwm}>{t("fanCurve.belowMinimumWarning")}</DialogButton>
+          ) : null}
           <div className="afc-note">
             {t("fanCurve.editInstructions")}
           </div>
           {factoryCurve ? (
-            <div className="afc-reset-row">
-              <ButtonItem layout="below" onClick={resetCurve}>
-                {t("fanCurve.resetFactory")}
-              </ButtonItem>
-            </div>
+            <DialogButton onClick={resetCurve}>
+              {t("fanCurve.resetFactory")}
+            </DialogButton>
           ) : null}
           <div className="afc-note">{t("fanCurve.unsavedDescription")}</div>
-        </PanelSection>
+        </DialogControlsSection>
       ) : null}
     </>
   );
 }
 
-// Wrapper row stays mounted (avoids a scroll jump); only the button itself is conditionally
-// rendered, since `disabled` alone left it selectable via gamepad nav.
 function MinPwmWarningButton({ onFix, visible }: { onFix: () => void; visible: boolean }) {
-  return (
-    <PanelSectionRow>
-      <div className={`afc-control-inset afc-min-warning-button${visible ? "" : " afc-min-warning-hidden"}`}>
-        {visible ? (
-          <ButtonItem
-            layout="below"
-            onClick={onFix}
-            description={t("fanCurve.minimumSpeedAdjustmentDescription")}
-          >
-            {t("fanCurve.belowMinimumWarning")}
-          </ButtonItem>
-        ) : null}
-      </div>
-    </PanelSectionRow>
-  );
+  if (!visible) return null;
+  return <ButtonRow
+    layout="below"
+    onClick={onFix}
+    description={t("fanCurve.minimumSpeedAdjustmentDescription")}
+  >
+    {t("fanCurve.belowMinimumWarning")}
+  </ButtonRow>;
 }
 
 function PointsPanel({
@@ -407,7 +392,9 @@ function PointsPanel({
   return (
     <PanelSection title={t("fanCurve.points")}>
       <PanelSectionRow>
-        <FanCurveGraph points={points} onChange={commitPoints} currentTemp={currentTemp} />
+        <div className="armada-control-panel-content">
+          <FanCurveGraph points={points} onChange={commitPoints} currentTemp={currentTemp} />
+        </div>
       </PanelSectionRow>
       <MinPwmWarningButton onFix={fixMinPwm} visible={belowMinPoint} />
       <div className="afc-note">
@@ -435,21 +422,13 @@ function PointsPanel({
         </>
       ) : null}
       {onOpenFullscreen ? (
-        <PanelSectionRow>
-          <div className="afc-control-inset">
-            <ButtonItem layout="below" onClick={onOpenFullscreen}>
-              {t("fanCurve.fullscreenEditor")}
-            </ButtonItem>
-          </div>
-        </PanelSectionRow>
+        <ButtonRow layout="below" onClick={onOpenFullscreen}>
+          {t("fanCurve.fullscreenEditor")}
+        </ButtonRow>
       ) : null}
-      <PanelSectionRow>
-        <div className="afc-control-inset">
-          <ButtonItem layout="below" onClick={onToggleShowPointEditor}>
-            {showPointEditor ? t("fanCurve.hidePoints") : t("fanCurve.editPoints")}
-          </ButtonItem>
-        </div>
-      </PanelSectionRow>
+      <ButtonRow layout="below" onClick={onToggleShowPointEditor}>
+        {showPointEditor ? t("fanCurve.hidePoints") : t("fanCurve.editPoints")}
+      </ButtonRow>
       <AnimatedCollapse isOpen={showPointEditor}>
         <div className="afc-points-drawer">
           {points.map((point, index) => (
@@ -473,11 +452,9 @@ function PointsPanel({
         </div>
       </AnimatedCollapse>
       {factoryCurve ? (
-        <div className="afc-reset-row">
-          <ButtonItem layout="below" onClick={resetCurve}>
-            {t("fanCurve.resetFactory")}
-          </ButtonItem>
-        </div>
+        <ButtonRow layout="below" onClick={resetCurve}>
+          {t("fanCurve.resetFactory")}
+        </ButtonRow>
       ) : null}
       <div className="afc-note">{t("fanCurve.unsavedDescription")}</div>
     </PanelSection>

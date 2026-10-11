@@ -1,7 +1,13 @@
 [Unit]
-Description=Expose passthrough gamepads to Waydroid
-ConditionPathExists=/run/waydroid-lxc/network_up
+Description=Share InputPlumber controllers with Waydroid
+BindsTo=waydroid-container.service
+After=waydroid-container.service
+
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=/usr/libexec/armada/waydroid-input-setup
-TimeoutStartSec=120
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=waydroid-container.service

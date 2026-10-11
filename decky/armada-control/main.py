@@ -6,6 +6,7 @@ from armada_control.calibration import (
     end_session,
     reset_calibration_params,
     save_calibration,
+    start_recording,
 )
 from armada_control.config import build_config
 from armada_control.controller import set_controller_type
@@ -19,13 +20,16 @@ from armada_control.system import (
     set_abl_auto_enabled,
     set_bottom_screen_brightness,
     set_bottom_screen_enabled,
+    get_sleep_logs_enabled,
     set_mtp_enabled,
     set_desktop_mode,
     set_sleep_mode,
+    set_sleep_logs_enabled,
     set_ssh_enabled,
+    set_swipe_gestures_enabled,
 )
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
-from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves
+from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves, save_charging_pwm
 from armada_control.fan_sensors import get_current_temp
 
 
@@ -54,6 +58,9 @@ class Plugin:
     async def save_compat_applied(self, appids, proton_default=None):
         return await asyncio.to_thread(save_compat_applied, appids, proton_default)
 
+    async def set_swipe_gestures_enabled(self, enabled):
+        return await asyncio.to_thread(set_swipe_gestures_enabled, enabled)
+
     async def set_ssh_enabled(self, enabled):
         return await asyncio.to_thread(set_ssh_enabled, enabled)
 
@@ -78,6 +85,12 @@ class Plugin:
     async def set_sleep_mode(self, value):
         return await asyncio.to_thread(set_sleep_mode, value)
 
+    async def get_sleep_logs_enabled(self):
+        return await asyncio.to_thread(get_sleep_logs_enabled)
+
+    async def set_sleep_logs_enabled(self, enabled):
+        return await asyncio.to_thread(set_sleep_logs_enabled, enabled)
+
     async def reapply_perf(self):
         return await asyncio.to_thread(reapply_perf)
 
@@ -90,14 +103,25 @@ class Plugin:
     async def get_rgb(self):
         return await asyncio.to_thread(get_rgb)
 
-    async def set_rgb(self, enabled, color, brightness):
-        return await asyncio.to_thread(set_rgb, enabled, color, brightness)
+    async def set_rgb(self, enabled, link_brightness, color, saturation, max_brightness, brightness):
+        return await asyncio.to_thread(
+            set_rgb,
+            enabled,
+            link_brightness,
+            color,
+            saturation,
+            max_brightness,
+            brightness,
+        )
 
     async def get_controller_state(self):
         return await asyncio.to_thread(controller_state)
 
-    async def save_calibration(self, capture):
-        return await asyncio.to_thread(save_calibration, capture)
+    async def start_calibration_recording(self):
+        return await asyncio.to_thread(start_recording)
+
+    async def save_calibration(self):
+        return await asyncio.to_thread(save_calibration)
 
     async def reset_calibration(self):
         return await asyncio.to_thread(reset_calibration_params)
@@ -113,6 +137,9 @@ class Plugin:
 
     async def save_fan_curves(self, fan_curves, fan_settings):
         return await asyncio.to_thread(save_fan_curves, fan_curves, fan_settings)
+
+    async def set_charging_fan_pwm(self, pwm):
+        return await asyncio.to_thread(save_charging_pwm, pwm)
 
     # Polled separately from get_fans_state -- see hooks/useCurrentTemp.
     async def get_current_temp(self):

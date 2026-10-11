@@ -47,7 +47,7 @@ jobs:
           matrix='[]'
           args=""
           # The package set is the directories themselves, so it cannot drift
-          # from the tree. Only the two cross-compiled ones need a non-arm runner.
+          # from the tree. Only the cross-compiled ones need a non-arm runner.
           for dir in packages/*/; do
             pkg="$(basename "${dir}")"
             [ -f "${dir}/build.sh" ] || continue
@@ -55,8 +55,8 @@ jobs:
             ref="${repo}/${pkg}:${hash}"
 
             case "${pkg}" in
-              mesa-android|mesa-x86) runner=ubuntu-24.04 ;;
-              *)                     runner=ubuntu-24.04-arm ;;
+              mesa-android|lepton|mesa-x86) runner=ubuntu-24.04 ;;
+              *)                            runner=ubuntu-24.04-arm ;;
             esac
 
             if skopeo inspect --raw "docker://${ref}" >/dev/null 2>&1; then
@@ -127,7 +127,7 @@ jobs:
         # Buildah's cache mounts live outside the layer store, so they start
         # empty on a fresh runner unless restored here.
         if: matrix.package == 'kernel' || matrix.package == 'mesa'
-        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5 # v4.2.3
+        uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca # v4.2.3
         with:
           path: ${{ steps.cachedir.outputs.dir }}
           # hash the pinned toolchain into the key so a bump cannot serve stale objects

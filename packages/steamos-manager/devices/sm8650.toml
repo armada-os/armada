@@ -1,0 +1,18 @@
+# SM8650 handhelds. Board compatibles from packages/kernel/dts, identity from
+# system_files/usr/lib/armada/devices/*.conf.
+
+[[device]]
+dt.compatible = "ayaneo,pocket-s2"
+device        = "ayaneo_pocket_s2"
+variant       = "PocketS2"
+friendly_name = "AYANEO Pocket S2"
+
+[[device]]
+dt.compatible = "konkr,pocket-fit"
+device        = "konkr_pocket_fit"
+variant       = "PocketFIT"
+friendly_name = "KONKR Pocket FIT"
+
+# armada-powerd owns the governor and serves CpuScaling1 over remotes.d.
+[cpu_scaling]
+driver = "none"

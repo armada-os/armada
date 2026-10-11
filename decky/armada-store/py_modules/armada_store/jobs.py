@@ -2,7 +2,7 @@ import threading
 import time
 from collections import OrderedDict
 
-from . import catalog, installers, paths, postinstall, store
+from . import android, catalog, installers, paths, postinstall, store
 
 ACTIVE_PHASES = {"queued", "resolving", "downloading", "installing", "extracting", "removing"}
 DONE_TTL = 10.0
@@ -15,7 +15,7 @@ _worker = None
 
 
 class Job:
-    def __init__(self, app_id, action):
+    def __init__(self, app_id, action, app=None):
         self.app_id = app_id
         self.action = action
         self.phase = "queued"
@@ -23,6 +23,7 @@ class Job:
         self.error = ""
         self.finished_at = None
         self.cancel = threading.Event()
+        self.app = app
 
     def snapshot(self):
         return {
@@ -40,12 +41,14 @@ def start(app_id, action):
     app = catalog.find_app(app_id)
     if app is None:
         raise ValueError("Unknown app: " + str(app_id))
+    if action != "uninstall" and not app.get("canInstall", True):
+        raise ValueError("This app cannot be downloaded")
     global _worker
     with _lock:
         existing = _jobs.get(app_id)
         if existing and existing.phase in ACTIVE_PHASES:
             raise ValueError("Already in progress")
-        job = Job(app_id, action)
+        job = Job(app_id, action, app)
         _jobs[app_id] = job
         _jobs.move_to_end(app_id)
         _queue.append(app_id)
@@ -135,7 +138,7 @@ def _extract_progress(job, span=FULL_SPAN):
 
 
 def _execute(job):
-    app = catalog.find_app(job.app_id)
+    app = job.app or catalog.find_app(job.app_id)
     install = (app or {}).get("install") or {}
     kind = install.get("type")
     try:
@@ -152,7 +155,7 @@ def _execute(job):
                 _remove_conflicts(job, app)
             postinstall.run(app)
         else:
-            _execute_uninstall(job, install, kind)
+            _execute_uninstall(job, install, kind, app)
         job.phase = "done"
         job.percent = None
     except installers.Cancelled:
@@ -182,7 +185,10 @@ def _remove_conflicts(job, app):
 
 
 def _execute_install(job, app, install, kind):
-    if kind == "flatpak":
+    if kind == "android":
+        job.phase = "resolving"
+        android.install(app, job.cancel, _download_progress(job))
+    elif kind == "flatpak":
         # Indeterminate until the first parsed percent, not a misleading 0%.
         job.phase = "installing"
         job.percent = None
@@ -236,11 +242,13 @@ def _execute_install(job, app, install, kind):
         raise RuntimeError("Unknown install type: " + str(kind))
 
 
-def _execute_uninstall(job, install, kind):
+def _execute_uninstall(job, install, kind, app=None):
     job.phase = "removing"
     store.clear_pending_shortcut(job.app_id)
     state = store.load_state()
-    if kind == "flatpak":
+    if kind == "android":
+        android.uninstall(app)
+    elif kind == "flatpak":
         installers.uninstall_flatpak(install["ref"], job.cancel)
         catalog.invalidate_flatpak_cache()
     elif kind == "appimage":

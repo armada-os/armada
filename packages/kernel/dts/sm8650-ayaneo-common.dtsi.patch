@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 driver
+Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 driver, fix PCIe WAKE# polarity, codec rail sleep modes, RTC offset in SDAM
 
 --- a/arch/arm64/boot/dts/qcom/sm8650-ayaneo-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm8650-ayaneo-common.dtsi
@@ -25,7 +25,7 @@ Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 drive
 +
  	gpio-keys {
  		compatible = "gpio-keys";
-
+ 
 @@ -133,7 +149,6 @@
  			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
  			debounce-interval = <15>;
@@ -34,7 +34,7 @@ Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 drive
  		};
  	};
  
-@@ -971,9 +987,7 @@
+@@ -1019,9 +1034,7 @@
  		regulator-min-microvolt = <5000000>;
  		regulator-max-microvolt = <5000000>;
  		reset-gpios = <&tlmm 59 GPIO_ACTIVE_HIGH>,
@@ -45,7 +45,7 @@ Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 drive
  		status = "okay";
  	};
  
-@@ -981,6 +995,13 @@
+@@ -1029,6 +1042,13 @@
  	sy7758_bl: sy7758@2e {
  		reg = <0x2e>;
  		compatible = "silergy,sy7758";
@@ -59,7 +59,47 @@ Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 drive
  		status = "okay";
  	};
  };
-@@ -1389,13 +1409,27 @@
+@@ -1093,7 +1113,7 @@
+ };
+ 
+ &pcieport0 {
+-	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
+ 
+ 	wifi@0 {
+@@ -1127,7 +1147,7 @@
+ };
+ 
+ &pcie1_port0 {
+-	wake-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 99 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
+ 
+ 	/* Renesas μPD720201 PCIe USB3.0 HOST CONTROLLER */
+@@ -1265,12 +1285,19 @@
+ 	};
+ };
+ 
++/* UEFI variables are not available here for the RTC offset */
+ &pmk8550_rtc {
+-	qcom,uefi-rtc-info;
+-	qcom,no-alarm; /* alarm owned by ADSP */
++	nvmem-cells = <&rtc_offset>;
++	nvmem-cell-names = "offset";
+ 	status = "okay";
+ };
+ 
++&pmk8550_sdam_2 {
++	rtc_offset: rtc-offset@bc {
++		reg = <0xbc 0x4>;
++	};
++};
++
+ &remoteproc_adsp {
+ 	firmware-name = "qcom/sm8650/ayaneo/ps2/adsp.mbn",
+ 			"qcom/sm8650/ayaneo/ps2/adsp_dtb.mbn";
+@@ -1452,13 +1479,27 @@
  	};
  
  	panel_pwr_active: panel-pwr-active-state {
@@ -88,3 +128,29 @@ Subject: [PATCH] arm64: dts: qcom: sm8650-ayaneo: wire the upstream SY7758 drive
  	disp0_reset_n_active: disp0-reset-n-active-state {
  		pins = "gpio133";
  		function = "gpio";
+@@ -1659,3 +1700,25 @@
+ &xo_board {
+ 	clock-frequency = <76800000>;
+ };
++
++/* The codec keeps these rails enabled through s2idle; idle them in LPM */
++&vreg_l15b_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_bob1 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_l3c_1p2 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};

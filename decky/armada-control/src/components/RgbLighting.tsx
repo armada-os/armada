@@ -75,7 +75,14 @@ export function RgbLighting() {
     const timer: number = window.setTimeout(async () => {
       lastUpdate.current = Date.now();
       try {
-        await setRgb(config.enabled, config.color, config.brightness);
+        await setRgb(
+          config.enabled,
+          config.linkBrightness,
+          config.color,
+          config.saturation,
+          config.maxBrightness,
+          config.brightness,
+        );
         savedConfig.current = current;
       } catch (error) {
         toaster.toast({ title: t("rgb.changeError"), body: String(error) });
@@ -93,16 +100,35 @@ export function RgbLighting() {
       <ToggleRow
         label={t("common.enabled")}
         value={config.enabled}
-        onChange={(enabled: boolean) => setConfig({ ...config, enabled })}
+        onChange={(enabled: boolean) => setConfig({
+          ...config,
+          enabled,
+          linkBrightness: enabled ? config.linkBrightness : false,
+        })}
+      />
+      <ToggleRow
+        label={t("rgb.smartBrightness")}
+        value={config.linkBrightness}
+        disabled={!config.enabled}
+        onChange={(linkBrightness: boolean) => setConfig({
+          ...config,
+          linkBrightness,
+          maxBrightness: linkBrightness
+            ? Math.max(1, config.maxBrightness)
+            : config.maxBrightness,
+        })}
       />
       <SliderEdit
-        label={t("common.brightness")}
-        value={config.brightness}
-        min={0}
+        label={config.linkBrightness ? t("rgb.maxBrightness") : t("common.brightness")}
+        value={config.linkBrightness ? config.maxBrightness : config.brightness}
+        min={config.linkBrightness ? 1 : 0}
         max={100}
         step={1}
         disabled={!config.enabled}
-        onChange={(brightness: number) => setConfig({ ...config, brightness })}
+        onChange={(brightness: number) => setConfig(
+          config.linkBrightness ?
+            { ...config, maxBrightness: brightness } :
+            { ...config, brightness })}
       />
       <SliderEdit
         label={t("common.color")}
@@ -114,6 +140,17 @@ export function RgbLighting() {
         showValue={false}
         wrapperClassName="armada-slider-field armada-rgb-hue"
         onChange={(hue: number) => setConfig({ ...config, color: hueColor(hue) })}
+      />
+      <SliderEdit
+        label={t("rgb.saturation")}
+        value={config.saturation}
+        min={0}
+        max={100}
+        step={1}
+        disabled={!config.enabled}
+        showValue={false}
+        wrapperClassName="armada-slider-field armada-rgb-saturation"
+        onChange={(saturation: number) => setConfig({ ...config, saturation })}
       />
     </PanelSection>
   );

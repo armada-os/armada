@@ -7,7 +7,7 @@ from .privileged import call
 from .fan_sensors import get_current_temp
 
 # Shared with Armada Control: only owns [fan_curve.*] sections and [fan]'s
-# ramp/smoothing/min_pwm keys; forces min_pwm to 0 when any curve's fan-stopped.
+# ramp/smoothing/min_pwm/charging_pwm keys; forces min_pwm to 0 when any curve's fan-stopped.
 POWER_CONFIG = Path("/etc/armada/power-profiles.conf")
 FACTORY_POWER_CONFIG = Path("/usr/share/armada/power-profiles.conf")
 # Profile armada-powerd is actually running (may differ from [general] default_profile).
@@ -265,6 +265,20 @@ def render_all(fan_curves, fan_settings):
         parser.write(f)
         f.seek(0)
         return f.read()
+
+
+def save_charging_pwm(pwm):
+    pwm = int(pwm)
+    if not (MIN_PWM <= pwm <= MAX_PWM):
+        raise ValueError(f"charging_pwm out of range: {pwm}")
+    parser = _read(POWER_CONFIG)
+    factory = _read(FACTORY_POWER_CONFIG).getint("fan", "charging_pwm", fallback=0)
+    set_or_clear(parser, "fan", "charging_pwm", pwm, pwm != factory)
+    with tempfile.TemporaryFile("w+", encoding="utf-8") as f:
+        parser.write(f)
+        f.seek(0)
+        call("write_config", name="power", text=f.read())
+    return pwm
 
 
 def save_all(fan_curves, fan_settings):

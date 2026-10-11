@@ -9,6 +9,7 @@ OUT="${OUT:-output/armada-$(TZ='America/New_York' date +%Y%m%d).img.gz}"
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ABL_RELEASES="${REPO_ROOT}/abl/releases.tsv"
 ABL_CATALOG_TOOL="${REPO_ROOT}/system_files/usr/lib/armada/abl-version"
+ABL_SRC="${REPO_ROOT}/abl"
 
 if [[ ! -f "${RAW_IMAGE}" ]]; then
     echo "ERROR: raw image not found at ${RAW_IMAGE}"
@@ -18,11 +19,6 @@ fi
 
 WORK=$(mktemp -d)
 trap "sudo umount '${WORK}/mnt' 2>/dev/null || true; sudo losetup -d \"\$(cat ${WORK}/loop 2>/dev/null)\" 2>/dev/null || true; rm -rf '${WORK}'" EXIT
-
-curl --connect-timeout 30 --retry 12 --retry-delay 10 -fsSL -o "${WORK}/abl.tar.gz" \
-    "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
-mkdir -p "${WORK}/abl-extracted"
-tar -xzf "${WORK}/abl.tar.gz" -C "${WORK}/abl-extracted"
 
 LOOP=$(sudo losetup -fP --show "${RAW_IMAGE}")
 echo "${LOOP}" > "${WORK}/loop"
@@ -41,7 +37,6 @@ sudo mount "${ESP}" "${WORK}/mnt"
 sudo mkdir -p "${WORK}/mnt/rocknix_abl"
 # One image serves all devices, so stage a self-contained folder per SoC.
 # vfat has no Unix ownership, so `cp -a` would error on chown under set -e.
-ABL_SRC=$(ls -d "${WORK}/abl-extracted"/rocknix-abl-*)
 sudo cp "${REPO_ROOT}/abl/README" "${WORK}/mnt/rocknix_abl/README"
 for soc in SM8250 SM8550 SM8650 SM8750; do
     approved=$(ARMADA_ABL_RELEASES="${ABL_RELEASES}" \

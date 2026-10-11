@@ -1,0 +1,10 @@
+# SwitchToGameMode hardcodes this SteamOS session name; without it SDDM drops to
+# the greeter. Same Exec as gamescope-session-steam.desktop, hidden from pickers.
+[Desktop Entry]
+Encoding=UTF-8
+Name=Steam Big Picture
+Comment=Steam Big Picture session
+Exec=gamescope-session-plus steam
+Type=Application
+DesktopNames=gamescope
+NoDisplay=true

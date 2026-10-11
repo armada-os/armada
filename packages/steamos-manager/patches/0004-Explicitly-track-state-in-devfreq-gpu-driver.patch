@@ -1,0 +1,154 @@
+From 06b61dc956eb654adaf347d8eedb254256dd102f Mon Sep 17 00:00:00 2001
+From: Arun Raghavan <arunr@valvesoftware.com>
+Date: Wed, 20 May 2026 17:52:32 -0700
+Subject: [PATCH] Explicitly track state in devfreq gpu driver
+
+We previously used the system frequency state, but the manual freq
+setter can be called (and should be a noop) in auto mode, so let's just
+track manual vs. auto as state rather than depending on current
+frequency values in the system.
+---
+ steamos-manager/src/gpu.rs          | 37 +++++++++++++----------------
+ steamos-manager/src/manager/root.rs |  2 +-
+ 2 files changed, 18 insertions(+), 21 deletions(-)
+
+diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
+index e894594..377f4ba 100644
+--- a/steamos-manager/src/gpu.rs
++++ b/steamos-manager/src/gpu.rs
+@@ -137,6 +137,7 @@ pub(crate) struct IntelGpuConfig {
+ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
+     sysfs_path: PathBuf,
+     available_freqs: Vec<u32>,
++    level: DevfreqPerformanceLevel,
+ }
+ 
+ #[async_trait]
+@@ -152,7 +153,7 @@ pub(crate) trait GpuPerformanceLevelDriver: Send + Sync {
+     fn performance_level_from_str(&self, value: &str) -> Result<GpuPerformanceLevel>;
+     async fn get_available_performance_levels(&self) -> Result<Vec<GpuPerformanceLevel>>;
+     async fn get_performance_level(&self) -> Result<GpuPerformanceLevel>;
+-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()>;
++    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()>;
+ 
+     async fn get_clocks_range(&self) -> Result<RangeInclusive<u32>>;
+     async fn get_clocks(&self) -> Result<u32>;
+@@ -347,7 +348,7 @@ impl GpuPerformanceLevelDriver for AmdgpuPerformanceLevelDriver {
+         ))
+     }
+ 
+-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
++    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
+         let GpuPerformanceLevel::Amdgpu(level) = level else {
+             bail!("This is not an amdgpu-compatible performance level");
+         };
+@@ -559,7 +560,7 @@ impl GpuPerformanceLevelDriver for IntelGpuPerformanceLevelDriver {
+         Ok(performance_level)
+     }
+ 
+-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
++    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
+         let GpuPerformanceLevel::Intel(level) = level else {
+             bail!("This is not an Intel-compatible performance level");
+         };
+@@ -635,6 +636,7 @@ impl DevfreqGpuPerformanceLevelDriver {
+                 })
+                 .sorted()
+                 .collect(),
++            level: DevfreqPerformanceLevel::Auto,
+         })
+     }
+ 
+@@ -671,21 +673,10 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+     }
+ 
+     async fn get_performance_level(&self) -> Result<GpuPerformanceLevel> {
+-        let min = fs::read_to_string(self.sysfs_path.join(DEVFREQ_MINIMUM_FREQ))
+-            .await
+-            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
+-        let max = fs::read_to_string(self.sysfs_path.join(DEVFREQ_MAXIMUM_FREQ))
+-            .await
+-            .map_err(|message| anyhow!("Error opening sysfs file for reading {message}"))?;
+-
+-        Ok(GpuPerformanceLevel::Devfreq(if min == max {
+-            DevfreqPerformanceLevel::Manual
+-        } else {
+-            DevfreqPerformanceLevel::Auto
+-        }))
++        Ok(GpuPerformanceLevel::Devfreq(self.level))
+     }
+ 
+-    async fn set_performance_level(&self, level: GpuPerformanceLevel) -> Result<()> {
++    async fn set_performance_level(&mut self, level: GpuPerformanceLevel) -> Result<()> {
+         let GpuPerformanceLevel::Devfreq(level) = level else {
+             bail!("This is not an devfreq-compatible performance level");
+         };
+@@ -703,6 +694,8 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+             }
+         }
+ 
++        self.level = level;
++
+         Ok(())
+     }
+ 
+@@ -720,6 +713,10 @@ impl GpuPerformanceLevelDriver for DevfreqGpuPerformanceLevelDriver {
+     }
+ 
+     async fn set_clocks(&self, clocks: u32) -> Result<()> {
++        if self.level == DevfreqPerformanceLevel::Auto {
++            return Ok(());
++        }
++
+         let cur = self.get_clocks().await?;
+         let out = clocks * 1_000_000u32;
+ 
+@@ -923,7 +920,7 @@ CCLK_RANGE in Core0:
+     #[tokio::test]
+     async fn test_set_gpu_performance_level() {
+         let _h = testing::start();
+-        let driver = AmdgpuPerformanceLevelDriver {};
++        let mut driver = AmdgpuPerformanceLevelDriver {};
+ 
+         setup_amdgpu().await.expect("setup_amdgpu");
+         let base = find_hwmon(AMDGPU_HWMON_NAME).await.unwrap();
+@@ -1394,7 +1391,7 @@ CCLK_RANGE in Core0:
+ 
+         setup_intel_i915().await.expect("setup_intel_i915");
+ 
+-        let driver = IntelGpuPerformanceLevelDriver::new()
++        let mut driver = IntelGpuPerformanceLevelDriver::new()
+             .await
+             .expect("Intel i915 driver creation");
+ 
+@@ -1527,7 +1524,7 @@ CCLK_RANGE in Core0:
+ 
+         setup_intel_xe().await.expect("setup_intel_xe");
+ 
+-        let driver = IntelGpuPerformanceLevelDriver::new()
++        let mut driver = IntelGpuPerformanceLevelDriver::new()
+             .await
+             .expect("Intel Xe driver creation");
+ 
+@@ -1601,7 +1598,7 @@ CCLK_RANGE in Core0:
+ 
+         setup_intel_i915().await.expect("setup_intel_i915");
+ 
+-        let driver = IntelGpuPerformanceLevelDriver::new()
++        let mut driver = IntelGpuPerformanceLevelDriver::new()
+             .await
+             .expect("Intel driver creation");
+ 
+diff --git a/steamos-manager/src/manager/root.rs b/steamos-manager/src/manager/root.rs
+index c79171b..61b37fb 100644
+--- a/steamos-manager/src/manager/root.rs
++++ b/steamos-manager/src/manager/root.rs
+@@ -509,7 +509,7 @@ impl SteamOSManager {
+             debug!("SetGpuPerformanceLevel: discarding out of order serial");
+             return Ok(());
+         }
+-        let Some(ref driver) = self.gpu_performance_level else {
++        let Some(ref mut driver) = self.gpu_performance_level else {
+             return Err(fdo::Error::Failed(String::from(
+                 "GPU performance settings not configured",
+             )));

@@ -1,0 +1,40 @@
+armada_plasma_shell() {
+    local state=${1:-${XDG_CONFIG_HOME:-$HOME/.config}/steamos-manager/state.toml}
+
+    if grep -Eqs '^desktop_session[[:space:]]*=[[:space:]]*"armada-plasma-mobile\.desktop"' "${state}"; then
+        echo mobile
+    else
+        echo desktop
+    fi
+}
+
+# Desktop and mobile shells require separate layouts.
+armada_plasma_activate_config() {
+    local shell=$1
+    local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}"
+    local config="${config_dir}/plasmashellrc"
+
+    install -d -m 0700 "${config_dir}"
+    if [[ -e "${config}" && ! -L "${config}" ]]; then
+        # A plain file beside a saved desktop layout is ambiguous; keep both.
+        if [[ -e "${config}.desktop" || -L "${config}.desktop" ]]; then
+            mv -f "${config}" "${config}.conflict"
+        else
+            mv "${config}" "${config}.desktop"
+        fi
+    fi
+    [[ -e "${config}.${shell}" ]] || install -m 0600 /dev/null "${config}.${shell}"
+    ln -sfn "plasmashellrc.${shell}" "${config}"
+}
+
+armada_plasma_nested_pids() {
+    local id=$1 environ pid
+
+    for environ in /proc/[0-9]*/environ; do
+        pid=${environ#/proc/}
+        pid=${pid%/environ}
+        if grep -qzx "ARMADA_PLASMA_NESTED=${id}" "${environ}" 2>/dev/null; then
+            echo "${pid}"
+        fi
+    done
+}

@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and rumble, fix PCIe WAKE# polarity
+Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and rumble, fix PCIe WAKE# polarity, codec rail sleep modes and gamepad MCU supply
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
@@ -11,7 +11,15 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		};
  	};
  
-@@ -1096,7 +1096,7 @@
+@@ -467,7 +466,6 @@
+ 		startup-delay-us = <10000>;
+ 
+ 		gpio = <&tlmm 99 GPIO_ACTIVE_HIGH>;
+-		regulator-always-on;
+ 		regulator-boot-on;
+ 		enable-active-high;
+ 	};
+@@ -1096,7 +1094,7 @@
  };
  
  &pcieport0 {
@@ -20,7 +28,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
  
  	wifi@0 {
-@@ -1462,7 +1462,6 @@
+@@ -1462,7 +1460,6 @@
  	no-mmc;
  
  	qcom,dll-config = <0x0007442c>;
@@ -28,7 +36,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  	status = "okay";
  };
-@@ -1700,6 +1699,7 @@
+@@ -1700,6 +1697,7 @@
  
  	gamepad: gamepad {
  		compatible = "gamepad,rsinput";
@@ -36,3 +44,31 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  		gamepad-name = "AYN Odin2 Gamepad";
  		gamepad-bus = <0x0003>;
+@@ -1707,7 +1705,7 @@
+ 		gamepad-pid = <0x3001>;
+ 		gamepad-rev = <0x0001>;
+ 
+-		vdd-supply = <&vreg_bob2>;
++		vdd-supply = <&vdd_mcu_3v3>;
+ 		enable-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
+ 		pinctrl-0 = <&mcu_en_active>;
+ 		pinctrl-names = "default";
+@@ -1765,3 +1763,18 @@
+ &xo_board {
+ 	clock-frequency = <76800000>;
+ };
++
++/* The codec keeps these rails enabled through s2idle; idle them in LPM */
++&vreg_l15b_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_bob1 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};

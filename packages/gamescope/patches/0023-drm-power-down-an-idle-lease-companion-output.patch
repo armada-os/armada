@@ -1,0 +1,60 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] drm: power down an idle lease companion's output
+
+A --drm-lease-client gamescope only commits while it has a window. The
+leased panel is off before its first window, but once the last one
+closes the panel stays lit on the final frame, and clearing
+drm_sleep_internal_screen on resume lights it again.
+
+With no focused window the companion now presents an empty frame, which
+commits the powered-down state the sleep convar uses, and the next
+window brings the output back. One companion can then stay up for
+whatever uses the panel.
+---
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -3206,6 +3206,14 @@ paint_all( global_focus_t *pFocus, bool
+ 	frameInfo.eUpscaleScaler = pFocus->eUpscaleScaler;
+ 	frameInfo.nUpscaleSharpness = pFocus->nUpscaleSharpness;
+ 
++	// With no window a lease companion presents an empty frame to power its output down.
++	if ( g_sDrmLeaseClientSocket && !w )
++	{
++		if ( pConnector )
++			pConnector->Present( &frameInfo, async );
++		return;
++	}
++
+ 	// If the window we'd paint as the base layer is the streaming client,
+ 	// find the video underlay and put it up first in the scenegraph
+ 	if ( cv_paint_primary_plane )
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -4126,7 +4126,8 @@ int drm_prepare( struct drm_t *drm, bool
+ 
+ 	// A sleeping screen holds no output LUTs, so its desired state is "not applied";
+ 	// otherwise every repaint while asleep would see a mismatch and ask for a modeset.
+-	const bool bSleep = drm->pConnector && cv_drm_sleep_screens[ drm->pConnector->GetScreenType() ];
++	const bool bSleep = drm->pConnector && ( cv_drm_sleep_screens[ drm->pConnector->GetScreenType() ] ||
++		( g_sDrmLeaseClientSocket && frameInfo->layers.count() == 0 ) );
+ 
+ 	// The output LUTs change on this request when they go on or off (which changes
+ 	// the display blocks the CRTC owns and needs a modeset) or when their contents do;
+@@ -5031,6 +5032,15 @@ namespace gamescope
+ 			if ( drm_lease_client_suspended() )
+ 				return 0;
+ 
++			if ( g_sDrmLeaseClientSocket && pFrameInfo->layers.count() == 0 )
++			{
++				if ( !g_DRM.pConnector || g_DRM.pConnector->GetProperties().CRTC_ID->GetCurrentValue() == 0 )
++					return 0;
++				if ( drm_prepare( &g_DRM, false, pFrameInfo ) != 0 )
++					return 0;
++				return Commit( pFrameInfo );
++			}
++
+ 			static uint64_t s_ulLastTime = get_time_in_nanos();
+ 			uint64_t ulNow = get_time_in_nanos();
+ 			drm_log.debugf( "CDRMBackend::Present Begin: %lu -> delta: %lu", ulNow, ulNow - s_ulLastTime );

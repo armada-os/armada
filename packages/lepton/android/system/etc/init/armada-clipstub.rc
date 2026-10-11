@@ -1,0 +1,8 @@
+service armada_clipstub /system/bin/app_process -Djava.class.path=/system/framework/armada-clipstub.jar /system/bin ClipStub
+    user root
+    group root
+    disabled
+
+# Both Lepton images mount this file; Android 14's still has its own clipboard service.
+on zygote-start && property:ro.build.version.sdk=30
+    start armada_clipstub

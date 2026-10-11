@@ -1,0 +1,36 @@
+From 6025c0ea40b708061e3895e6a68c9ee14491b3d7 Mon Sep 17 00:00:00 2001
+From: Matthieu Bucchianeri <mbucchia@valvesoftware.com>
+Date: Wed, 22 Jul 2026 14:20:29 -0700
+Subject: [PATCH] Add instructions to resolve common build issues.
+
+---
+ README.md | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/README.md b/README.md
+index 6b3a986..47c68d1 100644
+--- a/README.md
++++ b/README.md
+@@ -42,6 +42,22 @@ Some of the Rust dependencies require Clang, which require installing the
+ Once you have that and `cargo` is in your path, to build the project you can
+ use `cargo build`.
+ 
++## Troubleshooting
++
++- `cargo build` fails with this error:
++
++  ```
++  --- stderr
++  /usr/include/stdio.h:34:10: fatal error: 'stddef.h' file not found
++  ```
++
++  Solution: make sure clang is setup on your machine! (eg: `pacman -S clang`).
++
++- CI pipeline fails at 'proxy' job with local diffs.
++
++  Solution: use the `update_proxy.sh` script under `steamos-manager-proxy/src`.
++  You might need to run `cargo install zbus_xmlgen` first.
++
+ # Developing
+ 
+ As far as IDEs go, Visual Studio Code works pretty well for giving errors about

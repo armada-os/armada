@@ -1,0 +1,350 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] hwmon: pwm-fan: optionally run the fan while charging in s2idle
+
+The fan is always stopped at suspend, so a handheld charging while asleep
+heats up with no airflow. Add a pwm1_sleep_charging attribute (0-255,
+default 0 keeps the current behaviour). When it is set and the system
+enters suspend-to-idle with external power present, the fan keeps that
+speed, and a power supply notifier stops or restarts it when the charger
+goes away or comes back during sleep. The awake speed is restored at
+resume. This needs PWM and supply providers that keep working in
+suspend-to-idle, so it stays off unless userspace enables it. A power
+supply event that is never delivered leaves the fan as it was until the
+next event or resume.
+
+The PWM helpers now update the cached PWM state only after the hardware
+accepts it, and start the fan with the stop-to-start duty whenever it is
+not running, so a failed write can be retried without a stale state.
+---
+--- a/Documentation/hwmon/pwm-fan.rst
++++ b/Documentation/hwmon/pwm-fan.rst
+@@ -30,3 +30,7 @@
+ 			3 -> enable pwm; if pwm==0, disable pwm and regulator
+ pwm1		rw	relative speed (0-255), 255=max. speed.
+ =============== ======= =======================================================
++
++pwm1_sleep_charging (rw) is a fan speed (0-255) kept during suspend-to-idle
++while external power is present. With the default 0, the fan is stopped
++during suspend. It is ignored when pwm1_enable is 0.
+--- a/drivers/hwmon/pwm-fan.c
++++ b/drivers/hwmon/pwm-fan.c
+@@ -13,7 +13,9 @@
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/platform_device.h>
++#include <linux/power_supply.h>
+ #include <linux/property.h>
++#include <linux/suspend.h>
+ #include <linux/pwm.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/sysfs.h>
+@@ -64,6 +66,14 @@
+ 	u64 pwm_duty_cycle_from_stopped;
+ 	u32 pwm_usec_from_stopped;
+ 	u8 pwm_shutdown;
++
++	/* Fan speed while a charger is connected during system sleep, 0 = off */
++	u8 pwm_sleep_charging;
++	bool suspended;
++	bool charging_valid;
++	bool charging_on;
++	unsigned long pwm_awake;
++	struct notifier_block psy_nb;
+ };
+ 
+ /* This handler assumes self resetting edge triggered interrupt. */
+@@ -141,9 +151,19 @@
+ 	return ret;
+ }
+ 
++/* Commit the new state only once the hardware has taken it */
++static int pwm_fan_apply(struct pwm_fan_ctx *ctx, struct pwm_state *state)
++{
++	int ret = pwm_apply_might_sleep(ctx->pwm, state);
++
++	if (!ret)
++		ctx->pwm_state = *state;
++	return ret;
++}
++
+ static int pwm_fan_power_on(struct pwm_fan_ctx *ctx)
+ {
+-	struct pwm_state *state = &ctx->pwm_state;
++	struct pwm_state state = ctx->pwm_state;
+ 	int ret;
+ 
+ 	if (ctx->enabled)
+@@ -155,8 +175,8 @@
+ 		return ret;
+ 	}
+ 
+-	state->enabled = true;
+-	ret = pwm_apply_might_sleep(ctx->pwm, state);
++	state.enabled = true;
++	ret = pwm_fan_apply(ctx, &state);
+ 	if (ret) {
+ 		dev_err(ctx->dev, "failed to enable PWM\n");
+ 		goto disable_regulator;
+@@ -173,7 +193,7 @@
+ 
+ static int pwm_fan_power_off(struct pwm_fan_ctx *ctx, bool force_disable)
+ {
+-	struct pwm_state *state = &ctx->pwm_state;
++	struct pwm_state state = ctx->pwm_state;
+ 	bool enable_regulator = false;
+ 	int ret;
+ 
+@@ -181,13 +201,13 @@
+ 		return 0;
+ 
+ 	pwm_fan_enable_mode_2_state(ctx->enable_mode,
+-				    state,
++				    &state,
+ 				    &enable_regulator);
+ 
+ 	if (force_disable)
+-		state->enabled = false;
+-	state->duty_cycle = 0;
+-	ret = pwm_apply_might_sleep(ctx->pwm, state);
++		state.enabled = false;
++	state.duty_cycle = 0;
++	ret = pwm_fan_apply(ctx, &state);
+ 	if (ret) {
+ 		dev_err(ctx->dev, "failed to disable PWM\n");
+ 		return ret;
+@@ -202,8 +222,7 @@
+ 
+ static int  __set_pwm(struct pwm_fan_ctx *ctx, unsigned long pwm)
+ {
+-	struct pwm_state *state = &ctx->pwm_state;
+-	unsigned long final_pwm = pwm;
++	struct pwm_state state = ctx->pwm_state;
+ 	unsigned long period;
+ 	bool update = false;
+ 	int ret = 0;
+@@ -213,22 +232,23 @@
+ 			/* pwm-fan hard disabled */
+ 			return 0;
+ 
+-		period = state->period;
+-		update = state->duty_cycle < ctx->pwm_duty_cycle_from_stopped;
++		period = state.period;
++		update = ctx->pwm_duty_cycle_from_stopped &&
++			 (!ctx->enabled || state.duty_cycle < ctx->pwm_duty_cycle_from_stopped);
+ 		if (update)
+-			state->duty_cycle = ctx->pwm_duty_cycle_from_stopped;
++			state.duty_cycle = ctx->pwm_duty_cycle_from_stopped;
+ 		else
+-			state->duty_cycle = DIV_ROUND_UP(pwm * (period - 1), MAX_PWM);
+-		ret = pwm_apply_might_sleep(ctx->pwm, state);
++			state.duty_cycle = DIV_ROUND_UP(pwm * (period - 1), MAX_PWM);
++		ret = pwm_fan_apply(ctx, &state);
+ 		if (ret)
+ 			return ret;
+ 		ret = pwm_fan_power_on(ctx);
+ 		if (!ret && update) {
+-			pwm = final_pwm;
+-			state->duty_cycle = DIV_ROUND_UP(pwm * (period - 1), MAX_PWM);
++			state = ctx->pwm_state;
++			state.duty_cycle = DIV_ROUND_UP(pwm * (period - 1), MAX_PWM);
+ 			usleep_range(ctx->pwm_usec_from_stopped,
+ 				     ctx->pwm_usec_from_stopped * 2);
+-			ret = pwm_apply_might_sleep(ctx->pwm, state);
++			ret = pwm_fan_apply(ctx, &state);
+ 		}
+ 	} else {
+ 		ret = pwm_fan_power_off(ctx, false);
+@@ -289,15 +309,15 @@
+ 		 * Nothing to do if currently enabled
+ 		 */
+ 		if (!ctx->enabled) {
+-			struct pwm_state *state = &ctx->pwm_state;
++			struct pwm_state state = ctx->pwm_state;
+ 			bool enable_regulator = false;
+ 
+-			state->duty_cycle = 0;
++			state.duty_cycle = 0;
+ 			pwm_fan_enable_mode_2_state(val,
+-						    state,
++						    &state,
+ 						    &enable_regulator);
+ 
+-			pwm_apply_might_sleep(ctx->pwm, state);
++			pwm_fan_apply(ctx, &state);
+ 			pwm_fan_switch_power(ctx, enable_regulator);
+ 			pwm_fan_update_state(ctx, 0);
+ 		}
+@@ -494,6 +514,115 @@
+ 	}
+ }
+ 
++static ssize_t pwm1_sleep_charging_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", ctx->pwm_sleep_charging);
++}
++
++static ssize_t pwm1_sleep_charging_store(struct device *dev, struct device_attribute *attr,
++				   const char *buf, size_t count)
++{
++	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
++	unsigned long val;
++	int ret;
++
++	ret = kstrtoul(buf, 10, &val);
++	if (ret)
++		return ret;
++	if (val > MAX_PWM)
++		return -EINVAL;
++
++	mutex_lock(&ctx->lock);
++	ctx->pwm_sleep_charging = val;
++	mutex_unlock(&ctx->lock);
++
++	return count;
++}
++
++static DEVICE_ATTR_RW(pwm1_sleep_charging);
++
++static struct attribute *pwm_fan_attrs[] = {
++	&dev_attr_pwm1_sleep_charging.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(pwm_fan);
++
++/* External power present; also true on systems that register no power supplies */
++static bool pwm_fan_charger_online(void)
++{
++#if IS_REACHABLE(CONFIG_POWER_SUPPLY)
++	return power_supply_is_system_supplied() > 0;
++#else
++	return false;
++#endif
++}
++
++/* Called with ctx->lock held while suspended */
++static int pwm_fan_apply_charging(struct pwm_fan_ctx *ctx)
++{
++	bool on = ctx->pwm_sleep_charging && ctx->enable_mode != pwm_off_reg_off &&
++		  pwm_fan_charger_online();
++	int ret;
++
++	if (ctx->charging_valid && on == ctx->charging_on)
++		return 0;
++
++	ctx->charging_valid = false;
++	ret = on ? __set_pwm(ctx, ctx->pwm_sleep_charging) : pwm_fan_power_off(ctx, true);
++	if (ret) {
++		dev_warn(ctx->dev, "failed to turn the fan %s in sleep: %d\n", on ? "on" : "off", ret);
++		return ret;
++	}
++
++	ctx->charging_on = on;
++	ctx->charging_valid = true;
++	dev_dbg(ctx->dev, "fan %s in sleep\n", on ? "on" : "off");
++	return 0;
++}
++
++#if IS_REACHABLE(CONFIG_POWER_SUPPLY)
++static int pwm_fan_psy_notify(struct notifier_block *nb, unsigned long event, void *data)
++{
++	struct pwm_fan_ctx *ctx = container_of(nb, struct pwm_fan_ctx, psy_nb);
++
++	if (event != PSY_EVENT_PROP_CHANGED)
++		return NOTIFY_DONE;
++
++	mutex_lock(&ctx->lock);
++	if (ctx->suspended)
++		pwm_fan_apply_charging(ctx);
++	mutex_unlock(&ctx->lock);
++
++	return NOTIFY_OK;
++}
++
++static void pwm_fan_psy_unregister(void *data)
++{
++	struct pwm_fan_ctx *ctx = data;
++
++	power_supply_unreg_notifier(&ctx->psy_nb);
++}
++
++static int pwm_fan_register_charger_notifier(struct device *dev, struct pwm_fan_ctx *ctx)
++{
++	int ret;
++
++	ctx->psy_nb.notifier_call = pwm_fan_psy_notify;
++	ret = power_supply_reg_notifier(&ctx->psy_nb);
++	if (ret)
++		return ret;
++
++	return devm_add_action_or_reset(dev, pwm_fan_psy_unregister, ctx);
++}
++#else
++static int pwm_fan_register_charger_notifier(struct device *dev, struct pwm_fan_ctx *ctx)
++{
++	return 0;
++}
++#endif
++
+ static int pwm_fan_probe(struct platform_device *pdev)
+ {
+ 	struct thermal_cooling_device *cdev;
+@@ -672,11 +801,15 @@
+ 	if (ret)
+ 		ctx->pwm_usec_from_stopped = 250000;
+ 
++	ret = pwm_fan_register_charger_notifier(dev, ctx);
++	if (ret)
++		return ret;
++
+ 	ctx->info.ops = &pwm_fan_hwmon_ops;
+ 	ctx->info.info = channels;
+ 
+ 	hwmon = devm_hwmon_device_register_with_info(dev, "pwmfan",
+-						     ctx, &ctx->info, NULL);
++						     ctx, &ctx->info, pwm_fan_groups);
+ 	if (IS_ERR(hwmon)) {
+ 		dev_err(dev, "Failed to register hwmon device\n");
+ 		return PTR_ERR(hwmon);
+@@ -710,15 +843,38 @@
+ static int pwm_fan_suspend(struct device *dev)
+ {
+ 	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
++	int ret = 0;
++
++	mutex_lock(&ctx->lock);
++	ctx->pwm_awake = ctx->pwm_value;
++	/* The PWM and supply providers must keep working in s2idle */
++	if (ctx->pwm_sleep_charging && pm_suspend_target_state == PM_SUSPEND_TO_IDLE) {
++		ctx->suspended = true;
++		ctx->charging_valid = false;
++		ret = pwm_fan_apply_charging(ctx);
++		if (ret) {
++			ctx->suspended = false;
++			__set_pwm(ctx, ctx->pwm_awake);
++		}
++	} else {
++		ret = pwm_fan_power_off(ctx, true);
++	}
++	mutex_unlock(&ctx->lock);
+ 
+-	return pwm_fan_power_off(ctx, true);
++	return ret;
+ }
+ 
+ static int pwm_fan_resume(struct device *dev)
+ {
+ 	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);
++	int ret;
+ 
+-	return set_pwm(ctx, ctx->pwm_value);
++	mutex_lock(&ctx->lock);
++	ctx->suspended = false;
++	ret = __set_pwm(ctx, ctx->pwm_awake);
++	mutex_unlock(&ctx->lock);
++
++	return ret;
+ }
+ 
+ static DEFINE_SIMPLE_DEV_PM_OPS(pwm_fan_pm, pwm_fan_suspend, pwm_fan_resume);

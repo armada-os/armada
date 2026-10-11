@@ -1,11 +1,12 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: pocket-fit-elite: configure touch and DP audio
+Subject: [PATCH] arm64: dts: qcom: pocket-fit-elite: configure touch and DP audio, fix PCIe WAKE# polarity, codec rail sleep modes
 
 Use the full Chipone binding expected by Armada's touchscreen driver,
 remove volume-up as a wakeup source, and add the DisplayPort audio link.
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts b/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
 index eba9f43..5bb5f29 100644
+
 --- a/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
 @@ -122,7 +122,6 @@
@@ -76,3 +77,38 @@ index eba9f43..5bb5f29 100644
  	};
  
  	wcn7860-pmu {
+@@ -1621,7 +1626,7 @@
+ };
+ 
+ &pcieport0 {
+-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 104 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
+ 
+ 	wifi@0 {
+@@ -1699,3 +1704,25 @@
+ 			"qcom/sm8750/konkr/pfe/cdsp_dtb.mbn";
+ 	status = "okay";
+ };
++
++/* The codec keeps these rails enabled through s2idle; idle them in LPM */
++&vreg_l15b_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_bob1 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_l2i_1p2 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};

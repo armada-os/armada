@@ -1,4 +1,4 @@
-import { DialogBody, DialogButton, DialogFooter, ModalRoot } from "@decky/ui";
+import { DialogBody, DialogButton, DialogFooter } from "@decky/ui";
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { saveFanCurves } from "../backend";
@@ -6,8 +6,8 @@ import { FanCurveGraphEditor } from "./FanCurveEditor";
 import { useCurrentTemp } from "../hooks/useCurrentTemp";
 import { useFanCurvesSave } from "../hooks/useFanCurvesSave";
 import { t } from "../i18n";
-import { styles } from "../styles";
 import type { CurvesState } from "../types";
+import { ArmadaModalRoot } from "./ArmadaModalRoot";
 
 export function FanCurveEditorModal({
   initial,
@@ -54,8 +54,7 @@ export function FanCurveEditorModal({
 
   return (
     // bAllowFullSize -- without it GenericDialog clamps to a small default size.
-    <ModalRoot bAllowFullSize onCancel={() => closeModal?.()}>
-      <style>{styles}</style>
+    <ArmadaModalRoot bAllowFullSize onCancel={() => closeModal?.()}>
       <DialogBody className="afc-scope">
         {saveError ? <div className="afc-error">{saveError}</div> : null}
         <FanCurveGraphEditor
@@ -66,28 +65,17 @@ export function FanCurveEditorModal({
           currentTemp={currentTemp}
         />
       </DialogBody>
-      {/* Column layout: DialogFooter's default row doesn't hold up with three buttons. */}
-      <DialogFooter className="afc-modal-footer">
-        <div className="afc-modal-footer-row">
-          <DialogButton
-            className="afc-modal-footer-half"
-            onClick={handleSave}
-            disabled={!dirty || saving}
-          >
-            {saving ? t("common.saving") : t("common.saveChanges")}
-          </DialogButton>
-          <DialogButton
-            className="afc-modal-footer-half"
-            onClick={handleRevert}
-            disabled={!dirty || saving}
-          >
-            {t("common.revertChanges")}
-          </DialogButton>
-        </div>
-        <DialogButton className="afc-modal-footer-full" onClick={() => closeModal?.()}>
+      <DialogFooter className="armada-control-dialog-footer">
+        <DialogButton onClick={handleSave} disabled={!dirty || saving}>
+          {saving ? t("common.saving") : t("common.saveChanges")}
+        </DialogButton>
+        <DialogButton onClick={handleRevert} disabled={!dirty || saving}>
+          {t("common.revertChanges")}
+        </DialogButton>
+        <DialogButton onClick={() => closeModal?.()}>
           {t("common.close")}
         </DialogButton>
       </DialogFooter>
-    </ModalRoot>
+    </ArmadaModalRoot>
   );
 }

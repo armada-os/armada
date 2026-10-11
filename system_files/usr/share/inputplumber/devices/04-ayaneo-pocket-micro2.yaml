@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+version: 1
+kind: CompositeDevice
+name: AYANEO Pocket MICRO 2
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: AYANEO Pocket MICRO 2
+
+single_source: false
+
+source_devices:
+  - group: gamepad
+    evdev:
+      name: AYANEO Controller
+      vendor_id: "4001"
+      product_id: "0428"
+      handler: event*
+    capability_map_id: ayaneo_pocket_micro2
+  - group: keyboard
+    evdev:
+      name: aya-keys
+      handler: event*
+    capability_map_id: ayaneo_pocket_micro2_keys
+
+options:
+  auto_manage: true
+
+target_devices:
+  - xb360
+  - keyboard

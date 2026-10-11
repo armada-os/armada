@@ -1,5 +1,0 @@
-[D-BUS Service]
-Name=com.steampowered.SteamOSManager1
-Exec=/bin/false
-User=root
-SystemdService=armada-steamos-manager.service

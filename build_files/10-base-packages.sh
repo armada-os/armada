@@ -19,11 +19,12 @@ dnf5 -y install --setopt=install_weak_deps=False \
     atheros-firmware \
     NetworkManager \
     NetworkManager-wifi \
-    iwd \
     wpa_supplicant \
     bluez \
     dbus-broker \
     python3-gobject \
+    gtk4 \
+    libadwaita \
     python3-websocket-client \
     polkit \
     upower \
@@ -37,10 +38,10 @@ dnf5 -y install --setopt=install_weak_deps=False \
     lsb_release \
     htop \
     lsof \
-    scx-scheds \
     unzip \
     fuse \
     fuse-libs \
+    libxcrypt-compat \
     sdl2-compat \
     evtest \
     dbus-x11 \
@@ -67,7 +68,10 @@ dnf5 -y install --setopt=install_weak_deps=False \
     wl-clipboard \
     binutils \
     btop \
-    tailscale
+    tailscale \
+    SDL2_image \
+    SDL2_ttf \
+    SDL2_gfx 
 
 curl --connect-timeout 30 --max-time 120 --retry 3 -fsSL \
     -o /etc/yum.repos.d/negativo17-fedora-multimedia.repo \
@@ -161,7 +165,7 @@ dnf5 -y install --setopt=install_weak_deps=False \
 
 # scx_cosmos/scx_lavd for the Armada Control scheduler setting; without the
 # binaries armada-powerd reports the scheduler choice as unavailable.
-dnf5 -y install --setopt=install_weak_deps=False scx-scheds
+dnf5 -y install --setopt=install_weak_deps=False /packages/scx-scheds/scx-scheds-[0-9]*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False \
     --repofrompath 'copr-ublue-os-packages,https://download.copr.fedorainfracloud.org/results/ublue-os/packages/fedora-$releasever-$basearch/' \

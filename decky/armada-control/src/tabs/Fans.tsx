@@ -1,10 +1,11 @@
-import { ButtonItem, Field, PanelSection, PanelSectionRow, showModal } from "@decky/ui";
+import { Field, PanelSection, showModal } from "@decky/ui";
 import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { getFansState, saveFanCurves } from "../backend";
 import { CreateCurveModal } from "../components/CreateCurveModal";
 import { FanCurveEditor } from "../components/FanCurveEditor";
 import { FanCurveEditorModal } from "../components/FanCurveEditorModal";
+import { ButtonRow } from "../components/widgets";
 import { useCurrentTemp } from "../hooks/useCurrentTemp";
 import { useFanCurvesSave } from "../hooks/useFanCurvesSave";
 import { t } from "../i18n";
@@ -96,20 +97,12 @@ export function Fans({ setConfig }: {
         currentTemp={currentTemp}
       />
       <PanelSection title={t("fans.saveSection")}>
-        <PanelSectionRow>
-          <div className="afc-control-inset">
-            <ButtonItem layout="below" onClick={handleSave} disabled={!dirty || saving}>
-              {saving ? t("common.saving") : t("common.saveChanges")}
-            </ButtonItem>
-          </div>
-        </PanelSectionRow>
-        <PanelSectionRow>
-          <div className="afc-control-inset">
-            <ButtonItem layout="below" onClick={handleRevert} disabled={!dirty || saving}>
-              {t("common.revertChanges")}
-            </ButtonItem>
-          </div>
-        </PanelSectionRow>
+        <ButtonRow layout="below" onClick={handleSave} disabled={!dirty || saving}>
+          {saving ? t("common.saving") : t("common.saveChanges")}
+        </ButtonRow>
+        <ButtonRow layout="below" onClick={handleRevert} disabled={!dirty || saving}>
+          {t("common.revertChanges")}
+        </ButtonRow>
         {dirty ? <div className="afc-note">{t("common.unsavedChanges")}</div> : null}
       </PanelSection>
     </div>

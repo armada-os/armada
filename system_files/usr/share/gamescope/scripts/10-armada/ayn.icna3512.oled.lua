@@ -1,7 +1,8 @@
 -- ICNA3512 OLED used by the AYN Odin 2 Portal, AYANEO Pocket EVO, and Pocket DS
 -- top display. It exposes no EDID, so gamescope synthesizes one and identifies
--- the display through GAMESCOPE_INTERNAL_DEVICE_ID;
--- this profile supplies the panel's colorimetry (nominal DCI-P3, not measured).
+-- the display through GAMESCOPE_INTERNAL_DEVICE_ID; this profile supplies the
+-- panel's colorimetry (nominal DCI-P3, not measured) and HDR capability.
+-- Steam owns HDR behavior at runtime.
 gamescope.config.known_displays.armada_ayn_icna3512_oled = {
     pretty_name = "ICNA3512 internal OLED",
     colorimetry = {
@@ -11,7 +12,11 @@ gamescope.config.known_displays.armada_ayn_icna3512_oled = {
         w = { x = 0.3127, y = 0.3290 },
     },
     hdr = {
-        supported = false,
+        supported = true,
+        eotf = gamescope.eotf.gamma22,
+        max_content_light_level = 780,
+        max_frame_average_luminance = 390,
+        min_content_light_level = 0,
     },
     matches = function(display)
         if (display.device_id == "ayn-odin-2-portal"

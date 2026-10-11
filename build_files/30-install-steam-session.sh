@@ -4,6 +4,11 @@ set -euxo pipefail
 # Patched Turnip includes the Mesa #14656 VM_BIND fix.
 dnf5 -y install --setopt=install_weak_deps=False /packages/mesa/mesa-*.fc44.armada.*.rpm
 
+mkdir -p /usr/share/armada
+cp -a /packages/mesa/turnip /usr/share/armada/turnip
+# A separate rechunk component keeps a driver bump from invalidating unrelated layers.
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"turnip")' /usr/share/armada/turnip
+
 # Patched mangohud: Adreno GPU load/clock/temp for mainline drm/msm (msm_dpu).
 dnf5 -y install --setopt=install_weak_deps=False /packages/mangohud/mangohud-*.fc44.armada.*.rpm
 
@@ -20,14 +25,41 @@ dnf5 -y install --setopt=install_weak_deps=False \
 # Patched InputPlumber: dpad signed-axis fix
 dnf5 -y install --setopt=install_weak_deps=False /packages/inputplumber/inputplumber-*.rpm
 
+# SteamOS Manager: upstream main plus the Steam Frame series, with our device configs.
+dnf5 -y install --setopt=install_weak_deps=False \
+    /packages/steamos-manager/steamos-manager-[0-9]*.rpm
+
 # Patched NetworkManager: /etc/NetworkManager/ignore-sleep keeps wifi up across fake-suspend.
 dnf5 -y install --setopt=install_weak_deps=False /packages/networkmanager/*.rpm
+
+dnf5 -y install --setopt=install_weak_deps=False /packages/wpa_supplicant/*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False /packages/armada-splash/*.rpm
 
 dnf5 -y install --setopt=install_weak_deps=False /packages/armada-rgb/*.rpm
 
+dnf5 -y install --setopt=install_weak_deps=False /packages/armada-aurora/*.rpm
+
 dnf5 -y install --setopt=install_weak_deps=False /packages/jupiter-hw-support/*.rpm
+
+dnf5 -y install --setopt=install_weak_deps=False /packages/lepton/lepton-{guestos,armada}-[0-9]*.rpm
+python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"lepton")' \
+    /usr/share/armada/lepton/guestos-android.erofs
+
+# Patched protontricks: Ships with https://github.com/Matoking/protontricks/pull/503
+dnf5 -y install --setopt=install_weak_deps=False \
+    cabextract \
+    unzip \
+    /packages/protontricks/protontricks-[0-9]*.rpm
+
+# winetricks itself: not packaged from Fedora, because their RPM requires wine-common,
+# which doesn't exist on aarch64. winetricks itself is only a shell script.
+WINETRICKS_VER="20260125"
+WINETRICKS_SHA256="431f82fc74000e6c864409f1d8fb495d696c03928808e3e8acffc45179312a7b"
+curl --retry 3 --retry-delay 2 -fsSL -o /usr/bin/winetricks \
+    "https://raw.githubusercontent.com/Winetricks/winetricks/${WINETRICKS_VER}/src/winetricks"
+echo "${WINETRICKS_SHA256}  /usr/bin/winetricks" | sha256sum -c -
+chmod 0755 /usr/bin/winetricks
 
 # Avoid gamescope-session-ogui-steam/-powerstation; Terra's aarch64 deps are broken.
 dnf5 -y install --setopt=install_weak_deps=False --enable-repo=terra \
@@ -102,7 +134,7 @@ python3 /ctx/build_files/verify-steam-bootstrap.py \
     "${STEAM_HOME}/package/steam_client_steamdeck_publicbeta_linuxarm64.installed" "${STEAM_HOME}"
 rm -f /etc/steamos-oobe-image
 
-PROTON_VER="11.0-20260703-slr"
+PROTON_VER="11.0-20261005-slr"
 PROTON_ARCHIVE_NAME="proton-cachyos-${PROTON_VER}-arm64"
 # Keep this in sync with armada-fixups when changing Proton major/minor lines.
 PROTON_TOOL_NAME="proton-cachyos-11.0-arm64"

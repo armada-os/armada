@@ -1,0 +1,5 @@
+--- a/arch/arm64/boot/dts/qcom/sm8250-mangmi-pocket-max.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-mangmi-pocket-max.dts
+@@ -1353,2 +1352,0 @@
+-
+-#include "sm8250-pwm-fan-cooling.dtsi"

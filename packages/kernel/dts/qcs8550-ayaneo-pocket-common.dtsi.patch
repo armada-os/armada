@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: qcs8550-ayaneo: drop the SDHCI capability mask
+Subject: [PATCH] arm64: dts: qcom: qcs8550-ayaneo: drop the SDHCI capability mask, fix PCIe WAKE# polarity, codec rail sleep mode
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocket-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocket-common.dtsi
@@ -11,7 +11,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayaneo: drop the SDHCI capability mas
  		};
  	};
  
-@@ -962,7 +962,6 @@
+@@ -1025,7 +1024,6 @@
  	no-mmc;
  
  	qcom,dll-config = <0x0007442c>;
@@ -19,3 +19,33 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayaneo: drop the SDHCI capability mas
  
  	status = "okay";
  };
+@@ -1371,7 +1369,7 @@
+ };
+ 
+ &pcieport0 {
+-	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
+ 
+ 	wifi@0 {
+@@ -1405,7 +1403,7 @@
+ };
+ 
+ &pcie1_port0 {
+-	wake-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
++	wake-gpios = <&tlmm 99 GPIO_ACTIVE_LOW>;
+ 	reset-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
+ 
+ 	/* Renesas μPD720201 PCIe USB3.0 HOST CONTROLLER */
+@@ -1502,3 +1500,11 @@
+ &iris {
+ 	status = "okay";
+ };
++
++/* The codec keeps this rail enabled through s2idle; idle it in LPM */
++&vreg_l10b_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};

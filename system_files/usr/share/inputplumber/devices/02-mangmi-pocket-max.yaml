@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+version: 1
+kind: CompositeDevice
+name: MANGMI Pocket Max
+
+matches: []
+
+single_source: false
+
+source_devices:
+  - group: gamepad
+    evdev:
+      name: MANGMI Pocket Max Joypad
+      phys_path: mangmi-pocket-max/input0
+      handler: event*
+    capability_map_id: pocket_max_mcu
+  - group: gamepad
+    evdev:
+      name: pwm-vibrator
+      handler: event*
+
+options:
+  auto_manage: true
+
+target_devices:
+  - ds5
+  - keyboard
