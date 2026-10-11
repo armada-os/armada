@@ -5,6 +5,7 @@ import pathlib
 import shlex
 import subprocess
 import tempfile
+import time
 
 STATE_FILE = pathlib.Path("/run/armada/perf-state.json")
 SESSION_SOCKET = "/run/armada/session.sock"
@@ -225,37 +226,90 @@ def _policy(tid):
         return -1
 
 
-def apply_gamescope(values):
-    # RESET_ON_FORK covers negative nice in children but not affinity.
+def _gamescope_targets(values):
     nice = clamp(values.get("gamescopeNice", 0), GAMESCOPE_NICE_MIN, GAMESCOPE_NICE_MAX)
     cores = values.get("gamescopeCores") or None
     all_cpus = set(online_cpus())
     mask = set(cores) & all_cpus if cores else all_cpus
     if not mask:
         mask = all_cpus
-    for pid in gamescope_pids():
-        for tid in process_tids(pid):
-            policy = _policy(tid)
-            try:
-                if policy in (os.SCHED_OTHER, os.SCHED_BATCH):
-                    if nice < 0 and policy == os.SCHED_OTHER:
-                        os.sched_setscheduler(
-                            tid, os.SCHED_OTHER | os.SCHED_RESET_ON_FORK,
-                            os.sched_param(0))
-                    os.setpriority(os.PRIO_PROCESS, tid, nice)
-                os.sched_setaffinity(tid, mask)
-            except (OSError, PermissionError):
-                continue
-        if mask != all_cpus:
-            for child in child_pids(pid):
-                try:
-                    with open(f"/proc/{child}/comm", encoding="utf-8") as f:
-                        if f.read().strip() in GAMESCOPE_COMMS:
-                            continue
-                except OSError:
-                    continue
-                for tid in process_tids(child):
-                    try:
-                        os.sched_setaffinity(tid, all_cpus)
-                    except OSError:
+    return nice, mask, all_cpus
+
+
+def _apply_gamescope_thread(tid, nice, mask):
+    policy = _policy(tid)
+    try:
+        if policy in (os.SCHED_OTHER, os.SCHED_BATCH):
+            if nice < 0 and policy == os.SCHED_OTHER:
+                os.sched_setscheduler(
+                    tid, os.SCHED_OTHER | os.SCHED_RESET_ON_FORK,
+                    os.sched_param(0))
+            os.setpriority(os.PRIO_PROCESS, tid, nice)
+        os.sched_setaffinity(tid, mask)
+    except (OSError, PermissionError):
+        pass
+
+
+def _comm(pid):
+    try:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+class GamescopeTuner:
+    """Applies gamescope nice/affinity to new threads without rescanning /proc every tick."""
+
+    RESCAN_SECONDS = 30
+
+    def __init__(self):
+        self.pids = []
+        self.scanned = None
+        self.signature = None
+        self.done = set()
+
+    def _gamescope_pids(self, now):
+        alive = [pid for pid in self.pids if _comm(pid) in GAMESCOPE_COMMS]
+        if (not alive or alive != self.pids or self.scanned is None
+                or now - self.scanned >= self.RESCAN_SECONDS):
+            self.pids = gamescope_pids()
+            self.scanned = now
+            self.done = set()
+        return self.pids
+
+    def apply(self, values, now=None):
+        # RESET_ON_FORK covers negative nice in children but not affinity.
+        nice, mask, all_cpus = _gamescope_targets(values)
+        signature = (nice, frozenset(mask))
+        if signature != self.signature:
+            self.signature = signature
+            self.done = set()
+        done = set()
+        for pid in self._gamescope_pids(time.monotonic() if now is None else now):
+            for tid in process_tids(pid):
+                key = (pid, tid)
+                if key not in self.done:
+                    _apply_gamescope_thread(tid, nice, mask)
+                done.add(key)
+            if mask != all_cpus:
+                for child in child_pids(pid):
+                    comm = _comm(child)
+                    if comm is None or comm in GAMESCOPE_COMMS:
                         continue
+                    for tid in process_tids(child):
+                        key = (child, tid)
+                        if key not in self.done:
+                            try:
+                                os.sched_setaffinity(tid, all_cpus)
+                            except OSError:
+                                pass
+                        done.add(key)
+        self.done = done
+
+
+_GAMESCOPE_TUNER = GamescopeTuner()
+
+
+def apply_gamescope(values):
+    _GAMESCOPE_TUNER.apply(values)
