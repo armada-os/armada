@@ -35,6 +35,7 @@
 0106-drm-panel-il97680a-luminance-linear-backlight-scale.patch
 0107-drm-msm-dpu-AVR-variable-refresh-on-DSI-video-mode.patch
 0108-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch
+0109-drm-panel-il97680a-defer-display-enable.patch
 0064_Mangmi-Air-Y-Pro-panel.patch
 
 # ============== Panel power + backlight ==============
