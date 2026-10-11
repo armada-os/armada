@@ -1,5 +1,5 @@
 import { toaster } from "@decky/api";
-import { ButtonItem, Field, PanelSection } from "@decky/ui";
+import { Field, PanelSection } from "@decky/ui";
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import {
@@ -19,7 +19,7 @@ import {
   setSwipeGesturesEnabled as applySwipeGesturesEnabled,
 } from "../backend";
 import { openCalibration } from "../components/Calibration";
-import { SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
+import { ButtonRow, SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
 import { useDebouncedApply } from "../hooks/useDebouncedApply";
 import { t, translateLabel } from "../i18n";
 import { percentToPwm, pwmToPercent } from "../lib/fanCurve";
@@ -197,7 +197,7 @@ export function Settings({ config, setConfig }: {
           options={(config.controllerTypes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
           onChange={setControllerType}
         />
-        <ButtonItem layout="below" onClick={openCalibration}>{t("calibration.launch")}</ButtonItem>
+        <ButtonRow layout="below" onClick={openCalibration}>{t("calibration.launch")}</ButtonRow>
       </PanelSection>
       <PanelSection title={t("settings.system")}>
         <ToggleRow

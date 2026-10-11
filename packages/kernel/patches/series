@@ -33,6 +33,8 @@
 0104a-drm-panel-visionox-vtdr6130-add-sm8250.patch
 0105-drm-panel-Add-Retroid-Pocket-Nova-panel.patch
 0106-drm-panel-il97680a-luminance-linear-backlight-scale.patch
+0107-drm-msm-dpu-AVR-variable-refresh-on-DSI-video-mode.patch
+0108-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch
 0064_Mangmi-Air-Y-Pro-panel.patch
 
 # ============== Panel power + backlight ==============
