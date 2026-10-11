@@ -416,6 +416,17 @@
         "releases": "https://api.github.com/repos/justradical/decky-optiscaler-arm64ec/releases/394141296",
         "asset": "^OptiScaler\\.zip$"
       }
+    },
+    {
+      "id": "npupscale",
+      "name": "NPUpscale",
+      "summary": "FSR4 upscaling on the Snapdragon NPU (XeSS slot)",
+      "category": "plugins",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/puzzled-pancake/npuscale/releases?per_page=10",
+        "asset": "^NPUpscale-.*\\.zip$"
+      }
     }
   ]
 }
