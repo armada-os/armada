@@ -33,6 +33,8 @@ export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
 # Steam restores these for compat tools, which otherwise start with no PATH
 export SYSTEM_PATH="${PATH}"
 export SYSTEM_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
+# Remote Play: restart only the capture queue on a decoder source change
+export STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1
 
 # prune the Proton 11 registration earlier releases wrote; the internal-name
 # match keeps user-created tool dirs safe
