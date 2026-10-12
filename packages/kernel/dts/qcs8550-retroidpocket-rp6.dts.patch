@@ -3,9 +3,10 @@ Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and L
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
-@@ -129,6 +129,54 @@
+@@ -129,6 +129,55 @@
  
  &gamepad {
++	mcu-calibration;
  	axis-range = <1024>;
 +};
 +
@@ -58,7 +59,7 @@ Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and L
  };
  
  &{/gpio-keys} {
-@@ -377,15 +425,15 @@
+@@ -377,15 +426,15 @@
  };
  
  &remoteproc_adsp {
