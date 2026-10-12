@@ -939,3 +939,11 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://patchwork.kernel.org/project/linux-arm-msm/patch/179163212446.46972.2306254853726299632@pm.me/
   upstream: https://lore.kernel.org/r/179163212446.46972.2306254853726299632@pm.me
   notes: Posted, not yet merged. The Odin 3's WCN7860 Bluetooth runs on hci_qca.
+- `patches/0732-arm64-dts-qcom-disable-the-qce-crypto-engine.patch`
+  source: armada
+  upstream: local
+  notes: Linux 7.3 made CRYPTO_DEV_QCE depend on BROKEN. With fw_devlink.strict=1 the never-probing crypto@1dfa000 kept the interconnect providers out of sync_state, so every BCM stayed at its maximum vote, asleep included.
+- `patches/0733-clk-qcom-dispcc-sm8750-keep-the-mdss-gdsc-on.patch`
+  source: armada
+  upstream: local
+  notes: Workaround. The SM8750 display does not come back after mdss_gdsc collapses (first DSI bring-up leaves the command engine stuck; resume can block in dpm_complete). Drop once the DSI restore path is fixed.

@@ -1,0 +1,66 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: disable the QCE crypto engine on SM8250/SM8550/SM8650/SM8750
+
+Linux 7.3 made CRYPTO_DEV_QCE depend on BROKEN, so nothing can bind to
+crypto@1dfa000 any more. With fw_devlink.strict=1 the unprobed consumer
+keeps the interconnect providers from reaching sync_state, which leaves
+every BCM voted at its maximum in the active, wake and sleep sets.
+Disable the node so the providers sync and drop to real votes.
+
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+index c60a27bc4205..5400b3000a0f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -2653,6 +2653,9 @@ crypto: crypto@1dfa000 {
+ 				 <&apps_smmu 0x596 0x0011>;
+ 			interconnects = <&aggre2_noc MASTER_CRYPTO_CORE_0 0 &mc_virt SLAVE_EBI_CH0 0>;
+ 			interconnect-names = "memory";
++
++			/* CRYPTO_DEV_QCE depends on BROKEN since Linux 7.3 */
++			status = "disabled";
+ 		};
+ 
+ 		tcsr_mutex: hwlock@1f40000 {
+diff --git a/arch/arm64/boot/dts/qcom/sm8550.dtsi b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+index 276c5b8af7c5..65d697da6ef3 100644
+--- a/arch/arm64/boot/dts/qcom/sm8550.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+@@ -2733,6 +2733,9 @@ crypto: crypto@1dfa000 {
+ 			interconnects = <&aggre2_noc MASTER_CRYPTO QCOM_ICC_TAG_ALWAYS
+ 					 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+ 			interconnect-names = "memory";
++
++			/* CRYPTO_DEV_QCE depends on BROKEN since Linux 7.3 */
++			status = "disabled";
+ 		};
+ 
+ 		ufs_mem_phy: phy@1d80000 {
+diff --git a/arch/arm64/boot/dts/qcom/sm8650.dtsi b/arch/arm64/boot/dts/qcom/sm8650.dtsi
+index d9619bc33346..9fabe85b3779 100644
+--- a/arch/arm64/boot/dts/qcom/sm8650.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8650.dtsi
+@@ -4185,6 +4185,9 @@ crypto: crypto@1dfa000 {
+ 
+ 			iommus = <&apps_smmu 0x480 0>,
+ 				 <&apps_smmu 0x481 0>;
++
++			/* CRYPTO_DEV_QCE depends on BROKEN since Linux 7.3 */
++			status = "disabled";
+ 		};
+ 
+ 		tcsr_mutex: hwlock@1f40000 {
+diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+index cfbcea8ed048..1aeba72a2cc8 100644
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -2183,6 +2183,9 @@ crypto: crypto@1dfa000 {
+ 
+ 			iommus = <&apps_smmu 0x480 0>,
+ 				 <&apps_smmu 0x481 0>;
++
++			/* CRYPTO_DEV_QCE depends on BROKEN since Linux 7.3 */
++			status = "disabled";
+ 		};
+ 
+ 		tcsr_mutex: hwlock@1f40000 {

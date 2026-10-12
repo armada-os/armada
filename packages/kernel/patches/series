@@ -268,3 +268,5 @@
 0727-drm-msm-dsi-fix-AHB-clock-staying-enabled-across-sus.patch
 0730-soundwire-qcom-disable-the-interrupt-before-gating-the-clock.patch
 0731-Bluetooth-hci_qca-reset-the-in-band-sleep-state-on-power-off.patch
+0732-arm64-dts-qcom-disable-the-qce-crypto-engine.patch
+0733-clk-qcom-dispcc-sm8750-keep-the-mdss-gdsc-on.patch
