@@ -21,6 +21,11 @@ concurrency:
   queue: max
 
 jobs:
+  boot-tests:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/boot-tests.yml
+
   packages:
     name: Packages
     permissions:
@@ -31,7 +36,7 @@ jobs:
 
   build_push:
     name: Container image
-    needs: packages
+    needs: [packages, boot-tests]
     runs-on: ubuntu-24.04-arm
     outputs:
       channel: ${{ steps.channel.outputs.channel }}
@@ -335,6 +340,7 @@ jobs:
       needs.build_push.outputs.channel != '' &&
       github.event.repository.fork == false
     permissions:
+      actions: read
       contents: read
       packages: read
     uses: ./.github/workflows/build-disk.yml

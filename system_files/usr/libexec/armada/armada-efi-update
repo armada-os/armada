@@ -1,0 +1,273 @@
+#!/bin/bash
+set -euo pipefail
+
+ESP=${ESP:-/boot/efi}
+BOOTROOT=${BOOTROOT:-/boot}
+SYSROOT=${SYSROOT:-/}
+ARGS_FILE=${ARGS_FILE:-/usr/lib/armada/bootimg-args}
+CMDLINE=${CMDLINE:-/proc/cmdline}
+
+die() {
+    echo "armada-efi-update: $*" >&2
+    exit 1
+}
+
+findmnt -rn "${ESP}" >/dev/null || die "ESP is not mounted: ${ESP}"
+exec 9>"${LOCK_FILE:-/run/armada-efi.lock}"
+flock -w 30 9 || die "could not acquire EFI update lock within 30 seconds"
+. "${ARGS_FILE}"
+
+entry=$(armada_default_bls_entry "${BOOTROOT}")
+[ -n "${entry}" ] || die "no default BLS entry under ${BOOTROOT}/loader/entries"
+for key in linux initrd; do
+    path=$(sed -n "s/^${key} //p" "${entry}" | head -1)
+    [ -n "${path}" ] || die "missing ${key} path in ${entry}"
+    [ -s "${BOOTROOT}${path#/boot}" ] || die "missing or empty ${key}: ${BOOTROOT}${path#/boot}"
+done
+options=$(sed -n 's/^options //p' "${entry}" | head -1)
+ostree=
+for arg in ${options}; do
+    case "${arg}" in ostree=*) ostree=${arg#ostree=} ;; esac
+done
+[ -n "${ostree}" ] || die "missing ostree= option in ${entry}"
+deploy=$(realpath -e "${SYSROOT%/}${ostree}") || die "cannot resolve deployment: ${SYSROOT%/}${ostree}"
+# Older deployments only update /KERNEL; leave no EFI loader to shadow it.
+if [ ! -x "${deploy}/usr/libexec/armada/armada-efi-update" ]; then
+    disabled=
+    for file in "${ESP}/EFI/BOOT/BOOTAA64.EFI" \
+        "${ESP}/EFI/Microsoft/Boot/bootmgfw.efi" \
+        "${ESP}/EFI/systemd/systemd-bootaa64.efi"; do
+        [ -e "${file}" ] || continue
+        rm -f "${file}"
+        disabled=1
+    done
+    sync
+    if [ -n "${disabled}" ]; then
+        echo "armada-efi-update: disabled EFI for older deployment ${deploy##*/}; using /KERNEL"
+    fi
+    exit 0
+fi
+
+default_version=$(cat "${deploy}/usr/lib/armada/version") || die "cannot read version for ${deploy}"
+[ -n "${default_version}" ] || die "empty version in ${deploy}/usr/lib/armada/version"
+loader=${deploy}/usr/lib/systemd/boot/efi/systemd-bootaa64.efi
+ext4=${deploy}/usr/share/edk2/drivers/ext4aa64.efi
+adtbloader=${deploy}/usr/lib/armada/efi/drivers/adtbloaderaa64.efi
+armada_boot=${deploy}/usr/lib/armada/efi/armada-boot.efi
+dtb_list=${deploy}/usr/lib/armada/supported-dtbs
+for file in "${loader}" "${ext4}" "${adtbloader}" "${armada_boot}"; do
+    [ -s "${file}" ] || die "missing or empty EFI asset: ${file}"
+done
+[ -s "${dtb_list}" ] || die "missing or empty supported DTB list: ${dtb_list}"
+
+choice=
+for arg in $(cat "${CMDLINE}" 2>/dev/null || true); do
+    case "${arg}" in armada.device=*) choice=${arg#armada.device=} ;; esac
+done
+selected=
+if [ -z "${choice}" ] && [ -s "${ESP}/armada/device" ]; then
+    read -r choice < "${ESP}/armada/device"
+fi
+if [ "${choice}" != auto ] && grep -Fxq "${choice}" "${dtb_list}"; then
+    selected=${choice}
+fi
+
+mapfile -t entries < <(find "${BOOTROOT}/loader/entries" -maxdepth 1 -name '*.conf' ! -name '*-dtb-*.conf' -type f | sort)
+[ "${#entries[@]}" -gt 0 ] || die "no BLS entries under ${BOOTROOT}/loader/entries"
+rollback=$(
+    for file in "${entries[@]}"; do
+        [ "${file}" != "${entry}" ] || continue
+        version=$(sed -n 's/^version //p' "${file}" | head -1)
+        printf '%s\t%s\n' "${version:-0}" "${file}"
+    done | sort -rn | head -1 | cut -f2
+)
+rollback_ready=
+if [ -n "${rollback}" ]; then
+    rollback_entry=${rollback##*/}
+    rollback_options=$(sed -n 's/^options //p' "${rollback}" | head -1)
+    rollback_ostree=
+    for arg in ${rollback_options}; do
+        case "${arg}" in ostree=*) rollback_ostree=${arg#ostree=} ;; esac
+    done
+    rollback_linux=$(sed -n 's/^linux //p' "${rollback}" | head -1)
+    rollback_linux=${rollback_linux#/boot}
+    rollback_dtbs=$(dirname "${rollback_linux}")/dtb/qcom
+    rollback_deploy=
+    if [ -n "${rollback_ostree}" ]; then
+        rollback_deploy=$(realpath -e "${SYSROOT%/}${rollback_ostree}" 2>/dev/null || true)
+    fi
+    rollback_version=
+    if [ -n "${rollback_deploy}" ] && [ -r "${rollback_deploy}/usr/lib/armada/version" ]; then
+        rollback_version=$(cat "${rollback_deploy}/usr/lib/armada/version")
+    fi
+    if [ -n "${rollback_version}" ] && [ -d "${BOOTROOT}${rollback_dtbs}" ] && \
+        [ -x "${rollback_deploy}/usr/libexec/armada/armada-efi-update" ]; then
+        if [ -z "${selected}" ] || [ -f "${BOOTROOT}${rollback_dtbs}/${selected}.dtb" ]; then
+            rollback_ready=1
+        fi
+    fi
+fi
+linux=$(sed -n 's/^linux //p' "${entry}" | head -1)
+linux=${linux#/boot}
+while read -r name; do
+    dtb=${BOOTROOT}$(dirname "${linux}")/dtb/qcom/${name}.dtb
+    [ -f "${dtb}" ] || die "missing DTB: ${dtb}"
+    model=$(fdtget -t s "${dtb}" / model) || die "cannot read model from DTB: ${dtb}"
+done < "${dtb_list}"
+
+work=$(mktemp -d)
+trap 'rm -rf "${work}"' EXIT
+mkdir -p "${work}/entries"
+
+linux=$(sed -n 's/^linux //p' "${entry}" | head -1)
+linux=${linux#/boot}
+dtbs=${BOOTROOT}$(dirname "${linux}")/dtb/qcom
+for file in "${entries[@]}"; do
+    linux=$(sed -n 's/^linux //p' "${file}" | head -1)
+    linux=${linux#/boot}
+    dtb=${BOOTROOT}$(dirname "${linux}")/dtb/qcom/${selected:-}.dtb
+
+    output=${work}/entries/${file##*/}
+
+    # Keep suppressed deployments as BLS files so a later device selection can
+    # reconsider them. systemd-boot hides entries for a foreign architecture.
+    if [ -n "${selected}" ] && [ -f "${dtb}" ] &&
+        { [ "${file}" = "${entry}" ] || { [ "${file}" = "${rollback}" ] && [ -n "${rollback_ready}" ]; }; }; then
+        if [ "${file}" = "${entry}" ]; then
+            title='Armada OS'
+        else
+            title='Armada OS (Previous Version)'
+        fi
+        sed -e "s|^title .*|title ${title}|" \
+            -e 's|^linux /boot/|linux /|' -e 's|^initrd /boot/|initrd /|' \
+            -e '/^fdtdir /d' -e '/^devicetree /d' \
+            -e '/^architecture armada-hidden$/d' -e 's/ armada\.device=[^ ]*//g' \
+            -e "s|^options |options armada.device=${selected} |" \
+            "${file}" > "${output}.new"
+        printf 'devicetree %s/dtb/qcom/%s.dtb\n' \
+            "$(dirname "${linux}")" "${selected}" >> "${output}.new"
+        mv -f "${output}.new" "${output}"
+    elif [ -z "${selected}" ] && [ "${file}" = "${entry}" ]; then
+        sed -e 's|^title .*|title Armada OS (Automatic)|' \
+            -e 's|^linux /boot/|linux /|' -e 's|^initrd /boot/|initrd /|' \
+            -e '/^fdtdir /d' \
+            -e '/^devicetree /d' -e '/^architecture armada-hidden$/d' \
+            -e 's/ armada\.device=[^ ]*//g' -e 's|^options |options armada.device=auto |' \
+            "${file}" > "${output}.new"
+        mv -f "${output}.new" "${output}"
+        while read -r name; do
+            dtb=${BOOTROOT}$(dirname "${linux}")/dtb/qcom/${name}.dtb
+            [ -f "${dtb}" ] || continue
+            model=$(fdtget -t s "${dtb}" / model)
+            device=${output%.conf}-dtb-${name}.conf
+            sed -e "s|^title .*|title Armada OS - ${model}|" \
+                -e "s|armada.device=auto|armada.device=${name}|" "${output}" > "${device}.new"
+            printf 'devicetree %s/dtb/qcom/%s.dtb\n' \
+                "$(dirname "${linux}")" "${name}" >> "${device}.new"
+            mv -f "${device}.new" "${device}"
+        done < "${dtb_list}"
+    elif [ -z "${selected}" ] && [ "${file}" = "${rollback}" ] && [ -n "${rollback_ready}" ]; then
+        sed -e 's|^title .*|title Armada OS (Previous Version)|' \
+            -e 's|^linux /boot/|linux /|' -e 's|^initrd /boot/|initrd /|' \
+            -e '/^fdtdir /d' -e '/^devicetree /d' \
+            -e '/^architecture armada-hidden$/d' -e 's/ armada\.device=[^ ]*//g' \
+            -e 's|^options |options armada.device=auto |' \
+            "${file}" > "${output}.new"
+        mv -f "${output}.new" "${output}"
+    else
+        # Hide deployments that cannot boot the selected device.
+        sed -e 's|^linux /boot/|linux /|' -e 's|^initrd /boot/|initrd /|' \
+            -e '/^architecture armada-hidden$/d' "${file}" > "${output}.new"
+        printf 'architecture armada-hidden\n' >> "${output}.new"
+        mv -f "${output}.new" "${output}"
+    fi
+done
+
+{
+    printf 'ARMADA_DEFAULT_VERSION=%s\n' "${default_version}"
+    if [ -x "${deploy}/usr/libexec/armada/device-env" ]; then
+        while read -r name; do
+            model=$(fdtget -t s "${dtbs}/${name}.dtb" / model)
+            rotation=$(ARMADA_MODEL="${model}" ARMADA_DEVICE_DIR="${deploy}/usr/lib/armada/devices" \
+                "${deploy}/usr/libexec/armada/device-env" | sed -n 's/^ARMADA_EFI_ROTATION=//p')
+            case "${rotation}" in
+                0|90|180|270) printf 'ARMADA_EFI_ROTATION=%s:%s\n' "${model}" "${rotation}" ;;
+            esac
+        done < "${dtb_list}"
+    fi
+    if [ -n "${rollback_ready}" ]; then
+        printf 'ARMADA_ROLLBACK_ENTRY=%s\n' "${rollback_entry}"
+        printf 'ARMADA_ROLLBACK_VERSION=%s\n' "${rollback_version}"
+        printf 'ARMADA_ROLLBACK_DTBS=%s\n' "${rollback_dtbs}"
+    fi
+} > "${work}/backend.conf"
+printf 'default %s\ntimeout menu-hidden\neditor no\n' \
+    "${entry##*/}" > "${work}/loader.conf"
+
+sources=() targets=()
+needed=$((4 * 1024 * 1024))
+cluster=$(stat -f -c %S "${ESP}")
+stage() {
+    rm -f "$2.new"
+    cmp -s "$1" "$2" && return 0
+    sources+=("$1") targets+=("$2")
+    local size
+    size=$(stat -c %s "$1")
+    needed=$((needed + (size + cluster - 1) / cluster * cluster))
+}
+while IFS= read -r -d '' file; do
+    stage "${file}" "${ESP}/${file#"${BOOTROOT}/"}"
+done < <(find "${BOOTROOT}/ostree" -type f -print0)
+for dtb in "${dtbs}"/*.dtb; do
+    stage "${dtb}" "${ESP}/dtbloader/dtbs/qcom/${dtb##*/}"
+done
+stage "${adtbloader}" "${ESP}/EFI/BOOT/drivers_aa64/adtbloaderaa64.efi"
+stage "${ext4}" "${ESP}/EFI/systemd/drivers/ext4aa64.efi"
+for file in "${work}/entries"/*.conf; do
+    stage "${file}" "${ESP}/loader/entries/${file##*/}"
+done
+stage "${work}/backend.conf" "${ESP}/armada/backend.conf"
+if [ -n "${selected}" ]; then
+    printf '%s\n' "${selected}" > "${work}/device"
+    stage "${work}/device" "${ESP}/armada/device"
+fi
+stage "${work}/loader.conf" "${ESP}/loader/loader.conf"
+# Propeller discovers these paths even without BOOTAA64.EFI, so install them last.
+stage "${loader}" "${ESP}/EFI/systemd/systemd-bootaa64.efi"
+stage "${armada_boot}" "${ESP}/EFI/Microsoft/Boot/bootmgfw.efi"
+stage "${armada_boot}" "${ESP}/EFI/BOOT/BOOTAA64.EFI"
+available=$(df -B1 --output=avail "${ESP}" | tail -1)
+if [ "${available}" -lt "${needed}" ]; then
+    echo "armada-efi-update: insufficient space on ${ESP} (need ${needed} bytes)" >&2
+    exit 1
+fi
+for i in "${!sources[@]}"; do
+    target=${targets[i]}
+    mkdir -p "$(dirname "${target}")"
+    cp -f "${sources[i]}" "${target}.new" || die "could not stage ${sources[i]} at ${target}.new"
+    sync "${target}.new" || die "could not sync ${target}.new"
+    mv -f "${target}.new" "${target}" || die "could not install ${target}"
+done
+
+rm -f "${ESP}/EFI/BOOT/refind.conf" \
+    "${ESP}/EFI/BOOT/fbaa64.efi" \
+    "${ESP}/EFI/BOOT/BOOTAA64.CSV" \
+    "${ESP}/EFI/BOOT/grub.cfg" \
+    "${ESP}/EFI/BOOT/grubaa64.efi" \
+    "${ESP}/EFI/systemd/drivers/adtbloaderaa64.efi" \
+    "${ESP}/EFI/systemd/drivers/dtbloaderaa64.efi"
+rm -rf "${ESP}/EFI/BOOT/theme" "${ESP}/EFI/refind" "${ESP}/EFI/fedora" "${ESP}/EFI.disabled"
+for file in "${ESP}/ostree"/*; do
+    [ ! -e "${file}" ] || [ -e "${BOOTROOT}/ostree/${file##*/}" ] || rm -rf "${file}"
+done
+for file in "${ESP}/loader/entries"/*.conf; do
+    [ ! -e "${file}" ] || [ -e "${work}/entries/${file##*/}" ] || rm -f "${file}"
+done
+for dtb in "${ESP}/dtbloader/dtbs/qcom"/*.dtb; do
+    [ ! -e "${dtb}" ] || [ -f "${dtbs}/${dtb##*/}" ] || rm -f "${dtb}"
+done
+[ -n "${selected}" ] || rm -f "${ESP}/armada/device"
+sync
+if [ "${#sources[@]}" -gt 0 ]; then
+    echo "armada-efi-update: synced ${#sources[@]} files for ${default_version} (device: ${selected:-auto})"
+fi

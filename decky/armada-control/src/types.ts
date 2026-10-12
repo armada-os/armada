@@ -144,8 +144,10 @@ export interface Config {
   cpuDeviceClass: string;
   rgbSupported: boolean;
   protonDefaults: string[];
+  bootBackend?: "abl" | "efi" | "unknown";
   osVersion: string;
   ablVersion: string;
+  efiVersion?: string;
   ablAutoEnabled: boolean;
   bottomScreenSupported: boolean;
   bottomScreenEnabled: boolean;

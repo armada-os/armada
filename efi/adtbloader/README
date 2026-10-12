@@ -1,0 +1,10 @@
+From ArmadaOS adtbloader (https://github.com/armada-os/adtbloader), BSD-3-Clause.
+
+1. Copy this folder from the SD card to Android internal storage.
+
+2. In RPSettings, use "run script as root" to run describe_android_dt.sh.
+
+3. Copy identity.txt, android.dtb, and active-dtbo.img from the adtbloader
+   folder in Android internal storage to your PC.
+
+4. Attach all three files when requesting ArmadaOS device support.

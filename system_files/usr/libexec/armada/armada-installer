@@ -31,8 +31,9 @@ LINUX_TYPE = "0fc63daf-8483-4772-8e79-3d69d8477de4"
 BTRFS_OPTS = "noatime,compress=zstd:1,discard=async"
 SELF = "/usr/libexec/armada/armada-installer"
 BOOTIMG = "/usr/libexec/armada/armada-bootimg-update"
-RECOVERY = ("To retry from SD, select SD as the boot source in ABL and re-run the installer. "
-            "To abandon the internal installation, select UNINSTALL CFW in ABL.")
+EFIUPDATE = "/usr/libexec/armada/armada-efi-update"
+RECOVERY = ("To retry from SD, select SD as the boot source in your bootloader and re-run the installer. "
+            "To abandon the internal installation, use the uninstall option in your bootloader.")
 
 
 class Error(Exception):
@@ -228,7 +229,7 @@ class Plan:
             start = ud_end
         end = end * sector // MIB * MIB // sector
         if (end - start) * sector < ESP_SIZE + BOOT_SIZE + ROOT_MIN:
-            raise Error("Space after userdata is too small; use UNINSTALL CFW in ABL, then install with a smaller Android size")
+            raise Error("Space after userdata is too small; uninstall Armada through your bootloader, then install with a smaller Android size")
         used = {p.number for p in table.parts if p not in tail}
         preferred = [userdata.number + offset for offset in (1, 2, 3)]
         free = [number for number in range(1, table.entry_count + 1) if number not in used]
@@ -563,12 +564,16 @@ class Installation:
         run("cp", "-a", f"{seed}/.", f"{target}/var/")
         shutil.rmtree(seed)
         configure_deployment(target, source, uuids, kargs)
-        print("Writing the internal boot image...", flush=True)
+        print("Writing the internal boot files...", flush=True)
+        env = dict(os.environ, ESP=str(target / "boot/efi"),
+                   BOOTROOT=str(target / "boot"), SYSROOT=str(target), CMDLINE="/dev/null")
         with tempfile.TemporaryDirectory(prefix=".armada-bootimg.", dir=target) as scratch:
-            run(BOOTIMG, env=dict(os.environ, TMPDIR=scratch, ESP=str(target / "boot/efi"),
-                                 BOOTROOT=str(target / "boot"), SYSROOT=str(target)))
-        if not (target / "boot/efi/KERNEL").is_file() or not (target / "boot/efi/KERNEL").stat().st_size:
-            raise Error("The internal boot image was not created")
+            run(BOOTIMG, env=dict(env, TMPDIR=scratch))
+        run(EFIUPDATE, env=env)
+        for name in ("KERNEL", "EFI/BOOT/BOOTAA64.EFI"):
+            result = target / "boot/efi" / name
+            if not result.is_file() or not result.stat().st_size:
+                raise Error(f"The internal boot file {name} was not created")
 
     def recovery(self):
         android = " Android userdata and earlier partitions are unchanged." if self.plan.operation == "replace" else ""
@@ -616,7 +621,7 @@ def inhibit_sleep():
 
 def require_commands():
     needed = ["sfdisk", "lsblk", "findmnt", "partprobe", "udevadm", "dd", "systemd-inhibit", "mount"]
-    needed += ["btrfs", "mkfs.btrfs", "mkfs.ext4", "mkfs.vfat", "umount", "ostree", "blkid", "cp", BOOTIMG]
+    needed += ["btrfs", "mkfs.btrfs", "mkfs.ext4", "mkfs.vfat", "umount", "ostree", "blkid", "cp", BOOTIMG, EFIUPDATE]
     missing = [name for name in needed if not shutil.which(name)]
     if missing:
         raise Error("Missing required tools: " + ", ".join(missing))
@@ -803,7 +808,7 @@ class Gui:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__, epilog="To uninstall, select UNINSTALL CFW in ABL.")
+    parser = argparse.ArgumentParser(description=__doc__, epilog="To uninstall, use the uninstall option in your bootloader.")
     parser.add_argument("--device", default=os.environ.get("ARMADA_INTERNAL_DEVICE"))
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("gui", help="desktop installer")

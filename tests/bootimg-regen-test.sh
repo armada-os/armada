@@ -178,7 +178,7 @@ fi
 (( stop > lock_wait )) || fail "sync unit: TimeoutStopSec ${stop}s does not exceed the ${lock_wait}s lock wait"
 mapfile -t sync_stops < <(sed -n 's/^ExecStop=//p' "$sync_unit")
 assert_eq "sync bootimg ordering" "${sync_stops[0]:-}" \
-    "/usr/libexec/armada/armada-bootimg-update"
+    "/usr/libexec/armada/armada-boot-update"
 assert_eq "sync ABL ordering" "${sync_stops[1]:-}" \
     "-/usr/libexec/armada/armada-abl-finalize"
 
