@@ -25,8 +25,13 @@ from armada_store import catalog, postinstall
 for app in apps:
     install = app["install"]
     kind = install["type"]
-    assert kind in ("flatpak", "appimage", "deckyplugin", "system"), (app["id"], kind)
-    assert app["category"] in ("emulators", "applications", "plugins"), app["id"]
+    assert kind in ("flatpak", "appimage", "deckyplugin", "system", "gamemod"), (app["id"], kind)
+    assert app["category"] in ("emulators", "applications", "plugins", "mods"), app["id"]
+    if kind == "gamemod":
+        # The release asset is <mod id>-<version>.tar.gz, which is also where the version comes from.
+        assert app["category"] == "mods" and install.get("releases") and install.get("steamAppids"), app["id"]
+        assert re.search(install["asset"], app["id"] + "-1.2.3.tar.gz"), app["id"]
+        assert not re.search(install["asset"], app["id"] + "-extra-1.2.3.tar.gz"), app["id"]
     if kind == "flatpak":
         assert install.get("ref"), app["id"]
     if kind == "system":
@@ -189,6 +194,139 @@ assert tag == "v2-pre", "a draft was selected: " + tag
 # update detection compares.
 assert stamp, "resolver must return a release date"
 print("release selection: newest-by-date, prerelease fallback, stamp OK")
+PY
+
+# Game mods: the installer runs as the user against real archives.
+python3 - "$STORE" "$WORK" <<'PY'
+import io, json, os, sys, pathlib, tarfile, threading
+store, work = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+home = work / "modhome"
+home.mkdir()
+os.environ["DECKY_USER_HOME"] = str(home)
+os.environ["ARMADA_STORE_STATE_DIR"] = str(work / "modstate")
+sys.path.insert(0, str(store / "py_modules"))
+from armada_store import catalog, installers, jobs, mods, updates
+
+def archive(name, mod_id, version, link=False):
+    path = work / name
+    with tarfile.open(path, "w:gz") as tar:
+        def add(member, data):
+            info = tarfile.TarInfo(mod_id + "/" + member)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        add("mod.json", json.dumps({"id": mod_id, "version": version, "name": "Test " + mod_id,
+                                    "summary": "A test", "steam_appids": [480]}).encode())
+        add("overlay/file.txt", b"x")
+        if link:
+            info = tarfile.TarInfo(mod_id + "/overlay/link")
+            info.type, info.linkname = tarfile.SYMTYPE, "/etc/passwd"
+            tar.addfile(info)
+    return str(path)
+
+root = home / ".local/share/armada-mods"
+assert mods.add_local(archive("a.tar.gz", "test-mod", "1.0.0")) == "test-mod"
+assert (root / "mods/test-mod/overlay/file.txt").is_file()
+listed = mods.installed()["test-mod"]
+assert listed["version"] == "1.0.0" and not listed["byHand"] and listed["steamAppids"] == [480], listed
+# A mod the catalog does not know still shows up, as a row that cannot be downloaded.
+extra = [app for app in catalog.all_apps() if app["id"] == "test-mod"]
+assert len(extra) == 1 and extra[0]["category"] == "mods" and extra[0]["canInstall"] is False, extra
+assert catalog.installed_map()["test-mod"] == {"installed": True, "version": "1.0.0", "byHand": False}
+
+mods.add_local(archive("b.tar.gz", "test-mod", "1.1.0"))
+assert mods.installed()["test-mod"]["version"] == "1.1.0"
+
+for bad, why in ((archive("link.tar.gz", "linked", "1.0.0", link=True), "link"), ("relative.tar.gz", "path"),
+                 (str(work / "a.zip"), "extension")):
+    try:
+        mods.add_local(bad)
+        raise AssertionError("accepted a bad archive: " + why)
+    except (ValueError, RuntimeError):
+        pass
+assert not (root / "mods/linked").exists()
+
+# A folder the user copied in is listed but never replaced or removed.
+hand = root / "mods/by-hand"
+hand.mkdir()
+(hand / "mod.json").write_text(json.dumps({"id": "by-hand", "version": "0.1", "name": "Hand", "steam_appids": [480]}))
+mods.invalidate()
+assert mods.installed()["by-hand"]["byHand"]
+for attempt in (lambda: mods.add_local(archive("hand.tar.gz", "by-hand", "9.0")), lambda: mods.remove("by-hand")):
+    try:
+        attempt()
+        raise AssertionError("touched a hand-installed mod")
+    except RuntimeError:
+        pass
+assert json.loads((hand / "mod.json").read_text())["version"] == "0.1"
+
+mods.remove("test-mod")
+assert not (root / "mods/test-mod").exists() and "test-mod" not in mods.installed()
+
+# Catalog install and update: every page of releases is read and the highest
+# version wins, whatever order or release it was published in.
+app = next(a for a in catalog.bundled_apps() if a["id"] == "second-screen-balatro")
+published = {"versions": ["0.2.0"]}
+class Page(io.BytesIO):
+    def __init__(self, releases, link):
+        super().__init__(json.dumps(releases).encode())
+        self.headers = {"Link": link}
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+def rel(names, **extra):
+    return dict({"assets": [{"name": n, "browser_download_url": "https://example.invalid/" + n} for n in names]}, **extra)
+def fake_urlopen(request, **kw):
+    if "page=2" in request.full_url:
+        return Page([rel(["second-screen-balatro-%s.tar.gz" % v for v in published["versions"]]),
+                     rel(["second-screen-balatro-9.0.0.tar.gz"], draft=True),
+                     rel(["second-screen-balatro-8.0.0.tar.gz"], prerelease=True)], "")
+    return Page([rel(["second-screen-crosscode-5.0.0.tar.gz", "second-screen-balatro-0.1.0.tar.gz"])],
+                '<https://example.invalid/releases?page=2>; rel="next"')
+installers.urllib.request.urlopen = fake_urlopen
+mods.RELEASES_TTL = 0
+assert mods.latest(app["id"], app["install"])[0] == "0.2.0"
+assert mods.version_key("0.10.0") > mods.version_key("0.9.1")
+def fake_download(fh, url, cancel, progress):
+    fh.write(pathlib.Path(archive("dl.tar.gz", "second-screen-balatro", url.rsplit("-", 1)[1][:-7])).read_bytes())
+installers.download_to = fake_download
+# Replace the module reference, not subprocess.run itself, which the mod tool also uses.
+updates.subprocess = type("S", (), {
+    "run": staticmethod(lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()),
+    "TimeoutExpired": TimeoutError})
+catalog.flatpak_refs = lambda max_age=3.0: set()
+mods.install(app["id"], app["install"], threading.Event(), lambda done, total: None)
+assert mods.installed()["second-screen-balatro"]["version"] == "0.2.0"
+assert not (home / ".cache/armada-mods/store-download.tar.gz").exists()
+assert "second-screen-balatro" not in updates.available(force=True)
+published["versions"] = ["0.3.0", "0.2.0"]
+assert updates.available(force=True)["second-screen-balatro"] == {"latest": "0.3.0"}
+mods.install(app["id"], app["install"], threading.Event(), lambda done, total: None)
+assert "second-screen-balatro" not in updates.available()
+
+# A download that turns out to be some other mod is not left installed.
+installers.download_to = lambda fh, url, cancel, progress: fh.write(
+    pathlib.Path(archive("wrong.tar.gz", "impostor", "1.0")).read_bytes())
+try:
+    mods.install(app["id"], app["install"], threading.Event(), lambda done, total: None)
+    raise AssertionError("installed a mismatched mod")
+except RuntimeError:
+    pass
+assert "impostor" not in mods.installed() and mods.installed()["second-screen-balatro"]["version"] == "0.3.0"
+
+# While a game the mod applies to holds its launch lock, the mod is left alone.
+import fcntl
+(home / ".cache/armada-mods").mkdir(parents=True, exist_ok=True)
+running = open(home / ".cache/armada-mods/480.lock", "a")
+fcntl.flock(running, fcntl.LOCK_EX)
+for attempt in (lambda: mods.add_local(archive("busy.tar.gz", "second-screen-balatro", "9.9.9")),
+                lambda: mods.remove("second-screen-balatro")):
+    try:
+        attempt()
+        raise AssertionError("changed a mod while its game was running")
+    except RuntimeError:
+        pass
+running.close()
+assert mods.installed()["second-screen-balatro"]["version"] == "0.3.0"
+print("game mods: local add, update, hand-installed protection, bad archives, catalog install OK")
 PY
 
 # Installer behaviour against real archives, with the network stubbed out.

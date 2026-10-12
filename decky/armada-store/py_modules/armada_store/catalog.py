@@ -7,7 +7,7 @@ import threading
 import time
 import zipfile
 
-from . import android, store
+from . import android, mods, store
 from .proc import clean_env
 from .paths import apps_dir, plugin_dir, plugins_dir, user_home, user_ids
 
@@ -32,7 +32,8 @@ def bundled_apps():
 
 
 def all_apps():
-    return bundled_apps() + android.apps()
+    bundled = bundled_apps()
+    return bundled + android.apps() + mods.apps({app.get("id") for app in bundled})
 
 
 def find_app(app_id):
@@ -96,6 +97,11 @@ def installed_info(app, state, refs):
         return info
     if kind == "android":
         return {"installed": android.apk_path(app).is_file(), "version": app.get("version", "")}
+    if kind == "gamemod":
+        mod = mods.installed().get(app.get("id"))
+        if not mod:
+            return {"installed": False}
+        return {"installed": True, "version": mod["version"], "byHand": mod["byHand"]}
     return {"installed": False}
 
 
@@ -207,6 +213,7 @@ def catalog_payload():
             "note": app.get("note") or "",
             "installType": install.get("type") or "",
             "imported": bool(install.get("path")),
+            "steamAppids": install.get("steamAppids") or [],
             "canInstall": app.get("canInstall", True),
             "desktopOnly": bool(app.get("desktopOnly")),
             "hasConfig": bool(app.get("config")),

@@ -15,6 +15,7 @@ const SECTIONS = [
   { key: "applications", title: "Applications" },
   { key: "android", title: "Android Apps" },
   { key: "plugins", title: "Decky Plugins" },
+  { key: "mods", title: "Game Mods" },
 ];
 
 // The QAM unmounts the panel whenever a menu or modal takes focus, so
@@ -39,6 +40,20 @@ const androidFeeds = [
 ];
 const androidCache = new Map<string, AndroidPages>();
 let androidSearch = { query: "", category: "APPLICATION", pager: new AndroidPages(), loaded: false, busy: false, message: "" };
+
+// A mod has no artwork of its own, so its row borrows the icon Steam holds for the game.
+function gameIcon(appids: number[]): string {
+  try {
+    const store = (window as any).appStore;
+    for (const appid of appids) {
+      const overview = store?.GetAppOverviewByAppID?.(appid);
+      const url = overview && store.GetIconURLForApp?.(overview);
+      if (url) return url;
+    }
+  } catch (error) {
+  }
+  return "";
+}
 
 export function Content() {
   const [catalog, setCatalogState] = useState<Catalog | null>(cachedCatalog);
@@ -237,6 +252,11 @@ export function Content() {
     const conflicts = status?.installed?.[app.id]?.conflicts || [];
     const shortcut = status?.shortcuts?.[app.id];
     const items: ReactNode[] = [];
+    const info = status?.installed?.[app.id];
+    if (app.installType === "gamemod") {
+      if (app.summary) items.push(<MenuItem key="summary" disabled>{app.summary}</MenuItem>);
+      if (info?.version) items.push(<MenuItem key="version" disabled>{`Installed: ${info.version}`}</MenuItem>);
+    }
     if (active) {
       items.push(<MenuItem key="cancel" onSelected={() => run(backend.cancelJob(app.id))}>Cancel</MenuItem>);
     } else {
@@ -321,7 +341,9 @@ export function Content() {
           </MenuItem>,
         );
       }
-      if (installed && app.installType !== "system") {
+      if (installed && info?.byHand) {
+        items.push(<MenuItem key="by-hand" disabled>Installed by hand</MenuItem>);
+      } else if (installed && app.installType !== "system") {
         items.push(
           <MenuItem key="uninstall" tone="destructive" onSelected={() => run(uninstallFlow(app, shortcut), () => { refreshCatalog().catch(() => {}); })}>
             {app.imported ? "Remove from Store" : "Uninstall"}
@@ -420,6 +442,14 @@ export function Content() {
       }).catch(() => {});
   };
 
+  const addLocalMod = () => {
+    openFilePicker(FileSelectionType.FILE, catalog?.home || "/var/home/armada", true, true)
+      .then((result) => {
+        const path = result.realpath || result.path;
+        if (path) run(backend.addMod(path).then(refreshCatalog), () => toast("Game Mods", "Mod added"));
+      }).catch(() => {});
+  };
+
   const categoryApps = (key: string) =>
     (cachedCatalog?.apps || catalog?.apps || [])
       .filter((app) => app.category === key)
@@ -432,6 +462,37 @@ export function Content() {
           <div>{message}</div>
         </PanelSectionRow>
       </PanelSection>
+    );
+  }
+
+  if (view === "mods") {
+    const mods = categoryApps("mods").map((app) => ({ ...app, icon: app.icon || gameIcon(app.steamAppids) }));
+    const isInstalled = (app: CatalogApp) => !!status?.installed?.[app.id]?.installed;
+    const rows = (apps: CatalogApp[]) => apps.map((app) => (
+      <AppRow
+        key={app.id}
+        app={app}
+        job={jobs.get(app.id) || null}
+        info={status?.installed?.[app.id] || null}
+        updateAvailable={updates[app.id] != null}
+        onMenu={() => openMenu(app)}
+      />
+    ));
+    const featured = mods.filter((app) => app.canInstall !== false);
+    const installedMods = mods.filter(isInstalled);
+    return (
+      <>
+        <style>{styles}</style>
+        <PanelSection title="Game Mods">
+          <PanelSectionRow><ButtonItem layout="below" onClick={() => setView(null)}>Back</ButtonItem></PanelSectionRow>
+          <PanelSectionRow><ButtonItem layout="below" onClick={addLocalMod}>+ Add local .tar.gz</ButtonItem></PanelSectionRow>
+        </PanelSection>
+        <PanelSection title="Featured">{rows(featured)}</PanelSection>
+        <PanelSection title="Installed">
+          {installedMods.length ? rows(installedMods)
+            : <PanelSectionRow><div style={{ opacity: 0.65 }}>No mods installed</div></PanelSectionRow>}
+        </PanelSection>
+      </>
     );
   }
 

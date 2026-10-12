@@ -416,6 +416,66 @@
         "releases": "https://api.github.com/repos/justradical/decky-optiscaler-arm64ec/releases/394141296",
         "asset": "^OptiScaler\\.zip$"
       }
+    },
+    {
+      "id": "second-screen-hollow-knight",
+      "name": "Hollow Knight: Companion",
+      "summary": "Map, charms and inventory on the second screen",
+      "category": "mods",
+      "install": {
+        "type": "gamemod",
+        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
+        "asset": "^second-screen-hollow-knight-[0-9][^/]*\\.tar\\.gz$",
+        "steamAppids": [367520]
+      }
+    },
+    {
+      "id": "second-screen-balatro",
+      "name": "Balatro: Run Tracker",
+      "summary": "Blinds, jokers, deck and hand levels on the second screen",
+      "category": "mods",
+      "install": {
+        "type": "gamemod",
+        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
+        "asset": "^second-screen-balatro-[0-9][^/]*\\.tar\\.gz$",
+        "steamAppids": [2379780]
+      }
+    },
+    {
+      "id": "second-screen-crosscode",
+      "name": "CrossCode: Status and Quick Items",
+      "summary": "Status, touch items and quests on the second screen",
+      "category": "mods",
+      "install": {
+        "type": "gamemod",
+        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
+        "asset": "^second-screen-crosscode-[0-9][^/]*\\.tar\\.gz$",
+        "steamAppids": [368340]
+      }
+    },
+    {
+      "id": "second-screen-persona-3-reload",
+      "name": "Persona 3 Reload: Companion",
+      "summary": "Calendar, social links, party and personas on the second screen",
+      "category": "mods",
+      "install": {
+        "type": "gamemod",
+        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
+        "asset": "^second-screen-persona-3-reload-[0-9][^/]*\\.tar\\.gz$",
+        "steamAppids": [2161700]
+      }
+    },
+    {
+      "id": "second-screen-chained-echoes",
+      "name": "Chained Echoes: Companion",
+      "summary": "Area map, party, journal and items on the second screen",
+      "category": "mods",
+      "install": {
+        "type": "gamemod",
+        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
+        "asset": "^second-screen-chained-echoes-[0-9][^/]*\\.tar\\.gz$",
+        "steamAppids": [1229240]
+      }
     }
   ]
 }

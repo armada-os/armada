@@ -19,4 +19,5 @@ export const resetConfig = (appId: string) => call<[string], void>("reset_config
 export const switchToDesktop = () => call<[], void>("switch_to_desktop");
 export const searchAndroid = (query: string, page?: AndroidPage, category?: string) =>
   call<[string, AndroidPage | null, string | null], { ids: string[]; pages: AndroidPage[] }>("search_android", query, page ?? null, category ?? null);
+export const addMod = (path: string) => call<[string], string>("add_mod", path);
 export const importAndroid = (path: string) => call<[string], string>("import_android", path);

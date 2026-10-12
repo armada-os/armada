@@ -1,0 +1,355 @@
+#!/usr/bin/python3
+# Game mod launch wrapper ("armada-mod-launch <command>"): shows the files of every
+# installed mod for the Steam app being started inside the game directory, in a private
+# mount namespace, and runs its second-screen program while the game does.
+import fcntl
+import json
+import os
+import pathlib
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import traceback
+
+ROOT = pathlib.Path(os.environ.get("ARMADA_MODS_HOME", pathlib.Path.home() / ".local/share/armada-mods"))
+MODS = ROOT / "mods"
+SCRATCH = pathlib.Path(os.environ.get("XDG_CACHE_HOME") or pathlib.Path.home() / ".cache") / "armada-mods"
+PREFIX = "ARMADA_MOD"
+LOG = None
+
+
+def log(msg):
+    print(f"armada-mods: {msg}", file=sys.stderr, flush=True)
+    if LOG:
+        LOG.write(f"{msg}\n")
+        LOG.flush()
+
+
+def wipe(path):
+    # overlayfs leaves a mode-000 directory in its work directory
+    for top, dirs, _ in os.walk(path):
+        for d in dirs:
+            target = os.path.join(top, d)
+            if not os.path.islink(target):
+                os.chmod(target, 0o700)
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def app_id():
+    for key in ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId"):
+        value = os.environ.get(key, "").strip()
+        if value.isdigit():
+            return value
+    return None
+
+
+def game_dir(args):
+    path = os.environ.get("STEAM_COMPAT_INSTALL_PATH", "")
+    if path and os.path.isdir(path):
+        return pathlib.Path(path)
+    # Native games get no install path from Steam; take it from the command line.
+    for arg in args:
+        head, sep, tail = arg.partition("/steamapps/common/")
+        if sep and "/" in tail and os.path.exists(arg):
+            return pathlib.Path(head + sep + tail.split("/", 1)[0])
+    return None
+
+
+def installed(appid):
+    found = []
+    for d in sorted(MODS.iterdir()) if MODS.is_dir() else []:
+        try:
+            meta = json.loads((d / "mod.json").read_text())
+        except (OSError, ValueError) as e:
+            if (d / "mod.json").exists():
+                log(f"{d.name}: unreadable mod.json: {e}")
+            continue
+        appids = meta.get("steam_appids") if isinstance(meta, dict) else None
+        if isinstance(appids, list) and meta.get("id") == d.name and appid in [str(a) for a in appids if isinstance(a, int)]:
+            found.append((d, meta))
+    return found
+
+
+def script(mod, rel, key):
+    if not rel:
+        return None
+    path = (mod / rel).resolve()
+    if mod.resolve() not in path.parents or not os.access(path, os.X_OK):
+        raise RuntimeError(f"{key}: {rel} is not an executable inside the mod")
+    return str(path)
+
+
+def run_script(cmd, env, limit):
+    # its own process group, so a timeout takes helper children down with it
+    proc = subprocess.Popen(cmd, env=env, cwd=env[f"{PREFIX}_PACKAGE_DIR"], start_new_session=True,
+                            stdin=subprocess.DEVNULL, stdout=LOG, stderr=LOG)
+    try:
+        code = proc.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        raise RuntimeError(f"{cmd[0]} timed out")
+    if code != 0:
+        raise RuntimeError(f"{cmd[0]} exited with {code}")
+
+
+def mounts(game, layers, appid):
+    # The game directory is the overlay's upper layer, so its own writes land in the install.
+    # Each mod entry is then mounted over its name: otherwise the game's copy of a replaced
+    # file wins, and writing or deleting a mod file leaves a copy or a whiteout in the install.
+    binds, works, merged = [], [], [game]
+
+    def walk(rel, sources):
+        for name in sorted({n for s in sources for n in os.listdir(s / rel)}):
+            sub = rel / name
+            have = [s for s in sources if os.path.lexists(s / sub)]
+            top, real = have[-1] / sub, game / sub
+            if not top.is_dir():
+                if real.is_dir():
+                    raise RuntimeError(f"{sub} is a file in a mod and a folder in the game")
+                binds.append(["--ro-bind", str(top), str(real)])
+                continue
+            # layers below a file of the same name are hidden by it
+            dirs = []
+            for s in reversed(have):
+                if not (s / sub).is_dir():
+                    break
+                dirs.insert(0, s)
+            if real.is_dir():
+                merged.append(real)
+                walk(sub, dirs)
+            elif os.path.lexists(real):
+                raise RuntimeError(f"{sub} is a folder in a mod and a file in the game")
+            elif len(dirs) == 1:
+                # writes into a folder only the mod has stay in the mod
+                binds.append(["--bind", str(top), str(real)])
+            else:
+                # the same new folder from several layers: writes go to the last one
+                work = dirs[-1].parent / f".work-{appid}-{len(binds)}"
+                work.mkdir(exist_ok=True)
+                works.append(work)
+                lower = [arg for s in dirs[:-1] for arg in ("--overlay-src", str(s / sub))]
+                binds.append([*lower, "--overlay", str(top), str(work), str(real)])
+
+    walk(pathlib.Path(), layers)
+    lower = [arg for layer in layers for arg in ("--overlay-src", str(layer))]
+    # bwrap takes 9000 arguments at most, Steam's command included
+    if sum(len(b) for b in binds) > 8000:
+        for w in works:
+            wipe(w)
+        raise RuntimeError("the mods for this game replace or add more files than can be mounted one by one")
+    # an overlay's work directory must be on the upper layer's filesystem and outside it
+    work = game.parent / f".armada-mods-{appid}"
+    work.mkdir(exist_ok=True)
+    args = [*lower, "--overlay", str(game), str(work), str(game), *(arg for b in binds for arg in b)]
+    return args, (game, [work, *works], merged)
+
+
+def tidy(leftovers):
+    game, works, merged = leftovers
+    # mountinfo escapes these characters in paths
+    needle = str(game)
+    for char, code in (("\\", "\\134"), (" ", "\\040"), ("\t", "\\011"), ("\n", "\\012")):
+        needle = needle.replace(char, code)
+    needle = f" {needle} ".encode()
+
+    def mounted():
+        for entry in os.listdir("/proc"):
+            try:
+                lines = pathlib.Path("/proc", entry, "mountinfo").read_bytes().splitlines() if entry.isdigit() else []
+            except OSError:
+                continue
+            if any(needle in line and b" - overlay " in line for line in lines):
+                return True
+        return False
+
+    for _ in range(30):
+        if not mounted():
+            break
+        time.sleep(1)
+    else:
+        log("the game's mounts are still in use, leaving the overlay's leftovers for the next launch")
+        return
+    for work in works:
+        wipe(work)
+    for d in merged:
+        try:
+            for name in os.listxattr(d):
+                if name.startswith("user.overlay."):
+                    os.removexattr(d, name)
+        except OSError:
+            pass
+
+
+def plan(args):
+    appid = app_id()
+    if not appid or os.environ.get(f"{PREFIX}S_DISABLE"):
+        return None
+    # Taken before looking at the mods, which an install or removal holding it may be changing.
+    # Held by the supervisor for as long as the game runs.
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    lock = os.open(SCRATCH / f"{appid}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock)
+        log("this app is running with mods or a mod is being changed, launching without them")
+        return None
+    mods = installed(appid)
+    if not mods:
+        os.close(lock)
+        return None
+    game = game_dir(args)
+    if game is None:
+        log("no game directory, mods skipped")
+        return None
+
+    scratch = SCRATCH / appid
+    wipe(scratch)
+    scratch.mkdir(parents=True)
+    global LOG
+    LOG = open(scratch / "mods.log", "a")
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith(PREFIX)}
+    if (ROOT / "dev").exists():
+        env[f"{PREFIX}_DEV"] = "1"
+        windows = bool(os.environ.get("STEAM_COMPAT_DATA_PATH"))
+        dev_dir = str(SCRATCH / "dev" / appid)
+        env[f"{PREFIX}_DEV_DIR"] = "Z:" + dev_dir.replace("/", "\\") if windows else dev_dir
+
+    # hooks and second-screen programs never see another mod's env
+    base, applied = dict(env), 0
+    layers, screen, posts, extra_args = [], None, [], []
+    for mod, meta in mods:
+        name = mod.name
+        try:
+            data = ROOT / "data" / name
+            data.mkdir(parents=True, exist_ok=True)
+            own = {**base, f"{PREFIX}_PACKAGE_DIR": str(mod), f"{PREFIX}_DATA_DIR": str(data),
+                   f"{PREFIX}_GAME_DIR": str(game)}
+            hooks = meta.get("hooks", {})
+            before = script(mod, hooks.get("before_launch"), "before_launch")
+            after = script(mod, hooks.get("after_exit"), "after_exit")
+            host = script(mod, meta.get("second_screen"), "second_screen")
+            if before:
+                run_script([before], own, 600)
+            added = [layer for layer in (mod / "overlay", data / "overlay") if layer.is_dir() and any(layer.iterdir())]
+            for layer in added:
+                link = next((f for f in layer.rglob("*") if f.is_symlink()), None)
+                if link:
+                    raise RuntimeError(f"{link.relative_to(layer.parent)} is a link; overlays hold plain files and folders")
+            extra = {}
+            for key, value in meta.get("env", {}).items():
+                if not isinstance(key, str) or not key or "=" in key or "\0" in key + str(value):
+                    raise RuntimeError(f"env: bad entry {key!r}")
+                value = str(value).replace("{data}", str(data))
+                if key == "WINEDLLOVERRIDES" and env.get(key):
+                    value = env[key] + ";" + value
+                extra[key] = value
+            more = meta.get("launch_args", [])
+            if not isinstance(more, list) or not all(isinstance(a, str) and "\0" not in a for a in more):
+                raise RuntimeError("launch_args must be a list of strings")
+        except Exception as e:
+            log(f"{name} left out: {e}")
+            continue
+        env.update(extra)
+        extra_args += more
+        layers += added
+        applied += 1
+        if host and screen:
+            log(f"{name}: second-screen program not started, {screen[0]} already has the bottom screen")
+        elif host:
+            screen = (name, host, own)
+        if after:
+            posts.append((after, own))
+        log(f"{name} applied")
+    if not applied:
+        return None
+
+    mount, leftovers = [], None
+    if layers:
+        overlay, leftovers = mounts(game, layers, appid)
+        mount = ["bwrap", "--dev-bind", "/", "/", *overlay, "--"]
+        # once the game is exec'd through bwrap there is no falling back
+        try:
+            subprocess.run([*mount, "true"], check=True, timeout=30, stdin=subprocess.DEVNULL)
+        except Exception:
+            if leftovers:
+                tidy(leftovers)
+            raise
+    supervise(screen, posts, leftovers)
+    return [*mount, *args, *extra_args], env
+
+
+def supervise(screen, posts, leftovers):
+    # Forked twice so it is not a descendant of the game: when a game is stopped from
+    # Steam, the launched process and everything below it is killed.
+    global LOG
+    game = os.pidfd_open(os.getpid())
+    child = os.fork()
+    if child:
+        os.close(game)
+        os.waitpid(child, 0)
+        return
+    try:
+        os.setsid()
+        if os.fork():
+            os._exit(0)
+        os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+        os.dup2(LOG.fileno(), 1)
+        os.dup2(LOG.fileno(), 2)
+        LOG = None
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        running = None
+        # second-screen programs use the system's libraries, not the Steam runtime's
+        if screen and os.path.exists(os.path.join(runtime, "armada-bottom-env")):
+            name, host, own = screen
+            clean = {k: v for k, v in own.items() if k not in ("LD_PRELOAD", "LD_LIBRARY_PATH")}
+            try:
+                running = subprocess.Popen(["armada-run-bottom", "--", host], env=clean,
+                                           cwd=own[f"{PREFIX}_PACKAGE_DIR"], start_new_session=True)
+            except OSError as e:
+                log(f"{name}: second-screen program not started: {e}")
+        select.select([game], [], [])
+        if running:
+            try:
+                os.killpg(running.pid, signal.SIGTERM)
+            except OSError:
+                pass
+        for post, own in posts:
+            try:
+                run_script([post], own, 60)
+            except Exception as e:
+                log(f"after_exit: {e}")
+        if leftovers:
+            tidy(leftovers)
+    except Exception:
+        log(traceback.format_exc())
+    finally:
+        os._exit(0)
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        sys.exit("usage: armada-mod-launch <command> [args...]")
+    try:
+        planned = plan(args)
+    except Exception as e:
+        log(f"mods disabled for this launch: {e}")
+        planned = None
+    if planned:
+        cmd, env = planned
+        try:
+            os.execvpe(cmd[0], cmd, env)
+        except (OSError, ValueError) as e:
+            log(f"overlay launch failed: {e}")
+    os.execvp(args[0], args)
+
+
+if __name__ == "__main__":
+    main()

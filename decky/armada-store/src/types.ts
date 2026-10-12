@@ -14,8 +14,9 @@ export interface CatalogApp {
   category: string;
   icon: string;
   note: string;
-  installType: "flatpak" | "appimage" | "deckyplugin" | "system" | "android" | "";
+  installType: "flatpak" | "appimage" | "deckyplugin" | "system" | "android" | "gamemod" | "";
   imported: boolean;
+  steamAppids: number[];
   canInstall?: boolean;
   desktopOnly: boolean;
   hasConfig: boolean;
@@ -44,6 +45,7 @@ export interface Conflict {
 export interface InstalledInfo {
   installed: boolean;
   version?: string;
+  byHand?: boolean;
   conflicts?: Conflict[];
 }
 

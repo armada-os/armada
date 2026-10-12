@@ -2,7 +2,7 @@ import threading
 import time
 from collections import OrderedDict
 
-from . import android, catalog, installers, paths, postinstall, store
+from . import android, catalog, installers, mods, paths, postinstall, store
 
 ACTIVE_PHASES = {"queued", "resolving", "downloading", "installing", "extracting", "removing"}
 DONE_TTL = 10.0
@@ -238,6 +238,9 @@ def _execute_install(job, app, install, kind):
                 pass
         if previous:
             installers.restart_decky()
+    elif kind == "gamemod":
+        job.phase = "resolving"
+        mods.install(job.app_id, install, job.cancel, _download_progress(job))
     else:
         raise RuntimeError("Unknown install type: " + str(kind))
 
@@ -258,5 +261,7 @@ def _execute_uninstall(job, install, kind, app=None):
     elif kind == "deckyplugin":
         installers.remove_decky_plugin((state.get("plugins") or {}).get(job.app_id))
         store.clear_plugin(job.app_id)
+    elif kind == "gamemod":
+        mods.remove(job.app_id)
     else:
         raise RuntimeError("Unknown install type: " + str(kind))

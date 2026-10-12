@@ -299,6 +299,15 @@ def repair_wedged_controller():
           f"({pad_sections} pad sections)", file=sys.stderr)
 
 
+MOD_LAUNCH = "/usr/libexec/armada/armada-mod-launch"
+
+
+def game_mods(args):
+    if os.access(MOD_LAUNCH, os.X_OK):
+        return [MOD_LAUNCH, *args]
+    return args
+
+
 def main():
     args = sys.argv[1:]
     if not args:
@@ -344,6 +353,7 @@ def main():
     except Exception as exc:
         print(f"armada-game-launch: controller repair skipped: {exc}", file=sys.stderr)
 
+    args = game_mods(args)
     try:
         os.execv(args[0], args)
     except OSError as exc:

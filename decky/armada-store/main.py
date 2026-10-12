@@ -1,6 +1,6 @@
 import asyncio
 
-from armada_store import android, catalog, jobs, postinstall, session, store, updates
+from armada_store import android, catalog, jobs, mods, postinstall, session, store, updates
 
 
 class Plugin:
@@ -9,6 +9,9 @@ class Plugin:
 
     async def import_android(self, path):
         return await asyncio.to_thread(android.import_local, path)
+
+    async def add_mod(self, path):
+        return await asyncio.to_thread(mods.add_local, path)
 
     async def _unload(self):
         await asyncio.to_thread(android.stop)
