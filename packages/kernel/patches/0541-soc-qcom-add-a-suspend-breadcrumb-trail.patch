@@ -49,10 +49,10 @@ Non-obvious choices:
   30-byte header write.
 ---
 diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
-index 2caadbb..d5af2d5 100644
+index 2b524154d9fb..a65812579d90 100644
 --- a/drivers/soc/qcom/Kconfig
 +++ b/drivers/soc/qcom/Kconfig
-@@ -171,6 +171,20 @@ config QCOM_RPMH
+@@ -163,6 +163,20 @@ config QCOM_RPMH
  	  of hardware components aggregate requests for these resources and
  	  help apply the aggregated state on the resource.
  
@@ -72,9 +72,9 @@ index 2caadbb..d5af2d5 100644
 +
  config QCOM_SMEM
  	tristate "Qualcomm Shared Memory Manager (SMEM)"
- 	depends on ARCH_QCOM || COMPILE_TEST
+ 	depends on HWSPINLOCK
 diff --git a/drivers/soc/qcom/Makefile b/drivers/soc/qcom/Makefile
-index b7f1d2a..1f511f8 100644
+index 798643be3590..2a667b6e33fe 100644
 --- a/drivers/soc/qcom/Makefile
 +++ b/drivers/soc/qcom/Makefile
 @@ -22,6 +22,7 @@ obj-$(CONFIG_QCOM_RPM_MASTER_STATS)	+= rpm_master_stats.o
@@ -83,10 +83,10 @@ index b7f1d2a..1f511f8 100644
  qcom_rpmh-y			+= rpmh.o
 +obj-$(CONFIG_QCOM_SUSPEND_TRAIL)	+= suspend-trail.o
  obj-$(CONFIG_QCOM_SMD_RPM)	+= rpm-proc.o smd-rpm.o
- obj-$(CONFIG_QCOM_SMEM) +=	smem.o
- obj-$(CONFIG_QCOM_SMEM_STATE) += smem_state.o
+ qcom_smem-y			+= smem.o smem_dramc.o
+ obj-$(CONFIG_QCOM_SMEM) +=	qcom_smem.o
 diff --git a/drivers/soc/qcom/rpmh-rsc.c b/drivers/soc/qcom/rpmh-rsc.c
-index 66928ca..7f5e2a8 100644
+index f881af35ecfc..95bc13508314 100644
 --- a/drivers/soc/qcom/rpmh-rsc.c
 +++ b/drivers/soc/qcom/rpmh-rsc.c
 @@ -29,6 +29,7 @@
@@ -97,7 +97,7 @@ index 66928ca..7f5e2a8 100644
  #include <soc/qcom/tcs.h>
  #include <dt-bindings/soc/qcom,rpmh-rsc.h>
  
-@@ -935,10 +936,15 @@ static int rpmh_rsc_pd_callback(struct notifier_block *nfb,
+@@ -944,10 +945,15 @@ static int rpmh_rsc_pd_callback(struct notifier_block *nfb,
  				unsigned long action, void *v)
  {
  	struct rsc_drv *drv = container_of(nfb, struct rsc_drv, genpd_nb);
@@ -117,7 +117,7 @@ index 66928ca..7f5e2a8 100644
  	return NOTIFY_OK;
 diff --git a/drivers/soc/qcom/suspend-trail.c b/drivers/soc/qcom/suspend-trail.c
 new file mode 100644
-index 0000000..f3e5696
+index 000000000000..f3e5696db1fd
 --- /dev/null
 +++ b/drivers/soc/qcom/suspend-trail.c
 @@ -0,0 +1,743 @@
@@ -866,7 +866,7 @@ index 0000000..f3e5696
 +subsys_initcall(qcom_suspend_trail_init);
 diff --git a/include/soc/qcom/suspend-trail.h b/include/soc/qcom/suspend-trail.h
 new file mode 100644
-index 0000000..0baa845
+index 000000000000..0baa845c139f
 --- /dev/null
 +++ b/include/soc/qcom/suspend-trail.h
 @@ -0,0 +1,25 @@

@@ -16,9 +16,11 @@ The PWM helpers now update the cached PWM state only after the hardware
 accepts it, and start the fan with the stop-to-start duty whenever it is
 not running, so a failed write can be retried without a stale state.
 ---
+diff --git a/Documentation/hwmon/pwm-fan.rst b/Documentation/hwmon/pwm-fan.rst
+index f77998b204ef..65002b3309b1 100644
 --- a/Documentation/hwmon/pwm-fan.rst
 +++ b/Documentation/hwmon/pwm-fan.rst
-@@ -30,3 +30,7 @@
+@@ -30,3 +30,7 @@ pwm1_enable	rw	keep enable mode, defines behaviour when pwm1=0
  			3 -> enable pwm; if pwm==0, disable pwm and regulator
  pwm1		rw	relative speed (0-255), 255=max. speed.
  =============== ======= =======================================================
@@ -26,6 +28,8 @@ not running, so a failed write can be retried without a stale state.
 +pwm1_sleep_charging (rw) is a fan speed (0-255) kept during suspend-to-idle
 +while external power is present. With the default 0, the fan is stopped
 +during suspend. It is ignored when pwm1_enable is 0.
+diff --git a/drivers/hwmon/pwm-fan.c b/drivers/hwmon/pwm-fan.c
+index 0a3f7812d8c0..6c4093bd151f 100644
 --- a/drivers/hwmon/pwm-fan.c
 +++ b/drivers/hwmon/pwm-fan.c
 @@ -13,7 +13,9 @@
@@ -38,7 +42,7 @@ not running, so a failed write can be retried without a stale state.
  #include <linux/pwm.h>
  #include <linux/regulator/consumer.h>
  #include <linux/sysfs.h>
-@@ -64,6 +66,14 @@
+@@ -64,6 +66,14 @@ struct pwm_fan_ctx {
  	u64 pwm_duty_cycle_from_stopped;
  	u32 pwm_usec_from_stopped;
  	u8 pwm_shutdown;
@@ -53,7 +57,7 @@ not running, so a failed write can be retried without a stale state.
  };
  
  /* This handler assumes self resetting edge triggered interrupt. */
-@@ -141,9 +151,19 @@
+@@ -141,9 +151,19 @@ static int pwm_fan_switch_power(struct pwm_fan_ctx *ctx, bool on)
  	return ret;
  }
  
@@ -74,7 +78,7 @@ not running, so a failed write can be retried without a stale state.
  	int ret;
  
  	if (ctx->enabled)
-@@ -155,8 +175,8 @@
+@@ -155,8 +175,8 @@ static int pwm_fan_power_on(struct pwm_fan_ctx *ctx)
  		return ret;
  	}
  
@@ -85,7 +89,7 @@ not running, so a failed write can be retried without a stale state.
  	if (ret) {
  		dev_err(ctx->dev, "failed to enable PWM\n");
  		goto disable_regulator;
-@@ -173,7 +193,7 @@
+@@ -173,7 +193,7 @@ static int pwm_fan_power_on(struct pwm_fan_ctx *ctx)
  
  static int pwm_fan_power_off(struct pwm_fan_ctx *ctx, bool force_disable)
  {
@@ -94,7 +98,7 @@ not running, so a failed write can be retried without a stale state.
  	bool enable_regulator = false;
  	int ret;
  
-@@ -181,13 +201,13 @@
+@@ -181,13 +201,13 @@ static int pwm_fan_power_off(struct pwm_fan_ctx *ctx, bool force_disable)
  		return 0;
  
  	pwm_fan_enable_mode_2_state(ctx->enable_mode,
@@ -112,7 +116,7 @@ not running, so a failed write can be retried without a stale state.
  	if (ret) {
  		dev_err(ctx->dev, "failed to disable PWM\n");
  		return ret;
-@@ -202,8 +222,7 @@
+@@ -202,8 +222,7 @@ static int pwm_fan_power_off(struct pwm_fan_ctx *ctx, bool force_disable)
  
  static int  __set_pwm(struct pwm_fan_ctx *ctx, unsigned long pwm)
  {
@@ -122,7 +126,7 @@ not running, so a failed write can be retried without a stale state.
  	unsigned long period;
  	bool update = false;
  	int ret = 0;
-@@ -213,22 +232,23 @@
+@@ -213,22 +232,23 @@ static int  __set_pwm(struct pwm_fan_ctx *ctx, unsigned long pwm)
  			/* pwm-fan hard disabled */
  			return 0;
  
@@ -154,7 +158,7 @@ not running, so a failed write can be retried without a stale state.
  		}
  	} else {
  		ret = pwm_fan_power_off(ctx, false);
-@@ -289,15 +309,15 @@
+@@ -289,15 +309,15 @@ static int pwm_fan_update_enable(struct pwm_fan_ctx *ctx, long val)
  		 * Nothing to do if currently enabled
  		 */
  		if (!ctx->enabled) {
@@ -174,8 +178,8 @@ not running, so a failed write can be retried without a stale state.
  			pwm_fan_switch_power(ctx, enable_regulator);
  			pwm_fan_update_state(ctx, 0);
  		}
-@@ -494,6 +514,115 @@
- 	}
+@@ -500,6 +520,115 @@ static void pwm_fan_timer_cleanup(void *__ctx)
+ 	timer_shutdown_sync(&ctx->rpm_timer);
  }
  
 +static ssize_t pwm1_sleep_charging_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -290,7 +294,7 @@ not running, so a failed write can be retried without a stale state.
  static int pwm_fan_probe(struct platform_device *pdev)
  {
  	struct thermal_cooling_device *cdev;
-@@ -672,11 +801,15 @@
+@@ -678,11 +807,15 @@ static int pwm_fan_probe(struct platform_device *pdev)
  	if (ret)
  		ctx->pwm_usec_from_stopped = 250000;
  
@@ -307,7 +311,7 @@ not running, so a failed write can be retried without a stale state.
  	if (IS_ERR(hwmon)) {
  		dev_err(dev, "Failed to register hwmon device\n");
  		return PTR_ERR(hwmon);
-@@ -710,15 +843,38 @@
+@@ -717,15 +850,38 @@ static void pwm_fan_shutdown(struct platform_device *pdev)
  static int pwm_fan_suspend(struct device *dev)
  {
  	struct pwm_fan_ctx *ctx = dev_get_drvdata(dev);

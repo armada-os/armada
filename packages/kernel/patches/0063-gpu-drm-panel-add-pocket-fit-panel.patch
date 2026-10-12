@@ -11,10 +11,10 @@ Subject: [PATCH] gpu:drm:panel:add pocket fit panel
  create mode 100644 drivers/gpu/drm/panel/panel-ar14-144hz.c
 
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index 407c5f6a268b..6481e0100061 100644
+index 609ea9036b6e..123ff3198412 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -37,6 +37,19 @@
+@@ -47,6 +47,19 @@ config DRM_PANEL_AR02_3INCH
  	  Say Y here if you want to enable support for Ayaneo Pocket DMG
  	  1080x1240 60hz Panel.
  
@@ -35,7 +35,7 @@ index 407c5f6a268b..6481e0100061 100644
  	tristate "ARM Versatile panel driver"
  	depends on OF
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index 3615a761b44f..5ae127482f10 100644
+index 296014ac75d7..c5606eb3c88c 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
 @@ -1,5 +1,6 @@
@@ -44,10 +44,10 @@ index 3615a761b44f..5ae127482f10 100644
 +obj-$(CONFIG_DRM_PANEL_AR14) += panel-ar14-144hz.o
  obj-$(CONFIG_DRM_PANEL_AR06_4INCH) += panel-ar06-4inch.o
  obj-$(CONFIG_DRM_PANEL_AR02_3INCH) += panel-ar02-3inch.o
- obj-$(CONFIG_DRM_PANEL_ARM_VERSATILE) += panel-arm-versatile.o
+ obj-$(CONFIG_DRM_PANEL_ANBERNIC_TD4310) += panel-anbernic-td4310.o
 diff --git a/drivers/gpu/drm/panel/panel-ar14-144hz.c b/drivers/gpu/drm/panel/panel-ar14-144hz.c
 new file mode 100644
-index 000000000000..5e38005a0398
+index 000000000000..5a90eb8af829
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ar14-144hz.c
 @@ -0,0 +1,551 @@

@@ -11,10 +11,10 @@ Subject: [PATCH] gpu: panel: add Pocket DMG panel driver
  create mode 100644 drivers/gpu/drm/panel/panel-ar02-3inch.c
 
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index 2b0c4bab517c..86f3c0178805 100644
+index 2b0f2f4e303d..2e79e1344a54 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -27,6 +27,16 @@ config DRM_PANEL_AR06_4INCH
+@@ -37,6 +37,16 @@ config DRM_PANEL_AR06_4INCH
  	  Say Y here if you want to enable support for Ayaneo Pocket ACE
  	  1080x1620 60hz Panel.
  
@@ -32,7 +32,7 @@ index 2b0c4bab517c..86f3c0178805 100644
  	tristate "ARM Versatile panel driver"
  	depends on OF
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index e2e83723083e..630f5f22e40f 100644
+index 4a95e0126977..588b498bfc06 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
 @@ -1,6 +1,7 @@
@@ -40,12 +40,12 @@ index e2e83723083e..630f5f22e40f 100644
  obj-$(CONFIG_DRM_PANEL_ABT_Y030XX067A) += panel-abt-y030xx067a.o
  obj-$(CONFIG_DRM_PANEL_AR06_4INCH) += panel-ar06-4inch.o
 +obj-$(CONFIG_DRM_PANEL_AR02_3INCH) += panel-ar02-3inch.o
+ obj-$(CONFIG_DRM_PANEL_ANBERNIC_TD4310) += panel-anbernic-td4310.o
  obj-$(CONFIG_DRM_PANEL_ARM_VERSATILE) += panel-arm-versatile.o
  obj-$(CONFIG_DRM_PANEL_ASUS_Z00T_TM5P5_NT35596) += panel-asus-z00t-tm5p5-n35596.o
- obj-$(CONFIG_DRM_PANEL_AUO_A030JTN01) += panel-auo-a030jtn01.o
 diff --git a/drivers/gpu/drm/panel/panel-ar02-3inch.c b/drivers/gpu/drm/panel/panel-ar02-3inch.c
 new file mode 100644
-index 000000000000..67151480f1aa
+index 000000000000..f1bbbebd0f46
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ar02-3inch.c
 @@ -0,0 +1,648 @@
@@ -697,5 +697,3 @@ index 000000000000..67151480f1aa
 +MODULE_AUTHOR("linux-mdss-dsi-panel-driver-generator <fix@me>"); // FIXME
 +MODULE_DESCRIPTION("DRM driver for ar02 395inch video mode dsi panel");
 +MODULE_LICENSE("GPL");
--- 
-2.50.1

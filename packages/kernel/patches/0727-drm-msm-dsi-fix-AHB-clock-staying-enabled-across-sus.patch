@@ -1,0 +1,233 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Arpit Saini <arpit.saini@oss.qualcomm.com>
+Date: Tue, 6 Oct 2026 18:43:53 +0530
+Subject: [PATCH 727/727] drm/msm/dsi: fix AHB clock staying enabled across
+ suspend
+
+pm_clk_suspend()/resume() only call clk_disable()/clk_enable() for the
+AHB ("iface") clock, never clk_unprepare(), so prepare_count never
+reaches 0. The clock (and its source) stays reported as enabled
+through s2idle suspend even though the display stack is fully
+suspended:
+
+  disp_cc_mdss_ahb_clk [19200000] ->
+    disp_cc_mdss_ahb_clk_src [19200000] ->
+    bi_tcxo [19200000] -> xo-board [76800000]
+  disp_cc_mdss_ahb_clk_src [19200000] ->
+    bi_tcxo [19200000] -> xo-board [76800000]
+
+Calling clk_prepare_enable()/clk_disable_unprepare() directly from the
+PHY's runtime_suspend/runtime_resume is not safe either, since it can
+deadlock against the PHY's own PLL clocks taking the global CCF
+prepare_lock during clk_prepare()/clk_unprepare().
+
+Fix this by moving clk_prepare()/clk_unprepare() out of the runtime PM
+path. clk_enable()/clk_disable() (spinlock only) stay in
+runtime_suspend/runtime_resume. clk_prepare()/clk_unprepare() move to
+suspend_late/resume_early, avoiding the prepare_lock collision and
+actually dropping prepare_count to 0. DPM_FLAG_NO_DIRECT_COMPLETE
+ensures these hooks always run on sleep.
+
+Fixes: 0b3ccb76b95b ("drm/msm/dsi: Fix 14nm DSI PHY PLL Lock issue")
+Signed-off-by: Arpit Saini <arpit.saini@oss.qualcomm.com>
+---
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy.c | 132 ++++++++++++++++++++++++--
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy.h |   4 +
+ 2 files changed, 127 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+index 1fb3899b8..3a8b5e23f 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+@@ -3,9 +3,9 @@
+  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+  */
+ 
++#include <linux/clk.h>
+ #include <linux/clk-provider.h>
+ #include <linux/platform_device.h>
+-#include <linux/pm_clock.h>
+ #include <linux/pm_runtime.h>
+ #include <dt-bindings/phy/phy.h>
+ 
+@@ -610,6 +610,105 @@ static int dsi_phy_get_id(struct msm_dsi_phy *phy)
+ 	return -EINVAL;
+ }
+ 
++static int dsi_phy_prepare_ahb_clk(struct msm_dsi_phy *phy)
++{
++	int ret;
++
++	if (clk_is_enabled_when_prepared(phy->ahb_clk) || phy->ahb_clk_prepared)
++		return 0;
++
++	ret = clk_prepare(phy->ahb_clk);
++	if (!ret)
++		phy->ahb_clk_prepared = true;
++
++	return ret;
++}
++
++static void dsi_phy_unprepare_ahb_clk(struct msm_dsi_phy *phy)
++{
++	if (phy->ahb_clk_prepared) {
++		clk_unprepare(phy->ahb_clk);
++		phy->ahb_clk_prepared = false;
++	}
++}
++
++static int dsi_phy_runtime_suspend(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++
++	if (phy->ahb_clk_enabled) {
++		clk_disable(phy->ahb_clk);
++		phy->ahb_clk_enabled = false;
++	}
++
++	if (clk_is_enabled_when_prepared(phy->ahb_clk))
++		dsi_phy_unprepare_ahb_clk(phy);
++
++	return 0;
++}
++
++static int dsi_phy_runtime_resume(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++	int ret;
++
++	if (clk_is_enabled_when_prepared(phy->ahb_clk)) {
++		ret = clk_prepare_enable(phy->ahb_clk);
++		if (ret)
++			return ret;
++
++		phy->ahb_clk_prepared = true;
++	} else {
++		/* Do not enable an unprepared clock after a failed system resume. */
++		if (!phy->ahb_clk_prepared)
++			return -EIO;
++
++		ret = clk_enable(phy->ahb_clk);
++		if (ret)
++			return ret;
++	}
++
++	phy->ahb_clk_enabled = true;
++
++	return 0;
++}
++
++static int dsi_phy_suspend_late(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++	int ret;
++
++	ret = pm_runtime_force_suspend(dev);
++	if (ret)
++		return ret;
++
++	/* Runtime PM is quiesced, so it is safe to release preparation now. */
++	dsi_phy_unprepare_ahb_clk(phy);
++
++	return 0;
++}
++
++static int dsi_phy_resume_early(struct device *dev)
++{
++	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
++	int ret, resume_ret;
++
++	ret = dsi_phy_prepare_ahb_clk(phy);
++	/* Balance force_suspend even if restoring preparation failed. */
++	resume_ret = pm_runtime_force_resume(dev);
++
++	return ret ?: resume_ret;
++}
++
++static void dsi_phy_release_ahb_clk(void *data)
++{
++	struct msm_dsi_phy *phy = data;
++
++	/* Runtime PM is either not enabled yet or has already been quiesced. */
++	dsi_phy_runtime_suspend(&phy->pdev->dev);
++	dsi_phy_unprepare_ahb_clk(phy);
++}
++
+ static int dsi_phy_driver_probe(struct platform_device *pdev)
+ {
+ 	struct msm_dsi_phy *phy;
+@@ -683,17 +782,31 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, phy);
+ 
+-	ret = devm_pm_runtime_enable(dev);
++	phy->ahb_clk = msm_clk_get(pdev, "iface");
++	if (IS_ERR(phy->ahb_clk))
++		return dev_err_probe(dev, PTR_ERR(phy->ahb_clk),
++				     "Unable to get iface clk\n");
++
++	/*
++	 * As a clock provider, the PHY can be runtime-resumed with the CCF
++	 * prepare_lock held. Keep clocks with separate enable operations
++	 * prepared across runtime PM, and only unprepare them during system
++	 * sleep (dsi_phy_suspend_late()/dsi_phy_resume_early()).
++	 */
++	ret = dsi_phy_prepare_ahb_clk(phy);
+ 	if (ret)
+-		return ret;
++		return dev_err_probe(dev, ret, "Unable to prepare iface clk\n");
+ 
+-	ret = devm_pm_clk_create(dev);
++	ret = devm_add_action_or_reset(dev, dsi_phy_release_ahb_clk, phy);
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = pm_clk_add(dev, "iface");
+-	if (ret < 0)
+-		return dev_err_probe(dev, ret, "Unable to get iface clk\n");
++	/* Even a runtime-suspended PHY must release preparation for sleep. */
++	dev_pm_set_driver_flags(dev, DPM_FLAG_NO_DIRECT_COMPLETE);
++
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		return ret;
+ 
+ 	if (phy->cfg->ops.pll_init) {
+ 		ret = phy->cfg->ops.pll_init(phy);
+@@ -712,7 +825,8 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
+ }
+ 
+ static const struct dev_pm_ops dsi_phy_pm_ops = {
+-	SET_RUNTIME_PM_OPS(pm_clk_suspend, pm_clk_resume, NULL)
++	RUNTIME_PM_OPS(dsi_phy_runtime_suspend, dsi_phy_runtime_resume, NULL)
++	LATE_SYSTEM_SLEEP_PM_OPS(dsi_phy_suspend_late, dsi_phy_resume_early)
+ };
+ 
+ static struct platform_driver dsi_phy_platform_driver = {
+@@ -720,7 +834,7 @@ static struct platform_driver dsi_phy_platform_driver = {
+ 	.driver     = {
+ 		.name   = "msm_dsi_phy",
+ 		.of_match_table = dsi_phy_dt_match,
+-		.pm = &dsi_phy_pm_ops,
++		.pm = pm_ptr(&dsi_phy_pm_ops),
+ 	},
+ };
+ 
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+index f5d3e806f..77ae08dcf 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+@@ -106,6 +106,10 @@ struct msm_dsi_phy {
+ 	phys_addr_t lane_size;
+ 	int id;
+ 
++	struct clk *ahb_clk;
++	bool ahb_clk_prepared;
++	bool ahb_clk_enabled;
++
+ 	struct regulator_bulk_data *supplies;
+ 
+ 	struct msm_dsi_dphy_timing timing;
+-- 
+2.56.0
+

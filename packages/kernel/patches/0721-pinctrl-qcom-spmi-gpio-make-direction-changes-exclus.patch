@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Date: Sun, 27 Sep 2026 09:09:13 +0800
+Subject: [PATCH] pinctrl: qcom: spmi-gpio: make direction changes exclusive
+
+Neither direction callback clears the opposite buffer: .direction_output()
+only packs PIN_CONFIG_LEVEL and .direction_input() only packs
+PIN_CONFIG_INPUT_ENABLE.  As pmic_gpio_populate() seeds input_enabled and
+output_enabled from MODE_CTL, a pad left in DIGITAL_INPUT[_OUTPUT] by the
+bootloader ends up in DIGITAL_INPUT_OUTPUT whichever direction is
+requested.  That leaves an input still driving the line, and makes
+pmic_gpio_get_direction() report an output as an input, which breaks
+consumers that read the direction back:
+
+  reg-fixed-voltage regulator-wcn-core-vm-1p35: setup of GPIO (default) failed: -1
+  reg-fixed-voltage regulator-wcn-core-vm-1p35: error -EPERM: can't get GPIO
+
+Pack the opposite buffer's PIN_CONFIG_*_ENABLE along with the requested
+direction, so MODE_CTL becomes DIGITAL_INPUT or DIGITAL_OUTPUT, never
+both.  pmic_gpio_config_set() writes the registers once after walking all
+configs, so this stays a single write.
+
+An open-drain or open-source output is the exception: it only drives one
+rail, so pmic_gpio_get() needs the input buffer to sample the line rather
+than return the value last written.  Program the input buffer from
+pad->buffer_type, which gpiolib has already updated via
+PIN_CONFIG_DRIVE_OPEN_DRAIN, and key pmic_gpio_get_direction() off
+output_enabled so such pads still read back as outputs.
+
+Genuinely bidirectional pads can still be described that way through
+pinconf; the gpiolib callbacks now mean what gpiolib says they mean.
+
+Fixes: 263447532463 ("pinctrl: qcom: spmi-gpio: implement .get_direction()")
+Assisted-by: LLM
+Reviewed-by: Linus Walleij <linusw@kernel.org>
+Signed-off-by: Shawn Guo <shengchao.guo@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260927010913.1212600-1-shengchao.guo@oss.qualcomm.com
+Signed-off-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+---
+ drivers/pinctrl/qcom/pinctrl-spmi-gpio.c | 37 +++++++++++++++++++-----
+ 1 file changed, 29 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+index 922c27177b5a..c6f93fb1dc20 100644
+--- a/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
++++ b/drivers/pinctrl/qcom/pinctrl-spmi-gpio.c
+@@ -734,29 +734,50 @@ static int pmic_gpio_get_direction(struct gpio_chip *chip, unsigned pin)
+ 	    (!pad->input_enabled && !pad->output_enabled))
+ 		return -EINVAL;
+ 
+-	/* Make sure the state is aligned on what pmic_gpio_get() returns */
+-	return pad->input_enabled ? GPIO_LINE_DIRECTION_IN : GPIO_LINE_DIRECTION_OUT;
++	/*
++	 * An open-drain or open-source pad keeps its input buffer enabled while
++	 * driving, so the output buffer is what tells the direction.
++	 */
++	return pad->output_enabled ? GPIO_LINE_DIRECTION_OUT : GPIO_LINE_DIRECTION_IN;
+ }
+ 
+ static int pmic_gpio_direction_input(struct gpio_chip *chip, unsigned pin)
+ {
+ 	struct pmic_gpio_state *state = gpiochip_get_data(chip);
+-	unsigned long config;
++	unsigned long configs[2];
+ 
+-	config = pinconf_to_config_packed(PIN_CONFIG_INPUT_ENABLE, 1);
++	configs[0] = pinconf_to_config_packed(PIN_CONFIG_OUTPUT_ENABLE, 0);
++	configs[1] = pinconf_to_config_packed(PIN_CONFIG_INPUT_ENABLE, 1);
+ 
+-	return pmic_gpio_config_set(state->ctrl, pin, &config, 1);
++	return pmic_gpio_config_set(state->ctrl, pin, configs,
++				    ARRAY_SIZE(configs));
+ }
+ 
+ static int pmic_gpio_direction_output(struct gpio_chip *chip,
+ 				      unsigned pin, int val)
+ {
+ 	struct pmic_gpio_state *state = gpiochip_get_data(chip);
+-	unsigned long config;
++	struct pmic_gpio_pad *pad = state->ctrl->desc->pins[pin].drv_data;
++	unsigned long configs[2];
+ 
+-	config = pinconf_to_config_packed(PIN_CONFIG_LEVEL, val);
++	/*
++	 * An open-drain or open-source pad only ever drives one rail, so the
++	 * line can still be sampled while the pad is an output.  Keep the input
++	 * buffer enabled for those, so that pmic_gpio_get() reports what is on
++	 * the wire rather than the value last written, and disable it for a
++	 * CMOS pad, so that the pad ends up in DIGITAL_OUTPUT rather than
++	 * DIGITAL_INPUT_OUTPUT.  Program it either way, as the buffer may have
++	 * been left in the opposite state by the bootloader or by an earlier
++	 * direction change with a different buffer type.  gpiolib applies
++	 * PIN_CONFIG_DRIVE_OPEN_DRAIN before calling this, so buffer_type is
++	 * already up to date here.
++	 */
++	configs[0] = pinconf_to_config_packed(PIN_CONFIG_INPUT_ENABLE,
++					     pad->buffer_type != PMIC_GPIO_OUT_BUF_CMOS);
++	configs[1] = pinconf_to_config_packed(PIN_CONFIG_LEVEL, val);
+ 
+-	return pmic_gpio_config_set(state->ctrl, pin, &config, 1);
++	return pmic_gpio_config_set(state->ctrl, pin, configs,
++				    ARRAY_SIZE(configs));
+ }
+ 
+ static int pmic_gpio_get(struct gpio_chip *chip, unsigned pin)
+-- 
+2.56.0
+

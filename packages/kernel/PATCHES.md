@@ -19,10 +19,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0048-drm-msm-dsi-reparent-byte-pixel-src-to-xo-on-disable.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0048-drm-msm-dsi-reparent-byte-pixel-src-to-xo-on-disable.patch
   upstream: unknown
-- `patches/0048a-drm-msm-dsi-round-byte-clock-rate-after-reparenting-to-PLL.patch`
-  source: https://git.kernel.org/torvalds/c/2028280686f4fa78e2f1f6dede4b6c1fd782b9e3
-  upstream: https://lore.kernel.org/r/20260903-fix-eliza-dsi-v1-1-3474a6c9f2e0@oss.qualcomm.com
-  notes: Context of the struct msm_dsi_host hunk refreshed to apply after `0048`.
 - `patches/0048b-drm-msm-dsi-fix-pll-init-in-bonded-mode.patch`
   source: armada
   upstream: local
@@ -71,9 +67,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0052-gpu-panel-add-Pocket-DMG-panel-driver.patch
   upstream: unknown
   notes: Ported to Linux 7.2's managed DRM panel allocator.
-- `patches/0053-gpu-panel-st7703-add-Pocket-DS-lower-panel.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/7651a1b97d762d2c7dc335fa82a7a254c3a12927/projects/ROCKNIX/devices/SM8550/patches/linux/0053-gpu-panel-st7703-add-Pocket-DS-lower-panel.patch
-  upstream: https://lore.kernel.org/r/20260723-b4-st7703-pocketds-lower-v1-2-e3db246589f4@gmail.com
 - `patches/0055_Synaptics-TD4328-LCD-panel.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0055_Synaptics-TD4328-LCD-panel.patch
   upstream: https://lore.kernel.org/r/20240424-ayn-odin2-initial-v1-4-e0aa05c991fd@gmail.com
@@ -133,14 +126,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0058_AYN-Odin2-Mini--backlight.patch
   upstream: unknown
   notes: Armada refreshed only the Makefile context for Linux 7.1's backlight object list; driver behavior is unchanged.
-- `patches/0060-backlight-Add-SY7758-LED-driver.patch`
-  source: https://patchwork.kernel.org/project/dri-devel/patch/20260529-topic-sm8650-ayaneo-pocket-s2-sy7758-v5-2-03aacd49747c@linaro.org/
-  upstream: https://lore.kernel.org/r/178300990349.2239788.13080024963462152507.b4-ty@b4
-  notes: Armada made the enable GPIO optional (`devm_gpiod_get_optional`). The AYANEO Pocket DS wires no discrete enable line to its SY7758, and requiring one left the whole lower DSI chain deferred; boards that do have one are unaffected. The binding patch carries the matching change.
-- `patches/0060-dt-bindings-silergy-sy7758.patch`
-  source: https://patchwork.kernel.org/project/dri-devel/patch/20260529-topic-sm8650-ayaneo-pocket-s2-sy7758-v5-1-03aacd49747c@linaro.org/
-  upstream: https://lore.kernel.org/r/178300990349.2239788.13080024963462152507.b4-ty@b4
-  notes: Armada dropped `enable-gpios` from the required list to match the driver change above; the AYANEO Pocket DS reaches its SY7758 without a separately described enable pin.
+- `patches/0060-backlight-sy7758-make-the-enable-gpio-optional.patch`
+  source: armada
+  upstream: local
+  notes: The SY7758 driver itself is upstream since Linux 7.3; this keeps Armada's optional enable GPIO. The upstream binding still lists `enable-gpios` as required, which only affects dtbs_check for the Pocket DS.
 - `patches/0054-regulator-add-sgm3804-i2c-regulator-for-panel-power-.patch`
   source: armada
   upstream: local
@@ -265,10 +254,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1006-tty-serial-qcom-geni-mask-non-console-irq-on-suspend.patch`
   source: https://github.com/thorch-os/thorch/blob/2614a262d7de3f31bd47a0c92981461146663847/packages/linux-thorch/patches/0010-tty-serial-qcom-geni-mask-non-console-irq-on-suspend.patch
   upstream: unknown
-- `patches/0534-serial-qcom-geni-add-force-suspend-resume-to-system-sleep-callbacks.patch`
-  source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=d0cd9c8d0fd59bc7d140f3d60cf02e1d80376dab
-  upstream: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=d0cd9c8d0fd59bc7d140f3d60cf02e1d80376dab
-  notes: Backported to Linux 7.2 on top of 1006, re-enabling the masked IRQ when the force suspend or force resume fails.
 - `patches/1007-input-rsinput-drop-the-mcu-supply-across-system-sleep.patch`
   source: armada
   upstream: local
@@ -292,6 +277,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch
   upstream: https://lore.kernel.org/r/20251008-topic-sm8x50-next-hdk-i2s-v2-3-6b7d38d4ad5e@linaro.org
+  notes: Rebased onto Linux 7.3, which handles MI2S formats and LPAIF sysclks in hw_params per card data. Keeps the optional `i2s_clk` board clock, now counted across all MI2S DAIs (the former 0060), and the Primary MI2S formats at startup for cards without `codec_dai_fmt` (SM8750).
 - `patches/0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch
   upstream: unknown
@@ -311,10 +297,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/20260424_neil_armstrong_arm64_dts_qcom_sm8_456_50_add_missing_cx_power_domain_to_gcc.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/20260424_neil_armstrong_arm64_dts_qcom_sm8_456_50_add_missing_cx_power_domain_to_gcc.patch
   upstream: https://lore.kernel.org/r/20260615-topic-sm8x50-tie-gcc-to-cx-v2-0-6b5752dd4747@linaro.org
-- `patches/v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch`
-  source: https://lore.kernel.org/r/20260729110455.641256-1-kuldeep.singh@oss.qualcomm.com
-  upstream: https://lore.kernel.org/r/20260729110455.641256-1-kuldeep.singh@oss.qualcomm.com
-  notes: Refreshed only its include context for Linux 7.2; runtime-PM and interconnect behavior is unchanged.
 - `patches/0504-mailbox-qcom-ipcc-mask-summary-irq-for-suspend-to-ram.patch`
   source: https://github.com/ROCKNIX/distribution/commit/f955f5b6137554253e4d52bbe72f9b4936fb253d
   upstream: not submitted
@@ -454,16 +436,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0006-add-hw_params-callback-function-to-drm_connector_hdmi_audio_ops.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0006-add-hw_params-callback-function-to-drm_connector_hdmi_audio_ops.patch
   upstream: https://lore.kernel.org/r/20250925040530.20731-1-liujianfeng1994@gmail.com
-- `patches/0007-ASoC-qcom-audioreach-compute-active-channel-maps.patch`
-  source: https://lore.kernel.org/r/20260728-topic-sm8650-ayaneo-pocket-s2-wsa2-fix-v3-1-b29f44720178@linaro.org
-  upstream: https://lore.kernel.org/r/178550094533.136247.8108653420741029312.b4-ty@b4
-- `patches/0008-ASoC-dt-bindings-qcom-sm8250-Add-Ayaneo-Pocket-S2.patch`
-  source: https://lore.kernel.org/r/20260728-topic-sm8650-ayaneo-pocket-s2-wsa2-fix-v3-2-b29f44720178@linaro.org
-  upstream: https://lore.kernel.org/r/178550094533.136247.8108653420741029312.b4-ty@b4
-- `patches/0009-ASoC-qcom-sc8280xp-add-Ayaneo-Pocket-S2-card.patch`
-  source: https://lore.kernel.org/r/20260728-topic-sm8650-ayaneo-pocket-s2-wsa2-fix-v3-3-b29f44720178@linaro.org
-  upstream: https://lore.kernel.org/r/178550094533.136247.8108653420741029312.b4-ty@b4
-  notes: Backported to Armada's Linux 7.2 machine-driver layout; the accepted WSA2 channel map and constraints are unchanged.
 - `patches/0010-ASoC-qcom-add-KONKR-Pocket-FIT-WSA2-card.patch`
   source: armada
   upstream: local
@@ -472,9 +444,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Restores the WSA2-to-WSA interface rewrite that ROCKNIX bundled inside its replaced channel-map workaround; the SM8650 topology declares the speaker backend as WSA2, which the shipped ADSP firmware rejects. Gated to `qcom,sm8650`; remove once a corrected topology stops declaring WSA2.
-- `patches/v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8650/patches/linux/v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
-  upstream: https://lore.kernel.org/r/20260615-topic-sm8650-upstream-cpu-props-v3-0-eeb6e9fa7581@linaro.org
 - `patches/0063-gpu-drm-panel-add-pocket-fit-panel.patch`
   source: https://github.com/ROCKNIX/distribution/blob/5cff2f7918ca6bd56d8a884f0837309529a058bc/projects/ROCKNIX/devices/SM8750/patches/linux/0055-gpu-drm-panel-add-pocket-fit-panel.patch
   upstream: unknown
@@ -569,9 +538,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0027-soc-qcom-socinfo-Add-CQ8725S-SoC-ID.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0027-soc-qcom-socinfo-Add-CQ8725S-SoC-ID.patch
   upstream: https://lore.kernel.org/r/20260605-cq8725s-soc-id-v1-2-bb1ef93de649@gmail.com
-- `patches/0034-arm64-dts-qcom-sm8750-Add-UART15.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0034-arm64-dts-qcom-sm8750-Add-UART15.patch
-  upstream: https://lore.kernel.org/r/20260605-sm8750-uart15-v1-1-93e660722e61@gmail.com
 - `patches/0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch
   upstream: https://lore.kernel.org/r/20260714-gpucc_dt_v6-v6-1-16bf5289572d@oss.qualcomm.com
@@ -635,10 +601,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0603-ASoC-codecs-wcd939x-keep-the-codec-resumed-while-a-ja.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0603-ASoC-codecs-wcd939x-keep-the-codec-resumed-while-a-ja.patch
   upstream: unknown
-- `patches/0060-ASoC-qcom-sc8280xp-enable-MI2S-bit-clock-on-BE-startup.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0060-ASoC-qcom-sc8280xp-enable-MI2S-bit-clock-on-BE-startup.patch
-  upstream: unknown
-  notes: Armada combined ROCKNIX's SM8750 clock-reference fix with Armada's Primary-MI2S clock handling while rebasing the shared driver onto Linux 7.1.
 - `patches/0072-ASoC-lpass-rx-macro-add-HPH-PCM-mode.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0072-ASoC-lpass-rx-macro-add-HPH-PCM-mode.patch
   upstream: unknown
@@ -678,10 +640,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0540-arm64-signal-reapply-the-ssbs-policy-on-sigreturn.patch`
   source: armada
   upstream: local
-- `patches/0618-drm-msm-dp-dont-fail-audio-prepare-when-display-off.patch`
-  source: https://github.com/ROCKNIX/distribution/pull/3187
-  upstream: unknown
-  notes: Imported unchanged from the linked ROCKNIX pull request.
 - `patches/0619-drm-msm-map-submitqueue-priority-onto-high-low.patch`
   source: armada
   upstream: local
@@ -837,30 +795,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0505a-arm64-unaligned-atomics-cover-the-load128-store-exclusive.patch`
   source: armada
   upstream: local
-- `patches/0557-ASoC-codecs-lpass-wsa-macro-switch-to-pm-clock-framework.patch`
-  source: https://git.kernel.org/torvalds/c/cd054a6e272caa97ab808ef6f5588749a1429108
-  upstream: https://patch.msgid.link/20260702-xo-sd-codec-v7-b4-v8-1-d39d0fdb7859@oss.qualcomm.com
-  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
-- `patches/0558-ASoC-codecs-lpass-va-macro-switch-to-pm-clock-framework.patch`
-  source: https://git.kernel.org/torvalds/c/eb667d0fbdd38d5a800b9e7aafc9a6c14530b9bf
-  upstream: https://patch.msgid.link/20260702-xo-sd-codec-v7-b4-v8-2-d39d0fdb7859@oss.qualcomm.com
-  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
-- `patches/0559-ASoC-codecs-lpass-wsa-macro-use-devm-clk-hw-register-for-mclk.patch`
-  source: https://git.kernel.org/torvalds/c/541735571578b84987868c5662089f73bac36895
-  upstream: https://patch.msgid.link/20260702-xo-sd-codec-v7-b4-v8-3-d39d0fdb7859@oss.qualcomm.com
-  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
-- `patches/0560-ASoC-codecs-lpass-tx-macro-switch-to-pm-clock-framework.patch`
-  source: https://git.kernel.org/torvalds/c/b9b23e72abef91ab4689f1467cefc2517042ab26
-  upstream: https://patch.msgid.link/20260707-xo-sd-codec-tx-rx-v2-1-f61b4622f97f@oss.qualcomm.com
-  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
-- `patches/0561-ASoC-codecs-lpass-rx-macro-switch-to-pm-clock-framework.patch`
-  source: https://git.kernel.org/torvalds/c/b05482e7ce1b110f86b08a99768ac41e4c9e4dfa
-  upstream: https://patch.msgid.link/20260707-xo-sd-codec-tx-rx-v2-2-f61b4622f97f@oss.qualcomm.com
-  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
-- `patches/0562-ASoC-codecs-lpass-tx-rx-macro-check-clk-set-rate-return-value.patch`
-  source: https://git.kernel.org/torvalds/c/b8ca90fafe6adc401601f91d1394ba76bacf67ed
-  upstream: https://patch.msgid.link/20260707-xo-sd-codec-tx-rx-v2-3-f61b4622f97f@oss.qualcomm.com
-  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
 - `patches/0563-ASoC-codecs-lpass-macro-force-runtime-suspend-across-system-sleep.patch`
   source: armada
   upstream: local
@@ -913,11 +847,94 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://git.kernel.org/next/linux-next/c/480ba24aa34031c898d0a711405664cd947bbee4
   upstream: https://patch.msgid.link/20261002130656.50577-1-26rote@gmail.com
   notes: After DPMS off/on or s2idle the MDP average bandwidth vote stayed 0 until a plane changed.
-- `patches/0580-Revert-wifi-ath12k-add-panic-handler.patch`
-  source: https://git.kernel.org/torvalds/c/05165f7b3b9ab6817fe216c24f90755b7c5e15f3
-  upstream: https://patch.msgid.link/20260612032332.2278338-1-yingying.tang@oss.qualcomm.com
-  notes: The panic notifier sleeps under RCU, turning a panic into a hang (and losing the ramoops record). Rebased: core.h context.
 - `patches/0546-interconnect-qcom-bcm-voter-debug-knob-to-ignore-the-built-in-sleep-keepalive.patch`
   source: armada
   upstream: local
   notes: Debug only. Runtime switch to drop the 0545 SN4 sleep keepalive for re-testing the s2idle wake hang.
+- `patches/0700-wifi-mac80211-fix-unauthorised-port-check-for-encap-.patch`
+  source: https://git.kernel.org/next/linux-next/c/d59b9bf7df49367e01b06e82dd0f6e7ad3be493c
+  upstream: https://patch.msgid.link/20260802105818.dd5da579813d.I51ed0121154bb652bebc97bb0597b1fae9ac978f@changeid
+- `patches/0701-wifi-mac80211-fix-key-selection-for-encap-offload-fr.patch`
+  source: https://git.kernel.org/next/linux-next/c/0e80db08668b560b3522849cb705623148bcd4b5
+  upstream: https://patch.msgid.link/20260802105818.0feb7ad61047.Ia506ca211176a3c466bc60e4cc3e506df34a4a67@changeid
+- `patches/0702-wifi-mac80211-don-t-send-encap-offload-frames-unencr.patch`
+  source: https://git.kernel.org/next/linux-next/c/a48daf145fed445d41ef422573411500785415c8
+  upstream: https://patch.msgid.link/20260802085818.1336616-7-johannes@sipsolutions.net
+  notes: ath12k uses 802.11 encapsulation offload; without this, mac80211 can send data frames unencrypted to a station that requires encryption.
+- `patches/0703-wifi-mac80211-drop-encap-offload-frames-with-a-taint.patch`
+  source: https://git.kernel.org/next/linux-next/c/c8ddbe1e8c43f6d008591c50f8be8de39cdce267
+  upstream: https://patch.msgid.link/20260802105818.870b6ef31374.Ib87175b55b9fd94c16ba6d9cd816b7a09248df87@changeid
+- `patches/0704-mac80211-tx-Use-info-flags-in-ieee80211_tx_h_select_.patch`
+  source: https://git.kernel.org/next/linux-next/c/5f2530a4df8e0573e54cc0f4175c06ecb810a4dd
+  upstream: https://patch.msgid.link/20260908094341.12196-1-spasswolf@web.de
+- `patches/0705-wifi-mac80211-don-t-reset-the-TXQ-scheduling-round-n.patch`
+  source: https://git.kernel.org/next/linux-next/c/8ea81827d3537db7cfcc82c008f052bb1bbe7567
+  upstream: https://patch.msgid.link/20260908144155.756569-1-julius@bairaktaris.de
+- `patches/0708-wifi-ath12k-fix-truncated-TX-buffer-DMA-address-in-M.patch`
+  source: https://git.kernel.org/next/linux-next/c/979ecb88ed3528e08dd7f87b90b029374226ca84
+  upstream: https://patch.msgid.link/20260818-ath12k-truncated-tx-dma-addr-v1-1-ead978969371@oss.qualcomm.com
+  notes: TX buffers mapped above 4 GB were handed to the firmware with the high address bits cleared.
+- `patches/0709-wifi-ath12k-fix-stale-skb-pointers-after-aligned-TX-.patch`
+  source: https://git.kernel.org/next/linux-next/c/6c40719489c8d799798989b15bc07b0700c132f8
+  upstream: https://patch.msgid.link/20260818-ath12k-uaf-for-aligned-tx-v1-1-d6ae195b15e7@oss.qualcomm.com
+- `patches/0710-wifi-ath12k-fix-DMA-unwind-for-ext-MSDU-descriptor-r.patch`
+  source: https://git.kernel.org/next/linux-next/c/4de5a8a0edddc453f1a4c93b6d9f09013a23b72e
+  upstream: https://patch.msgid.link/20260813-ext-msdu-fix-v1-1-c5e80ccd061a@oss.qualcomm.com
+- `patches/0711-wifi-ath12k-signal-regd-update-completion-when-reg-e.patch`
+  source: https://git.kernel.org/next/linux-next/c/f2576dc0f894ef33045ba7ed057ec417988bba8a
+  upstream: https://patch.msgid.link/20260729-ath12k-regd-wait-timeout-v1-1-504aa6e7e93c@oss.qualcomm.com
+- `patches/0712-soc-qcom-pmic_glink-Avoid-losing-early-rpmsg-probe.patch`
+  source: https://git.kernel.org/next/linux-next/c/1517efff0e9d21cc4c9cc7ffa1fcc30225e6b069
+  upstream: https://patch.msgid.link/20260720-topic-pmic_glink_defer-v1-1-94c0f233f2f7@oss.qualcomm.com
+  notes: If the rpmsg device appears before pmic_glink has probed, USB-C and battery reporting were lost for that boot.
+- `patches/0713-soc-qcom-pmic_glink-Fix-device-access-from-worker-du.patch`
+  source: https://git.kernel.org/next/linux-next/c/7d0767c5cd878707fd6711023731549c83563840
+  upstream: https://lore.kernel.org/r/20260819-b4-soc-qcom-pmic-glink-fix-device-access-on-worker-while-suspended-v3-1-169b00e0d9d4@oss.qualcomm.com
+- `patches/0714-drm-msm-Fix-vm_bo-use-after-free-in-with_vm_locks.patch`
+  source: https://git.kernel.org/next/linux-next/c/81878aa1a2f551f51a3d3aef2a9509503ec34d8b
+  upstream: https://lore.kernel.org/r/20260916175548.2089821-1-vulab@iscas.ac.cn
+- `patches/0716-clk-qcom-rcg2-Initialize-shared-floor-clock-state.patch`
+  source: https://git.kernel.org/next/linux-next/c/b9a14395e6edfeb3ce241f19f84991106efcd3b3
+  upstream: https://patch.msgid.link/20260917-topic-qc_clk_fixes-v1-1-5531cb00514b@oss.qualcomm.com
+- `patches/0717-clk-qcom-rcg2-Clear-force-enable-after-rate-failure.patch`
+  source: https://git.kernel.org/next/linux-next/c/ae881bdb1b1d081ea3febcc16fe6ee16d3a2a0d1
+  upstream: https://patch.msgid.link/20260917-topic-qc_clk_fixes-v1-3-5531cb00514b@oss.qualcomm.com
+- `patches/0718-clk-qcom-rcg2-Propagate-force-enable-status-errors.patch`
+  source: https://git.kernel.org/next/linux-next/c/396e900a120db686c3fe375df3b9fb6a62f173a6
+  upstream: https://patch.msgid.link/20260917-topic-qc_clk_fixes-v1-2-5531cb00514b@oss.qualcomm.com
+- `patches/0719-firmware-qcom_scm-handle-empty-PAS-resource-table.patch`
+  source: https://git.kernel.org/next/linux-next/c/abb698e1a973869a3f82a604d5ef7c6066f60725
+  upstream: https://patch.msgid.link/20260921195636.1925869-2-mukesh.ojha@oss.qualcomm.com
+- `patches/0721-pinctrl-qcom-spmi-gpio-make-direction-changes-exclus.patch`
+  source: https://git.kernel.org/next/linux-next/c/19fc4240358be2a25ce8e0a49a2819588ed61c5d
+  upstream: https://patch.msgid.link/20260927010913.1212600-1-shengchao.guo@oss.qualcomm.com
+- `patches/0722-drm-msm-a6xx-Honor-perfmode_bw-threshold-on-A8x.patch`
+  source: https://git.kernel.org/next/linux-next/c/db6a2e4a7ebd4378d03a97f4bef22f8c157240ad
+  upstream: https://lore.kernel.org/r/20260923-hawi-gpu-v1-1-0c3c79a1a470@oss.qualcomm.com
+  notes: Without it the A8xx GMU votes DDR performance mode (ACV) for every GPU bandwidth level and ignores the Adreno 830 perfmode_bw threshold in 0049.
+- `patches/0723-drm-msm-a6xx-Fix-RPMH-dependency-votes.patch`
+  source: https://git.kernel.org/next/linux-next/c/eab0aff8965ee17cf972a37eb6456032c45b7acd
+  upstream: https://lore.kernel.org/r/20260923-hawi-gpu-v1-3-0c3c79a1a470@oss.qualcomm.com
+- `patches/0724-drm-msm-a6xx-Fix-secondary-rail-vote-in-ARC-votes.patch`
+  source: https://git.kernel.org/next/linux-next/c/128a0edde50780ed9eb93ab5d2e18ca24c1f1c43
+  upstream: https://lore.kernel.org/r/20260923-hawi-gpu-v1-2-0c3c79a1a470@oss.qualcomm.com
+- `patches/0725-drm-msm-a8xx-enable-the-PC-block-clock-gating-on-Adreno-830.patch`
+  source: armada
+  upstream: local
+  notes: Applies the a8xx_gpu.c hunk of upstream's Adreno 830 support (https://git.kernel.org/next/linux-next/c/2c94d177a927a25d3eb111fe83694b5f84239069) to Armada's 0049 catalog entry; drop when 0049 is replaced by the upstream entry.
+- `patches/0726-phy-qualcomm-phy-qcom-eusb2-repeater-Fix-SMB-Power-l.patch`
+  source: https://lore.kernel.org/r/20260917-smb-repeater-power-leakage-v1-1-6d7311c3c03e@oss.qualcomm.com
+  upstream: https://lore.kernel.org/r/20260917-smb-repeater-power-leakage-v1-1-6d7311c3c03e@oss.qualcomm.com
+  notes: Posted, not yet merged. Found on Glymur's SMB2370; the Odin 3 uses the PMIH0108 repeater and the SM8550/SM8650 boards the PM8550B one, which the same exit path covers.
+- `patches/0727-drm-msm-dsi-fix-AHB-clock-staying-enabled-across-sus.patch`
+  source: https://lore.kernel.org/r/20261006-dsi-ahb-clk-suspend-fix-v1-1-67da848e1b0a@oss.qualcomm.com
+  upstream: https://lore.kernel.org/r/20261006-dsi-ahb-clk-suspend-fix-v1-1-67da848e1b0a@oss.qualcomm.com
+  notes: Posted, not yet merged. Releases disp_cc_mdss_ahb_clk (and its XO vote) in s2idle; replaces the earlier runtime-PM attempt, which caused display problems around suspend.
+- `patches/0730-soundwire-qcom-disable-the-interrupt-before-gating-the-clock.patch`
+  source: https://patchwork.kernel.org/project/linux-arm-msm/patch/20261009082639.22662-1-okerixx@gmail.com/
+  upstream: https://lore.kernel.org/r/20261009082639.22662-1-okerixx@gmail.com
+  notes: Posted, not yet merged. 0564 force-suspends the SoundWire controllers on every system sleep, which runs the clock-gating path this fixes once per suspend.
+- `patches/0731-Bluetooth-hci_qca-reset-the-in-band-sleep-state-on-power-off.patch`
+  source: https://patchwork.kernel.org/project/linux-arm-msm/patch/179163212446.46972.2306254853726299632@pm.me/
+  upstream: https://lore.kernel.org/r/179163212446.46972.2306254853726299632@pm.me
+  notes: Posted, not yet merged. The Odin 3's WCN7860 Bluetooth runs on hci_qca.

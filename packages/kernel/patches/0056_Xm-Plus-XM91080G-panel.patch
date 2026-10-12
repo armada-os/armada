@@ -12,12 +12,12 @@ Signed-off-by: Teguh Sobirin <teguh@sobir.in>
  create mode 100644 drivers/gpu/drm/panel/panel-boe-xm91080g.c
 
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index c667f5e4424f..3bcf710414dd 100644
+index cbdf7b8f7f7a..7260e57f105a 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -105,6 +105,16 @@ config DRM_PANEL_BOE_TV101WUM_LL2
- 	  Say Y here if you want to support for BOE TV101WUM-LL2
- 	  WUXGA PANEL DSI Video Mode panel
+@@ -126,6 +126,16 @@ config DRM_PANEL_CHIPONE_ICNA35XX
+ 	  around the Chipone ICNA3512 and ICNA3520 display controllers,
+ 	  such as some Tianma panels used in AYN Odin2 Portal and Thor.
  
 +config DRM_PANEL_BOE_XM91080G
 +	tristate "Xm-Plus XM91080G-based panels"
@@ -33,19 +33,20 @@ index c667f5e4424f..3bcf710414dd 100644
  	tristate "CHIPWEALTH CH13726A-based DSI panel"
  	depends on OF
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index 5306d33caead..4b64459f88b5 100644
+index 3b523cf37833..f65a79898604 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
-@@ -10,5 +10,6 @@ obj-$(CONFIG_DRM_PANEL_BOE_TH101MB31UIG002_28A) += panel-boe-th101mb31ig002-28a.o
+@@ -9,6 +9,7 @@ obj-$(CONFIG_DRM_PANEL_BOE_HIMAX8279D) += panel-boe-himax8279d.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TD4320) += panel-boe-td4320.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TH101MB31UIG002_28A) += panel-boe-th101mb31ig002-28a.o
  obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_LL2) += panel-boe-tv101wum-ll2.o
- obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
 +obj-$(CONFIG_DRM_PANEL_BOE_XM91080G) += panel-boe-xm91080g.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
+ obj-$(CONFIG_DRM_PANEL_CHIPONE_ICNA35XX) += panel-chipone-icna35xx.o
  obj-$(CONFIG_DRM_PANEL_CHIPWEALTH_CH13726A) += panel-chipwealth-ch13726a.o
- obj-$(CONFIG_DRM_PANEL_DSI_CM) += panel-dsi-cm.o
- obj-$(CONFIG_DRM_PANEL_LVDS) += panel-lvds.o
 diff --git a/drivers/gpu/drm/panel/panel-boe-xm91080g.c b/drivers/gpu/drm/panel/panel-boe-xm91080g.c
 new file mode 100644
-index 000000000000..bd8e0f8562c8
+index 000000000000..4cd028b28af7
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-boe-xm91080g.c
 @@ -0,0 +1,388 @@
@@ -438,5 +439,3 @@ index 000000000000..bd8e0f8562c8
 +MODULE_DESCRIPTION("DRM driver for Xm-Plus XM91080G based MIPI DSI panels");
 +MODULE_LICENSE("GPL");
 \ No newline at end of file
--- 
-2.34.1

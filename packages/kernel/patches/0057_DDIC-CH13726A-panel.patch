@@ -12,10 +12,10 @@ Signed-off-by: Teguh Sobirin <teguh@sobir.in>
  create mode 100644 drivers/gpu/drm/panel/panel-ddic-ch13726a.c
 
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index cc2b93322628..fd889664ff6b 100644
+index 7d3f4a3c823d..64ff6445d99d 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -157,6 +157,17 @@
+@@ -167,6 +167,17 @@ config DRM_PANEL_CHIPWEALTH_CH13726A
  	  Say Y here if you want to enable support for ChipWealth
  	  CH13726A-based display panels.
  
@@ -34,11 +34,11 @@ index cc2b93322628..fd889664ff6b 100644
  	tristate "EBBG FT8719 panel driver"
  	depends on GPIOLIB
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index 339a5cb9f31b..c5f4f5f7bd82 100644
+index 37dcc9d85e30..e693c8a8fc44 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
-@@ -14,6 +14,7 @@
- obj-$(CONFIG_DRM_PANEL_BOE_XM91080G) += panel-boe-xm91080g.o
+@@ -15,6 +15,7 @@ obj-$(CONFIG_DRM_PANEL_BOE_XM91080G) += panel-boe-xm91080g.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
  obj-$(CONFIG_DRM_PANEL_CHIPONE_ICNA35XX) += panel-chipone-icna35xx.o
  obj-$(CONFIG_DRM_PANEL_CHIPWEALTH_CH13726A) += panel-chipwealth-ch13726a.o
 +obj-$(CONFIG_DRM_PANEL_DDIC_CH13726A) += panel-ddic-ch13726a.o
@@ -47,7 +47,7 @@ index 339a5cb9f31b..c5f4f5f7bd82 100644
  obj-$(CONFIG_DRM_PANEL_SIMPLE) += panel-simple.o
 diff --git a/drivers/gpu/drm/panel/panel-ddic-ch13726a.c b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
 new file mode 100644
-index 000000000000..946ad32f9b82
+index 000000000000..ca7306efc2b4
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ddic-ch13726a.c
 @@ -0,0 +1,328 @@
@@ -379,5 +379,3 @@ index 000000000000..946ad32f9b82
 +
 +MODULE_DESCRIPTION("DRM driver for CH13726A DSI panels");
 +MODULE_LICENSE("GPL");
--- 
-2.34.1

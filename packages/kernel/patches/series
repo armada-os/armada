@@ -6,7 +6,6 @@
 0004-drm-msm-a6xx-Enable-IFPC-on-Adreno-740.patch
 0010-msm-resource-cleanup.patch
 0048-drm-msm-dsi-reparent-byte-pixel-src-to-xo-on-disable.patch
-0048a-drm-msm-dsi-round-byte-clock-rate-after-reparenting-to-PLL.patch
 0048b-drm-msm-dsi-fix-pll-init-in-bonded-mode.patch
 0049-drm-msm-dpu-panel-opt-in-8bpc-dither.patch
 0066-drm-msm-dpu-enable-inline-rotation.patch
@@ -21,7 +20,6 @@
 0028-drm-panel-Add-panel-driver-for-Chipone-ICNA35XX-base.patch
 0051-gpu-panel-add-Pocket-ACE-panel-driver.patch
 0052-gpu-panel-add-Pocket-DMG-panel-driver.patch
-0053-gpu-panel-st7703-add-Pocket-DS-lower-panel.patch
 0055_Synaptics-TD4328-LCD-panel.patch
 0057_DDIC-CH13726A-panel.patch
 0059-drm-panel-add-brightness-levels-helper.patch
@@ -39,8 +37,7 @@
 
 # ============== Panel power + backlight ==============
 0058_AYN-Odin2-Mini--backlight.patch
-0060-backlight-Add-SY7758-LED-driver.patch
-0060-dt-bindings-silergy-sy7758.patch
+0060-backlight-sy7758-make-the-enable-gpio-optional.patch
 0054-regulator-add-sgm3804-i2c-regulator-for-panel-power-.patch
 0056-backlight-aw99706-enable-hwen-before-chip-id-read.patch
 0057-backlight-aw99706-konkr-cfg7.patch
@@ -83,7 +80,6 @@
 1003-input-haptics-fix-rumble-bridge-atomic-sleep.patch
 1005-input-rsinput-quiesce-the-mcu-across-system-sleep.patch
 1006-tty-serial-qcom-geni-mask-non-console-irq-on-suspend.patch
-0534-serial-qcom-geni-add-force-suspend-resume-to-system-sleep-callbacks.patch
 1007-input-rsinput-drop-the-mcu-supply-across-system-sleep.patch
 1004-input-haptics-stop-zero-amplitude-immediately.patch
 1300-input-rsinput-axis-deadzone.patch
@@ -96,7 +92,6 @@
 0064-ASoC-wcd-mbhc-clear-stale-jack-report-on-mechanical-removal.patch
 0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch
 0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch
-0618-drm-msm-dp-dont-fail-audio-prepare-when-display-off.patch
 0619-drm-msm-map-submitqueue-priority-onto-high-low.patch
 0620-drm-msm-a6xx-hfi-irq-clears-only-the-cm3-fault.patch
 0621-drm-msm-a6xx-bound-the-gmu-wait-for-a-fault-devcoredump.patch
@@ -112,7 +107,6 @@
 
 # ============== SoC / Platform ==============
 20260424_neil_armstrong_arm64_dts_qcom_sm8_456_50_add_missing_cx_power_domain_to_gcc.patch
-v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0504-mailbox-qcom-ipcc-mask-summary-irq-for-suspend-to-ram.patch
 0505-msm_gem-lock-before-put_iova_spaces.patch
 0204-thermal-qcom-tsens-mask-lower-threshold-irqs-across-suspend.patch
@@ -163,12 +157,8 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 # ============== SM8650 (AYANEO Pocket S2, KONKR Pocket FIT) ==============
 0001-pcie-update-sm8650-dtsi.patch
 0006-add-hw_params-callback-function-to-drm_connector_hdmi_audio_ops.patch
-0007-ASoC-qcom-audioreach-compute-active-channel-maps.patch
-0008-ASoC-dt-bindings-qcom-sm8250-Add-Ayaneo-Pocket-S2.patch
-0009-ASoC-qcom-sc8280xp-add-Ayaneo-Pocket-S2-card.patch
 0010-ASoC-qcom-add-KONKR-Pocket-FIT-WSA2-card.patch
 0011-ASoC-qcom-audioreach-use-wsa-interface-for-sm8650-wsa2.patch
-v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0063-gpu-drm-panel-add-pocket-fit-panel.patch
 0064-input-touchscreen-add-rocknix-chipone-tddi.patch
 
@@ -202,7 +192,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 # ============== SM8750 (AYN Odin 3, KONKR Pocket FIT Elite) ==============
 0026-dt-bindings-arm-qcom-ids-Add-SoC-ID-for-CQ8725S.patch
 0027-soc-qcom-socinfo-Add-CQ8725S-SoC-ID.patch
-0034-arm64-dts-qcom-sm8750-Add-UART15.patch
 0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch
 0038-arm64-dts-qcom-sm8750-add-GPU-nodes.patch
 0038a-arm64-dts-qcom-sm8750-map-A8xx-RSCC-registers.patch
@@ -222,7 +211,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0517-usb-typec-mux-dont-swallow-EPROBE_DEFER.patch
 0519-usb-typec-ucsi-clear-USB-role.patch
 0603-ASoC-codecs-wcd939x-keep-the-codec-resumed-while-a-ja.patch
-0060-ASoC-qcom-sc8280xp-enable-MI2S-bit-clock-on-BE-startup.patch
 0072-ASoC-lpass-rx-macro-add-HPH-PCM-mode.patch
 0073-ASoC-wcd939x-add-HPH-PCM-HiFi-mode.patch
 0074-soundwire-qcom-PCM-data-port-format-enable.patch
@@ -235,13 +223,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0530-ASoC-qdsp6-release-AudioReach-graphs-across-system-suspend.patch
 0532-hwmon-pwm-fan-optionally-run-the-fan-while-charging-in-s2idle.patch
 
-# ============== LPASS clocks released in s2idle (7.3 backports + force suspend) ==============
-0557-ASoC-codecs-lpass-wsa-macro-switch-to-pm-clock-framework.patch
-0558-ASoC-codecs-lpass-va-macro-switch-to-pm-clock-framework.patch
-0559-ASoC-codecs-lpass-wsa-macro-use-devm-clk-hw-register-for-mclk.patch
-0560-ASoC-codecs-lpass-tx-macro-switch-to-pm-clock-framework.patch
-0561-ASoC-codecs-lpass-rx-macro-switch-to-pm-clock-framework.patch
-0562-ASoC-codecs-lpass-tx-rx-macro-check-clk-set-rate-return-value.patch
+# ============== LPASS clocks released in s2idle (force suspend; the pm_clk conversion is upstream since 7.3) ==============
 0563-ASoC-codecs-lpass-macro-force-runtime-suspend-across-system-sleep.patch
 0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch
 0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch
@@ -258,4 +240,31 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0577-wifi-ath12k-Reserve-space-for-a-string-terminator.patch
 0578-wifi-ath12k-Free-allocated-CE-IRQs-on-request_irq-fa.patch
 0579-drm-msm-dpu-compute-the-CRTC-bandwidth-from-the-stat.patch
-0580-Revert-wifi-ath12k-add-panic-handler.patch
+
+# ============== Upstream fixes not in Linux 7.3 (linux-next / posted) ==============
+0700-wifi-mac80211-fix-unauthorised-port-check-for-encap-.patch
+0701-wifi-mac80211-fix-key-selection-for-encap-offload-fr.patch
+0702-wifi-mac80211-don-t-send-encap-offload-frames-unencr.patch
+0703-wifi-mac80211-drop-encap-offload-frames-with-a-taint.patch
+0704-mac80211-tx-Use-info-flags-in-ieee80211_tx_h_select_.patch
+0705-wifi-mac80211-don-t-reset-the-TXQ-scheduling-round-n.patch
+0708-wifi-ath12k-fix-truncated-TX-buffer-DMA-address-in-M.patch
+0709-wifi-ath12k-fix-stale-skb-pointers-after-aligned-TX-.patch
+0710-wifi-ath12k-fix-DMA-unwind-for-ext-MSDU-descriptor-r.patch
+0711-wifi-ath12k-signal-regd-update-completion-when-reg-e.patch
+0712-soc-qcom-pmic_glink-Avoid-losing-early-rpmsg-probe.patch
+0713-soc-qcom-pmic_glink-Fix-device-access-from-worker-du.patch
+0714-drm-msm-Fix-vm_bo-use-after-free-in-with_vm_locks.patch
+0716-clk-qcom-rcg2-Initialize-shared-floor-clock-state.patch
+0717-clk-qcom-rcg2-Clear-force-enable-after-rate-failure.patch
+0718-clk-qcom-rcg2-Propagate-force-enable-status-errors.patch
+0719-firmware-qcom_scm-handle-empty-PAS-resource-table.patch
+0721-pinctrl-qcom-spmi-gpio-make-direction-changes-exclus.patch
+0722-drm-msm-a6xx-Honor-perfmode_bw-threshold-on-A8x.patch
+0723-drm-msm-a6xx-Fix-RPMH-dependency-votes.patch
+0724-drm-msm-a6xx-Fix-secondary-rail-vote-in-ARC-votes.patch
+0725-drm-msm-a8xx-enable-the-PC-block-clock-gating-on-Adreno-830.patch
+0726-phy-qualcomm-phy-qcom-eusb2-repeater-Fix-SMB-Power-l.patch
+0727-drm-msm-dsi-fix-AHB-clock-staying-enabled-across-sus.patch
+0730-soundwire-qcom-disable-the-interrupt-before-gating-the-clock.patch
+0731-Bluetooth-hci_qca-reset-the-in-band-sleep-state-on-power-off.patch

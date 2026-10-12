@@ -31,12 +31,14 @@ taken; the disable/enable pair is self-balanced regardless.
 Signed-off-by: jaewun <jaewun@users.noreply.github.com>
 ---
 diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_geni_serial.c
+index a851b8f0ef04..11d6163ae3c1 100644
 --- a/drivers/tty/serial/qcom_geni_serial.c
 +++ b/drivers/tty/serial/qcom_geni_serial.c
-@@ -1956,6 +1956,23 @@
+@@ -2092,6 +2092,23 @@ static int qcom_geni_serial_suspend(struct device *dev)
  	struct qcom_geni_private_data *private_data = uport->private_data;
-
- 	/*
+ 	int ret;
+ 
++	/*
 +	 * A peer that keeps streaming into a non-console geni UART across the
 +	 * suspend teardown (e.g. the gamepad MCU on irq 190) storms the RX IRQ
 +	 * once uart_suspend_port() sets uport->suspended: the ISR then returns
@@ -53,13 +55,12 @@ diff --git a/drivers/tty/serial/qcom_geni_serial.c b/drivers/tty/serial/qcom_gen
 +	if (!uart_console(uport))
 +		disable_irq(uport->irq);
 +
-+	/*
+ 	/*
  	 * This is done so we can hit the lowest possible state in suspend
  	 * even with no_console_suspend
- 	 */
-@@ -1974,6 +1991,9 @@
- 	struct qcom_geni_private_data *private_data = uport->private_data;
-
+@@ -2129,6 +2146,9 @@ static int qcom_geni_serial_resume(struct device *dev)
+ 	}
+ 
  	ret = uart_resume_port(private_data->drv, uport);
 +	/* Balance the disable_irq() taken in qcom_geni_serial_suspend(). */
 +	if (!uart_console(uport))

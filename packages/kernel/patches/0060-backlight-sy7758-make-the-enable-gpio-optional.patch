@@ -1,0 +1,24 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] backlight: sy7758: make the enable GPIO optional
+
+The AYANEO Pocket DS wires no discrete enable line to its SY7758, and
+requiring one leaves the whole lower DSI chain deferred. Boards that do
+describe the GPIO are unaffected.
+
+---
+--- a/drivers/video/backlight/sy7758.c
++++ b/drivers/video/backlight/sy7758.c
+@@ -184,8 +184,11 @@
+ 
+ 	fsleep(100);
+ 
+-	/* Get enable GPIO and set to high */
+-	sydev->gpio = devm_gpiod_get(dev, "enable", GPIOD_OUT_HIGH);
++	/*
++	 * Some boards route SY7758 EN through a dedicated GPIO, while Pocket DS
++	 * leaves the chip reachable without a separately-described enable pin.
++	 */
++	sydev->gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_HIGH);
+ 	if (IS_ERR(sydev->gpio))
+ 		return dev_err_probe(dev, PTR_ERR(sydev->gpio),
+ 				     "failed to get enable GPIO\n");

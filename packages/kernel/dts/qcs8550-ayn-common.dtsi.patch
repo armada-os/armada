@@ -3,7 +3,19 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
-@@ -51,7 +51,6 @@
+@@ -19,6 +19,11 @@
+ /delete-node/ &camera_mem;
+ /delete-node/ &ipa_fw_mem;
+ /delete-node/ &ipa_gsi_mem;
++
++/* Linux 7.3 points the SoC IPA node at the carve-out deleted above */
++&ipa {
++	/delete-property/ memory-region;
++};
+ /delete-node/ &mpss_dsm_mem;
+ /delete-node/ &mpss_mem;
+ /delete-node/ &q6_mpss_dtb_mem;
+@@ -51,7 +56,6 @@
  			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
  			linux,code = <KEY_VOLUMEUP>;
  			linux,can-disable;
@@ -11,7 +23,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		};
  	};
  
-@@ -467,7 +466,6 @@
+@@ -467,7 +471,6 @@
  		startup-delay-us = <10000>;
  
  		gpio = <&tlmm 99 GPIO_ACTIVE_HIGH>;
@@ -19,16 +31,18 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		regulator-boot-on;
  		enable-active-high;
  	};
-@@ -1096,7 +1094,7 @@
+@@ -1095,8 +1098,8 @@
+ 	status = "okay";
  };
  
- &pcieport0 {
+-&pcieport0 {
 -	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
++&pcie0_port0 {
 +	wake-gpios = <&tlmm 96 GPIO_ACTIVE_LOW>;
  	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
  
  	wifi@0 {
-@@ -1462,7 +1460,6 @@
+@@ -1462,7 +1465,6 @@
  	no-mmc;
  
  	qcom,dll-config = <0x0007442c>;
@@ -36,7 +50,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  	status = "okay";
  };
-@@ -1700,6 +1697,7 @@
+@@ -1700,6 +1702,7 @@
  
  	gamepad: gamepad {
  		compatible = "gamepad,rsinput";
@@ -44,7 +58,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  		gamepad-name = "AYN Odin2 Gamepad";
  		gamepad-bus = <0x0003>;
-@@ -1707,7 +1705,7 @@
+@@ -1707,7 +1710,7 @@
  		gamepad-pid = <0x3001>;
  		gamepad-rev = <0x0001>;
  
@@ -53,7 +67,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		enable-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
  		pinctrl-0 = <&mcu_en_active>;
  		pinctrl-names = "default";
-@@ -1765,3 +1763,18 @@
+@@ -1765,3 +1768,18 @@
  &xo_board {
  	clock-frequency = <76800000>;
  };

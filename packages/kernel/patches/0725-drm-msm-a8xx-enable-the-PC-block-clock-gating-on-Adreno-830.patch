@@ -1,0 +1,21 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] drm/msm/a8xx: enable the PC block clock gating on Adreno 830
+
+a8xx_set_hwcg() programs RBBM_CGC_0_PC for the X2-85 only. Upstream's
+Adreno 830 support (2c94d177a927, "drm/msm/a8xx: Add support for
+Adreno 830 GPU") programs it for the A830 as well, but the A830
+catalog entry Armada carries (0049) predates that and leaves the PC
+block clock gating at its reset value. Program it for the A830 too.
+---
+diff --git a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+--- a/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a8xx_gpu.c
+@@ -200,7 +200,7 @@ static void a8xx_set_hwcg(struct msm_gpu *gpu, bool state)
+ 	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
+ 	u32 val;
+ 
+-	if (adreno_is_x285(adreno_gpu) && state)
++	if ((adreno_is_x285(adreno_gpu) || adreno_is_a830(adreno_gpu)) && state)
+ 		gpu_write(gpu, REG_A8XX_RBBM_CGC_0_PC, 0x00000702);
+ 
+ 	gmu_write(gmu, REG_A6XX_GPU_GMU_AO_GMU_CGC_MODE_CNTL,

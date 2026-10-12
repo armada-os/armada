@@ -31,15 +31,6 @@ index 912525e9bca6..a8eccaebcf2d 100644
  			operating-points-v2 = <&pcie1_opp_table>;
  
  			status = "disabled";
-@@ -2288,7 +2284,7 @@ opp-32000000-4 {
- 				};
- 			};
- 
--			pcie@0 {
-+			pcie1_port0: pcie@0 {
- 				device_type = "pci";
- 				reg = <0x0 0x0 0x0 0x0 0x0>;
- 				bus-range = <0x01 0xff>;
 @@ -2296,6 +2292,8 @@ pcie@0 {
  				#address-cells = <3>;
  				#size-cells = <2>;
