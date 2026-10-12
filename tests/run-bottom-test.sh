@@ -10,7 +10,7 @@ GAMESCOPE_SERVICE="$ROOT/system_files/usr/lib/systemd/user/armada-bottom-gamesco
 SESSION_DROPIN="$ROOT/system_files/usr/lib/systemd/user/gamescope-session-plus@steam.service.d/30-armada-gamescope.conf"
 WAYDROID_INPUT_SETUP="$ROOT/system_files/usr/libexec/armada/waydroid-input-setup"
 FAKE_SUSPEND="$ROOT/system_files/usr/libexec/armada/fake-suspend"
-LAUNCH_STEAM="$ROOT/system_files/usr/libexec/armada/launch-steam"
+LAUNCH_STEAM="$ROOT/system_files/usr/lib/steam/steam"
 tmp="$(mktemp -d)"
 socket_pid=
 
@@ -191,7 +191,7 @@ env \
     STEAM_ROOT="$tmp/steam" \
     XDG_RUNTIME_DIR="$tmp/runtime" \
     GAMESCOPE_WAYLAND_DISPLAY=gamescope-secondary \
-    "$LAUNCH_STEAM" --desktop
+    "$LAUNCH_STEAM"
 [[ "$(readlink "$tmp/runtime/gamescope-primary")" == gamescope-0 ]]
 
 grep -Fxq 'Wants=armada-bottom-gamescope.service' "$SESSION_DROPIN"
