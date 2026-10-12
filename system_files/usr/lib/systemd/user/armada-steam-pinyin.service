@@ -1,0 +1,14 @@
+[Unit]
+Description=Steam gaming-mode IBus pinyin daemon
+After=gamescope-session-plus@steam.service
+BindsTo=gamescope-session-plus@steam.service
+PartOf=gamescope-session-plus@steam.service
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/steam-pinyin
+KillMode=control-group
+TimeoutStopSec=5
+
+[Install]
+WantedBy=gamescope-session-plus@steam.service

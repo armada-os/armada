@@ -102,6 +102,7 @@ systemctl --global enable steamos-manager.service
 systemctl --global enable steamos-manager-session-cleanup.service
 systemctl --global enable armada-steam-default-session.service
 systemctl --global enable armada-steam-charging-eta.service
+systemctl --global enable armada-steam-pinyin.service
 systemctl enable armada-bootimg-sync.service
 systemctl enable armada-esp-rename.service
 systemctl enable armada-boot-hotkeys.service
