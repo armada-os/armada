@@ -601,6 +601,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0603-ASoC-codecs-wcd939x-keep-the-codec-resumed-while-a-ja.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0603-ASoC-codecs-wcd939x-keep-the-codec-resumed-while-a-ja.patch
   upstream: unknown
+  notes: Armada holds only the TX SoundWire device (the source held RX and TX). MBHC reports through TX; the RX link suspends and is resumed on demand for impedance detection. Releasing TX as well loses plug events because the in-band wake from clock stop never raises swr_wake_irq on SM8750.
 - `patches/0072-ASoC-lpass-rx-macro-add-HPH-PCM-mode.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0072-ASoC-lpass-rx-macro-add-HPH-PCM-mode.patch
   upstream: unknown
