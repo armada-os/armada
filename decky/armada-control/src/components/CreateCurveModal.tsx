@@ -1,11 +1,10 @@
-import { DialogBody, DialogButton, DialogFooter, Field, ModalRoot, PanelSectionRow, TextField } from "@decky/ui";
+import { DialogBody, DialogButton, DialogControlsSection, DialogFooter, DialogHeader, Dropdown, Field, TextField } from "@decky/ui";
 import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { PseudoDropdown } from "./fanWidgets";
 import { t, translateLabel } from "../i18n";
 import { slugifyCurveName } from "../lib/fanCurve";
 import { clone, titleCase } from "../lib/util";
-import { styles } from "../styles";
+import { ArmadaModalRoot } from "./ArmadaModalRoot";
 import type { CurvesState } from "../types";
 
 export function CreateCurveModal({
@@ -46,44 +45,43 @@ export function CreateCurveModal({
   };
 
   return (
-    <ModalRoot onCancel={() => closeModal?.()}>
-      <style>{styles}</style>
+    <ArmadaModalRoot onCancel={() => closeModal?.()}>
       <DialogBody className="afc-scope">
-        <h2 className="afc-modal-title">{t("fanCurve.create")}</h2>
-        <PanelSectionRow>
-          <div className="afc-control-inset">
-            <Field
-              label={t("fanCurve.name")}
-              description={t("fanCurve.nameRequirements")}
-              childrenLayout="below"
-              childrenContainerWidth="max"
-            >
-              <TextField value={newName} onChange={(event) => setNewName(event.target.value)} />
-            </Field>
-          </div>
-        </PanelSectionRow>
+        <DialogHeader>{t("fanCurve.create")}</DialogHeader>
+        <DialogControlsSection>
+          <TextField
+            label={t("fanCurve.name")}
+            description={t("fanCurve.nameRequirements")}
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
+          />
+          <Field
+            label={t("fanCurve.base")}
+            childrenLayout="below"
+          >
+            <Dropdown
+              selectedOption={baseCurve}
+              rgOptions={names.map((curveName) => ({
+                data: curveName,
+                label: translateLabel(initial.fanCurves[curveName]?.label || titleCase(curveName)),
+              }))}
+              onChange={(option) => setBaseCurve(String(option.data))}
+            />
+          </Field>
+        </DialogControlsSection>
         {duplicateName ? (
           <div className="afc-modal-error">{t("fanCurve.nameExists", { name })}</div>
         ) : null}
-        <PseudoDropdown
-          label={t("fanCurve.base")}
-          value={baseCurve}
-          options={names.map((curveName) => ({
-            data: curveName,
-            label: translateLabel(initial.fanCurves[curveName]?.label || titleCase(curveName)),
-          }))}
-          onChange={setBaseCurve}
-        />
         <div className="afc-note">
           {t("fanCurve.createDescription")}
         </div>
       </DialogBody>
-      <DialogFooter>
-        <DialogButton onClick={() => closeModal?.()}>{t("common.cancel")}</DialogButton>
+      <DialogFooter className="armada-control-dialog-footer">
         <DialogButton onClick={createCurve} disabled={!canCreate}>
           {t("fanCurve.create")}
         </DialogButton>
+        <DialogButton onClick={() => closeModal?.()}>{t("common.cancel")}</DialogButton>
       </DialogFooter>
-    </ModalRoot>
+    </ArmadaModalRoot>
   );
 }

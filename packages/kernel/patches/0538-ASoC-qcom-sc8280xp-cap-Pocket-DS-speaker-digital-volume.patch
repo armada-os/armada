@@ -1,0 +1,30 @@
+From: Radical <radical@radical.fun>
+Subject: [PATCH] ASoC: qcom: sc8280xp: cap Pocket DS speaker digital volume
+
+With the WSA compander enabled, the Pocket DS speakers distort above
+-13 dB digital volume. Lower the WSA RX digital volume limit from 81
+to 71 on this board only.
+
+---
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -4,6 +4,7 @@
+ #include <dt-bindings/sound/qcom,q6afe.h>
+ #include <linux/clk.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <sound/soc.h>
+ #include <sound/soc-dapm.h>
+@@ -52,6 +53,11 @@
+ 		snd_soc_limit_volume(card, "WSA_RX1 Digital Volume", 81);
+ 		snd_soc_limit_volume(card, "SpkrLeft PA Volume", 17);
+ 		snd_soc_limit_volume(card, "SpkrRight PA Volume", 17);
++		/* Pocket DS speakers distort above -13 dB with the compander enabled. */
++		if (of_machine_is_compatible("ayaneo,pocketds")) {
++			snd_soc_limit_volume(card, "WSA_RX0 Digital Volume", 71);
++			snd_soc_limit_volume(card, "WSA_RX1 Digital Volume", 71);
++		}
+ 		break;
+ 	case DISPLAY_PORT_RX_0:
+ 		/* DISPLAY_PORT dai ids are not contiguous */

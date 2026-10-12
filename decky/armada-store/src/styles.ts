@@ -1,4 +1,15 @@
 export const styles = `
+      .armada-store-search { position: relative; }
+      .armada-store-search > span {
+        position: absolute;
+        top: 50%;
+        left: 12px;
+        transform: translateY(-50%);
+        pointer-events: none;
+        opacity: 0.65;
+        z-index: 1;
+      }
+      .armada-store-search input { padding-left: 40px !important; }
       .armada-store-row {
         display: flex;
         align-items: center;

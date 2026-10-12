@@ -27,6 +27,7 @@ ARG MESA_ANDROID_REF
 ARG LEPTON_REF
 ARG MESA_X86_REF
 ARG EXTEST_REF
+ARG ARMADA_AURORA_REF
 ARG ARMADA_SPLASH_REF
 ARG ARMADA_RGB_REF
 ARG UMTP_RESPONDER_REF
@@ -53,6 +54,7 @@ FROM ${MESA_ANDROID_REF} AS mesa-android
 FROM ${LEPTON_REF} AS lepton
 FROM ${MESA_X86_REF} AS mesa-x86
 FROM ${EXTEST_REF} AS extest
+FROM ${ARMADA_AURORA_REF} AS armada-aurora
 FROM ${ARMADA_SPLASH_REF} AS armada-splash
 FROM ${ARMADA_RGB_REF} AS armada-rgb
 FROM ${UMTP_RESPONDER_REF} AS umtp-responder
@@ -107,6 +109,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \
+    --mount=type=bind,from=armada-aurora,source=/rpms,target=/packages/armada-aurora \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \

@@ -1,0 +1,46 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: retroid: keep trigger conversion independent of calibration
+
+The MCU reports descending trigger readings. trigger_*_max is the
+calibrated evdev range, not the MCU release reference. Using it for both
+shifts every sample by the calibration correction as well as the
+advertised range, so full travel cannot reach 100 percent unless the
+fully pressed reading is zero, and repeated calibration makes the error
+worse.
+
+Keep the original 0x610 release reference for conversion and let the
+calibrated maximum describe the observed travel only, matching rsinput.
+
+--- a/drivers/input/joystick/retroid.c
++++ b/drivers/input/joystick/retroid.c
+@@ -69,11 +69,14 @@ module_param(rumble_enable, bool, 0660);
+ 
+ static int update_params=0;
+ 
+-static int trigger_left_max=0x610;
++/* MCU release reference; independent of the calibrated evdev maximum. */
++#define RETROID_TRIGGER_RELEASE 0x610
++
++static int trigger_left_max=RETROID_TRIGGER_RELEASE;
+ static int trigger_left_deadzone=0x0;
+ static int trigger_left_antideadzone=0x0;
+ 
+-static int trigger_right_max=0x610;
++static int trigger_right_max=RETROID_TRIGGER_RELEASE;
+ static int trigger_right_deadzone=0x0;
+ static int trigger_right_antideadzone=0x0;
+ 
+@@ -250,11 +253,11 @@ static void gamepad_input_handler(struct gamepad_device *dev,
+ 
+ 	int16_t value;
+ 
+-	value = (int16_t)(trigger_left_max - (data->data[2] | (data->data[3] << 8)));
++	value = (int16_t)(RETROID_TRIGGER_RELEASE - (data->data[2] | (data->data[3] << 8)));
+ 	input_report_abs(indev, ABS_HAT2X,
+ 			 ( value < trigger_left_deadzone )? 0 : value - trigger_left_antideadzone);
+ 
+-	value = (int16_t)(trigger_right_max - (data->data[4] | (data->data[5] << 8)));
++	value = (int16_t)(RETROID_TRIGGER_RELEASE - (data->data[4] | (data->data[5] << 8)));
+ 	input_report_abs(indev, ABS_HAT2Y,
+ 			 ( value < trigger_right_deadzone )? 0 : value - trigger_right_antideadzone);
+ 

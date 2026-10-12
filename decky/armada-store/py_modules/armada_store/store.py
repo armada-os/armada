@@ -56,6 +56,14 @@ def clear_plugin(app_id):
     _mutate_state(lambda s: s.setdefault("plugins", {}).pop(app_id, None))
 
 
+def record_android(app_id, app):
+    _mutate_state(lambda s: s.setdefault("android", {}).__setitem__(app_id, app))
+
+
+def clear_android(app_id):
+    _mutate_state(lambda s: s.setdefault("android", {}).pop(app_id, None))
+
+
 def record_shortcut(app_id, steam_appid):
     def mutate(state):
         state.setdefault("shortcuts", {})[app_id] = int(steam_appid)

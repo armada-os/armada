@@ -1,0 +1,17 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: odin2: keep the panel and touch IO supply on
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-odin2.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-odin2.dts
+@@ -330,6 +330,11 @@
+ 	};
+ };
+ 
++/* Must stay on in suspend: the panel draws current with its IO supply cut */
++&vreg_l12b_1p8 {
++	regulator-always-on;
++};
++
+ /*
+  * AYN Odin 2 has two extra back buttons (M1, M2) on the lower back of
+  * the device. They are plain active-low SoC TLMM GPIOs (M1 = GPIO_57,

@@ -19,7 +19,7 @@ Source3:        VkLayer_fossilize.json
 Source4:        lepton-armada
 Source5:        compatibilitytool.vdf
 Source6:        toolmanifest.vdf
-Source7:        launcher.patch
+Source7:        liblepton-armada.sh
 Source8:        overlay.tar
 
 BuildRequires:  systemd-rpm-macros
@@ -43,10 +43,9 @@ paths its scripts assume.
 %package -n lepton-armada
 Summary:        Lepton (Armada) compat tool, Lepton with controllers and a second display
 Requires:       lepton-guestos = %{version}-%{release}
-Requires:       patch
 
 %description -n lepton-armada
-Lepton (Armada) compat tool. On launch it patches a copy of Lepton's launcher
+Lepton (Armada) compat tool. On launch it wraps a copy of Lepton's launcher
 scripts to pass Steam Input's controllers to Android and to give Android the
 secondary screen as an external display, redone whenever Steam updates Lepton.
 
@@ -65,7 +64,8 @@ install -Dpm 0644 %{SOURCE3} %{buildroot}%{_datadir}/vulkan/guestos-android/VkLa
 install -dm 0755 %{buildroot}%{_prefix}/lib/android-sdk/platform-tools
 ln -s ../../../bin/adb %{buildroot}%{_prefix}/lib/android-sdk/platform-tools/adb
 install -Dpm 0755 %{SOURCE4} %{buildroot}%{_datadir}/steam/compatibilitytools.d/lepton-armada/lepton
-install -Dpm 0644 -t %{buildroot}%{_datadir}/steam/compatibilitytools.d/lepton-armada %{SOURCE5} %{SOURCE6} %{SOURCE7}
+install -Dpm 0644 -t %{buildroot}%{_datadir}/steam/compatibilitytools.d/lepton-armada %{SOURCE5} %{SOURCE6}
+install -Dpm 0644 %{SOURCE7} %{buildroot}%{_datadir}/steam/compatibilitytools.d/lepton-armada/liblepton.sh
 # Android 11 only, so these reach lepton-armada's copy and not the directory every Lepton mounts.
 install -dm 0755 %{buildroot}%{_datadir}/steam/compatibilitytools.d/lepton-armada/overlay
 tar -C %{buildroot}%{_datadir}/steam/compatibilitytools.d/lepton-armada/overlay -xf %{SOURCE8}

@@ -12,7 +12,7 @@ source /etc/os-release
 
 dnf install -y --nogpgcheck --repofrompath "terra,https://repos.fyralabs.com/terra${VERSION_ID}" terra-release
 dnf -y install --skip-unavailable \
-    anda anda-srpm-macros
+    anda anda-srpm-macros mold
 
 cat >/etc/rpm/macros.armada <<EOF
 %_buildhost armada-builder

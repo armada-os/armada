@@ -33,6 +33,8 @@
 0104a-drm-panel-visionox-vtdr6130-add-sm8250.patch
 0105-drm-panel-Add-Retroid-Pocket-Nova-panel.patch
 0106-drm-panel-il97680a-luminance-linear-backlight-scale.patch
+0107-drm-msm-dpu-AVR-variable-refresh-on-DSI-video-mode.patch
+0108-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch
 0064_Mangmi-Air-Y-Pro-panel.patch
 
 # ============== Panel power + backlight ==============
@@ -96,6 +98,9 @@
 0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch
 0618-drm-msm-dp-dont-fail-audio-prepare-when-display-off.patch
 0619-drm-msm-map-submitqueue-priority-onto-high-low.patch
+0620-drm-msm-a6xx-hfi-irq-clears-only-the-cm3-fault.patch
+0621-drm-msm-a6xx-bound-the-gmu-wait-for-a-fault-devcoredump.patch
+0622-drm-msm-a6xx-mask-the-hfi-interrupt-before-booting-the-gmu.patch
 
 # ============== LED / RGB ==============
 0030-leds-Add-driver-for-HEROIC-HTR3212.patch
@@ -103,6 +108,7 @@
 
 # ============== PWM ==============
 0054_sn3112-pwm-driver.patch
+0054c-pwm-sn3112-power-down-across-system-suspend.patch
 
 # ============== SoC / Platform ==============
 20260424_neil_armstrong_arm64_dts_qcom_sm8_456_50_add_missing_cx_power_domain_to_gcc.patch
@@ -115,6 +121,7 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0533-scsi-ufs-ufs-qcom-enable-only-lane-clocks-in-lane-clock-apis.patch
 0535-scsi-ufs-core-fast-abort-unsupported-query-idns.patch
 0536-scsi-ufs-core-dynamically-disable-timestamp-on-unsupported-devices.patch
+0537-usb-xhci-pci-renesas-let-the-controller-power-off-in-suspend.patch
 0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch
 0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch
 0543-PCI-qcom-let-the-suspend-opp-floor-be-skipped-for-debugging.patch
@@ -172,7 +179,9 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0009-qcom-spmi-haptics.patch
 0008-retroid-gamepad.patch
 0013-add-force-feedback.patch
+0008a-input-retroid-keep-trigger-conversion-independent-of-calibration.patch
 0060_Mangmi-Pocket-Max-SPI-joypad.patch
+0060b-input-mangmi-pocket-max-keep-trigger-conversion-independent-of-calibration.patch
 0063_Mangmi-Pocket-Max-HL7139-charge-pump.patch
 0011-qcom-pm8150b-charger.patch
 0005-sm8250-uart.patch
@@ -221,6 +230,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
 0613-ASoC-q6apm-scope-prepare-start-to-MI2S.patch
 0528-ASoC-qcom-sc8280xp-suspend-the-card-and-its-streams.patch
+0538-ASoC-qcom-sc8280xp-cap-Pocket-DS-speaker-digital-volume.patch
 0529-ASoC-qdsp6-q6apm-fail-the-graph-open-when-the-DSP-rejects-it.patch
 0530-ASoC-qdsp6-release-AudioReach-graphs-across-system-suspend.patch
 0532-hwmon-pwm-fan-optionally-run-the-fan-while-charging-in-s2idle.patch

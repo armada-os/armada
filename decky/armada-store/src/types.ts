@@ -14,7 +14,9 @@ export interface CatalogApp {
   category: string;
   icon: string;
   note: string;
-  installType: "flatpak" | "appimage" | "deckyplugin" | "system" | "";
+  installType: "flatpak" | "appimage" | "deckyplugin" | "system" | "android" | "";
+  imported: boolean;
+  canInstall?: boolean;
   desktopOnly: boolean;
   hasConfig: boolean;
   launch: LaunchSpec | null;
@@ -50,4 +52,9 @@ export interface Status {
   installed: Record<string, InstalledInfo>;
   shortcuts: Record<string, number>;
   pending: string[];
+}
+
+export interface AndroidPage {
+  kind: "bundle" | "cluster";
+  url: string;
 }

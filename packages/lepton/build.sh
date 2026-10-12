@@ -66,7 +66,6 @@ cat >/etc/rpm/macros.armada <<EOF
 %vendor Armada
 EOF
 
-cat /work/patches/launcher-*.patch >~/rpmbuild/SOURCES/launcher.patch
 (cd /work/prebuilt && sha256sum --check --strict ../prebuilt.sha256)
 mkdir /tmp/overlay
 cp -a /work/overlay/. /work/prebuilt/. /tmp/overlay/

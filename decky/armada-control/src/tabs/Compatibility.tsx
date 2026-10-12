@@ -1,22 +1,19 @@
 import {
-  ButtonItem,
   DialogBody,
   DialogButton,
+  DialogControlsSection,
   DialogFooter,
   Dropdown,
   Field,
-  Focusable,
-  ModalRoot,
   PanelSection,
-  PanelSectionRow,
   TextField,
-  ToggleField,
   showModal,
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { getCompatMappedAppids, reapplyPerf, restartGameMode, saveCompatApplied, saveTweaks } from "../backend";
-import { SelectEdit, SliderEdit } from "../components/widgets";
+import { ButtonRow, ControlRow, SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
+import { ArmadaModalRoot } from "../components/ArmadaModalRoot";
 import { getCurrentLocale, t, translateLabel } from "../i18n";
 import { findPreset, localized, resolveEnvValues } from "../lib/envPresets";
 import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
@@ -96,15 +93,15 @@ function ConfirmResetAllModal({ closeModal, onConfirm }: { closeModal?: () => vo
     onConfirm();
   };
   return (
-    <ModalRoot onCancel={closeModal}>
+    <ArmadaModalRoot onCancel={closeModal}>
       <DialogBody>
         {t("compatibility.resetAllDescription")}
       </DialogBody>
-      <DialogFooter>
+      <DialogFooter className="armada-control-dialog-footer">
         <DialogButton onClick={confirm}>{t("compatibility.resetAllGames")}</DialogButton>
         <DialogButton onClick={closeModal}>{t("common.cancel")}</DialogButton>
       </DialogFooter>
-    </ModalRoot>
+    </ArmadaModalRoot>
   );
 }
 
@@ -122,15 +119,15 @@ function ConfirmResetGameModal({
     onConfirm();
   };
   return (
-    <ModalRoot onCancel={closeModal}>
+    <ArmadaModalRoot onCancel={closeModal}>
       <DialogBody>
         {t("compatibility.resetGameDescription", { game: gameName })}
       </DialogBody>
-      <DialogFooter>
+      <DialogFooter className="armada-control-dialog-footer">
         <DialogButton onClick={confirm}>{t("compatibility.resetGame")}</DialogButton>
         <DialogButton onClick={closeModal}>{t("common.cancel")}</DialogButton>
       </DialogFooter>
-    </ModalRoot>
+    </ArmadaModalRoot>
   );
 }
 
@@ -146,15 +143,15 @@ function ConfirmGameModeRestartModal({
     onRestart();
   };
   return (
-    <ModalRoot onCancel={closeModal}>
+    <ArmadaModalRoot onCancel={closeModal}>
       <DialogBody>
         {t("compatibility.restartGameModeDescription")}
       </DialogBody>
-      <DialogFooter>
+      <DialogFooter className="armada-control-dialog-footer">
         <DialogButton onClick={restart}>{t("compatibility.restartGameMode")}</DialogButton>
         <DialogButton onClick={closeModal}>{t("common.later")}</DialogButton>
       </DialogFooter>
-    </ModalRoot>
+    </ArmadaModalRoot>
   );
 }
 
@@ -201,57 +198,57 @@ function EnvVarModal({
     closeModal?.();
   };
   return (
-    <ModalRoot onCancel={closeModal}>
+    <ArmadaModalRoot onCancel={closeModal}>
       <DialogBody>
-        {fromPresets ? (
-          <Field label={t("common.name")} childrenLayout="below" childrenContainerWidth="max">
-            <Dropdown
-              strDefaultLabel={t("compatibility.selectVariable")}
-              selectedOption={key}
-              rgOptions={presets.map((item) => ({ data: item.name, label: item.name }))}
-              onChange={(option) => pickPreset(String(option.data))}
+        <DialogControlsSection>
+          {fromPresets ? (
+            <Field label={t("common.name")} childrenLayout="below">
+              <Dropdown
+                strDefaultLabel={t("compatibility.selectVariable")}
+                selectedOption={key}
+                rgOptions={presets.map((item) => ({ data: item.name, label: item.name }))}
+                onChange={(option) => pickPreset(String(option.data))}
+              />
+            </Field>
+          ) : (
+            <TextField label={t("common.name")} value={key} onChange={(event) => setKey(event.target.value)} />
+          )}
+          {preset ? <Field description={localized(preset.description, locale)} /> : null}
+          {nameError ? <Field description={nameError} /> : null}
+          {preset?.options ? (
+            <Field label={t("common.value")} childrenLayout="below">
+              <Dropdown
+                strDefaultLabel={t("compatibility.selectValue")}
+                selectedOption={value}
+                rgOptions={preset.options.map((option) => ({ data: option.data, label: localized(option.label, locale) }))}
+                onChange={(option) => setValue(String(option.data))}
+              />
+            </Field>
+          ) : (
+            <TextField
+              label={t("common.value")}
+              description={preset?.example ? t("compatibility.exampleValue", { example: preset.example }) : undefined}
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
             />
-          </Field>
-        ) : (
-          <TextField label={t("common.name")} value={key} onChange={(event) => setKey(event.target.value)} />
-        )}
-        {preset ? <Field description={localized(preset.description, locale)} /> : null}
-        {nameError ? <Field description={nameError} /> : null}
-        {preset?.options ? (
-          <Field label={t("common.value")} childrenLayout="below" childrenContainerWidth="max">
-            <Dropdown
-              strDefaultLabel={t("compatibility.selectValue")}
-              selectedOption={value}
-              rgOptions={preset.options.map((option) => ({ data: option.data, label: localized(option.label, locale) }))}
-              onChange={(option) => setValue(String(option.data))}
-            />
-          </Field>
-        ) : (
-          <TextField
-            label={t("common.value")}
-            description={preset?.example ? t("compatibility.exampleValue", { example: preset.example }) : undefined}
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-          />
-        )}
+          )}
+        </DialogControlsSection>
       </DialogBody>
-      <DialogFooter>
-        <Focusable style={{ display: "flex", flexDirection: "row", gap: "8px", width: "100%" }}>
-          <DialogButton disabled={fromPresets && (!key || !value)} onClick={save}>{t("common.save")}</DialogButton>
-          {onDelete ? (
-            <DialogButton
-              onClick={() => {
-                onDelete();
-                closeModal?.();
-              }}
-            >
-              {t("common.delete")}
-            </DialogButton>
-          ) : null}
-          <DialogButton onClick={closeModal}>{t("common.cancel")}</DialogButton>
-        </Focusable>
+      <DialogFooter className="armada-control-dialog-footer">
+        <DialogButton disabled={fromPresets && (!key || !value)} onClick={save}>{t("common.save")}</DialogButton>
+        {onDelete ? (
+          <DialogButton
+            onClick={() => {
+              onDelete();
+              closeModal?.();
+            }}
+          >
+            {t("common.delete")}
+          </DialogButton>
+        ) : null}
+        <DialogButton onClick={closeModal}>{t("common.cancel")}</DialogButton>
       </DialogFooter>
-    </ModalRoot>
+    </ArmadaModalRoot>
   );
 }
 
@@ -737,7 +734,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       <div className="armada-subheader">{t("compatibility.game")}</div>
       <SelectEdit label={t("compatibility.cpuCores")} value={coresIsCustom ? "custom" : coresValue} options={coreOptions} onChange={onSelectCores} />
       {coresIsCustom ? (
-        <PanelSectionRow>
+        <ControlRow>
           <TextField
             label={t("compatibility.customCoresDescription")}
             value={coresText}
@@ -748,13 +745,13 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
               if (!cpulistError(text, cpuCount)) patchSettings({ cores: text });
             }}
           />
-        </PanelSectionRow>
+        </ControlRow>
       ) : null}
       {coresError && coresText ? <div className="armada-field-note">{coresError}</div> : null}
       {coresValue ? (
-        <ToggleField
+        <ToggleRow
           label={t("compatibility.wineCpuTopology")}
-          checked={values.wineTopology !== false}
+          value={values.wineTopology !== false}
           onChange={(on) => patchSettings({ wineTopology: on })}
         />
       ) : null}
@@ -775,7 +772,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         }}
       />
       {gsCoresIsCustom ? (
-        <PanelSectionRow>
+        <ControlRow>
           <TextField
             label={t("compatibility.customCores")}
             value={gsCoresText}
@@ -785,14 +782,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
               if (!cpulistError(text, cpuCount)) patchSettings({ gamescopeCores: text });
             }}
           />
-        </PanelSectionRow>
+        </ControlRow>
       ) : null}
       {gsCoresError && gsCoresText ? <div className="armada-field-note">{gsCoresError}</div> : null}
       <SliderEdit label={t("compatibility.nice")} value={values.gamescopeNice ?? 0} min={-20} max={19} step={1} onChange={(v) => patchSettings({ gamescopeNice: v })} />
       {editingDefault ? (
-        <ToggleField
+        <ToggleRow
           label={t("compatibility.vulkanRealtimeQueue")}
-          checked={!!tweaks.global.gamescopeVulkanRealtime}
+          value={!!tweaks.global.gamescopeVulkanRealtime}
           onChange={setGamescopeVulkanRealtime}
         />
       ) : null}
@@ -804,14 +801,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         onChange={(v) => patchSettings({ scheduler: String(v) || undefined })}
       />
       {hasGamePerfOverrides ? (
-        <ButtonItem layout="below" onClick={resetGamePerformance}>
+        <ButtonRow layout="below" onClick={resetGamePerformance}>
           {t("compatibility.resetPerformance")}
-        </ButtonItem>
+        </ButtonRow>
       ) : null}
       {runningSelectedGame ? (
-        <ButtonItem layout="below" onClick={() => { void onReapply(); }}>
+        <ButtonRow layout="below" onClick={() => { void onReapply(); }}>
           {t("compatibility.reapplyRunningGame")}
-        </ButtonItem>
+        </ButtonRow>
       ) : null}
       {reapplyStatus ? <Field label={t("common.status")} description={reapplyStatus} /> : null}
     </>
@@ -822,10 +819,10 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     <>
       {inheritedEnvEntries.length ? <div className="armada-subheader">{t("compatibility.defaultVariables")}</div> : null}
       {inheritedEnvEntries.map(([key, value]) => (
-        <ToggleField
+        <ToggleRow
           key={key}
           label={String(value) ? `${key}=${String(value)}` : key}
-          checked={ownEnv[key] !== null}
+          value={ownEnv[key] !== null}
           onChange={(on) => patchOwnEnv((next) => {
             if (on) delete next[key];
             else next[key] = null;
@@ -834,20 +831,20 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       ))}
       {inheritedEnvEntries.length ? <div className="armada-subheader">{t("compatibility.perGameVariables")}</div> : null}
       {ownEnvEntries.map(([key, value]) => (
-        <ButtonItem key={key} layout="below" onClick={() => openEnvVar(key)}>
+        <ButtonRow key={key} layout="below" onClick={() => openEnvVar(key)}>
           <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "left" }}>
             {value ? `${key}=${value}` : key}
           </div>
-        </ButtonItem>
+        </ButtonRow>
       ))}
       {config.envPresets.length ? (
-        <ButtonItem layout="below" onClick={() => openEnvVar(null, true)}>
+        <ButtonRow layout="below" onClick={() => openEnvVar(null, true)}>
           {t("compatibility.addCommonVariable")}
-        </ButtonItem>
+        </ButtonRow>
       ) : null}
-      <ButtonItem layout="below" onClick={() => openEnvVar(null)}>
+      <ButtonRow layout="below" onClick={() => openEnvVar(null)}>
         {t("compatibility.addCustomVariable")}
-      </ButtonItem>
+      </ButtonRow>
     </>
   );
 
@@ -861,7 +858,6 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         {editingDefault ? (
           <>
             <SelectEdit
-              labelBelow
               label={t("compatibility.defaultProton")}
               value={globalTool || activeGlobalTool}
               options={toolOptions}
@@ -877,9 +873,9 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
             {activeGlobalTool === FOLLOW_STEAM_COMPAT ? (
               <div className="armada-compat-note">{t("compatibility.followSteamDescription")}</div>
             ) : (
-              <ToggleField
+              <ToggleRow
                 label={t("compatibility.applyToNewGames")}
-                checked={tweaks.global.autoApplyCompat !== false}
+                value={tweaks.global.autoApplyCompat !== false}
                 onChange={(enabled) => {
                   setAutoApplyCompat(enabled);
                   patchSettings({ autoApplyCompat: enabled });
@@ -890,7 +886,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
           </>
         ) : (
           <>
-            <SelectEdit labelBelow label={t("compatibility.tool")} value={currentTool} options={perGameToolOptions} onChange={onSelectPerGameTool} />
+            <SelectEdit label={t("compatibility.tool")} value={currentTool} options={perGameToolOptions} onChange={onSelectPerGameTool} />
             <SelectEdit label={t("compatibility.gameResolution")} value={resolution} options={resolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamResolution} />
           </>
         )}
@@ -898,33 +894,33 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         <SelectEdit label={t("compatibility.fexPreset")} value={fexValue} options={fexOptions} onChange={onSelectFex} />
         {isCustom
           ? fexKnobs.map((knob) => (
-              <ToggleField key={knob.key} label={translateLabel(knob.label)} checked={fexConfig[knob.key] === "1"} onChange={(value) => setKnob(knob.key, value)} />
+              <ToggleRow key={knob.key} label={translateLabel(knob.label)} value={fexConfig[knob.key] === "1"} onChange={(value) => setKnob(knob.key, value)} />
             ))
           : null}
       </PanelSection>
       <PanelSection title={t("common.advanced")}>
-        <ButtonItem layout="below" onClick={() => setShowPerf((value) => !value)}>
+        <ButtonRow layout="below" onClick={() => setShowPerf((value) => !value)}>
           {showPerf ? t("compatibility.hidePerformance") : t("options.performance")}
-        </ButtonItem>
+        </ButtonRow>
         {showPerf ? <div className="armada-advanced-group">{perfControls}</div> : null}
-        <ButtonItem layout="below" onClick={() => setShowThunks((value) => !value)}>
+        <ButtonRow layout="below" onClick={() => setShowThunks((value) => !value)}>
           {showThunks ? t("compatibility.hideHostThunks") : t("compatibility.hostThunks")}
-        </ButtonItem>
+        </ButtonRow>
         {showThunks ? (
           <div className="armada-advanced-group">
             {thunkModules.map((thunk) => (
-              <ToggleField key={thunk.module} label={translateLabel(thunk.label)} checked={thunks[thunk.module] !== false} onChange={(value) => setThunk(thunk.module, value)} />
+              <ToggleRow key={thunk.module} label={translateLabel(thunk.label)} value={thunks[thunk.module] !== false} onChange={(value) => setThunk(thunk.module, value)} />
             ))}
           </div>
         ) : null}
-        <ButtonItem layout="below" onClick={() => setShowEnv((value) => !value)}>
+        <ButtonRow layout="below" onClick={() => setShowEnv((value) => !value)}>
           {showEnv ? t("compatibility.hideEnvironment") : t("compatibility.environment")}
-        </ButtonItem>
+        </ButtonRow>
         {showEnv ? <div className="armada-advanced-group">{envControls}</div> : null}
         {turnipDrivers.length > 1 ? (
-          <ButtonItem layout="below" onClick={() => setShowDrivers((value) => !value)}>
+          <ButtonRow layout="below" onClick={() => setShowDrivers((value) => !value)}>
             {showDrivers ? t("compatibility.hideDrivers") : t("compatibility.drivers")}
-          </ButtonItem>
+          </ButtonRow>
         ) : null}
         {showDrivers && turnipDrivers.length > 1 ? (
           <div className="armada-advanced-group">
@@ -935,15 +931,15 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
       </PanelSection>
       {!editingDefault ? (
         <PanelSection>
-          <ButtonItem layout="below" disabled={resettingGame || resettingAll} onClick={confirmResetGame}>
+          <ButtonRow layout="below" disabled={resettingGame || resettingAll} onClick={confirmResetGame}>
             {resettingGame ? t("common.resetting") : t("common.resetToDefault")}
-          </ButtonItem>
+          </ButtonRow>
         </PanelSection>
       ) : (
         <PanelSection>
-          <ButtonItem layout="below" disabled={resettingAll || resettingGame} onClick={confirmResetAllGames}>
+          <ButtonRow layout="below" disabled={resettingAll || resettingGame} onClick={confirmResetAllGames}>
             {resettingAll ? t("common.resetting") : t("compatibility.resetAllGames")}
-          </ButtonItem>
+          </ButtonRow>
         </PanelSection>
       )}
     </>

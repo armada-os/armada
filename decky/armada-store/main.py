@@ -1,9 +1,18 @@
 import asyncio
 
-from armada_store import catalog, jobs, postinstall, session, store, updates
+from armada_store import android, catalog, jobs, postinstall, session, store, updates
 
 
 class Plugin:
+    async def search_android(self, query, page=None, category=None):
+        return await asyncio.to_thread(android.search, query, page, category)
+
+    async def import_android(self, path):
+        return await asyncio.to_thread(android.import_local, path)
+
+    async def _unload(self):
+        await asyncio.to_thread(android.stop)
+
     # Offload blocking work to a thread so a slow call can't stall Decky's asyncio loop.
     async def get_catalog(self):
         return await asyncio.to_thread(catalog.catalog_payload)

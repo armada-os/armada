@@ -663,6 +663,19 @@ def action_inputplumber_intercept(request):
     return {"ok": True}
 
 
+def unit_active(unit):
+    return subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", unit], check=False, timeout=2).returncode == 0
+
+
+def action_reload_input_ranges(_request):
+    # InputPlumber reads evdev ranges only when it opens the controller.
+    if unit_active("inputplumber.service"):
+        run(["/usr/bin/systemctl", "restart", "inputplumber.service"], timeout=10)
+        # Joins the start job the restart queued, so this returns once the controller type is applied.
+        run(["/usr/bin/systemctl", "start", "armada-controller-type.service"], timeout=15)
+    return {"ok": True}
+
+
 def action_write_config(request):
     name = str(request.get("name", ""))
     text = request.get("text")
@@ -879,6 +892,7 @@ ACTIONS = {
     "set_sleep_mode": action_set_sleep_mode,
     "write_config": action_write_config,
     "reapply_perf": action_reapply_perf,
+    "reload_input_ranges": action_reload_input_ranges,
     "restart_game_mode": action_restart_game_mode,
 }
 

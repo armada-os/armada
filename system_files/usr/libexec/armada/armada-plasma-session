@@ -126,6 +126,11 @@ export QT_QPA_PLATFORMTHEME=KDE
 export DISABLE_GAMESCOPE_WSI=1
 plasmashell=/usr/bin/plasmashell
 export XDG_CONFIG_DIRS=/etc/xdg
+# xdg-document-portal has no mount path option and would mount over Game Mode's.
+export XDG_DATA_DIRS="/usr/share/armada/plasma/bus:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+install -d -m 0700 "$XDG_RUNTIME_DIR/armada-plasma"
+# The portal looks up sandboxed callers in Flatpak's instance directory.
+ln -sfn ../.flatpak "$XDG_RUNTIME_DIR/armada-plasma/.flatpak"
 if [[ "$shell" == mobile ]]; then
     plasmashell='/usr/bin/plasmashell -p org.kde.plasma.mobileshell'
     export XDG_CONFIG_DIRS="$HOME/.config/plasma-mobile:$XDG_CONFIG_DIRS"
@@ -167,6 +172,7 @@ exec "${ARMADA_DBUS_RUN_SESSION:-/usr/bin/dbus-run-session}" \
     /usr/bin/env XDG_CONFIG_HOME="$kwin_home" \
     "${ARMADA_KWIN_WAYLAND:-/usr/bin/kwin_wayland}" \
     --x11-display "$DISPLAY" \
+    --socket "armada-plasma-$surface" \
     --fullscreen \
     --no-lockscreen \
     --xwayland \
