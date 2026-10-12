@@ -46,7 +46,7 @@ diff --git a/drivers/gpu/drm/panel/panel-ayaneo-ar18.c b/drivers/gpu/drm/panel/p
 new file mode 100644
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ayaneo-ar18.c
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,283 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2026 danyi (AYANEO Pocket S Mini AR16 panel)
@@ -61,6 +61,7 @@ new file mode 100644
 +
 +#include <drm/drm_mipi_dsi.h>
 +#include <drm/drm_modes.h>
++#include <drm/drm_of.h>
 +#include <drm/drm_panel.h>
 +#include <drm/drm_probe_helper.h>
 +
@@ -272,7 +273,7 @@ new file mode 100644
 +		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
 +				     "failed to get reset GPIO\n");
 +
-+	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	ret = drm_of_get_panel_orientation(dev->of_node, &ctx->orientation);
 +	if (ret < 0 && ret != -ENODEV)
 +		return dev_err_probe(dev, ret, "failed to get orientation\n");
 +

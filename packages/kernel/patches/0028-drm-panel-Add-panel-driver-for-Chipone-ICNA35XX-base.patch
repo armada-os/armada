@@ -12,17 +12,15 @@ adding one. Kconfig and Makefile entries come from upstream.]
 ---
 --- a/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
 +++ b/drivers/gpu/drm/panel/panel-chipone-icna35xx.c
-@@ -21,9 +21,7 @@
- #include <drm/drm_crtc.h>
- #include <drm/drm_mipi_dsi.h>
+@@ -23,7 +23,6 @@
  #include <drm/drm_modes.h>
--#include <drm/drm_of.h>
+ #include <drm/drm_of.h>
  #include <drm/drm_panel.h>
 -#include <drm/drm_probe_helper.h>
  
  struct panel_info {
  	struct drm_panel panel;
-@@ -34,6 +32,8 @@
+@@ -34,6 +33,8 @@
  
  	struct gpio_desc *reset_gpio;
  	struct regulator_bulk_data *supplies;
@@ -31,7 +29,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  };
  
  struct panel_desc {
-@@ -65,36 +65,92 @@
+@@ -65,36 +66,92 @@
  	return container_of(panel, struct panel_info, panel);
  }
  
@@ -132,7 +130,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
  
  	return dsi_ctx.accum_err;
-@@ -104,24 +160,37 @@
+@@ -104,24 +161,37 @@
  {
  	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
  	struct drm_dsc_picture_parameter_set pps;
@@ -178,7 +176,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  
  	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0x9F, 0x01);
  	mipi_dsi_generic_write_seq_multi(&dsi_ctx, 0xB2, 0x00);
-@@ -134,30 +203,44 @@
+@@ -134,30 +204,44 @@
  
  	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
  	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
@@ -234,7 +232,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	{
  		/* 120Hz */
  		.clock = (1080 + 24 + 1 + 24) * (1920 + 28 + 1 + 28) * 120 / 1000,
-@@ -169,19 +252,30 @@
+@@ -169,19 +253,30 @@
  		.vsync_start = 1920 + 28,
  		.vsync_end = 1920 + 28 + 1,
  		.vtotal = 1920 + 28 + 1 + 28,
@@ -270,7 +268,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	.init_sequence = icna3512_init_sequence,
  	.dsc = {
  		.dsc_version_major = 0x1,
-@@ -195,16 +289,15 @@
+@@ -195,16 +290,15 @@
  	},
  };
  
@@ -291,7 +289,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	.init_sequence = icna3520_init_sequence,
  	.dsc = {
  		.dsc_version_major = 0x1,
-@@ -233,7 +326,7 @@
+@@ -233,7 +327,7 @@
  	struct panel_info *pinfo = to_panel_info(panel);
  	int ret;
  
@@ -300,7 +298,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	if (ret < 0) {
  		dev_err(panel->dev, "failed to enable regulators: %d\n", ret);
  		return ret;
-@@ -243,7 +336,7 @@
+@@ -243,7 +337,7 @@
  
  	ret = pinfo->desc->init_sequence(pinfo);
  	if (ret < 0) {
@@ -309,7 +307,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  		dev_err(panel->dev, "failed to initialize panel: %d\n", ret);
  		return ret;
  	}
-@@ -256,6 +349,8 @@
+@@ -256,6 +350,8 @@
  	struct panel_info *pinfo = to_panel_info(panel);
  	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
  
@@ -318,7 +316,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
  
  	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
-@@ -271,17 +366,54 @@
+@@ -271,17 +367,54 @@
  	struct panel_info *pinfo = to_panel_info(panel);
  
  	gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
@@ -375,7 +373,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  }
  
  static enum drm_panel_orientation icna35xx_get_orientation(struct drm_panel *panel)
-@@ -291,9 +423,19 @@
+@@ -291,9 +424,19 @@
  	return pinfo->orientation;
  }
  
@@ -395,7 +393,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	.unprepare = icna35xx_unprepare,
  	.get_modes = icna35xx_get_modes,
  	.get_orientation = icna35xx_get_orientation,
-@@ -302,31 +444,34 @@
+@@ -302,31 +445,34 @@
  static int icna35xx_bl_update_status(struct backlight_device *bl)
  {
  	struct mipi_dsi_device *dsi = bl_get_data(bl);
@@ -442,7 +440,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  }
  
  static const struct backlight_ops icna35xx_bl_ops = {
-@@ -353,16 +498,17 @@
+@@ -353,16 +499,17 @@
  	struct panel_info *pinfo;
  	int ret;
  
@@ -463,16 +461,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  
  	pinfo->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
  	if (IS_ERR(pinfo->reset_gpio))
-@@ -375,7 +521,7 @@
- 	pinfo->dsi = dsi;
- 	mipi_dsi_set_drvdata(dsi, pinfo);
- 
--	ret = drm_of_get_panel_orientation(dev->of_node, &pinfo->orientation);
-+	ret = of_drm_get_panel_orientation(dev->of_node, &pinfo->orientation);
- 	if (ret < 0) {
- 		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, ret);
- 		return ret;
-@@ -383,34 +529,38 @@
+@@ -383,34 +530,38 @@
  
  	pinfo->panel.prepare_prev_first = true;
  
@@ -526,7 +515,7 @@ adding one. Kconfig and Makefile entries come from upstream.]
  	.driver = {
  		.name = "panel-chipone-icna35xx",
  		.of_match_table = icna35xx_of_match,
-@@ -420,4 +570,4 @@
+@@ -420,4 +571,4 @@
  
  MODULE_AUTHOR("Teguh Sobirin <teguh@sobir.in>");
  MODULE_DESCRIPTION("DRM driver for Chipone ICNA35XX based MIPI DSI panels");

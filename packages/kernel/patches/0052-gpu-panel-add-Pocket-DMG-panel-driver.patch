@@ -48,7 +48,7 @@ new file mode 100644
 index 000000000000..f1bbbebd0f46
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-ar02-3inch.c
-@@ -0,0 +1,648 @@
+@@ -0,0 +1,649 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +// Copyright (c) 2025 FIXME
 +// Generated with linux-mdss-dsi-panel-driver-generator from vendor device tree:
@@ -63,6 +63,7 @@ index 000000000000..f1bbbebd0f46
 +
 +#include <drm/drm_mipi_dsi.h>
 +#include <drm/drm_modes.h>
++#include <drm/drm_of.h>
 +#include <drm/drm_panel.h>
 +#include <drm/drm_probe_helper.h>
 +
@@ -642,7 +643,7 @@ index 000000000000..f1bbbebd0f46
 +			  MIPI_DSI_CLOCK_NON_CONTINUOUS;
 +
 +	/* Orientation */
-+	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	ret = drm_of_get_panel_orientation(dev->of_node, &ctx->orientation);
 +	if (ret < 0) {
 +		dev_err(dev, "failed to get orientation %d\n", ret);
 +		return ret;
