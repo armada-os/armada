@@ -280,6 +280,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Keeps the RSInput MCU trigger release reference independent of the calibrated evdev maximum, fixing incomplete travel and deteriorating repeated calibration on AYN devices (issue #423).
+- `patches/1302-input-rsinput-bound-and-serialize-command-writes.patch`
+  source: armada
+  upstream: local
+  notes: Sends MCU commands with a write timeout under a TX lock and rejects status payloads shorter than the 14 bytes the parser reads.
 - `patches/0059-ASoC-aw88395-lib-skip-monitor-sections-in-V1-ACF-parse.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0059-ASoC-aw88395-lib-skip-monitor-sections-in-V1-ACF-parse.patch
   upstream: unknown
