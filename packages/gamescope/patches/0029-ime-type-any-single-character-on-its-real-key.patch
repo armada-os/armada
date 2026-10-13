@@ -1,0 +1,54 @@
+From: enij90 <226572015+enij90@users.noreply.github.com>
+Subject: [PATCH] ime: type any single character on its real key when the layout has it
+
+Steam's on-screen keyboard types through gamescope's input method. A single
+character is typed on its real key only when it is one byte, so every
+accented letter took the remapped-keycode path: gamescope maps a spare key
+(1, 2, ...) to the character for a moment and presses it. Clients that read
+keysyms get the character, but clients that forward the physical key, like
+a Moonlight stream to Windows, send that spare key: an Italian keyboard
+types 1 for è, à, ò, ù.
+
+Decode the whole character before looking for it in the layout, and allow
+AltGr (Mod5) as well, so with XKB_DEFAULT_LAYOUT matching the host the
+letters and symbols (@ #) go out on their real keys.
+
+---
+diff --git a/src/ime.cpp b/src/ime.cpp
+index 518ac02..8d57ffd 100644
+--- a/src/ime.cpp
++++ b/src/ime.cpp
+@@ -342,7 +342,8 @@ static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keys
+ 					continue;
+ 				}
+ 
+-				xkb_mod_mask_t allowed = WLR_MODIFIER_SHIFT | WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT;
++				// AltGr (Mod5) too: @ # and the euro sign on many layouts
++				xkb_mod_mask_t allowed = WLR_MODIFIER_SHIFT | WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT | WLR_MODIFIER_MOD5;
+ 				if ((mask & allowed) != mask) {
+ 					continue;
+ 				}
+@@ -367,11 +368,18 @@ static bool try_type_keysym(struct wlserver_input_method *ime, xkb_keysym_t keys
+ void type_text(struct wlserver_input_method *ime, const char *text)
+ {
+ 	// If possible, try to type the character without switching the keymap
+-	// ...unless we're already using a fancy keymap
+-	if (utf8_size(text) == 1 && text[1] == '\0' && ime->keys.empty()) {
+-		xkb_keysym_t keysym = keysym_from_ch(text[0]);
+-		if (keysym != XKB_KEY_NoSymbol && try_type_keysym(ime, keysym)) {
+-			return;
++	// ...unless we're already using a fancy keymap. Any single character, not
++	// only ASCII: with a matching layout (XKB_DEFAULT_LAYOUT) an accented
++	// letter is a real key, and clients that forward physical keys (game
++	// streaming) only get it right that way.
++	if (ime->keys.empty()) {
++		const char *rest = text;
++		uint32_t ch = utf8_decode(&rest);
++		if (ch != UTF8_INVALID && rest[0] == '\0') {
++			xkb_keysym_t keysym = keysym_from_ch(ch);
++			if (keysym != XKB_KEY_NoSymbol && try_type_keysym(ime, keysym)) {
++				return;
++			}
+ 		}
+ 	}
+ 

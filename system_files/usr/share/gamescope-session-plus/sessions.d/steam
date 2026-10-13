@@ -58,6 +58,47 @@ if [[ -r "$_armada_swipe_gestures_config" ]]; then
 fi
 unset _armada_swipe_gestures_config _armada_line
 
+# Steam's on-screen keyboard types through gamescope's keymap. Give it the
+# layout chosen for that keyboard (Steam setting, newest account), so a client
+# that forwards physical keys, like a game stream to a PC, gets accented
+# letters on their real keys. Latin layouts only; a value already in the
+# environment (e.g. ~/.config/environment.d) wins.
+if [[ -z "${XKB_DEFAULT_LAYOUT:-}" ]]; then
+    _armada_localconfig="$(ls -t "$HOME"/.local/share/Steam/userdata/*/config/localconfig.vdf 2>/dev/null | head -n 1)"
+    _armada_layout=""
+    if [[ -r "$_armada_localconfig" ]]; then
+        _armada_layout="$(grep -o 'currentLayout\\":[0-9]*' "$_armada_localconfig" | head -n 1 | grep -o '[0-9]*$')"
+    fi
+    _armada_variant=""
+    case "$_armada_layout" in
+        4) _armada_layout=cz ;;
+        5) _armada_layout=dk ;;
+        6) _armada_layout=fi ;;
+        7) _armada_layout=fr ;;
+        8) _armada_layout=de ;;
+        10) _armada_layout=hu ;;
+        11) _armada_layout=it ;;
+        14) _armada_layout=no ;;
+        15) _armada_layout=pl ;;
+        16) _armada_layout=pt ;;
+        17) _armada_layout=ro ;;
+        19) _armada_layout=es ;;
+        20) _armada_layout=se ;;
+        22) _armada_layout=tr; _armada_variant=f ;;
+        23) _armada_layout=tr ;;
+        25) _armada_layout=vn ;;
+        26) _armada_layout=us; _armada_variant=intl ;;
+        27) _armada_layout=us; _armada_variant=dvorak ;;
+        28) _armada_layout=us; _armada_variant=colemak ;;
+        *) _armada_layout="" ;;
+    esac
+    if [[ -n "$_armada_layout" ]]; then
+        export XKB_DEFAULT_LAYOUT="$_armada_layout"
+        [[ -n "$_armada_variant" ]] && export XKB_DEFAULT_VARIANT="$_armada_variant"
+    fi
+fi
+unset _armada_localconfig _armada_layout _armada_variant
+
 # Set up first time bootstrap status
 export STEAM_BOOTSTRAP_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/gamescope/bootstrap.cfg"
 
