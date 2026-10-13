@@ -852,6 +852,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Debug only. Runtime switch to drop the 0545 SN4 sleep keepalive for re-testing the s2idle wake hang.
+- `patches/0555-soc-qcom-aoss-add-a-raw-qmp-send-debugfs-file.patch`
+  source: armada
+  upstream: local
+  notes: Debug only. /sys/kernel/debug/qcom_aoss/send forwards a raw QMP message, used to start the AOP lpm_mon violator log (read back from 0xc320000) that shows which DRV blocks CX power collapse in suspend.
 - `patches/0700-wifi-mac80211-fix-unauthorised-port-check-for-encap-.patch`
   source: https://git.kernel.org/next/linux-next/c/d59b9bf7df49367e01b06e82dd0f6e7ad3be493c
   upstream: https://patch.msgid.link/20260802105818.dd5da579813d.I51ed0121154bb652bebc97bb0597b1fae9ac978f@changeid

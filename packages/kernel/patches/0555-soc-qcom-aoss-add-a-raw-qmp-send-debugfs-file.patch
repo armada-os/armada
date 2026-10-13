@@ -1,0 +1,55 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] soc: qcom: aoss: add a raw QMP send debugfs file
+
+With every HLOS vote released in the RPMh sleep set the Odin 3 still
+never reaches CXSD, so the blocker is another DRV. The AOP can log which
+DRVs block CX power collapse ("{class: lpm_mon, type: cxpc, ...}", read
+back from 0xc320000 as the vendor sys_pm_vx driver does), but starting
+it needs a QMP message the fixed debugfs knobs cannot send. Add a
+"send" file that forwards a raw message. Test only.
+---
+--- a/drivers/soc/qcom/qcom_aoss.c
++++ b/drivers/soc/qcom/qcom_aoss.c
+@@ -556,12 +556,42 @@
+ 	.write = qmp_debugfs_write,
+ };
+ 
++/* Test interface: send a raw message, e.g. to start the AOP lpm_mon log */
++static ssize_t qmp_debugfs_raw_write(struct file *file, const char __user *user_buf,
++				     size_t count, loff_t *pos)
++{
++	struct qmp *qmp = file->private_data;
++	char buf[QMP_MSG_LEN];
++	int ret;
++
++	if (!count || count >= sizeof(buf))
++		return -EINVAL;
++
++	if (copy_from_user(buf, user_buf, count))
++		return -EFAULT;
++	buf[count] = '\0';
++	strim(buf);
++
++	ret = qmp_send(qmp, "%s", buf);
++	if (ret < 0)
++		return ret;
++
++	return count;
++}
++
++static const struct file_operations qmp_debugfs_raw_fops = {
++	.open = simple_open,
++	.write = qmp_debugfs_raw_write,
++};
++
+ static void qmp_debugfs_create(struct qmp *qmp)
+ {
+ 	const struct qmp_debugfs_entry *entry;
+ 	int i;
+ 
+ 	qmp->debugfs_root = debugfs_create_dir("qcom_aoss", NULL);
++	debugfs_create_file("send", 0200, qmp->debugfs_root, qmp,
++			    &qmp_debugfs_raw_fops);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(qmp->debugfs_files); i++) {
+ 		entry = &qmp_debugfs_entries[i];
