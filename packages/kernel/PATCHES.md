@@ -635,6 +635,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0530-ASoC-qdsp6-release-AudioReach-graphs-across-system-suspend.patch`
   source: armada
   upstream: local
+- `patches/0531-ASoC-qcom-sc8280xp-release-the-board-i2s-clock-across-system-suspend.patch`
+  source: armada
+  upstream: local
+  notes: A PCM still open at suspend (on the Odin 3, the power key's UI sound) kept the q6prm "i2s_clk" enabled, so the ADSP's AUDIO DRV blocked CX power collapse for the whole sleep. The card now drops the clock in suspend_post and restores it in resume_pre.
 - `patches/0532-hwmon-pwm-fan-optionally-run-the-fan-while-charging-in-s2idle.patch`
   source: armada
   upstream: local
