@@ -942,8 +942,4 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0732-arm64-dts-qcom-disable-the-qce-crypto-engine.patch`
   source: armada
   upstream: local
-  notes: Linux 7.3 made CRYPTO_DEV_QCE depend on BROKEN. With fw_devlink.strict=1 the never-probing crypto@1dfa000 kept the interconnect providers out of sync_state, so every BCM stayed at its maximum vote, asleep included.
-- `patches/0733-clk-qcom-dispcc-sm8750-keep-the-mdss-gdsc-on.patch`
-  source: armada
-  upstream: local
-  notes: Workaround. The SM8750 display does not come back after mdss_gdsc collapses (first DSI bring-up leaves the command engine stuck; resume can block in dpm_complete). Drop once the DSI restore path is fixed.
+  notes: Linux 7.3 made CRYPTO_DEV_QCE depend on BROKEN. With fw_devlink.strict=1 the never-probing crypto@1dfa000 kept the interconnect providers out of sync_state, so every BCM stayed at its maximum vote, asleep included. It is also what broke the SM8750 display on 7.3: MDSS does not survive a power collapse while the multimedia NoC is still voted on, so every blank and suspend left the DSI command engine stuck. Any other multimedia NoC user (video decoder, camera) active across a display power cycle still triggers that.
