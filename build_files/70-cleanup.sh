@@ -50,6 +50,7 @@ fi
 for package in \
     armada-jupiter-hw-support \
     armada-splash \
+    armada-logos \
     fex-emu-utils \
     terra-gamescope \
     terra-gamescope-libs \
