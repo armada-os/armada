@@ -361,11 +361,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0544-interconnect-qcom-bcm-voter-debug-sleep-keepalive-for-named-bcms.patch`
   source: armada
   upstream: local
-  notes: Test knob. icc_bcm_voter.sleep_keepalive_bcms (default empty) keeps a one-unit sleep vote on the listed BCMs, to find the minimal suspend floor.
-- `patches/0545-interconnect-qcom-sm8750-keep-sn4-in-the-sleep-set.patch`
-  source: armada
-  upstream: local
-  notes: Fixes the SM8750 s2idle wake hang: SN4 (PCIe aggregate NoC) must stay nonzero in the APPS sleep set. Replaces the 0521 PCIe suspend OPP floor.
+  notes: Test knob. icc_bcm_voter.sleep_keepalive_bcms (default empty) keeps a one-unit sleep vote on the listed BCMs, to find the minimal suspend floor. `SN4` restores the old SM8750 sleep keepalive at runtime if an s2idle wake hang ever needs ruling out.
 - `patches/0514-PCI-qcom-honor-iommu-map-cell-count.patch`
   source: https://lkml.iu.edu/2609.0/16096.html
   upstream: https://lore.kernel.org/r/20260907143349.317495-1-mani@kernel.org
@@ -558,6 +554,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0542-arm64-dts-qcom-sm8750-describe-the-tcsr-download-mode-cookie.patch`
   source: armada
   upstream: local
+- `patches/0557-arm64-dts-qcom-sm8750-add-the-soccp.patch`
+  source: armada
+  upstream: local
+  notes: Companion DT for 0556: the SoCCP remoteproc, its SMP2P edge and the TCSR D-state register (needs the `tcsr` syscon from 0542). Enabled in the SoC file so every SM8750 board gets at least the fallback bus vote; a board sets `firmware-name` to get the reload.
 - `patches/0049-drm-msm-a8xx-add-adreno-830-catalog.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0049-drm-msm-a8xx-add-adreno-830-catalog.patch
   upstream: unknown
@@ -848,14 +848,14 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://git.kernel.org/next/linux-next/c/480ba24aa34031c898d0a711405664cd947bbee4
   upstream: https://patch.msgid.link/20261002130656.50577-1-26rote@gmail.com
   notes: After DPMS off/on or s2idle the MDP average bandwidth vote stayed 0 until a plane changed.
-- `patches/0546-interconnect-qcom-bcm-voter-debug-knob-to-ignore-the-built-in-sleep-keepalive.patch`
-  source: armada
-  upstream: local
-  notes: Debug only. Runtime switch to drop the 0545 SN4 sleep keepalive for re-testing the s2idle wake hang.
 - `patches/0555-soc-qcom-aoss-add-a-raw-qmp-send-debugfs-file.patch`
   source: armada
   upstream: local
   notes: Debug only. /sys/kernel/debug/qcom_aoss/send forwards a raw QMP message, used to start the AOP lpm_mon violator log (read back from 0xc320000) that shows which DRV blocks CX power collapse in suspend.
+- `patches/0556-remoteproc-qcom-pas-manage-the-sm8750-soccp.patch`
+  source: armada
+  upstream: local
+  notes: Fixes the SM8750 s2idle wake hang at its cause and replaces the SN4 sleep keepalive (and the 0521 PCIe suspend OPP floor before it). The bootloader's early SoCCP image sits in D0 behind the system NoC with no bus vote; the driver reloads soccp.mbn, which parks itself in D3, and the SoC then also reaches CX shutdown and DDR low power in suspend. Until the TCSR D-state register shows D3 the driver holds the SoCCP's path to DDR itself, so a board without soccp.mbn (Pocket FIT Elite today) still wakes, without the deeper sleep. Odin 3 firmware: `qcom/sm8750/ayn/odin3/soccp.mbn`, from the device's modem partition.
 - `patches/0700-wifi-mac80211-fix-unauthorised-port-check-for-encap-.patch`
   source: https://git.kernel.org/next/linux-next/c/d59b9bf7df49367e01b06e82dd0f6e7ad3be493c
   upstream: https://patch.msgid.link/20260802105818.dd5da579813d.I51ed0121154bb652bebc97bb0597b1fae9ac978f@changeid

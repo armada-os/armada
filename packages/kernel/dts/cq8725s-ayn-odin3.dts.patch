@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering and codec rail sleep modes
+Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering, codec rail sleep modes and the SoCCP firmware
 
 --- a/arch/arm64/boot/dts/qcom/cq8725s-ayn-odin3.dts
 +++ b/arch/arm64/boot/dts/qcom/cq8725s-ayn-odin3.dts
@@ -13,7 +13,7 @@ Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering and codec rail sl
  	reset-gpios = <&tlmm 98 GPIO_ACTIVE_LOW>;
  
  	vddio-supply = <&vreg_l12b_1p8>;
-@@ -350,3 +353,39 @@
+@@ -350,3 +353,44 @@
  		};
  	};
  };
@@ -52,4 +52,9 @@ Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering and codec rail sl
 +		regulator-on-in-suspend;
 +		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
 +	};
++};
++
++/* Replaces the bootloader's early SoCCP image, which blocks SoC deep sleep */
++&remoteproc_soccp {
++	firmware-name = "qcom/sm8750/ayn/odin3/soccp.mbn";
 +};

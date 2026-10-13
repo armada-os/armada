@@ -1,0 +1,222 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] remoteproc: qcom: pas: manage the SM8750 SoCCP
+
+The SM8750 bootloader leaves an early SoCCP image running. It stays in
+D0, ignores SMP2P and has no bus vote of its own. The SoCCP sits on the
+aggre2 NoC behind the system NoC, and an s2idle wake from a full CPU
+subsystem power collapse hangs whenever every system NoC vote is 0 in
+the APPS sleep set. The vendor kernel reloads soccp.mbn through PAS
+(id 51) at boot; that image parks itself in D3 and no longer needs the
+bus, after which the SoC also reaches CX shutdown and DDR low power in
+suspend.
+
+Add the SM8750 SoCCP with the vendor's PAS id and crash-reason SMEM
+item and the CX/MX proxy domains used for the Kaanapali SoCCP, and boot
+it automatically.
+
+Until that image is in D3, vote the SoCCP's path to DDR on its behalf:
+take a second handle on the node's interconnect path at probe and vote
+it with the vendor's low-SVS bandwidth. The vote is dropped only when
+the D-state register named by qcom,soccp-dstate (TCSR, 2 = D0, 4 = D1,
+8 = D3) shows D3, checked at handover and again when a system suspend
+is prepared. A board without the firmware, a failed load, or an image
+that never reaches D3 therefore keeps the vote, which holds SN0 and SN3
+(and SH0, SH1, MC0) in the sleep set and avoids the hang at the cost of
+the deeper sleep states.
+---
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -10,9 +10,11 @@
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/firmware.h>
++#include <linux/interconnect.h>
+ #include <linux/interrupt.h>
+ #include <linux/iommu.h>
+ #include <linux/kernel.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+@@ -21,6 +23,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
++#include <linux/regmap.h>
+ #include <linux/firmware/qcom/qcom_pas.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/regulator/consumer.h>
+@@ -63,6 +66,7 @@
+ 	bool region_assign_shared;
+ 	int region_assign_vmid;
+ 	bool early_boot;
++	bool boot_bus_vote;
+ 	bool needs_tzmem;
+ };
+ 
+@@ -123,6 +127,12 @@
+ 
+ 	struct qcom_pas_context *pas_ctx;
+ 	struct qcom_pas_context *dtb_pas_ctx;
++
++	/* Bus vote for an image the bootloader left running, see boot_bus_vote */
++	struct icc_path *boot_path;
++	struct regmap *dstate;
++	u32 dstate_reg;
++	bool boot_voted;
+ };
+ 
+ static void qcom_pas_segment_dump(struct rproc *rproc,
+@@ -388,10 +398,72 @@
+ 	return ret;
+ }
+ 
++#define SOCCP_DSTATE_D3		BIT(3)
++#define SOCCP_BOOT_KBPS		1200
++#define SOCCP_D3_POLL_US		(10 * USEC_PER_MSEC)
++
++/*
++ * The SM8750 bootloader leaves an early SoCCP image running. It stays in D0,
++ * ignores SMP2P and has no bus vote of its own, and the SoC hangs on wake
++ * from a full power collapse unless the system NoC is kept on for it. Vote
++ * the SoCCP's path to DDR on its behalf, in every RPMh set, until the image
++ * loaded here has parked itself in D3. Without that image, or without the
++ * D-state register, the vote is simply kept.
++ */
++static int qcom_pas_boot_vote(struct qcom_pas *pas)
++{
++	struct device *dev = pas->dev;
++	int ret;
++
++	pas->boot_path = devm_of_icc_get(dev, NULL);
++	if (IS_ERR(pas->boot_path))
++		return dev_err_probe(dev, PTR_ERR(pas->boot_path),
++				     "failed to acquire the boot interconnect path\n");
++
++	pas->dstate = syscon_regmap_lookup_by_phandle_args(dev->of_node, "qcom,soccp-dstate",
++							   1, &pas->dstate_reg);
++	if (IS_ERR(pas->dstate)) {
++		dev_warn(dev, "no D-state register, the boot bus vote stays\n");
++		pas->dstate = NULL;
++	}
++
++	ret = icc_set_bw(pas->boot_path, SOCCP_BOOT_KBPS, SOCCP_BOOT_KBPS);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to vote the boot interconnect path\n");
++
++	pas->boot_voted = true;
++
++	return 0;
++}
++
++/* Drop the boot vote once the D-state register shows D3; true when dropped */
++static bool qcom_pas_boot_vote_release(struct qcom_pas *pas)
++{
++	u32 val = 0;
++
++	if (!pas->boot_voted)
++		return true;
++
++	if (!pas->dstate)
++		return false;
++
++	if (regmap_read_poll_timeout(pas->dstate, pas->dstate_reg, val,
++				     val & SOCCP_DSTATE_D3, 200, SOCCP_D3_POLL_US))
++		return false;
++
++	icc_set_bw(pas->boot_path, 0, 0);
++	pas->boot_voted = false;
++	dev_info(pas->dev, "in D3, boot bus vote dropped\n");
++
++	return true;
++}
++
+ static void qcom_pas_handover(struct qcom_q6v5 *q6v5)
+ {
+ 	struct qcom_pas *pas = container_of(q6v5, struct qcom_pas, q6v5);
+ 
++	qcom_pas_boot_vote_release(pas);
++
+ 	if (pas->px_supply)
+ 		regulator_disable(pas->px_supply);
+ 	if (pas->cx_supply)
+@@ -908,6 +980,12 @@
+ 		goto unassign_mem;
+ 	pas->proxy_pd_count = ret;
+ 
++	if (desc->boot_bus_vote) {
++		ret = qcom_pas_boot_vote(pas);
++		if (ret)
++			goto detach_proxy_pds;
++	}
++
+ 	ret = qcom_q6v5_init(&pas->q6v5, pdev, rproc, desc->crash_reason_smem,
+ 			     desc->load_state, qcom_pas_handover);
+ 	if (ret)
+@@ -979,6 +1057,24 @@
+ 	device_init_wakeup(pas->dev, false);
+ }
+ 
++/*
++ * An image that parks itself only after the handover is caught here, before
++ * the sleep set is flushed.
++ */
++static int qcom_pas_pm_prepare(struct device *dev)
++{
++	struct qcom_pas *pas = dev_get_drvdata(dev);
++
++	if (!qcom_pas_boot_vote_release(pas) && pas->rproc->state == RPROC_RUNNING)
++		dev_warn_once(dev, "not in D3, keeping the boot bus vote\n");
++
++	return 0;
++}
++
++static const struct dev_pm_ops qcom_pas_pm_ops = {
++	.prepare = pm_sleep_ptr(qcom_pas_pm_prepare),
++};
++
+ static const struct qcom_pas_data adsp_resource_init = {
+ 	.crash_reason_smem = 423,
+ 	.firmware_name = "adsp.mdt",
+@@ -1763,6 +1859,25 @@
+ 	.region_assign_vmid = QCOM_SCM_VMID_MSS_MSA,
+ };
+ 
++/*
++ * Started by the bootloader with an early image that Linux cannot manage;
++ * loading soccp.mbn replaces it. See qcom_pas_boot_vote().
++ */
++static const struct qcom_pas_data sm8750_soccp_resource = {
++	.crash_reason_smem = 656,
++	.firmware_name = "soccp.mbn",
++	.pas_id = 51,
++	.proxy_pd_names = (char*[]){
++		"cx",
++		"mx",
++		NULL
++	},
++	.ssr_name = "soccp",
++	.sysmon_name = "soccp",
++	.auto_boot = true,
++	.boot_bus_vote = true,
++};
++
+ static const struct qcom_pas_data kaanapali_soccp_resource = {
+ 	.crash_reason_smem = 656,
+ 	.firmware_name = "soccp.mbn",
+@@ -1906,6 +2021,7 @@
+ 	{ .compatible = "qcom,sm8650-cdsp-pas", .data = &sm8650_cdsp_resource },
+ 	{ .compatible = "qcom,sm8650-mpss-pas", .data = &sm8650_mpss_resource },
+ 	{ .compatible = "qcom,sm8750-mpss-pas", .data = &sm8750_mpss_resource },
++	{ .compatible = "qcom,sm8750-soccp-pas", .data = &sm8750_soccp_resource },
+ 	{ .compatible = "qcom,x1e80100-adsp-pas", .data = &x1e80100_adsp_resource },
+ 	{ .compatible = "qcom,x1e80100-cdsp-pas", .data = &x1e80100_cdsp_resource },
+ 	{ },
+@@ -1918,6 +2034,7 @@
+ 	.driver = {
+ 		.name = "qcom_q6v5_pas",
+ 		.of_match_table = qcom_pas_of_match,
++		.pm = pm_sleep_ptr(&qcom_pas_pm_ops),
+ 	},
+ };
+ 

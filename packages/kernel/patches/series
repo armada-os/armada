@@ -120,9 +120,8 @@
 0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch
 0543-PCI-qcom-let-the-suspend-opp-floor-be-skipped-for-debugging.patch
 0544-interconnect-qcom-bcm-voter-debug-sleep-keepalive-for-named-bcms.patch
-0545-interconnect-qcom-sm8750-keep-sn4-in-the-sleep-set.patch
-0546-interconnect-qcom-bcm-voter-debug-knob-to-ignore-the-built-in-sleep-keepalive.patch
 0555-soc-qcom-aoss-add-a-raw-qmp-send-debugfs-file.patch
+0556-remoteproc-qcom-pas-manage-the-sm8750-soccp.patch
 0522-PCI-host-common-let-only-endpoints-veto-d3cold.patch
 0523-regulator-qcom-rpmh-add-suspend-state-support.patch
 0524-regulator-core-apply-mem-state-for-s2idle.patch
@@ -135,7 +134,7 @@
 # ============== SM8550 DTSI prerequisites ==============
 0001-pcie-update-sm8550-dtsi.patch
 0520-arm64-dts-qcom-sm8550-add-a-pcie-suspend-opp.patch
-# 0521-arm64-dts-qcom-sm8750-add-a-pcie-suspend-opp.patch  # replaced by 0545 (SN4 sleep keepalive)
+# 0521-arm64-dts-qcom-sm8750-add-a-pcie-suspend-opp.patch  # not needed: the SoCCP is managed (0556, 0557)
 0527-arm64-dts-qcom-sm8650-add-a-pcie-suspend-opp.patch
 0120-20250728_konradybcio_gpu_cc_power_requirements_reality_check.patch
 0121-pmdomain-qcom-rpmhpd-presync-floor-gmu-rails.patch
@@ -199,6 +198,7 @@
 0035-arm64-dts-qcom-sm8750-set-CPU-capacity-dmips-mhz.patch
 0037-arm64-dts-qcom-sm8750-add-CPU-thermal-cooling.patch
 0542-arm64-dts-qcom-sm8750-describe-the-tcsr-download-mode-cookie.patch
+0557-arm64-dts-qcom-sm8750-add-the-soccp.patch
 0049-drm-msm-a8xx-add-adreno-830-catalog.patch
 0039-wifi-ath12k-add-initial-hardware-definition-for-WCN7.patch
 0040-wifi-ath12k-send-QDSS-config-when-CNSS_QDSS_CFG_MISS.patch
