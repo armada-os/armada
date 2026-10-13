@@ -205,7 +205,7 @@
 0041-wifi-ath12k-disable-CNSS_QDSS_CFG_MISS_V01-for-the-W.patch
 0042-PCI-pwrctrl-pwrseq-add-support-for-WCN7860.patch
 0043-power-sequencing-qcom-wcn-add-support-for-WCN7860.patch
-# 0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch  # TEST: upstream PWRSTS_OFF_ON for the PCIe GDSCs
+# 0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch  # hangs the s2idle wake once no PCIe bus vote is kept, see PATCHES.md
 0045-Bluetooth-qca-add-WCN7860-support.patch
 0066-scsi-ufs-ufs-qcom-add-sm8750-compatible.patch
 0509-soc-qcom-pmic_glink_altmode-defer-until-mux-switch-ready.patch

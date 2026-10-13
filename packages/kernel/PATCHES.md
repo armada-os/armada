@@ -580,6 +580,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch
   upstream: https://lore.kernel.org/r/20260102-pci_gdsc_fix-v1-3-b17ed3d175bc@oss.qualcomm.com
+  notes: Not applied (commented out in the series). With the PCIe GDSCs left on across suspend (PWRSTS_RET_ON) the controller stays powered on the PCIe NoC, and the SoC hangs on the s2idle wake unless a PCIe bus vote (SN4) is kept in the sleep set, which in turn blocks CX shutdown. Tested on the Odin 3 (7.2.6, SoCCP managed, no keepalive): with this patch the system-level PSCI call never returns; without it the SoC wakes and reaches CX shutdown, and the WCN7860 comes back because pwrctrl powers it off for suspend and the link retrains. Not tested on the Pocket FIT Elite.
 - `patches/0045-Bluetooth-qca-add-WCN7860-support.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0045-Bluetooth-qca-add-WCN7860-support.patch
   upstream: unknown
