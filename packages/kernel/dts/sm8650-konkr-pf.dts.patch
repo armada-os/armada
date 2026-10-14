@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: pocket-fit: dedicated sound card and controller MCU
+Subject: [PATCH] arm64: dts: qcom: pocket-fit: dedicated sound card, controller MCU, ADSP remote heap for the sensors
 
 --- a/arch/arm64/boot/dts/qcom/sm8650-konkr-pf.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8650-konkr-pf.dts
@@ -14,7 +14,7 @@ Subject: [PATCH] arm64: dts: qcom: pocket-fit: dedicated sound card and controll
  &mdss_dsi0 {
  	status = "okay";
  	vdda-supply = <&vreg_l3i_1p2>;
-@@ -86,3 +90,9 @@
+@@ -86,3 +90,31 @@
  		status = "okay";
  	};
  };
@@ -23,4 +23,26 @@ Subject: [PATCH] arm64: dts: qcom: pocket-fit: dedicated sound card and controll
 +	mcu {
 +		compatible = "konkr,pocket-fit-mcu";
 +	};
++};
++
++/*
++ * Qualcomm sensor core (SSC) on the ADSP: the FastRPC sensors process needs a
++ * remote heap, or it cannot start and the IMU (gyro/accel) never appears.
++ * Heap node and properties from the Odin 2 gyro work by justjoseorg in
++ * SteamOS-ARM-Port (qcs8550-ayn-odin2-gyro.dtsi): LPASS 0x16, ADSP_HEAP 0x25.
++ */
++&{/reserved-memory} {
++	adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
++		compatible = "shared-dma-pool";
++		alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++		alignment = <0x0 0x400000>;
++		size = <0x0 0xc00000>;
++		reusable;
++	};
++};
++
++&{/soc@0/remoteproc@6800000/glink-edge/fastrpc} {
++	memory-region = <&adsp_rpc_remote_heap_mem>;
++	qcom,fastrpc-adsp-sensors-pdr;
++	qcom,vmids = <0x16 0x25>;
 +};
