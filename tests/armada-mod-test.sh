@@ -41,6 +41,17 @@ grep -q "broken left out" "$tmp/stderr" || fail "failing hook not reported"
 [[ ! -e "$tmp/library/steamapps/common/.armada-mods-9" ]] || fail "mounted without files to overlay"
 rm -rf "$mods/fix" "$mods/broken" "$game/save.dat"
 
+# a mod with a second-screen program is left out whole where there is no second screen
+mkdir -p "$mods/screen/hooks"
+echo '{"id":"screen","version":"1","name":"Screen","steam_appids":[9],"hooks":{"before_launch":"hooks/run"},"second_screen":"hooks/run","env":{"SCREEN":"1"}}' >"$mods/screen/mod.json"
+printf '#!/bin/sh\ntouch "$ARMADA_MOD_DATA_DIR/ran"\n' >"$mods/screen/hooks/run"
+chmod +x "$mods/screen/hooks/run"
+out="$(launch sh -c 'echo "${SCREEN-unset}"')"
+[[ "$out" == unset ]] || fail "second-screen mod applied without a second screen: $out"
+[[ ! -e "$ARMADA_MODS_HOME/data/screen/ran" ]] || fail "second-screen mod's hook ran without a second screen"
+grep -q "screen left out" "$tmp/stderr" || fail "left-out second-screen mod not reported"
+rm -rf "$mods/screen"
+
 probe="$tmp/probe"
 mkdir -p "$probe/lower" "$probe/upper" "$probe/work"
 if ! bwrap --dev-bind / / --overlay-src "$probe/lower" --overlay "$probe/upper" "$probe/work" "$probe/upper" true 2>/dev/null; then

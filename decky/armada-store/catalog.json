@@ -424,8 +424,9 @@
       "category": "mods",
       "install": {
         "type": "gamemod",
-        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
-        "asset": "^second-screen-hollow-knight-[0-9][^/]*\\.tar\\.gz$",
+        "url": "https://github.com/virtudude/armada-mods/releases/download/second-screen-hollow-knight/v0.1.0/second-screen-hollow-knight-0.1.0.tar.gz",
+        "version": "0.1.0",
+        "sha256": "283918170fba55c70648dae3d11add32afc5c6a60d44f4dbfcec412e27eea3fb",
         "steamAppids": [367520]
       }
     },
@@ -436,8 +437,9 @@
       "category": "mods",
       "install": {
         "type": "gamemod",
-        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
-        "asset": "^second-screen-balatro-[0-9][^/]*\\.tar\\.gz$",
+        "url": "https://github.com/virtudude/armada-mods/releases/download/second-screen-balatro/v0.1.0/second-screen-balatro-0.1.0.tar.gz",
+        "version": "0.1.0",
+        "sha256": "ccd7c2de2f8a65d84f80f9cc91b8dd19ec221bfbee97dc9fa219924144f4c87f",
         "steamAppids": [2379780]
       }
     },
@@ -448,33 +450,36 @@
       "category": "mods",
       "install": {
         "type": "gamemod",
-        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
-        "asset": "^second-screen-crosscode-[0-9][^/]*\\.tar\\.gz$",
+        "url": "https://github.com/virtudude/armada-mods/releases/download/second-screen-crosscode/v0.1.0/second-screen-crosscode-0.1.0.tar.gz",
+        "version": "0.1.0",
+        "sha256": "20c6f202c97ef23d10846d256dbf1d356eb68a1928ed17b3f16cbee6cfd064f0",
         "steamAppids": [368340]
       }
     },
     {
-      "id": "second-screen-persona-3-reload",
-      "name": "Persona 3 Reload: Companion",
-      "summary": "Calendar, social links, party and personas on the second screen",
+      "id": "second-screen-marathon",
+      "name": "Classic Marathon: Suit Display",
+      "summary": "Shield, oxygen, motion sensor and weapons on the second screen",
       "category": "mods",
       "install": {
         "type": "gamemod",
-        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
-        "asset": "^second-screen-persona-3-reload-[0-9][^/]*\\.tar\\.gz$",
-        "steamAppids": [2161700]
+        "url": "https://github.com/virtudude/armada-mods/releases/download/second-screen-marathon/v0.1.0/second-screen-marathon-0.1.0.tar.gz",
+        "version": "0.1.0",
+        "sha256": "6df104d21ea1e5c19716bc5704287f7a9f3af87af0bd181e37f514ec3a655b5b",
+        "steamAppids": [2398450]
       }
     },
     {
-      "id": "second-screen-chained-echoes",
-      "name": "Chained Echoes: Companion",
-      "summary": "Area map, party, journal and items on the second screen",
+      "id": "second-screen-duke-nukem-3d",
+      "name": "Duke Nukem 3D: Gear",
+      "summary": "Health, ammo, weapons and items on the second screen",
       "category": "mods",
       "install": {
         "type": "gamemod",
-        "releases": "https://api.github.com/repos/virtudude/armada-mods/releases?per_page=100",
-        "asset": "^second-screen-chained-echoes-[0-9][^/]*\\.tar\\.gz$",
-        "steamAppids": [1229240]
+        "url": "https://github.com/virtudude/armada-mods/releases/download/second-screen-duke-nukem-3d/v0.1.0/second-screen-duke-nukem-3d-0.1.0.tar.gz",
+        "version": "0.1.0",
+        "sha256": "da4072158e20a1e46a14036b1a0ae6bf677f2954b319d5da931e6b7504084314",
+        "steamAppids": [434050]
       }
     }
   ]

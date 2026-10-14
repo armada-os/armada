@@ -13,12 +13,8 @@ TOOL = Path(__file__).with_name("modtool.py")
 CACHE_PARTS = (".cache", "armada-mods")
 DOWNLOAD_NAME = "store-download.tar.gz"
 
-RELEASES_TTL = 60.0
-MAX_RELEASE_PAGES = 10
-
 _lock = threading.Lock()
 _cache = {"at": None, "mods": {}}
-_releases = {}
 
 
 # The mods folder belongs to the user, so everything that touches it runs as
@@ -65,46 +61,13 @@ def version_key(version):
     return [int(part) if part.isdigit() else -1 for part in re.split(r"[.+-]", version or "")]
 
 
-# Every mod of a repository is looked up in the same release list, so one
-# fetch serves a whole refresh.
-def _release_assets(releases_url):
-    cached = _releases.get(releases_url)
-    if cached and time.monotonic() - cached[0] <= RELEASES_TTL:
-        return cached[1]
-    assets, url = [], releases_url
-    for _ in range(MAX_RELEASE_PAGES):
-        with installers.urllib.request.urlopen(installers._request(url), timeout=30,
-                                               context=installers._ssl_context()) as resp:
-            data = json.load(resp)
-            following = re.search(r'<([^>]+)>;\s*rel="next"', resp.headers.get("Link") or "")
-        for release in [data] if isinstance(data, dict) else data:
-            if not (release.get("draft") or release.get("prerelease")):
-                assets += [(asset.get("name") or "", asset.get("browser_download_url"))
-                           for asset in release.get("assets") or []]
-        if not following:
-            break
-        url = following.group(1)
-    _releases[releases_url] = (time.monotonic(), assets)
-    return assets
-
-
-def latest(app_id, install_spec):
-    """Version and URL of a mod's highest published version, wherever in the release history it sits."""
-    pattern, prefix = re.compile(install_spec["asset"]), app_id + "-"
-    found = [(name[len(prefix):-len(".tar.gz")], url)
-             for name, url in _release_assets(install_spec["releases"]) if url and pattern.search(name)]
-    if not found:
-        raise RuntimeError("No release of this mod has been published")
-    return max(found, key=lambda entry: version_key(entry[0]))
-
-
 def install(app_id, install_spec, cancel, progress):
-    _, url = latest(app_id, install_spec)
+    """Installs the one build the catalog names: its URL, and the checksum the download must have."""
     cache_fd = userfs.open_user_path(list(CACHE_PARTS), create=True)
     try:
         with userfs.create_file(cache_fd, DOWNLOAD_NAME, 0o600) as fh:
-            installers.download_to(fh, url, cancel, progress)
-        _tool("install", str(paths.user_home().joinpath(*CACHE_PARTS, DOWNLOAD_NAME)), app_id)
+            installers.download_to(fh, install_spec["url"], cancel, progress)
+        _tool("install", str(paths.user_home().joinpath(*CACHE_PARTS, DOWNLOAD_NAME)), app_id, install_spec["sha256"])
     finally:
         userfs.unlink(cache_fd, DOWNLOAD_NAME)
         os.close(cache_fd)

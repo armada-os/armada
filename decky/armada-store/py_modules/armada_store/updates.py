@@ -57,14 +57,6 @@ def _refresh(state, refs, force):
             tags[app["id"]] = tag
         if stamp:
             stamps[app["id"]] = stamp
-    for app in catalog.all_apps():
-        install = app.get("install") or {}
-        if install.get("type") == "gamemod" and install.get("releases") and \
-                catalog.installed_info(app, state, refs).get("installed"):
-            try:
-                tags[app["id"]] = mods.latest(app["id"], install)[0]
-            except Exception:
-                complete = False
     _cache.update({"at": time.monotonic() if complete else None, "flatpak": flatpak_updates,
                    "tags": tags, "stamps": stamps})
 
@@ -89,7 +81,8 @@ def available(force=False):
             if ref in refs and ref in flatpak_updates:
                 updates[app_id] = {"latest": ""}
         elif kind == "gamemod":
-            current, latest = catalog.installed_info(app, state, refs).get("version"), tags.get(app_id)
+            # the catalog names the one version on offer, so there is nothing to look up
+            current, latest = catalog.installed_info(app, state, refs).get("version"), install.get("version")
             if current and latest and mods.version_key(latest) > mods.version_key(current):
                 updates[app_id] = {"latest": latest}
         elif kind in ("appimage", "deckyplugin"):

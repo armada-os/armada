@@ -4,7 +4,7 @@
 A folder in mods/ that installed.json does not record was put there by hand
 and is never replaced or removed.
 """
-import fcntl, json, os, pathlib, re, shutil, subprocess, sys, tarfile, tempfile
+import fcntl, hashlib, json, os, pathlib, re, shutil, subprocess, sys, tarfile, tempfile
 
 ROOT = pathlib.Path(os.environ.get("ARMADA_MODS_HOME", pathlib.Path.home() / ".local/share/armada-mods"))
 MODS = ROOT / "mods"
@@ -42,8 +42,13 @@ def save(rec):
     tmp.replace(RECORD)
 
 
-def safe_extract(archive, dest):
-    with tarfile.open(archive) as tar:
+def safe_extract(archive, dest, sha256=None):
+    # hashed and unpacked through one open file, so what was checked is what is installed
+    with open(archive, "rb") as fh:
+        if sha256 and hashlib.file_digest(fh, "sha256").hexdigest() != sha256.lower():
+            raise ValueError("it is not the build the store lists")
+        fh.seek(0)
+        tar = tarfile.open(fileobj=fh)
         # Plain files and directories only. A link that is harmless inside the staging
         # directory can point somewhere else once the mod is moved into place.
         for member in tar.getmembers():
@@ -82,12 +87,12 @@ def lock_games(mod):
         HELD[appid] = lock
 
 
-def install(path, expected=None):
+def install(path, expected=None, sha256=None):
     MODS.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=MODS, prefix=".staging-") as tmp:
         tmp = pathlib.Path(tmp)
         try:
-            safe_extract(path, tmp)
+            safe_extract(path, tmp, sha256)
         except (OSError, ValueError, tarfile.TarError) as e:
             fail(f"Not a mod archive: {e}")
         entries = list(tmp.iterdir())
@@ -149,14 +154,14 @@ def main():
     ROOT.mkdir(parents=True, exist_ok=True)
     lock = open(ROOT / ".lock", "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
-    if len(a) in (2, 3) and a[0] == "install":
+    if len(a) in (2, 3, 4) and a[0] == "install":
         install(*a[1:])
     elif len(a) == 2 and a[0] == "remove":
         remove(a[1])
     elif a == ["list"]:
         listing()
     else:
-        fail("usage: install <archive> [expected id] | remove <id> | list")
+        fail("usage: install <archive> [expected id [sha256]] | remove <id> | list")
 
 
 if __name__ == "__main__":

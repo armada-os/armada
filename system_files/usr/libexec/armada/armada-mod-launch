@@ -223,6 +223,8 @@ def plan(args):
 
     # hooks and second-screen programs never see another mod's env
     base, applied = dict(env), 0
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    bottom = os.path.exists(os.path.join(runtime, "armada-bottom-env"))
     layers, screen, posts, extra_args = [], None, [], []
     for mod, meta in mods:
         name = mod.name
@@ -235,6 +237,11 @@ def plan(args):
             before = script(mod, hooks.get("before_launch"), "before_launch")
             after = script(mod, hooks.get("after_exit"), "after_exit")
             host = script(mod, meta.get("second_screen"), "second_screen")
+            # a mod made for the second screen does nothing to the game without it
+            if host and not bottom:
+                raise RuntimeError("this device has no second screen")
+            if host and screen:
+                raise RuntimeError(f"{screen[0]} already has the second screen")
             if before:
                 run_script([before], own, 600)
             added = [layer for layer in (mod / "overlay", data / "overlay") if layer.is_dir() and any(layer.iterdir())]
@@ -260,9 +267,7 @@ def plan(args):
         extra_args += more
         layers += added
         applied += 1
-        if host and screen:
-            log(f"{name}: second-screen program not started, {screen[0]} already has the bottom screen")
-        elif host:
+        if host:
             screen = (name, host, own)
         if after:
             posts.append((after, own))
@@ -303,10 +308,9 @@ def supervise(screen, posts, leftovers):
         os.dup2(LOG.fileno(), 1)
         os.dup2(LOG.fileno(), 2)
         LOG = None
-        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
         running = None
         # second-screen programs use the system's libraries, not the Steam runtime's
-        if screen and os.path.exists(os.path.join(runtime, "armada-bottom-env")):
+        if screen:
             name, host, own = screen
             clean = {k: v for k, v in own.items() if k not in ("LD_PRELOAD", "LD_LIBRARY_PATH")}
             try:
