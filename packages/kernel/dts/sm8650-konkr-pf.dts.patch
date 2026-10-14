@@ -1,14 +1,28 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: pocket-fit: use the dedicated sound card
+Subject: [PATCH] arm64: dts: qcom: pocket-fit: use the dedicated sound card and the MCU system buttons
 
 --- a/arch/arm64/boot/dts/qcom/sm8650-konkr-pf.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8650-konkr-pf.dts
-@@ -12,6 +12,10 @@
+@@ -13,6 +13,24 @@
  	compatible = "konkr,pocket-fit", "qcom,sm8650";
  };
  
 +&{/sound} {
 +	compatible = "konkr,pocket-fit-sndcard";
++};
++
++/*
++ * The gamepad MCU also reports the five extra buttons (K, =, LC, RC and the
++ * right-side menu button) on this UART, in the same protocol as on the Pocket
++ * FIT Elite: bind the built-in konkr_sysbtn driver to it. The buttons appear
++ * as "KONKR System Buttons" (BTN_TRIGGER_HAPPY1..5). The driver owns the UART
++ * from then on, so /dev/ttyHS0 goes away and the ayaneo-default quirk skips
++ * itself, as on the Elite.
++ */
++&uart13 {
++	mcu {
++		compatible = "konkr,pf-elite-mcu";
++	};
 +};
 +
  &mdss_dsi0 {

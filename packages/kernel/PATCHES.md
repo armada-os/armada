@@ -820,7 +820,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada selects the accepted Pocket S2 WSA2 sound-card mapping after copying the ROCKNIX DTS.
 - `dts/sm8650-konkr-pf.dts.patch`
   source: armada
-  notes: Armada selects the shared WSA2 channel mapping through a Pocket FIT-specific sound-card compatible.
+  notes: Armada selects the shared WSA2 channel mapping through a Pocket FIT-specific sound-card compatible, and binds the konkr_sysbtn driver to the gamepad MCU UART for the extra buttons.
 
 - `patches/0505-arm64-emulate-unaligned-atomics.patch`
   source: https://github.com/bylaws/linux/commit/7ae989a43ae7e3cb8007ac21c28dacc24c9d8320

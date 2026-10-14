@@ -1,0 +1,25 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] feat(Hardware Support): KONKR Pocket FIT system buttons
+
+The Pocket FIT's gamepad MCU reports K, =, LC, RC and the right-side menu
+button on a UART, in the same protocol as the Pocket FIT Elite. With the
+konkr_sysbtn driver bound to it they arrive as "KONKR System Buttons"
+(BTN_TRIGGER_HAPPY1..5); take them as a source with the Elite's konkr3 map.
+---
+diff --git a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
+--- a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
+@@ -44,6 +44,13 @@
+           vendor_id: 1c4f
+           product_id: 0002
+           handler: event*
++    # Extra buttons (K, =, LC, RC, right-side menu) from the gamepad MCU's UART,
++    # via the konkr_sysbtn kernel driver -- same events as on the Pocket FIT Elite.
++    - group: keyboard
++      capability_map_id: konkr3
++      evdev:
++          name: KONKR System Buttons
++          handler: event*
+ 
+ target_devices:
+     - xbox-elite
