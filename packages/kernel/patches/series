@@ -66,6 +66,7 @@
 0058-input-joystick-add-ayaneo-mcu-joystick.patch
 0069-input-misc-add-konkr-sysbtn-MCU-system-buttons.patch
 0069a-input-konkr-sysbtn-add-pocket-fit-mcu.patch
+0541-input-joystick-mcu-joystick-power-the-mcu-off-in-suspend.patch
 0031_input--Add-driver-for-RSInput-Gamepad.patch
 0508-input-rsinput-add-pm-resume-to-reinit-mcu-after-suspend.patch
 0504-Enable-64-bit-processes-to-use-compat-input-syscalls.patch

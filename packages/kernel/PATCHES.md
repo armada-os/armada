@@ -212,6 +212,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0069a-input-konkr-sysbtn-add-pocket-fit-mcu.patch`
   source: armada
   upstream: local
+- `patches/0541-input-joystick-mcu-joystick-power-the-mcu-off-in-suspend.patch`
+  source: armada
+  upstream: local
 - `patches/0060_Mangmi-Pocket-Max-SPI-joypad.patch`
   source: https://github.com/ROCKNIX/distribution/blob/807c74fc46c124891d8aa9b57a68533d38e9a6b2/projects/ROCKNIX/devices/SM8250/patches/linux/0060_Mangmi-Pocket-Max-SPI-joypad.patch
   upstream: unknown
