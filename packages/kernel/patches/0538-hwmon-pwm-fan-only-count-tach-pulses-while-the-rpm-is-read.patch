@@ -1,0 +1,175 @@
+From: ouroboros420 <ouroboros420@users.noreply.github.com>
+Subject: [PATCH] hwmon: (pwm-fan) only count tach pulses while the rpm is read
+
+The tach interrupt fires on every pulse for as long as the fan spins, and
+a non-deferrable 1 Hz timer keeps turning the count into an rpm value,
+from probe until removal. On handhelds whose fan never stops while awake
+that is hundreds of interrupts per second (rpm * pulses-per-revolution /
+60) that only feed a value that is read every now and then, and each one
+cuts short CPU and cluster idle.
+
+Request the tach interrupts with IRQF_NO_AUTOEN and only enable them while
+fan*_input is being read. The first read after an idle period starts a
+measurement and returns the last measured value; sampling continues once
+a second until no read has happened for PWM_FAN_TACH_IDLE_MS, then the
+interrupts are disabled again. A reader that polls more often than that
+sees the same behaviour as before.
+
+Sampling moves from a timer to deferrable delayed work so the interrupts
+can be enabled and disabled from process context (the tach may sit on a
+sleeping irqchip). The work is cancelled before the interrupts are freed
+on removal.
+---
+--- a/drivers/hwmon/pwm-fan.c
++++ b/drivers/hwmon/pwm-fan.c
+@@ -20,10 +20,13 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/sysfs.h>
+ #include <linux/thermal.h>
+-#include <linux/timer.h>
++#include <linux/workqueue.h>
+ 
+ #define MAX_PWM 255
+ 
++/* Count tach pulses only until this long after the last fan*_input read */
++#define PWM_FAN_TACH_IDLE_MS	5000
++
+ struct pwm_fan_tach {
+ 	int irq;
+ 	atomic_t pulses;
+@@ -52,7 +55,10 @@ struct pwm_fan_ctx {
+ 	struct pwm_fan_tach *tachs;
+ 	u32 *pulses_per_revolution;
+ 	ktime_t sample_start;
+-	struct timer_list rpm_timer;
++	struct delayed_work rpm_work;
++	struct mutex tach_lock;		/* protects tach_active and sampling */
++	bool tach_active;
++	unsigned long tach_last_read;
+ 
+ 	unsigned int pwm_value;
+ 	unsigned int pwm_fan_state;
+@@ -86,12 +92,29 @@ static irqreturn_t pulse_handler(int irq
+ 	return IRQ_HANDLED;
+ }
+ 
+-static void sample_timer(struct timer_list *t)
++static void pwm_fan_tach_irqs(struct pwm_fan_ctx *ctx, bool on)
++{
++	int i;
++
++	for (i = 0; i < ctx->tach_count; i++) {
++		if (ctx->tachs[i].irq <= 0)
++			continue;
++		if (on)
++			enable_irq(ctx->tachs[i].irq);
++		else
++			disable_irq(ctx->tachs[i].irq);
++	}
++}
++
++static void pwm_fan_sample_work(struct work_struct *work)
+ {
+-	struct pwm_fan_ctx *ctx = timer_container_of(ctx, t, rpm_timer);
+-	unsigned int delta = ktime_ms_delta(ktime_get(), ctx->sample_start);
++	struct pwm_fan_ctx *ctx = container_of(to_delayed_work(work),
++					       struct pwm_fan_ctx, rpm_work);
++	unsigned int delta;
+ 	int i;
+ 
++	mutex_lock(&ctx->tach_lock);
++	delta = ktime_ms_delta(ktime_get(), ctx->sample_start);
+ 	if (delta) {
+ 		for (i = 0; i < ctx->tach_count; i++) {
+ 			struct pwm_fan_tach *tach = &ctx->tachs[i];
+@@ -106,7 +129,39 @@ static void sample_timer(struct timer_li
+ 		ctx->sample_start = ktime_get();
+ 	}
+ 
+-	mod_timer(&ctx->rpm_timer, jiffies + HZ);
++	if (time_after(jiffies, ctx->tach_last_read +
++		       msecs_to_jiffies(PWM_FAN_TACH_IDLE_MS))) {
++		pwm_fan_tach_irqs(ctx, false);
++		ctx->tach_active = false;
++	} else {
++		queue_delayed_work(system_power_efficient_wq, &ctx->rpm_work, HZ);
++	}
++	mutex_unlock(&ctx->tach_lock);
++}
++
++/* The first read after an idle period returns the last measured value */
++static void pwm_fan_tach_kick(struct pwm_fan_ctx *ctx)
++{
++	int i;
++
++	mutex_lock(&ctx->tach_lock);
++	ctx->tach_last_read = jiffies;
++	if (!ctx->tach_active) {
++		for (i = 0; i < ctx->tach_count; i++)
++			atomic_set(&ctx->tachs[i].pulses, 0);
++		ctx->sample_start = ktime_get();
++		pwm_fan_tach_irqs(ctx, true);
++		ctx->tach_active = true;
++		queue_delayed_work(system_power_efficient_wq, &ctx->rpm_work, HZ);
++	}
++	mutex_unlock(&ctx->tach_lock);
++}
++
++static void pwm_fan_tach_stop(void *__ctx)
++{
++	struct pwm_fan_ctx *ctx = __ctx;
++
++	cancel_delayed_work_sync(&ctx->rpm_work);
+ }
+ 
+ static void pwm_fan_enable_mode_2_state(int enable_mode,
+@@ -374,6 +429,7 @@ static int pwm_fan_read(struct device *d
+ 		}
+ 		return -EOPNOTSUPP;
+ 	case hwmon_fan:
++		pwm_fan_tach_kick(ctx);
+ 		*val = ctx->tachs[channel].rpm;
+ 		return 0;
+ 
+@@ -503,7 +559,7 @@ static void pwm_fan_cleanup(void *__ctx)
+ {
+ 	struct pwm_fan_ctx *ctx = __ctx;
+ 
+-	timer_delete_sync(&ctx->rpm_timer);
++	cancel_delayed_work_sync(&ctx->rpm_work);
+ 	if (ctx->pwm_shutdown) {
+ 		ctx->enable_mode = pwm_enable_reg_enable;
+ 		__set_pwm(ctx, ctx->pwm_shutdown);
+@@ -699,7 +755,8 @@ static int pwm_fan_probe(struct platform
+ 		dev_err(dev, "Failed to configure PWM: %d\n", ret);
+ 		return ret;
+ 	}
+-	timer_setup(&ctx->rpm_timer, sample_timer, 0);
++	mutex_init(&ctx->tach_lock);
++	INIT_DEFERRABLE_WORK(&ctx->rpm_work, pwm_fan_sample_work);
+ 	ret = devm_add_action_or_reset(dev, pwm_fan_cleanup, ctx);
+ 	if (ret)
+ 		return ret;
+@@ -756,7 +813,8 @@ static int pwm_fan_probe(struct platform
+ 			return tach->irq;
+ 		if (tach->irq > 0) {
+ 			ret = devm_request_irq(dev, tach->irq, pulse_handler,
+-					       IRQF_NO_THREAD, pdev->name, tach);
++					       IRQF_NO_THREAD | IRQF_NO_AUTOEN,
++					       pdev->name, tach);
+ 			if (ret) {
+ 				dev_err(dev,
+ 					"Failed to request interrupt: %d\n",
+@@ -777,8 +835,10 @@ static int pwm_fan_probe(struct platform
+ 	}
+ 
+ 	if (ctx->tach_count > 0) {
+-		ctx->sample_start = ktime_get();
+-		mod_timer(&ctx->rpm_timer, jiffies + HZ);
++		/* Released before the tach IRQs: the work enables/disables them */
++		ret = devm_add_action_or_reset(dev, pwm_fan_tach_stop, ctx);
++		if (ret)
++			return ret;
+ 
+ 		channels[1] = &ctx->fan_channel;
+ 	}
