@@ -1,0 +1,124 @@
+Subject: [PATCH] media: qcom: iris: serialize controls with instance operations
+
+Dynamic controls currently use the control handler's private mutex while
+buffer submission and firmware responses use the instance mutex. Gen2
+control setters and buffer submission both construct commands in the same
+per-instance packet buffer. The core mutex only protects the later queue
+copy, so a concurrent control can overwrite a buffer command or vice versa.
+
+Use the instance mutex for the control handler as well. Keep the decoder
+minimum-buffer control pointer and update it with the unlocked helper from
+the response paths, which already hold the instance mutex. Clear that
+pointer under the same lock before freeing the handler, so late responses
+cannot dereference a freed control.
+
+This closes the per-instance control/queue serialization gap. It does not
+establish the cause of the observed firmware fault or hard freeze. Runtime
+validation with concurrent controls and decoder source changes is pending.
+
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_ctrls.c b/drivers/media/platform/qcom/iris/iris_ctrls.c
+--- a/drivers/media/platform/qcom/iris/iris_ctrls.c
++++ b/drivers/media/platform/qcom/iris/iris_ctrls.c
+@@ -360,6 +360,9 @@
+ 	if (ret)
+ 		return ret;
+ 
++	/* Serialize dynamic controls with buffer submission and responses. */
++	inst->ctrl_handler.lock = &inst->lock;
++
+ 	for (idx = 1; idx < INST_FW_CAP_MAX; idx++) {
+ 		struct v4l2_ctrl *ctrl;
+ 
+@@ -397,8 +400,9 @@
+ 	}
+ 
+ 	if (inst->domain == DECODER) {
+-		v4l2_ctrl_new_std(&inst->ctrl_handler, NULL,
+-				  V4L2_CID_MIN_BUFFERS_FOR_CAPTURE, 1, 32, 1, 4);
++		inst->min_capture_buffers =
++			v4l2_ctrl_new_std(&inst->ctrl_handler, NULL,
++					  V4L2_CID_MIN_BUFFERS_FOR_CAPTURE, 1, 32, 1, 4);
+ 	} else {
+ 		v4l2_ctrl_new_std(&inst->ctrl_handler, NULL,
+ 				  V4L2_CID_MIN_BUFFERS_FOR_OUTPUT, 1, 32, 1, 4);
+diff --git a/drivers/media/platform/qcom/iris/iris_instance.h b/drivers/media/platform/qcom/iris/iris_instance.h
+--- a/drivers/media/platform/qcom/iris/iris_instance.h
++++ b/drivers/media/platform/qcom/iris/iris_instance.h
+@@ -44,6 +44,7 @@
+  * @fmt_src: structure of v4l2_format for source
+  * @fmt_dst: structure of v4l2_format for destination
+  * @ctrl_handler: reference of v4l2 ctrl handler
++ * @min_capture_buffers: minimum capture buffer count control for decoder
+  * @domain: domain type: encoder or decoder
+  * @crop: structure of crop info
+  * @compose: structure of compose info
+@@ -91,6 +92,7 @@
+ 	struct v4l2_format		*fmt_src;
+ 	struct v4l2_format		*fmt_dst;
+ 	struct v4l2_ctrl_handler	ctrl_handler;
++	struct v4l2_ctrl		*min_capture_buffers;
+ 	enum domain_type		domain;
+ 	struct iris_hfi_rect_desc	crop;
+ 	struct iris_hfi_rect_desc	compose;
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+@@ -33,7 +33,6 @@
+ 	struct hfi_pic_struct *pic_struct;
+ 	struct hfi_framesize *frame_sz;
+ 	struct vb2_queue *dst_q;
+-	struct v4l2_ctrl *ctrl;
+ 	u32 full_range, ptype;
+ 
+ 	do {
+@@ -158,9 +157,9 @@
+ 	inst->fw_min_count = event.buf_count;
+ 	inst->buffers[BUF_OUTPUT].min_count = iris_vpu_buf_count(inst, BUF_OUTPUT);
+ 	inst->buffers[BUF_OUTPUT].size = pixmp_op->plane_fmt[0].sizeimage;
+-	ctrl = v4l2_ctrl_find(&inst->ctrl_handler, V4L2_CID_MIN_BUFFERS_FOR_CAPTURE);
+-	if (ctrl)
+-		v4l2_ctrl_s_ctrl(ctrl, inst->buffers[BUF_OUTPUT].min_count);
++	if (inst->min_capture_buffers)
++		__v4l2_ctrl_s_ctrl(inst->min_capture_buffers,
++				   inst->buffers[BUF_OUTPUT].min_count);
+ 
+ 	dst_q = v4l2_m2m_get_dst_vq(inst->m2m_ctx);
+ 	dst_q->min_reqbufs_allocation = inst->buffers[BUF_OUTPUT].min_count;
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -531,7 +531,6 @@
+ 	struct iris_core *core = inst->core;
+ 	u32 full_range, width, height;
+ 	struct vb2_queue *dst_q;
+-	struct v4l2_ctrl *ctrl;
+ 
+ 	subsc_params = inst_hfi_gen2->src_subcr_params;
+ 	width = (subsc_params.bitstream_resolution &
+@@ -654,9 +653,9 @@
+ 	inst->fw_min_count = subsc_params.fw_min_count;
+ 	inst->buffers[BUF_OUTPUT].min_count = iris_vpu_buf_count(inst, BUF_OUTPUT);
+ 	inst->buffers[BUF_OUTPUT].size = pixmp_op->plane_fmt[0].sizeimage;
+-	ctrl = v4l2_ctrl_find(&inst->ctrl_handler, V4L2_CID_MIN_BUFFERS_FOR_CAPTURE);
+-	if (ctrl)
+-		v4l2_ctrl_s_ctrl(ctrl, inst->buffers[BUF_OUTPUT].min_count);
++	if (inst->min_capture_buffers)
++		__v4l2_ctrl_s_ctrl(inst->min_capture_buffers,
++				   inst->buffers[BUF_OUTPUT].min_count);
+ 
+ 	dst_q = v4l2_m2m_get_dst_vq(inst->m2m_ctx);
+ 	dst_q->min_reqbufs_allocation = inst->buffers[BUF_OUTPUT].min_count;
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -285,6 +285,9 @@
+ {
+ 	struct iris_inst *inst = iris_get_inst(filp);
+ 
++	mutex_lock(&inst->lock);
++	inst->min_capture_buffers = NULL;
++	mutex_unlock(&inst->lock);
+ 	v4l2_ctrl_handler_free(&inst->ctrl_handler);
+ 	v4l2_m2m_ctx_release(inst->m2m_ctx);
+ 	v4l2_m2m_release(inst->m2m_dev);

@@ -152,6 +152,7 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 1031-media-iris-stop-AV1-tier-overwriting-HEVC-tier.patch
 0670-media-iris-subscribe-encoder-picture-type.patch
 0671-media-iris-gen2-force-keyframe.patch
+0672-media-iris-serialize-instance-controls.patch
 
 # ============== System tweaks ==============
 0500-ROCKNIX-set-boot-fanspeed.patch

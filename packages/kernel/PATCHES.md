@@ -425,7 +425,11 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0671-media-iris-gen2-force-keyframe.patch`
   source: https://git.zx2c4.com/linux-rng/commit/?id=6f62dcefd2494aa9ac01538372353bf07755491e
   upstream: https://lore.kernel.org/all/20260723-dynamic_encode-v4-2-5fd6bd549ead@oss.qualcomm.com/
-  notes: Backport the five HFI Gen2/shared-control files to 7.2.6, preserving upstream authorship and behavior; omit the three Gen1-only changes. Adds the standard force-keyframe control rejected by the KPFE baseline. A 90-frame Steam-style prefixed-header test produced correctly flagged IDRs at the requested times and decoded cleanly. A separate-header/no-prefix test encountered an IOMMU fault after its first request. An independently identified shared HFI packet serialization gap remains unresolved; its role in this fault is unproven. Full recording stability is still under investigation.
+  notes: Backport the five HFI Gen2/shared-control files to 7.2.6, preserving upstream authorship and behavior; omit the three Gen1-only changes. Adds the standard force-keyframe control rejected by the KPFE baseline. A 90-frame Steam-style prefixed-header test produced correctly flagged IDRs at the requested times and decoded cleanly. A separate-header/no-prefix test encountered an IOMMU fault after its first request. The shared HFI packet serialization gap is addressed by 0672; its role in this fault is unproven, and hardware validation of that change is pending. Full recording stability is still under investigation.
+- `patches/0672-media-iris-serialize-instance-controls.patch`
+  source: armada
+  upstream: local
+  notes: Share the instance mutex with control handling so dynamic control commands cannot race buffer submission in the same HFI packet buffer. Decoder response updates use the already-held lock, and the cached control pointer is cleared before handler destruction. All 30 Iris translation units compile with W=1 without warnings; independent lock-order review and zero-fuzz patch checks pass. Full-image and hardware validation are pending. This does not establish the cause of the earlier IOMMU fault or hard freeze.
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown
