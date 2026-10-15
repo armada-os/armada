@@ -1,0 +1,115 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: joystick: mcu-joystick: power the MCU off in suspend
+
+The gamepad MCU stays powered through system sleep although it cannot wake
+the system. Drop en and power at suspend and park the IRQ line in its
+default pull-down state. vdd is shared with the codec and stays on.
+
+Resume runs the power-on sequence from a work item, since it takes about
+750 ms and would otherwise hold up the rest of the system resume.
+---
+--- a/drivers/input/joystick/mcu_joystick.c
++++ b/drivers/input/joystick/mcu_joystick.c
+@@ -150,6 +150,7 @@
+ 	struct mutex io_lock;
+ 	struct delayed_work poll_work;
+ 	struct work_struct ff_work;	/* rumble: deferred SPI write (play is atomic) */
++	struct work_struct resume_work;
+ 	u8 ff_strong;
+ 	u8 ff_weak;
+ 	int irq;
+@@ -449,6 +450,24 @@
+ 	schedule_delayed_work(&mcu->poll_work, msecs_to_jiffies(MCU_POLL_MS));
+ }
+ 
++/* the power-on sequence takes ~750 ms, so keep it off the resume path */
++static void mcu_resume_work(struct work_struct *work)
++{
++	struct mcu_joystick *mcu =
++		container_of(work, struct mcu_joystick, resume_work);
++
++	mcu_power_dance(mcu);
++	mcu_send_init_cmds(mcu);
++	enable_work(&mcu->ff_work);
++
++	mcu->bad_frames = 0;
++	mcu->reinit_fails = 0;
++
++	if (mcu->irq > 0)
++		enable_irq(mcu->irq);
++	schedule_delayed_work(&mcu->poll_work, msecs_to_jiffies(MCU_POLL_MS));
++}
++
+ static int mcu_joystick_probe(struct spi_device *spi)
+ {
+ 	struct device *dev = &spi->dev;
+@@ -587,6 +606,7 @@
+ 	/* poll fallback (and primary path if no irq wired); also the recovery
+ 	 * watchdog — it re-inits a silent MCU */
+ 	INIT_DELAYED_WORK(&mcu->poll_work, mcu_poll_work);
++	INIT_WORK(&mcu->resume_work, mcu_resume_work);
+ 	schedule_delayed_work(&mcu->poll_work, msecs_to_jiffies(MCU_POLL_MS));
+ 
+ 	return 0;
+@@ -596,6 +616,7 @@
+ {
+ 	struct mcu_joystick *mcu = spi_get_drvdata(spi);
+ 
++	cancel_work_sync(&mcu->resume_work);
+ 	cancel_delayed_work_sync(&mcu->poll_work);
+ 	if (mcu->vdd)
+ 		regulator_disable(mcu->vdd);
+@@ -611,43 +632,32 @@
+ {
+ 	struct mcu_joystick *mcu = spi_get_drvdata(to_spi_device(dev));
+ 
++	flush_work(&mcu->resume_work);
+ 	if (mcu->irq > 0)
+ 		disable_irq(mcu->irq);
+ 	cancel_delayed_work_sync(&mcu->poll_work);
+-	cancel_work_sync(&mcu->ff_work);
++	/* the memless FF timer can queue it again until resume re-enables it */
++	disable_work_sync(&mcu->ff_work);
+ 
+ 	/* stop any running rumble and release latched input state */
+ 	mcu_write_word(mcu, MCU_WRITE_WORD(MCU_REG_RUMBLE_STRONG, 0));
+ 	mcu_write_word(mcu, MCU_WRITE_WORD(MCU_REG_RUMBLE_WEAK, 0));
+ 	mcu_report_idle(mcu);
+ 
++	/* vdd is shared with the codec, so en and power are what cut the MCU */
++	gpiod_set_value_cansleep(mcu->en_gpio, 0);
++	gpiod_set_value_cansleep(mcu->power_gpio, 0);
++	/* the active state's pull-up would back-feed the unpowered MCU */
++	pinctrl_select_default_state(dev);
++
+ 	return 0;
+ }
+ 
+ static int mcu_joystick_resume(struct device *dev)
+ {
+ 	struct mcu_joystick *mcu = spi_get_drvdata(to_spi_device(dev));
+-	u16 regs[MCU_NREGS];
+-
+-	/*
+-	 * Vendor resume recipe: re-send the irq-rate + start commands. If the
+-	 * MCU lost power across the suspend it answers zeros — give it the
+-	 * full power-on sequence then.
+-	 */
+-	mcu_send_init_cmds(mcu);
+-	if (mcu_read_frame(mcu, regs) || !mcu_frame_hdr_ok(regs)) {
+-		dev_info(dev, "resume: MCU silent after init cmds, power cycling\n");
+-		mcu_power_dance(mcu);
+-		mcu_send_init_cmds(mcu);
+-	}
+-
+-	mcu->bad_frames = 0;
+-	mcu->reinit_fails = 0;
+-
+-	if (mcu->irq > 0)
+-		enable_irq(mcu->irq);
+-	schedule_delayed_work(&mcu->poll_work, msecs_to_jiffies(MCU_POLL_MS));
+ 
++	schedule_work(&mcu->resume_work);
+ 	return 0;
+ }
+ 
