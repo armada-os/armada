@@ -418,6 +418,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1031-media-iris-stop-AV1-tier-overwriting-HEVC-tier.patch`
   source: armada
   upstream: local
+- `patches/0670-media-iris-subscribe-encoder-picture-type.patch`
+  source: armada
+  upstream: local
+  notes: Request encoder picture-type metadata through the existing HFI Gen2 subscription path. On a KPFE Linux 7.2.6 test image, all three IDRs and 87 P frames received the correct V4L2 flags while the encoded H.264 bytes matched the baseline. Combined with the force-keyframe backport, two short Steam recordings passed full video/audio decoding and timestamp checks; several additional recordings completed successfully. A later hard freeze outside active recording remains unexplained, so full stability is not claimed.
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown

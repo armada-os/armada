@@ -147,9 +147,10 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 1020-wifi-ath12k-send-the-computed-scan-priority-to-the-f.patch
 1021-wifi-ath12k-convert-scan-timeout-to-wiphy-delayed-work.patch
 
-# ============== Video decode ==============
+# ============== Video codecs ==============
 1030-media-iris-send-the-stream-POC-type.patch
 1031-media-iris-stop-AV1-tier-overwriting-HEVC-tier.patch
+0670-media-iris-subscribe-encoder-picture-type.patch
 
 # ============== System tweaks ==============
 0500-ROCKNIX-set-boot-fanspeed.patch
