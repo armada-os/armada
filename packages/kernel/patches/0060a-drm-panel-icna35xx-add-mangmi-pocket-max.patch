@@ -215,7 +215,3 @@ per-panel shutdown delays onto Armada's Linux 7.2 ICNA35xx driver.
 @@ -605,0 +801,2 @@
 +	{ .compatible = "mangmi,pocket-max-panel",
 +	  .data = &mangmi_pocket_max_desc },
-@@ -622 +819 @@
--MODULE_LICENSE("GPL");
-\ No newline at end of file
-+MODULE_LICENSE("GPL");

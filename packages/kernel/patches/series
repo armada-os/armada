@@ -82,7 +82,6 @@
 1003-input-haptics-fix-rumble-bridge-atomic-sleep.patch
 1005-input-rsinput-quiesce-the-mcu-across-system-sleep.patch
 1006-tty-serial-qcom-geni-mask-non-console-irq-on-suspend.patch
-0534-serial-qcom-geni-add-force-suspend-resume-to-system-sleep-callbacks.patch
 1007-input-rsinput-drop-the-mcu-supply-across-system-sleep.patch
 1004-input-haptics-stop-zero-amplitude-immediately.patch
 1300-input-rsinput-axis-deadzone.patch

@@ -88,7 +88,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0060a-drm-panel-icna35xx-add-mangmi-pocket-max.patch`
   source: https://github.com/ROCKNIX/distribution/blob/807c74fc46c124891d8aa9b57a68533d38e9a6b2/projects/ROCKNIX/devices/SM8250/patches/linux/0057_Chipone-ICNA35XX-panel.patch
   upstream: unknown
-  notes: Ports the Pocket Max init sequence, four vendor modes and per-panel shutdown delays onto Armada's Linux 7.2 managed-panel driver while retaining Armada's luminance-linear backlight scale.
+  notes: Ports the Pocket Max init sequence, four vendor modes and per-panel shutdown delays onto the upstream Linux 7.3 driver as extended by `0028` while retaining Armada's luminance-linear backlight scale.
 - `patches/0106-drm-panel-il97680a-luminance-linear-backlight-scale.patch`
   source: armada
   upstream: not submitted
@@ -252,11 +252,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1006-tty-serial-qcom-geni-mask-non-console-irq-on-suspend.patch`
   source: https://github.com/thorch-os/thorch/blob/2614a262d7de3f31bd47a0c92981461146663847/packages/linux-thorch/patches/0010-tty-serial-qcom-geni-mask-non-console-irq-on-suspend.patch
   upstream: unknown
-  notes: Adapted to Linux 7.3 suspend error handling; restores the IRQ on UART suspend failure and resumes the port before restoring the IRQ on runtime-suspend failure.
-- `patches/0534-serial-qcom-geni-add-force-suspend-resume-to-system-sleep-callbacks.patch`
-  source: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=d0cd9c8d0fd59bc7d140f3d60cf02e1d80376dab
-  upstream: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=d0cd9c8d0fd59bc7d140f3d60cf02e1d80376dab
-  notes: Backported to Linux 7.2 on top of 1006, re-enabling the masked IRQ when the force suspend or force resume fails.
+  notes: Adapted to Linux 7.3 suspend error handling; restores the IRQ on UART suspend failure and resumes the port before restoring the IRQ on runtime-suspend failure, and restores it on force-resume failure.
 - `patches/1007-input-rsinput-drop-the-mcu-supply-across-system-sleep.patch`
   source: armada
   upstream: local
