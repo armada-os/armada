@@ -2,18 +2,19 @@
 set -euxo pipefail
 
 cp -a /ctx/system_files/. /
-install -Dpm 0755 /packages/extest/libextest.so /usr/lib/extest/libextest.so
+
+# feedbackd's role-routing sinks can wedge Steam audio during session startup.
+rm -f /usr/share/wireplumber/wireplumber.conf.d/media-role-nodes.conf
+
+# CachyOS Proton's ARM64 GStreamer asks for Arch's libbz2 soname.
+ln -sf libbz2.so.1 /usr/lib64/libbz2.so.1.0
+
+# Some AppImages link zlib's unversioned development soname.
+ln -sf libz.so.1 /usr/lib64/libz.so
 
 # The vendored entries land after the RPM scriptlets ran, so mimeinfo.cache
 # would not otherwise list them.
 update-desktop-database -q /usr/share/applications
-
-cp -a /packages/mesa-android/waydroid/vendor /usr/share/armada/waydroid/
-
-mesa_sqsh=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh
-install -Dm0644 /packages/mesa-x86/ArmadaMesa.sqsh "${mesa_sqsh}"
-# A separate rechunk component keeps Mesa-only updates from invalidating ArchLinux.sqsh.
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"fex-mesa")' "${mesa_sqsh}"
 
 # Status text font for armada-splash (falls back to its embedded bitmap font
 # if this link dangles). Static face: stb_truetype renders a VF's default
@@ -32,12 +33,7 @@ EOF
 
 source /ctx/abl/release.env
 abl_releases=/ctx/abl/releases.tsv
-abl_archive=/tmp/rocknix-abl.tar.gz
-curl --connect-timeout 30 --retry 3 -fsSL -o "${abl_archive}" \
-    "https://github.com/ROCKNIX/abl/releases/download/v${ARMADA_ABL_VERSION}/rocknix-abl-v${ARMADA_ABL_VERSION}.tar.gz"
-abl_src=/tmp/rocknix-abl
-mkdir -p "${abl_src}"
-tar -xzf "${abl_archive}" -C "${abl_src}" --strip-components=1
+abl_src=/ctx/abl
 manifest=/usr/lib/armada/abl/manifest
 install -Dpm 0644 /dev/null "${manifest}"
 install -Dpm 0644 "${abl_releases}" /usr/lib/armada/abl/releases.tsv
@@ -72,8 +68,6 @@ for soc in SM8250 SM8550 SM8650 SM8750; do
         "${actual_hash}" \
         >> "${manifest}"
 done
-rm -f "${abl_archive}"
-rm -rf "${abl_src}"
 
 chmod 0755 /usr/libexec/armada/*
 chmod 0755 /usr/libexec/os-session-select
@@ -93,8 +87,11 @@ systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
 systemctl enable armada-guestos.service
+systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service
 systemctl enable armada-rgb.service
+systemctl enable armada-rgb-brightness-watch.service
+systemctl enable armada-rgb-brightness-watch.path
 systemctl enable armada-fixups.service
 systemctl enable armada-update-reserve.service
 systemctl enable armada-installer-visibility.service
@@ -104,6 +101,8 @@ systemctl enable armada-control.service
 systemctl enable steamos-manager.service
 systemctl --global enable steamos-manager.service
 systemctl --global enable steamos-manager-session-cleanup.service
+systemctl --global enable armada-steam-default-session.service
+systemctl --global enable armada-steam-charging-eta.service
 systemctl enable armada-bootimg-sync.service
 systemctl enable armada-esp-rename.service
 systemctl enable armada-boot-hotkeys.service

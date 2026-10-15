@@ -1,0 +1,37 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] gpu_fdinfo: skip an unreadable fdinfo instead of aborting
+
+find_fd() iterates /proc/<pid>/fdinfo with the throwing
+directory_iterator. For a non-dumpable process, such as one with file
+capabilities, or one that exits mid-scan, the iterator throws
+filesystem_error, nothing catches it, and mangoapp aborts. Use the
+error_code overloads so the pid simply reports no fdinfo until the next
+rescan.
+---
+diff --git a/src/gpu_fdinfo.cpp b/src/gpu_fdinfo.cpp
+index 4816786..53cab4f 100644
+--- a/src/gpu_fdinfo.cpp
++++ b/src/gpu_fdinfo.cpp
+@@ -16,18 +16,15 @@ void GPU_fdinfo::find_fd()
+ 
+     SPDLOG_TRACE("fdinfo_dir = {}", dir);
+ 
+-    if (!fs::exists(path)) {
+-        SPDLOG_DEBUG("{} does not exist", path.string());
+-        return;
+-    }
+-
+     // Here we store client-ids, if ids match, we dont open this file,
+     // because it will have same readings and it becomes a duplicate
+     std::set<std::string> client_ids;
+     int total = 0;
+ 
+-    for (const auto& entry : fs::directory_iterator(path)) {
+-        auto fd_path = entry.path().string();
++    // Inaccessible fdinfo must not abort mangoapp
++    std::error_code ec;
++    for (fs::directory_iterator it(path, ec), end; !ec && it != end; it.increment(ec)) {
++        auto fd_path = it->path().string();
+         auto file = std::ifstream(fd_path);
+ 
+         if (!file.is_open())

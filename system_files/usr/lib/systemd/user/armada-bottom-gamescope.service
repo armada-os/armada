@@ -1,0 +1,11 @@
+[Unit]
+Description=Armada bottom-screen gamescope
+PartOf=gamescope-session-plus@steam.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecCondition=/usr/libexec/armada/bottom-gamescope --supported
+ExecStart=/usr/libexec/armada/bottom-gamescope
+ExecStopPost=/usr/bin/rm -f %t/armada-bottom-env %t/gamescope-secondary
+Restart=always
+RestartSec=1

@@ -1,0 +1,38 @@
+From: virtudude <virtudude@protonmail.com>
+Date: Wed, 14 Oct 2026 00:30:00 -0400
+Subject: [PATCH] fix(Hardware Support): KONKR Pocket FIT MCU buttons and Xbox port
+
+Some Pocket FIT units expose no "AYANEO DEVICE" auxiliary keyboard in
+either controller mode. Their Menu, Equals and K buttons and the LC/RC
+pair arrive over the controller MCU's UART instead, through the same
+konkr_sysbtn input device as the Pocket FIT Elite. Add it as a source
+with the Elite's konkr3 map.
+
+The Xbox mode pad was matched only on port 1 of the built-in USB
+controller, but it enumerates on port 2 on these units. Match any port
+on that controller.
+
+---
+--- a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit.yaml
+@@ -32,7 +32,7 @@
+     # XInput mode
+     - group: gamepad
+       evdev:
+-          phys_path: usb-0001:01:00.0-1/input0
++          phys_path: usb-0001:01:00.0-*/input0
+           vendor_id: 045e
+           product_id: 028e
+           handler: event*
+@@ -44,6 +44,11 @@
+           vendor_id: 1c4f
+           product_id: 0002
+           handler: event*
++    - group: keyboard
++      capability_map_id: konkr3
++      evdev:
++          name: KONKR System Buttons
++          handler: event*
+ 
+ target_devices:
+     - xbox-elite

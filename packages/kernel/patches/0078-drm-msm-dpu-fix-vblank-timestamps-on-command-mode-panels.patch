@@ -1,0 +1,121 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] drm/msm/dpu: fix vblank timestamps on command mode panels
+
+On command mode the scanout position came from INTF_LINE_COUNT, the video
+timing engine's counter, which does not run. The position was therefore
+constant, and whenever the vblank interrupt had been off the reported vblank
+timestamp was the time of the query instead of the panel's last TE. Page flip
+events carry that timestamp, so compositors that pace from it drift off the
+panel's refresh.
+
+Read the tear check counter instead and treat it as lines since TE. A line
+count that cannot be read no longer produces a timestamp.
+
+---
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_crtc.c
+@@ -303,6 +303,20 @@
+ 
+ 	line = dpu_encoder_get_linecount(encoder);
+ 
++	if (etime)
++		*etime = ktime_get();
++
++	if (line < 0)
++		return false;
++
++	*hpos = 0;
++
++	/* command mode counts lines from the panel's TE, with no porches */
++	if (dpu_encoder_get_intf_mode(encoder) == INTF_MODE_CMD) {
++		*vpos = line;
++		return true;
++	}
++
+ 	if (line < vactive_start)
+ 		line -= vactive_start;
+ 	else if (line > vactive_end)
+@@ -311,10 +325,6 @@
+ 		line -= vactive_start;
+ 
+ 	*vpos = line;
+-	*hpos = 0;
+-
+-	if (etime)
+-		*etime = ktime_get();
+ 
+ 	return true;
+ }
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_cmd.c
+@@ -523,9 +523,9 @@
+ 
+ 	if (phys_enc->has_intf_te) {
+ 		hw_intf = phys_enc->hw_intf;
+-		if (!hw_intf || !hw_intf->ops.get_line_count)
++		if (!hw_intf || !hw_intf->ops.get_te_line_count)
+ 			return -EINVAL;
+-		return hw_intf->ops.get_line_count(hw_intf);
++		return hw_intf->ops.get_te_line_count(hw_intf);
+ 	}
+ 
+ 	hw_pp = phys_enc->hw_pp;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.c
+@@ -356,6 +356,24 @@
+ 	return DPU_REG_READ(c, INTF_LINE_COUNT);
+ }
+ 
++static u32 dpu_hw_intf_get_te_line_count(struct dpu_hw_intf *intf)
++{
++	struct dpu_hw_blk_reg_map *c = &intf->hw;
++	u32 height, init, line;
++
++	init = DPU_REG_READ(c, INTF_TEAR_VSYNC_INIT_VAL) & 0xffff;
++	height = DPU_REG_READ(c, INTF_TEAR_SYNC_CONFIG_HEIGHT) & 0xffff;
++	line = DPU_REG_READ(c, INTF_TEAR_INT_COUNT_VAL) & 0xffff;
++
++	/* the counter restarts at init on every TE and wraps at height */
++	if (line < init)
++		line += height - init;
++	else
++		line -= init;
++
++	return line;
++}
++
+ static void dpu_hw_intf_setup_misr(struct dpu_hw_intf *intf)
+ {
+ 	dpu_hw_setup_misr(&intf->hw, INTF_MISR_CTRL, 0x1);
+@@ -654,6 +672,7 @@
+ 		c->ops.enable_tearcheck = dpu_hw_intf_enable_te;
+ 		c->ops.disable_tearcheck = dpu_hw_intf_disable_te;
+ 		c->ops.connect_external_te = dpu_hw_intf_connect_external_te;
++		c->ops.get_te_line_count = dpu_hw_intf_get_te_line_count;
+ 		if (mdss_rev->core_major_ver >= 8)
+ 			c->ops.vsync_sel = dpu_hw_intf_vsync_sel_v8;
+ 		else
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_intf.h
+@@ -68,6 +68,8 @@
+  *                     feed pixels to this interface
+  * @setup_misr: enable/disable MISR
+  * @collect_misr: read MISR signature
++ * @get_te_line_count: reads the tear check line counter, as lines since the
++ *                     panel's last TE
+  * @enable_tearcheck:           Enables vsync generation and sets up init value of read
+  *                              pointer and programs the tear check configuration
+  * @disable_tearcheck:          Disables tearcheck block
+@@ -100,6 +102,8 @@
+ 
+ 	// Tearcheck on INTF since DPU 5.0.0
+ 
++	u32 (*get_te_line_count)(struct dpu_hw_intf *intf);
++
+ 	int (*enable_tearcheck)(struct dpu_hw_intf *intf, struct dpu_hw_tear_check *cfg);
+ 
+ 	int (*disable_tearcheck)(struct dpu_hw_intf *intf);

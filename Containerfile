@@ -11,6 +11,9 @@ FROM ${STEAM_BOOTSTRAP_REF} AS steam-bootstrap
 ARG FEX_REF
 FROM ${FEX_REF} AS fex
 
+ARG FEX_ROOTFS_ARCHLINUX_REF
+FROM ${FEX_ROOTFS_ARCHLINUX_REF} AS fex-rootfs-archlinux
+
 ARG MESA_REF
 FROM ${MESA_REF} AS mesa
 
@@ -35,6 +38,9 @@ FROM ${PLASMA_MOBILE_REF} AS plasma-mobile
 ARG POWERDEVIL_REF
 FROM ${POWERDEVIL_REF} AS powerdevil
 
+ARG PROTON_CACHYOS_REF
+FROM ${PROTON_CACHYOS_REF} AS proton-cachyos
+
 ARG PROTONTRICKS_REF
 FROM ${PROTONTRICKS_REF} AS protontricks
 
@@ -53,17 +59,26 @@ FROM ${NETWORKMANAGER_REF} AS networkmanager
 ARG WPA_SUPPLICANT_REF
 FROM ${WPA_SUPPLICANT_REF} AS wpa_supplicant
 
+ARG SCX_SCHEDS_REF
+FROM ${SCX_SCHEDS_REF} AS scx-scheds
+
 ARG JUPITER_HW_SUPPORT_REF
 FROM ${JUPITER_HW_SUPPORT_REF} AS jupiter-hw-support
 
 ARG MESA_ANDROID_REF
 FROM ${MESA_ANDROID_REF} AS mesa-android
 
+ARG LEPTON_REF
+FROM ${LEPTON_REF} AS lepton
+
 ARG MESA_X86_REF
 FROM ${MESA_X86_REF} AS mesa-x86
 
 ARG EXTEST_REF
 FROM ${EXTEST_REF} AS extest
+
+ARG ARMADA_AURORA_REF
+FROM ${ARMADA_AURORA_REF} AS armada-aurora
 
 ARG ARMADA_SPLASH_REF
 FROM ${ARMADA_SPLASH_REF} AS armada-splash
@@ -99,6 +114,7 @@ LABEL org.opencontainers.image.version="${ARMADA_VERSION}"
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=steam-bootstrap,source=/steam-bootstrap,target=/packages/steam-bootstrap \
     --mount=type=bind,from=fex,source=/rpms,target=/packages/fex \
+    --mount=type=bind,from=fex-rootfs-archlinux,source=/rpms,target=/packages/fex-rootfs-archlinux \
     --mount=type=bind,from=mesa,source=/rpms,target=/packages/mesa \
     --mount=type=bind,from=mangohud,source=/rpms,target=/packages/mangohud \
     --mount=type=bind,from=gamescope,source=/rpms,target=/packages/gamescope \
@@ -107,14 +123,17 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
     --mount=type=bind,from=plasma-mobile,source=/rpms,target=/packages/plasma-mobile \
     --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
+    --mount=type=bind,from=proton-cachyos,source=/,target=/packages/proton-cachyos \
     --mount=type=bind,from=protontricks,source=/rpms,target=/packages/protontricks \
     --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
     --mount=type=bind,from=inputplumber,source=/rpms,target=/packages/inputplumber \
     --mount=type=bind,from=steamos-manager,source=/rpms,target=/packages/steamos-manager \
     --mount=type=bind,from=networkmanager,source=/rpms,target=/packages/networkmanager \
     --mount=type=bind,from=wpa_supplicant,source=/rpms,target=/packages/wpa_supplicant \
+    --mount=type=bind,from=scx-scheds,source=/rpms,target=/packages/scx-scheds \
     --mount=type=bind,from=jupiter-hw-support,source=/rpms,target=/packages/jupiter-hw-support \
     --mount=type=bind,from=mesa-android,source=/,target=/packages/mesa-android \
+    --mount=type=bind,from=lepton,source=/rpms,target=/packages/lepton \
     --mount=type=bind,from=mesa-x86,source=/,target=/packages/mesa-x86 \
     --mount=type=bind,from=extest,source=/,target=/packages/extest \
     --mount=type=bind,from=armada-splash,source=/rpms,target=/packages/armada-splash \
@@ -122,6 +141,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \
+    --mount=type=bind,from=armada-aurora,source=/rpms,target=/packages/armada-aurora \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \

@@ -1,7 +1,7 @@
 From ee8ca085dc870dd242f9ffa58bcf9305f3ad2dc9 Mon Sep 17 00:00:00 2001
 From: JPyke3 <github@pyk.ee>
 Date: Sun, 13 Sep 2026 08:21:36 +1000
-Subject: [PATCH] arm64: dts: qcom: thorlite: correct touch orientation
+Subject: [PATCH] arm64: dts: qcom: thorlite: correct touch orientation and add AYN key
 
 The panels are exposed in their landscape orientation, and Gamescope maps
 each digitizer to its corresponding output. Applying the portrait-to-landscape
@@ -9,15 +9,35 @@ transform in the input driver as well rotates touch coordinates a second time,
 so the right edge of a panel behaves as its top edge.
 
 Keep the digitizers' native coordinates, matching Armada's full Thor handling.
+
+Add the AYN key using the stock Android GPIO definition.
 ---
- arch/arm64/boot/dts/qcom/sm8250-ayn-thorlite.dts | 4 ----
- 1 file changed, 4 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8250-ayn-thorlite.dts b/arch/arm64/boot/dts/qcom/sm8250-ayn-thorlite.dts
-index 32edbcb..28d22ae 100644
 --- a/arch/arm64/boot/dts/qcom/sm8250-ayn-thorlite.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8250-ayn-thorlite.dts
-@@ -739,8 +739,6 @@
+@@ -57,6 +57,20 @@
+ 			label = "Volume Up";
+ 			linux,code = <KEY_VOLUMEUP>;
+ 			gpios = <&pm8150_gpios 6 GPIO_ACTIVE_LOW>;
++		};
++	};
++
++	gpio-keys-ayn {
++		compatible = "gpio-keys";
++		pinctrl-names = "default";
++		pinctrl-0 = <&key_ayn_n>;
++
++		key-ayn {
++			label = "AYN Key";
++			gpios = <&tlmm 92 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_F24>;
++			debounce-interval = <15>;
++			linux,can-disable;
+ 		};
+ 	};
+ 
+@@ -739,8 +753,6 @@
  		label = "bottom_touchscreen";
  		touchscreen-size-x = <1080>;
  		touchscreen-size-y = <1240>;
@@ -26,7 +46,7 @@ index 32edbcb..28d22ae 100644
  
  		no-regmap-bulk-read;
  	};
-@@ -953,8 +951,6 @@
+@@ -953,8 +965,6 @@
  		label = "top_touchscreen";
  		touchscreen-size-x = <1080>;
  		touchscreen-size-y = <1920>;
@@ -35,6 +55,20 @@ index 32edbcb..28d22ae 100644
  	};
  };
  
+@@ -1475,6 +1485,14 @@
+ };
+ 
+ &tlmm {
++	key_ayn_n: key-ayn-n-state {
++		pins = "gpio92";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		input-enable;
++	};
++
+ 	hall_sensor_default: hall-sensor-default-state {
+ 		pins = "gpio123";
+ 		function = "gpio";
 -- 
 2.55.0
-

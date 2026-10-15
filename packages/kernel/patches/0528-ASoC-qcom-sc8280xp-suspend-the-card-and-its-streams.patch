@@ -1,0 +1,28 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: qcom: sc8280xp: suspend the card and its streams
+
+The card sets no PM ops, and qcom_snd_parse_of() marks every DPCM link
+ignore_suspend, so snd_soc_suspend() never runs for it and open PCMs are
+never suspended. Wire up snd_soc_pm_ops and clear ignore_suspend on this
+card's links; none of them has to run while the system sleeps.
+---
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -222,6 +222,9 @@
+ 			link->be_hw_params_fixup = sc8280xp_be_hw_params_fixup;
+ 			link->ops = &sc8280xp_be_ops;
+ 		}
++
++		/* Nothing on these cards has to play across system suspend */
++		link->ignore_suspend = 0;
+ 	}
+ }
+ 
+@@ -287,6 +290,7 @@
+ 	.driver = {
+ 		.name = "snd-sc8280xp",
+ 		.of_match_table = snd_sc8280xp_dt_match,
++		.pm = &snd_soc_pm_ops,
+ 	},
+ };
+ module_platform_driver(snd_sc8280xp_driver);

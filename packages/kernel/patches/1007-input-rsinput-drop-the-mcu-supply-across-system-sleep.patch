@@ -1,0 +1,68 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: rsinput: drop the MCU supply across system sleep
+
+The MCU is already quiesced across suspend, but its 3.3 V supply stays on
+because rsinput is its last consumer (the joystick LED drivers release
+it). Disable it at suspend and enable it again before the resume
+re-initialisation. Track whether the supply is off so a failed resume
+enable does not leave remove with an unbalanced disable.
+---
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -132,6 +132,7 @@
+     struct serdev_device *serdev;
+     struct input_dev *input;
+     struct regulator *vdd;
++    bool vdd_off;
+     struct gpio_desc *boot_gpio;
+     struct gpio_desc *enable_gpio;
+     struct gpio_desc *reset_gpio;
+@@ -632,12 +633,14 @@
+     if (drv->reset_gpio)
+         gpiod_set_value_cansleep(drv->reset_gpio, 0);
+ 
+-    regulator_disable(drv->vdd);
++    if (!drv->vdd_off)
++        regulator_disable(drv->vdd);
+ }
+ 
+ static int rsinput_suspend(struct device *dev)
+ {
+     struct rsinput_driver *drv = dev_get_drvdata(dev);
++    int error;
+ 
+     /* a pending rumble start must not fire into or after haptics suspend */
+     if (drv->rumble_work.func)
+@@ -654,12 +657,32 @@
+     if (drv->reset_gpio)
+         gpiod_set_value_cansleep(drv->reset_gpio, 0);
+ 
++    if (!drv->vdd_off) {
++        error = regulator_disable(drv->vdd);
++        if (error) {
++            dev_err(dev, "Failed to disable MCU supply: %d\n", error);
++            rsinput_init_commands(drv);
++            return error;
++        }
++        drv->vdd_off = true;
++    }
++
+     return 0;
+ }
+ 
+ static int rsinput_resume(struct device *dev)
+ {
+     struct rsinput_driver *drv = dev_get_drvdata(dev);
++    int error;
++
++    if (drv->vdd_off) {
++        error = regulator_enable(drv->vdd);
++        if (error) {
++            dev_err(dev, "Failed to enable MCU supply: %d\n", error);
++            return error;
++        }
++        drv->vdd_off = false;
++    }
+ 
+     return rsinput_init_commands(drv);
+ }

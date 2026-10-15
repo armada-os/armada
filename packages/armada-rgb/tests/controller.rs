@@ -12,7 +12,9 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
     root: PathBuf,
+    backlight: PathBuf,
     config: PathBuf,
+    dev: PathBuf,
     leds: PathBuf,
     model: PathBuf,
     profiles: PathBuf,
@@ -30,10 +32,16 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let leds: PathBuf = root.join("leds");
+        let backlight: PathBuf = root.join("backlight");
         fs::create_dir_all(&leds).unwrap();
+        fs::create_dir_all(backlight.join("panel")).unwrap();
+        fs::write(backlight.join("panel/brightness"), "50").unwrap();
+        fs::write(backlight.join("panel/max_brightness"), "100").unwrap();
 
         let fixture = Self {
             config: root.join("etc/rgb.json"),
+            backlight,
+            dev: root.join("dev"),
             leds,
             model: root.join("model"),
             profiles: root.join("profiles.json"),
@@ -65,6 +73,13 @@ impl Fixture {
         fs::write(path.join("brightness"), "unchanged\n").unwrap();
     }
 
+    fn serial_target(&self, name: &str) -> PathBuf {
+        fs::create_dir_all(&self.dev).unwrap();
+        let path: PathBuf = self.dev.join(name);
+        fs::write(&path, b"").unwrap();
+        path
+    }
+
     fn value(&self, target: &str, attribute: &str) -> String {
         fs::read_to_string(self.leds.join(target).join(attribute))
             .unwrap()
@@ -88,11 +103,26 @@ impl Fixture {
             }],
         });
         fs::write(&self.profiles, serde_json::to_vec(&catalog).unwrap()).unwrap();
+        self.binary()
+    }
 
+    fn serial_command(&self) -> Command {
+        self.serial_command_for("AYANEO Pocket MICRO 2")
+    }
+
+    fn serial_command_for(&self, model: &str) -> Command {
+        fs::write(&self.model, format!("{model}\0")).unwrap();
+        fs::write(&self.profiles, include_bytes!("../profiles.json")).unwrap();
+        self.binary()
+    }
+
+    fn binary(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_armada-rgb"));
         command
             .env("ARMADA_RGB_CONFIG_PATH", &self.config)
             .env("ARMADA_RGB_SYSFS_ROOT", &self.leds)
+            .env("ARMADA_BACKLIGHT_ROOT", &self.backlight)
+            .env("ARMADA_RGB_DEV_ROOT", &self.dev)
             .env("ARMADA_RGB_MODEL_PATH", &self.model)
             .env("ARMADA_RGB_PROFILES_PATH", &self.profiles);
         command
@@ -109,8 +139,11 @@ fn enabled(color: &str, brightness: u8) -> LightingConfig {
     LightingConfig {
         version: 1,
         enabled: true,
+        link_brightness: false,
         brightness,
+        max_brightness: 25,
         color: color.into(),
+        saturation: 100,
         correction: None,
     }
 }
@@ -150,6 +183,78 @@ fn thor_bgr_targets_do_not_touch_other_leds() {
         assert_eq!(fixture.value(&target, "brightness"), "64");
     }
     assert_eq!(fixture.value("power-led", "brightness"), "unchanged");
+}
+
+#[test]
+fn saturation_is_applied_to_multicolor_output() {
+    let fixture: Fixture = Fixture::new();
+    fixture.target("rgb:l1", "blue green red", "255");
+
+    let output: std::process::Output = fixture
+        .command("multicolor", &["rgb:l1"], None)
+        .args([
+            "set",
+            "--color",
+            "FF0000",
+            "--saturation",
+            "50",
+            "--brightness",
+            "100",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fixture.value("rgb:l1", "multi_intensity"), "55 55 255");
+}
+
+#[test]
+fn linked_brightness_scales_output_without_changing_saved_config() {
+    let fixture: Fixture = Fixture::new();
+    fixture.target("rgb:l1", "blue green red", "255");
+
+    let output: std::process::Output = fixture
+        .command("multicolor", &["rgb:l1"], None)
+        .args([
+            "set",
+            "--enabled",
+            "true",
+            "--link-brightness",
+            "true",
+            "--max-brightness",
+            "50",
+            "--color",
+            "FF0000",
+            "--brightness",
+            "80",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved: LightingConfig = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(saved.enabled);
+    assert!(saved.link_brightness);
+    assert_eq!(saved.max_brightness, 50);
+    assert_eq!(saved.brightness, 80);
+    assert_eq!(fixture.value("rgb:l1", "multi_intensity"), "0 0 255");
+    assert_eq!(fixture.value("rgb:l1", "brightness"), "64");
+
+    let output: std::process::Output = fixture
+        .command("multicolor", &["rgb:l1"], None)
+        .arg("get")
+        .output()
+        .unwrap();
+    let persisted: LightingConfig = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(persisted, saved);
 }
 
 #[test]
@@ -215,12 +320,21 @@ fn cli_supports_channel_backend() {
 }
 
 #[test]
-fn air_y_pro_profile_controls_both_aw20036_rings() {
+fn air_y_pro_profile_controls_both_aw20036_rings_and_logo() {
+    assert_mangmi_profile("MANGMI Air Y Pro", 18);
+}
+
+#[test]
+fn pocket_max_profile_controls_both_aw20036_rings_without_logo() {
+    assert_mangmi_profile("MANGMI Pocket Max", 16);
+}
+
+fn assert_mangmi_profile(model: &str, led_count: usize) {
     let fixture: Fixture = Fixture::new();
-    fs::write(&fixture.model, b"MANGMI Air Y Pro\0").unwrap();
+    fs::write(&fixture.model, format!("{model}\0")).unwrap();
     fs::write(&fixture.profiles, include_bytes!("../profiles.json")).unwrap();
 
-    for index in 0..16 {
+    for index in 0..led_count {
         for color in ["red", "green", "blue"] {
             fixture.channel_target(&format!("{color}:indicator-{index}"), "255");
         }
@@ -240,7 +354,7 @@ fn air_y_pro_profile_controls_both_aw20036_rings() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    for index in 0..16 {
+    for index in 0..led_count {
         assert_eq!(
             fixture.value(&format!("red:indicator-{index}"), "brightness"),
             "64"
@@ -254,6 +368,155 @@ fn air_y_pro_profile_controls_both_aw20036_rings() {
             "0"
         );
     }
+}
+
+#[test]
+fn pocket_micro2_profile_sends_static_frames_to_the_mcu() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS2");
+    let run = |args: &[&str]| fixture.serial_command().args(args).output().unwrap();
+
+    let output: std::process::Output = run(&["set", "--color", "FF8000", "--brightness", "25"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 11] = [0xF7, 0x01, 0x40, 0x20, 0x00, 0, 0, 0, 0, 0x61, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+
+    let output: std::process::Output = run(&["off"]);
+    assert!(output.status.success());
+    let frame: [u8; 11] = [0xF7, 0x01, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+}
+
+#[test]
+fn pocket_s2_profile_sends_stick_ring_frames_to_the_mcu() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS0");
+    let run = |args: &[&str]| {
+        fixture
+            .serial_command_for("AYANEO Pocket S2")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    let output: std::process::Output = run(&["set", "--color", "FF0000", "--brightness", "100"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 27] = [
+        0xF7, 0x00, 0x1C, 0x20, 0x01, 0x80, 0x00, 0x81, 0x00, 0x8B, 0x0F, 0x88, 0xFF, 0x89, 0x00,
+        0x8A, 0x00, 0x86, 0xFF, 0x87, 0xFF, 0x58, 0x08, 0x45, 0x00, 0x22, 0xED,
+    ];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+
+    let output: std::process::Output = run(&["off"]);
+    assert!(output.status.success());
+    let frame: [u8; 27] = [
+        0xF7, 0x00, 0x1C, 0x20, 0x01, 0x80, 0x00, 0x81, 0x00, 0x8B, 0x0F, 0x88, 0x00, 0x89, 0x00,
+        0x8A, 0x00, 0x86, 0x00, 0x87, 0x00, 0x58, 0x08, 0x45, 0x00, 0x25, 0xED,
+    ];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+}
+
+#[test]
+fn sleep_blanks_the_mcu_without_saving() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS2");
+    let run = |args: &[&str]| fixture.serial_command().args(args).output().unwrap();
+
+    let output: std::process::Output = run(&["set", "--color", "FF8000", "--brightness", "25"]);
+    assert!(output.status.success());
+    let saved: Vec<u8> = fs::read(&fixture.config).unwrap();
+
+    let output: std::process::Output = run(&["sleep"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 11] = [0xF7, 0x01, 0, 0, 0, 0, 0, 0, 0, 0x01, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+    assert_eq!(fs::read(&fixture.config).unwrap(), saved);
+}
+
+#[test]
+fn sleep_leaves_kernel_led_backends_alone() {
+    let fixture: Fixture = Fixture::new();
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        fixture.channel_target(target, "255");
+    }
+    let backend: ChannelBackend = ChannelBackend::new(
+        fixture.leds.clone(),
+        vec!["red=l:r1".into(), "green=l:g1".into(), "blue=l:b1".into()],
+    );
+    let controller: Controller =
+        Controller::new(fixture.config.clone(), LightingBackend::Channels(backend));
+
+    controller.sleep().unwrap();
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        assert_eq!(fixture.value(target, "brightness"), "unchanged");
+    }
+    assert!(!fixture.config.exists());
+
+    fixture.target("rgb:l1", "blue green red", "255");
+    fixture.controller(&["rgb:l1".into()]).sleep().unwrap();
+    assert_eq!(fixture.value("rgb:l1", "brightness"), "unchanged");
+    assert_eq!(fixture.value("rgb:l1", "multi_intensity"), "unchanged");
+}
+
+#[test]
+fn wake_leaves_kernel_led_backends_alone() {
+    let fixture: Fixture = Fixture::new();
+    let targets: [&str; 3] = ["red=l:r1", "green=l:g1", "blue=l:b1"];
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        fixture.channel_target(target, "255");
+    }
+
+    let output: std::process::Output = fixture
+        .command("channels", &targets, None)
+        .arg("wake")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for target in ["l:r1", "l:g1", "l:b1"] {
+        assert_eq!(fixture.value(target, "brightness"), "unchanged");
+        assert_eq!(fixture.value(target, "max_brightness"), "255");
+    }
+    assert!(!fixture.config.exists());
+}
+
+#[test]
+fn wake_resends_the_saved_color_to_the_mcu() {
+    let fixture: Fixture = Fixture::new();
+    let tty: PathBuf = fixture.serial_target("ttyHS2");
+    let run = |args: &[&str]| fixture.serial_command().args(args).output().unwrap();
+
+    let output: std::process::Output = run(&["set", "--color", "FF8000", "--brightness", "25"]);
+    assert!(output.status.success());
+    let saved: Vec<u8> = fs::read(&fixture.config).unwrap();
+    let output: std::process::Output = run(&["sleep"]);
+    assert!(output.status.success());
+
+    fs::write(&tty, b"").unwrap();
+    let output: std::process::Output = run(&["wake"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: [u8; 11] = [0xF7, 0x01, 0x40, 0x20, 0x00, 0, 0, 0, 0, 0x61, 0xED];
+    assert_eq!(fs::read(&tty).unwrap(), frame.repeat(3));
+    assert_eq!(fs::read(&fixture.config).unwrap(), saved);
 }
 
 #[test]

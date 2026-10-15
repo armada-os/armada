@@ -1,0 +1,95 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] input: konkr_sysbtn: add the KONKR Pocket FIT MCU
+
+The SM8650 Pocket FIT's controller MCU speaks the same UART protocol as
+the Pocket FIT Elite's: it answers the enable frame with the F7 55 AA xx
+ED version frame and serves the key-config requests. Its Menu, Equals
+and K buttons and the LC/RC pair arrive here, not on the USB pad.
+
+The same UART also selects the Pocket FIT's USB pad mode, and binding
+the driver removes the tty userspace used for that, so add a write-only
+gamepad_mode attribute ("default" or "xbox") on the Pocket FIT.
+
+---
+--- a/drivers/input/misc/konkr_sysbtn.c
++++ b/drivers/input/misc/konkr_sysbtn.c
+@@ -503,14 +503,70 @@
+ KONKR_KEY_ATTR(key_lc_back, 18);
+ KONKR_KEY_ATTR(key_rc_back, 19);
+ 
++/* The MCU wants the mode frame, then the same command as ASCII hex. */
++static ssize_t gamepad_mode_store(struct device *dev,
++				  struct device_attribute *attr,
++				  const char *buf, size_t count)
++{
++	struct konkr_sysbtn *kb = dev_get_drvdata(dev);
++	u8 frame[11] = { 0xe7, 0x55, 0x05, 0, 0, 0, 0, 0, 0, 0, 0xed };
++	char ascii[] = "5505000000000000";
++	ssize_t ret = count;
++
++	if (sysfs_streq(buf, "xbox"))
++		frame[3] = 1;
++	else if (!sysfs_streq(buf, "default"))
++		return -EINVAL;
++
++	frame[9] = 0x5a + frame[3];
++	ascii[5] += frame[3];
++
++	mutex_lock(&kb->tx_lock);
++	if (kb->tx_inhibited) {
++		ret = -EBUSY;
++		goto out;
++	}
++	if (serdev_device_write_buf(kb->serdev, frame, sizeof(frame)) !=
++	    sizeof(frame)) {
++		ret = -EIO;
++		goto out;
++	}
++	msleep(100);
++	if (serdev_device_write_buf(kb->serdev, (const u8 *)ascii, 16) != 16)
++		ret = -EIO;
++	msleep(100);
++out:
++	mutex_unlock(&kb->tx_lock);
++	return ret;
++}
++static DEVICE_ATTR_WO(gamepad_mode);
++
+ static struct attribute *konkr_attrs[] = {
++	&dev_attr_gamepad_mode.attr,
+ 	&dev_attr_key_lc_shoulder.attr,
+ 	&dev_attr_key_rc_shoulder.attr,
+ 	&dev_attr_key_lc_back.attr,
+ 	&dev_attr_key_rc_back.attr,
+ 	NULL
+ };
+-ATTRIBUTE_GROUPS(konkr);
++
++static umode_t konkr_attr_visible(struct kobject *kobj,
++				  struct attribute *attr, int n)
++{
++	struct device *dev = kobj_to_dev(kobj);
++
++	if (attr == &dev_attr_gamepad_mode.attr &&
++	    !of_device_is_compatible(dev->of_node, "konkr,pocket-fit-mcu"))
++		return 0;
++
++	return attr->mode;
++}
++
++static const struct attribute_group konkr_group = {
++	.attrs = konkr_attrs,
++	.is_visible = konkr_attr_visible,
++};
++__ATTRIBUTE_GROUPS(konkr);
+ 
+ /*
+  * Suspend/resume runs through a PM notifier, NOT dev_pm_ops: both hooks
+@@ -668,6 +724,7 @@
+ 
+ static const struct of_device_id konkr_sysbtn_of_match[] = {
+ 	{ .compatible = "konkr,pf-elite-mcu" },
++	{ .compatible = "konkr,pocket-fit-mcu" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, konkr_sysbtn_of_match);

@@ -5,25 +5,13 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
-import ast
 from pathlib import Path
 import re
 import sys
 
 root = Path(sys.argv[1])
-controller_type = root / "system_files/usr/libexec/armada/controller-type"
 devices = root / "system_files/usr/share/inputplumber/devices"
 udev_rules = root / "system_files/usr/lib/udev/rules.d/70-armada-inputplumber.rules"
-
-module = ast.parse(controller_type.read_text(encoding="utf-8"))
-profile_names = None
-for node in module.body:
-    if not isinstance(node, ast.Assign):
-        continue
-    if any(isinstance(target, ast.Name) and target.id == "ARMADA_PROFILE_NAMES" for target in node.targets):
-        profile_names = ast.literal_eval(node.value)
-if profile_names is None:
-    raise SystemExit("controller-type has no ARMADA_PROFILE_NAMES assignment")
 
 shipped_names = set()
 passthrough_paths = set()
@@ -51,10 +39,6 @@ for profile in sorted(devices.glob("*.yaml")):
         if not phys_path:
             raise SystemExit(f"{profile.relative_to(root)} has passthrough without phys_path")
         passthrough_paths.add(phys_path)
-
-missing_names = sorted(shipped_names - profile_names)
-if missing_names:
-    raise SystemExit(f"controller-type is missing profile names: {', '.join(missing_names)}")
 
 rules = udev_rules.read_text(encoding="utf-8")
 missing_rules = sorted(path for path in passthrough_paths if path not in rules)

@@ -1,0 +1,331 @@
+From: seilent <github@seilent.net>
+Subject: [PATCH] drm/panel: add AYANEO AR18 panel
+
+Add the 640x960 Sitronix ST7123 video mode panel used by the AYANEO
+Pocket MICRO 2. Based on the AYANEO Pocket S Mini AR16 panel driver by
+danyi from ROCKNIX (ROCKNIX/distribution aa418ad72e), moved to the
+mipi_dsi_multi_context API. Timings and init sequence come from the
+vendor device tree.
+
+---
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -45,6 +45,19 @@
+ 	  Say Y here to enable support for the AUO A030JTN01 320x480 3.0" panel
+ 	  as found in the YLM RS-97 handheld gaming console.
+ 
++config DRM_PANEL_AYANEO_AR18
++	tristate "AYANEO AR18 video mode panel"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	select DRM_DISPLAY_HELPER
++	help
++	  Say Y here if you want to enable support for the 640x960 60 Hz
++	  Sitronix ST7123 video mode DSI panel used by the AYANEO Pocket
++	  MICRO 2.
++
++	  To compile this driver as a module, choose M here.
++
+ config DRM_PANEL_BOE_BF060Y8M_AJ0
+ 	tristate "Boe BF060Y8M-AJ0 panel"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -3,6 +3,7 @@
+ obj-$(CONFIG_DRM_PANEL_ARM_VERSATILE) += panel-arm-versatile.o
+ obj-$(CONFIG_DRM_PANEL_ASUS_Z00T_TM5P5_NT35596) += panel-asus-z00t-tm5p5-n35596.o
+ obj-$(CONFIG_DRM_PANEL_AUO_A030JTN01) += panel-auo-a030jtn01.o
++obj-$(CONFIG_DRM_PANEL_AYANEO_AR18) += panel-ayaneo-ar18.o
+ obj-$(CONFIG_DRM_PANEL_BOE_BF060Y8M_AJ0) += panel-boe-bf060y8m-aj0.o
+ obj-$(CONFIG_DRM_PANEL_BOE_HIMAX8279D) += panel-boe-himax8279d.o
+ obj-$(CONFIG_DRM_PANEL_BOE_TD4320) += panel-boe-td4320.o
+diff --git a/drivers/gpu/drm/panel/panel-ayaneo-ar18.c b/drivers/gpu/drm/panel/panel-ayaneo-ar18.c
+new file mode 100644
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-ayaneo-ar18.c
+@@ -0,0 +1,282 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2026 danyi (AYANEO Pocket S Mini AR16 panel)
++ * Copyright (c) 2026 seilent
++ */
++
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_probe_helper.h>
++
++struct ar18 {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data *logic_supplies;
++	struct regulator_bulk_data *bias_supplies;
++	enum drm_panel_orientation orientation;
++};
++
++static const struct regulator_bulk_data ar18_logic_supplies[] = {
++	{ .supply = "vddio" },
++};
++
++static const struct regulator_bulk_data ar18_bias_supplies[] = {
++	{ .supply = "lab" },
++};
++
++static inline struct ar18 *to_ar18(struct drm_panel *panel)
++{
++	return container_of(panel, struct ar18, panel);
++}
++
++static void ar18_reset(struct ar18 *ctx)
++{
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(10);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	msleep(50);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	msleep(150);
++}
++
++static int ar18_on(struct ar18 *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x71, 0x23, 0xA2);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x71, 0x23, 0xA3);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x71, 0x23, 0xA4);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xB7, 0x00, 0x00, 0x64, 0x64);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xB0, 0x22, 0x61, 0x11, 0x7F, 0x25, 0x39, 0x39);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xBF, 0x99, 0x99);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xA4, 0x33);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xD7, 0x00, 0x2C, 0xD2, 0x19, 0xE0, 0xE0, 0xE0, 0x80, 0x00, 0x50);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x90, 0x71, 0x23, 0x5A, 0x20, 0x24, 0x10, 0x24);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xA3, 0x80, 0x01, 0x80, 0x7F, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x00, 0x00, 0x1E, 0x5C, 0x1E, 0x80, 0x10, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x00, 0x00, 0x1E, 0x5C, 0x1E, 0x80, 0x10, 0x20, 0x58, 0x00, 0x00, 0x00, 0xFF);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xA6, 0x0C, 0x00, 0x24, 0x55, 0x36, 0x00, 0x39, 0x00, 0x9F, 0x9F, 0x91, 0xFF, 0x00, 0x24, 0x55, 0x37, 0x00, 0x38, 0x00, 0x9F, 0x9F, 0x91, 0xFF, 0x00, 0xE4, 0x55, 0x00, 0x03, 0x00, 0x04, 0x9F, 0x9F, 0x91, 0xFF, 0x00, 0x2C, 0x11, 0x00, 0x00, 0x00, 0x00, 0x9F, 0x9F, 0xFF, 0xFF, 0x00, 0x08, 0x80, 0x08, 0x80, 0x06, 0x00, 0x00, 0x00, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xA7, 0x18, 0x18, 0x80, 0x64, 0x40, 0x07, 0x16, 0x40, 0x00, 0x44, 0x03, 0x9F, 0x9F, 0x91, 0xFF, 0x08, 0x80, 0x64, 0x40, 0x25, 0x34, 0x40, 0x00, 0x02, 0x01, 0x9F, 0x9F, 0x91, 0xFF, 0x08, 0x80, 0x64, 0x40, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x9F, 0x9F, 0x91, 0xFF, 0x08, 0x80, 0x64, 0x40, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x9F, 0x9F, 0x84, 0xFF, 0x08, 0x80, 0x53);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xAC, 0x1D, 0x1D, 0x1C, 0x10, 0x12, 0x0B, 0x09, 0x07, 0x07, 0x02, 0x18, 0x19, 0x01, 0x1C, 0x1D, 0x05, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1C, 0x11, 0x13, 0x0A, 0x08, 0x07, 0x07, 0x00, 0x18, 0x19, 0x03, 0x1C, 0x1D, 0x04, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xAD, 0xF0, 0x00, 0x06, 0x00, 0x09, 0x50, 0x50, 0xFF, 0xFF, 0xF0, 0x40, 0x06, 0x01, 0x07, 0x42, 0x42, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xAE, 0x78, 0xFE, 0x00, 0xF8, 0xFF, 0x00, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xB2, 0x15, 0x19, 0x05, 0x23, 0x49, 0xB9, 0x03, 0x2E, 0x5C, 0xD2, 0xFF, 0x10, 0x20, 0xFD, 0x20, 0xC0, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xE8, 0x20, 0x6F, 0x04, 0xC8, 0xC8, 0x3E, 0x04, 0xDC, 0xDC, 0x3E, 0x06, 0xFA, 0x26, 0x3E);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x75, 0x03, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xE7, 0x3B, 0x00, 0x00, 0x7C, 0x4B, 0x8C, 0x20, 0x1A, 0xF0, 0x84, 0x00, 0x84, 0x00, 0x84, 0x00, 0x84, 0x00, 0xFF, 0x00, 0x0A, 0x00, 0xFF, 0xFF, 0x00, 0xCB, 0x6A, 0xFF, 0x5A, 0x0A, 0x18, 0x88, 0x15, 0xB1, 0x01, 0x01, 0x77, 0x01, 0x01, 0x7C, 0xFF, 0x0A, 0x01, 0x2F, 0x59, 0x22, 0x33, 0x2F, 0xCF);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xE0, 0x38, 0x64, 0x80, 0x80);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xEA, 0x13, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x2C);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xE1, 0x0D, 0x0D);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xC8, 0x00, 0x00, 0x0E, 0x1A, 0x30, 0x00, 0x59, 0x02, 0x96, 0x05, 0x10, 0xED, 0x07, 0x65, 0x03, 0x21, 0xBA, 0x03, 0x03, 0x00, 0x22, 0x43, 0x0F, 0x85, 0x0A, 0x32, 0xE3, 0x0A, 0x3A, 0x0C, 0xF3, 0x86, 0x0D, 0xC2, 0xEC, 0x03, 0xFF);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xC9, 0x00, 0x00, 0x0E, 0x1A, 0x30, 0x00, 0x59, 0x02, 0x96, 0x05, 0x10, 0xED, 0x07, 0x65, 0x03, 0x21, 0xBA, 0x03, 0x03, 0x00, 0x22, 0x43, 0x0F, 0x85, 0x0A, 0x32, 0xE3, 0x0A, 0x3A, 0x0C, 0xF3, 0x86, 0x0D, 0xC2, 0xEC, 0x03, 0xFF);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x71, 0x23, 0x00);
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0x00);
++	mipi_dsi_msleep(&dsi_ctx, 20);
++
++	return dsi_ctx.accum_err;
++}
++
++static int ar18_off(struct ar18 *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 60);
++	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++
++	return dsi_ctx.accum_err;
++}
++
++static int ar18_prepare(struct drm_panel *panel)
++{
++	struct ar18 *ctx = to_ar18(panel);
++	int ret;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(ar18_logic_supplies),
++				    ctx->logic_supplies);
++	if (ret < 0)
++		return ret;
++
++	usleep_range(5000, 6000);
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(ar18_bias_supplies),
++				    ctx->bias_supplies);
++	if (ret < 0) {
++		regulator_bulk_disable(ARRAY_SIZE(ar18_logic_supplies),
++				       ctx->logic_supplies);
++		return ret;
++	}
++
++	msleep(20);
++	ar18_reset(ctx);
++
++	ret = ar18_on(ctx);
++	if (ret < 0) {
++		dev_err(panel->dev, "failed to initialize panel: %d\n", ret);
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		regulator_bulk_disable(ARRAY_SIZE(ar18_bias_supplies),
++				       ctx->bias_supplies);
++		usleep_range(5000, 6000);
++		regulator_bulk_disable(ARRAY_SIZE(ar18_logic_supplies),
++				       ctx->logic_supplies);
++	}
++
++	return ret;
++}
++
++static int ar18_unprepare(struct drm_panel *panel)
++{
++	struct ar18 *ctx = to_ar18(panel);
++	int ret;
++
++	ret = ar18_off(ctx);
++	if (ret < 0)
++		dev_err(panel->dev, "failed to uninitialize panel: %d\n", ret);
++
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	regulator_bulk_disable(ARRAY_SIZE(ar18_bias_supplies),
++			       ctx->bias_supplies);
++	usleep_range(5000, 6000);
++	regulator_bulk_disable(ARRAY_SIZE(ar18_logic_supplies),
++			       ctx->logic_supplies);
++
++	return 0;
++}
++
++static const struct drm_display_mode ar18_mode = {
++	.clock = (640 + 40 + 4 + 40) * (960 + 280 + 4 + 40) * 60 / 1000,
++	.hdisplay = 640,
++	.hsync_start = 640 + 40,
++	.hsync_end = 640 + 40 + 4,
++	.htotal = 640 + 40 + 4 + 40,
++	.vdisplay = 960,
++	.vsync_start = 960 + 280,
++	.vsync_end = 960 + 280 + 4,
++	.vtotal = 960 + 280 + 4 + 40,
++	.width_mm = 50,
++	.height_mm = 75,
++	.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
++};
++
++static int ar18_get_modes(struct drm_panel *panel,
++			    struct drm_connector *connector)
++{
++	return drm_connector_helper_get_modes_fixed(connector, &ar18_mode);
++}
++
++static enum drm_panel_orientation ar18_get_orientation(struct drm_panel *panel)
++{
++	struct ar18 *ctx = to_ar18(panel);
++
++	return ctx->orientation;
++}
++
++static const struct drm_panel_funcs ar18_panel_funcs = {
++	.prepare = ar18_prepare,
++	.unprepare = ar18_unprepare,
++	.get_modes = ar18_get_modes,
++	.get_orientation = ar18_get_orientation,
++};
++
++static int ar18_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct ar18 *ctx;
++	int ret;
++
++	ctx = devm_drm_panel_alloc(dev, struct ar18, panel,
++				   &ar18_panel_funcs,
++				   DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ret = devm_regulator_bulk_get_const(dev,
++					    ARRAY_SIZE(ar18_logic_supplies),
++					    ar18_logic_supplies,
++					    &ctx->logic_supplies);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "failed to get logic regulators\n");
++
++	ret = devm_regulator_bulk_get_const(dev,
++					    ARRAY_SIZE(ar18_bias_supplies),
++					    ar18_bias_supplies,
++					    &ctx->bias_supplies);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "failed to get bias regulators\n");
++
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "failed to get reset GPIO\n");
++
++	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	if (ret < 0 && ret != -ENODEV)
++		return dev_err_probe(dev, ret, "failed to get orientation\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO |
++			  MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
++			  MIPI_DSI_CLOCK_NON_CONTINUOUS;
++
++	ctx->panel.prepare_prev_first = true;
++
++	ret = drm_panel_of_backlight(&ctx->panel);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get backlight\n");
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		drm_panel_remove(&ctx->panel);
++		return dev_err_probe(dev, ret, "failed to attach DSI device\n");
++	}
++
++	return 0;
++}
++
++static void ar18_remove(struct mipi_dsi_device *dsi)
++{
++	struct ar18 *ctx = mipi_dsi_get_drvdata(dsi);
++
++	mipi_dsi_detach(dsi);
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id ar18_of_match[] = {
++	{ .compatible = "ayaneo,ar18-panel" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, ar18_of_match);
++
++static struct mipi_dsi_driver ar18_driver = {
++	.probe = ar18_probe,
++	.remove = ar18_remove,
++	.driver = {
++		.name = "panel-ayaneo-ar18",
++		.of_match_table = ar18_of_match,
++	},
++};
++module_mipi_dsi_driver(ar18_driver);
++
++MODULE_AUTHOR("seilent <github@seilent.net>");
++MODULE_DESCRIPTION("DRM driver for AYANEO Pocket MICRO 2 AR18 panel");
++MODULE_LICENSE("GPL");

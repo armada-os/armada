@@ -1,0 +1,75 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] usb: xhci-pci-renesas: let the controller power off in suspend
+
+The USB core arms PCI wakeup on the controller. Behind a Qualcomm PCIe host
+that keeps the controller and its link powered through suspend. Leave
+wakeup disabled by default.
+
+A ROM-less uPD720201 runs firmware from RAM and loses it when powered off,
+so the xHCI core then finds a dead controller on resume. Download the
+firmware again on resume if it is not running, and have it cached across
+suspend, since probe may skip requesting it.
+---
+--- a/drivers/usb/host/xhci-pci-renesas.c
++++ b/drivers/usb/host/xhci-pci-renesas.c
+@@ -636,7 +636,15 @@
+ 	if (retval)
+ 		return retval;
+ 
+-	return xhci_pci_common_probe(dev, id);
++	/* Resume reloads the firmware; probe may not have requested it */
++	firmware_request_cache(&dev->dev, RENESAS_FW_NAME);
++
++	retval = xhci_pci_common_probe(dev, id);
++	/* Armed PCI wakeup keeps the controller powered in suspend */
++	if (!retval)
++		device_set_wakeup_enable(&dev->dev, false);
++
++	return retval;
+ }
+ 
+ static const struct pci_device_id pci_ids[] = {
+@@ -646,6 +654,16 @@
+ };
+ MODULE_DEVICE_TABLE(pci, pci_ids);
+ 
++/* The RAM firmware is lost when the controller is powered off in suspend */
++static int xhci_pci_renesas_resume(struct device *dev)
++{
++	renesas_xhci_check_request_fw(to_pci_dev(dev), NULL);
++
++	return usb_hcd_pci_pm_ops.resume(dev);
++}
++
++static struct dev_pm_ops xhci_renesas_pm_ops;
++
+ static struct pci_driver xhci_renesas_pci_driver = {
+ 	.name =		"xhci-pci-renesas",
+ 	.id_table =	pci_ids,
+@@ -655,10 +673,24 @@
+ 
+ 	.shutdown = 	usb_hcd_pci_shutdown,
+ 	.driver = {
+-		.pm = pm_ptr(&usb_hcd_pci_pm_ops),
++		.pm = pm_ptr(&xhci_renesas_pm_ops),
+ 	},
+ };
+-module_pci_driver(xhci_renesas_pci_driver);
++
++static int __init xhci_renesas_init(void)
++{
++	xhci_renesas_pm_ops = usb_hcd_pci_pm_ops;
++	xhci_renesas_pm_ops.resume = xhci_pci_renesas_resume;
++
++	return pci_register_driver(&xhci_renesas_pci_driver);
++}
++module_init(xhci_renesas_init);
++
++static void __exit xhci_renesas_exit(void)
++{
++	pci_unregister_driver(&xhci_renesas_pci_driver);
++}
++module_exit(xhci_renesas_exit);
+ 
+ MODULE_DESCRIPTION("Renesas xHCI PCI Host Controller Driver");
+ MODULE_FIRMWARE(RENESAS_FW_NAME);

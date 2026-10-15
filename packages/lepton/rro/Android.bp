@@ -1,0 +1,6 @@
+runtime_resource_overlay {
+    name: "ArmadaLeptonFrameworkOverlay",
+    product_specific: true,
+    // Android 11 only applies a framework value that is not overlayable from a pre-Q overlay.
+    sdk_version: "28",
+}

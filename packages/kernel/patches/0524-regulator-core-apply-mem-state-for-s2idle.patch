@@ -1,0 +1,32 @@
+From: Luke Johnson <jaewun@me.com>
+Subject: [PATCH] regulator: core: apply regulator-state-mem for s2idle too
+
+On SM8550 the default suspend mode is s2idle, which converges on the same
+RPMh RSC sleep/wake handoff as deep suspend. Map PM_SUSPEND_TO_IDLE to the
+regulator-state-mem constraints so suspend sleep votes apply on the default
+path (upstream has no TO_IDLE devicetree binding).
+---
+--- a/drivers/regulator/core.c
++++ b/drivers/regulator/core.c
+@@ -465,7 +465,7 @@
+ /* return 0 if the state is valid */
+ static int regulator_check_states(suspend_state_t state)
+ {
+-	return (state > PM_SUSPEND_MAX || state == PM_SUSPEND_TO_IDLE);
++	return (state > PM_SUSPEND_MAX);
+ }
+ 
+ /* Make sure we select a voltage that suits the needs of all
+@@ -570,6 +570,12 @@
+ 	switch (state) {
+ 	case PM_SUSPEND_STANDBY:
+ 		return &rdev->constraints->state_standby;
++	/*
++	 * SM8550 s2idle reaches the same RSC sleep/wake handoff as deep,
++	 * so apply the regulator-state-mem configuration there too (upstream
++	 * has no PM_SUSPEND_TO_IDLE devicetree binding).
++	 */
++	case PM_SUSPEND_TO_IDLE:
+ 	case PM_SUSPEND_MEM:
+ 		return &rdev->constraints->state_mem;
+ 	case PM_SUSPEND_MAX:

@@ -98,3 +98,22 @@ needed).
  	tca6424_vcc: regulator-tca6424-vcc {
  		compatible = "regulator-fixed";
  		regulator-name = "tca6424_vcc";
+
+From: Radical <radical@radical.fun>
+Subject: [PATCH] arm64: dts: qcom: pocketds: give the sound card its own name
+
+The shared Pocket dtsi names every SM8550 Pocket card SM8550-APS, so
+UCM cannot select a DS-specific speaker profile. Override the model.
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketds.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayaneo-pocketds.dts
+@@ -73,6 +73,9 @@
+ 		vin-supply = <&tca6424_vcc>;
+ 	};
+ 
++	sound {
++		model = "SM8550-AYANEO-Pocket-DS";
++	};
+ };
+ 
+ &tlmm {

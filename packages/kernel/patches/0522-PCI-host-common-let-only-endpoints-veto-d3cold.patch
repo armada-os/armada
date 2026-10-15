@@ -1,0 +1,41 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] PCI: host-common: let only endpoints veto D3cold
+
+The root port is still in D0 when the host controller suspends, so
+pci_host_common_d3cold_possible() refuses D3cold and the controller, PHY
+and clocks stay on through s2idle even though the endpoint reached D3hot.
+Skip non-endpoint devices in the walk. pci_host_common.endpoint_d3cold=0
+restores the previous behaviour.
+---
+--- a/drivers/pci/controller/pci-host-common.c
++++ b/drivers/pci/controller/pci-host-common.c
+@@ -283,6 +283,11 @@
+ }
+ EXPORT_SYMBOL_GPL(pci_host_common_remove);
+ 
++/* The root port is still in D0 at noirq suspend and would veto D3cold for its endpoints */
++static bool endpoint_d3cold = true;
++module_param(endpoint_d3cold, bool, 0644);
++MODULE_PARM_DESC(endpoint_d3cold, "Only PCIe endpoints may veto D3cold at system suspend");
++
+ static int __pci_host_common_d3cold_possible(struct pci_dev *pdev,
+ 					     void *userdata)
+ {
+@@ -291,6 +296,17 @@
+ 	if (!pdev->dev.driver && !pci_is_enabled(pdev))
+ 		return 0;
+ 
++	if (endpoint_d3cold) {
++		switch (pci_pcie_type(pdev)) {
++		case PCI_EXP_TYPE_ENDPOINT:
++		case PCI_EXP_TYPE_LEG_END:
++		case PCI_EXP_TYPE_RC_END:
++			break;
++		default:
++			return 0;
++		}
++	}
++
+ 	if (pdev->current_state != PCI_D3hot)
+ 		goto exit;
+ 

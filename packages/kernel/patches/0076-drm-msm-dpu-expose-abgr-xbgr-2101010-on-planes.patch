@@ -1,0 +1,43 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] drm/msm/dpu: expose ABGR2101010 and XBGR2101010 on planes
+
+The format table already describes both layouts, linear and UBWC, and
+the hardware scans them out, but the plane format lists and the UBWC
+list only offered the ARGB/XRGB orders. A2B10G10R10 is the 10-bit
+swapchain format of Vulkan HDR10 games, so such a buffer could not be
+scanned out and the compositor had to copy it.
+
+---
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c
+@@ -121,6 +121,8 @@
+ 	DRM_FORMAT_XBGR8888,
+ 	DRM_FORMAT_ARGB2101010,
+ 	DRM_FORMAT_XRGB2101010,
++	DRM_FORMAT_ABGR2101010,
++	DRM_FORMAT_XBGR2101010,
+ 	DRM_FORMAT_RGB888,
+ 	DRM_FORMAT_BGR888,
+ 	DRM_FORMAT_RGB565,
+@@ -151,6 +153,8 @@
+ 	DRM_FORMAT_BGRA8888,
+ 	DRM_FORMAT_ARGB2101010,
+ 	DRM_FORMAT_XRGB2101010,
++	DRM_FORMAT_ABGR2101010,
++	DRM_FORMAT_XBGR2101010,
+ 	DRM_FORMAT_XRGB8888,
+ 	DRM_FORMAT_XBGR8888,
+ 	DRM_FORMAT_RGBX8888,
+diff -ruN a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -64,6 +64,8 @@
+ 	DRM_FORMAT_XRGB8888,
+ 	DRM_FORMAT_ARGB2101010,
+ 	DRM_FORMAT_XRGB2101010,
++	DRM_FORMAT_ABGR2101010,
++	DRM_FORMAT_XBGR2101010,
+ 	DRM_FORMAT_BGR565,
+ 
+ 	DRM_FORMAT_NV12,

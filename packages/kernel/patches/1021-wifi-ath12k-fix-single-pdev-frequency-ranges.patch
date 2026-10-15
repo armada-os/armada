@@ -1,0 +1,38 @@
+From: Shenghan Gao <gsh20040816@gmail.com>
+Subject: [PATCH] wifi: ath12k: fix frequency range for single-pdev devices
+
+This restores the frequency range fix originally posted upstream at
+https://lore.kernel.org/r/20260715065218.41232-1-gsh20040816@gmail.com
+
+WMI band capabilities are bit flags, not indices into cap.band[]. Use
+NL80211_BAND_* indices, and include 5 GHz when a single pdev covers both
+5 and 6 GHz, even if supports_6ghz is true.
+
+Signed-off-by: Shenghan Gao <gsh20040816@gmail.com>
+
+---
+diff --git a/drivers/net/wireless/ath/ath12k/reg.c b/drivers/net/wireless/ath/ath12k/reg.c
+--- a/drivers/net/wireless/ath/ath12k/reg.c
++++ b/drivers/net/wireless/ath/ath12k/reg.c
+@@ -300,7 +300,7 @@
+ 
+ 	if (supported_bands & WMI_HOST_WLAN_2GHZ_CAP) {
+ 		if (ab->hw_params->single_pdev_only) {
+-			phy_id = ar->pdev->cap.band[WMI_HOST_WLAN_2GHZ_CAP].phy_id;
++			phy_id = ar->pdev->cap.band[NL80211_BAND_2GHZ].phy_id;
+ 			reg_cap = &ab->hal_reg_cap[phy_id];
+ 		}
+ 
+@@ -310,9 +310,10 @@
+ 		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
+ 	}
+ 
+-	if (supported_bands & WMI_HOST_WLAN_5GHZ_CAP && !ar->supports_6ghz) {
++	if (supported_bands & WMI_HOST_WLAN_5GHZ_CAP &&
++	    (!ar->supports_6ghz || ab->hw_params->single_pdev_only)) {
+ 		if (ab->hw_params->single_pdev_only) {
+-			phy_id = ar->pdev->cap.band[WMI_HOST_WLAN_5GHZ_CAP].phy_id;
++			phy_id = ar->pdev->cap.band[NL80211_BAND_5GHZ].phy_id;
+ 			reg_cap = &ab->hal_reg_cap[phy_id];
+ 		}
+ 

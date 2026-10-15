@@ -1,4 +1,4 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From f62c9cc73ef3345bc3957a67ab92cd929fbdeb02 Mon Sep 17 00:00:00 2001
 From: virtudude <virtudude@protonmail.com>
 Date: Sun, 20 Sep 2026 20:13:11 -0400
 Subject: [PATCH] input: share raw gamepad input
@@ -16,17 +16,17 @@ and root-hidden sources.
 Eligible gamepads remain hidden even with passthrough: true. Other
 gamepad-driver sources retain upstream's exclusive grab.
 ---
- src/input/composite_device/mod.rs | 40 +++++++++++------
- src/input/source/evdev.rs         | 34 +++++++++++++++
- src/input/source/evdev/gamepad.rs | 91 +++++++++++++++++++++++++++++++++++++--
- src/udev/mod.rs                   | 57 +++++++++++++++++++-----
- 4 files changed, 195 insertions(+), 27 deletions(-)
+ src/input/composite_device/mod.rs | 40 +++++++++-----
+ src/input/source/evdev.rs         | 34 ++++++++++++
+ src/input/source/evdev/gamepad.rs | 91 ++++++++++++++++++++++++++++++-
+ src/udev/mod.rs                   | 56 +++++++++++++++----
+ 4 files changed, 194 insertions(+), 27 deletions(-)
 
 diff --git a/src/input/composite_device/mod.rs b/src/input/composite_device/mod.rs
-index 144372a..14a5af7 100644
+index 3cca2ba..5e508a5 100644
 --- a/src/input/composite_device/mod.rs
 +++ b/src/input/composite_device/mod.rs
-@@ -654,6 +654,18 @@ impl CompositeDevice {
+@@ -699,6 +699,18 @@ impl CompositeDevice {
              log::debug!("Hiding device: {}", source_path);
              if let Err(e) = hide_device(source_path.as_str(), flags).await {
                  log::warn!("Failed to hide device '{source_path}': {e:?}");
@@ -45,7 +45,7 @@ index 144372a..14a5af7 100644
              }
              log::debug!("Finished hiding device: {source_path}");
          }
-@@ -1707,29 +1719,31 @@ impl CompositeDevice {
+@@ -1734,29 +1746,31 @@ impl CompositeDevice {
          let source_device = match device {
              DeviceInfo::Udev(device) => {
                  let subsystem = device.subsystem();
@@ -136,7 +136,7 @@ index 2db1cad..8abbba4 100644
      fn get_driver_type(device: &UdevDevice, is_blocked: bool) -> DriverType {
          // TODO: add implmentations for other classes of evdev devices (e.g.
 diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
-index de2661f..2bee6d3 100644
+index 5f5b0e6..9491542 100644
 --- a/src/input/source/evdev/gamepad.rs
 +++ b/src/input/source/evdev/gamepad.rs
 @@ -3,8 +3,8 @@ use std::os::fd::AsFd;
@@ -256,18 +256,10 @@ index de2661f..2bee6d3 100644
      /// Create a new [Gamepad] source device from the given udev info
      pub fn new(
 diff --git a/src/udev/mod.rs b/src/udev/mod.rs
-index 15c85cc..8744fd9 100644
+index 871779f..0c7dfc0 100644
 --- a/src/udev/mod.rs
 +++ b/src/udev/mod.rs
-@@ -9,6 +9,7 @@ pub mod device;
- use std::{
-     error::Error,
-     fs,
-+    os::unix::fs::PermissionsExt,
-     path::{Path, PathBuf},
- };
- 
-@@ -17,7 +18,8 @@ use udev::Enumerator;
+@@ -20,7 +20,8 @@ use udev::Enumerator;
  
  use self::device::Device;
  
@@ -277,7 +269,7 @@ index 15c85cc..8744fd9 100644
  const RULE_HIDE_DEVICE_LATE_PRIORITY: &str = "96";
  const RULES_PREFIX: &str = "/run/udev/rules.d";
  
-@@ -26,6 +28,7 @@ const RULES_PREFIX: &str = "/run/udev/rules.d";
+@@ -32,6 +33,7 @@ static SAVED_PERMISSIONS: LazyLock<Mutex<HashMap<String, u32>>> =
  pub enum HideFlag {
      ChangePermissions,
      MoveSourceDevice,
@@ -285,7 +277,7 @@ index 15c85cc..8744fd9 100644
  }
  
  /// Hide the given input device from regular users.
-@@ -91,6 +94,14 @@ KERNEL=="hidraw[0-9]*", SUBSYSTEM=="{subsystem}", RUN+="{mv_cmd} /dev/%k /dev/in
+@@ -115,6 +117,14 @@ KERNEL=="hidraw[0-9]*", SUBSYSTEM=="{subsystem}", RUN+="{mv_cmd} /dev/%k /dev/in
          mv_late_rule = mv_early_rule.clone();
      }
  
@@ -297,18 +289,18 @@ index 15c85cc..8744fd9 100644
 +        ""
 +    };
 +
-     // Create an early udev rule to hide the device
-     let rule = format!(
-         r#"# Hides devices stemming from {name}
-@@ -99,6 +110,7 @@ KERNEL=="hidraw[0-9]*", SUBSYSTEM=="{subsystem}", RUN+="{mv_cmd} /dev/%k /dev/in
+     // Create an early udev rule to hide the device. On a match this jumps
+     // straight to the late rule below, skipping the uaccess/seat rules in
+     // between so they never get a chance to tag the device.
+@@ -125,6 +135,7 @@ KERNEL=="hidraw[0-9]*", SUBSYSTEM=="{subsystem}", RUN+="{mv_cmd} /dev/%k /dev/in
  GOTO="inputplumber_end"
  LABEL="inputplumber_valid"
  {chmod_early_rule}
 +{gamepad_rule}
  {mv_early_rule}
+ GOTO="inputplumber_hide_{name}_late"
  LABEL="inputplumber_end"
- "#
-@@ -128,7 +140,22 @@ LABEL="inputplumber_end"
+@@ -157,7 +168,22 @@ LABEL="inputplumber_end"
      fs::write(rule_path, rule)?;
  
      // Reload udev
@@ -332,7 +324,7 @@ index 15c85cc..8744fd9 100644
  
      Ok(())
  }
-@@ -167,7 +194,7 @@ pub async fn unhide_device(path: String) -> Result<(), Box<dyn Error>> {
+@@ -215,7 +241,7 @@ pub async fn unhide_device(path: String) -> Result<(), Box<dyn Error>> {
      }
  
      // Reload udev
@@ -341,7 +333,7 @@ index 15c85cc..8744fd9 100644
  
      Ok(())
  }
-@@ -221,19 +248,27 @@ pub async fn unhide_all() -> Result<(), Box<dyn Error>> {
+@@ -304,19 +330,27 @@ pub async fn unhide_all() -> Result<(), Box<dyn Error>> {
  }
  
  /// Trigger udev to evaluate rules on the children of the given parent device path
@@ -377,3 +369,6 @@ index 15c85cc..8744fd9 100644
      }
  
      Ok(())
+-- 
+2.56.0
+

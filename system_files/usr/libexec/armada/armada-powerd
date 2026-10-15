@@ -196,6 +196,22 @@ def require_ratio(parser, section, key):
     return clamp(parser.getfloat(section, key), 0.0, 1.0)
 
 
+def fan_enable_mode(hwmon):
+    # pwm-fan mode 3 also cuts the fan supply at duty 0 and in suspend; other
+    # hwmon drivers treat 2 and up as automatic control, so keep manual 1.
+    return "3" if read_text(hwmon / "name") == "pwmfan" else "1"
+
+
+def external_power_online():
+    # Follows the kernel's power_supply_is_system_supplied().
+    for supply in Path("/sys/class/power_supply").glob("*"):
+        if read_text(supply / "type") == "Battery" or read_text(supply / "scope") == "Device":
+            continue
+        if read_text(supply / "online", "0") != "0":
+            return True
+    return False
+
+
 def fan_safe_once():
     fan_hwmon = None
     for path in Path("/sys/class/hwmon").glob("hwmon*"):
@@ -211,7 +227,7 @@ def fan_safe_once():
         return
     enable = fan_hwmon / "pwm1_enable"
     if enable.exists():
-        write_text(enable, "1")
+        write_text(enable, fan_enable_mode(fan_hwmon))
     write_text(fan_hwmon / "pwm1", FAN_SAFE_PWM)
 
 
@@ -249,6 +265,7 @@ class ArmadaPower:
         if self.gpu_level == "manual" and self.manual_gpu_clock:
             self.set_gpu_manual_clock(self.manual_gpu_clock)
         self.apply_irq_affinity()
+        self.apply_sleep_charging_pwm()
         self.fan_tick()
         GLib.timeout_add_seconds(3, self.fan_tick)
 
@@ -365,6 +382,9 @@ class ArmadaPower:
         fan_config["pwm_quantum"] = clamp(parser.getint("fan", "pwm_quantum", fallback=1), 1, 255)
         fan_config["min_pwm"] = clamp(fan_config["min_pwm"], 0, 255)
         fan_config["max_pwm"] = clamp(fan_config["max_pwm"], fan_config["min_pwm"], 255)
+        fan_config["charging_pwm"] = clamp(
+            parser.getint("fan", "charging_pwm", fallback=0), 0, fan_config["max_pwm"]
+        )
 
         fan_safe_above = clamp(
             parser.getint("suspend", "fan_safe_above", fallback=55),
@@ -515,6 +535,8 @@ class ArmadaPower:
         command = [binary]
         if spec[0] == "cosmos" and spec[1]:
             command += ["--primary-domain", spec[1]]
+        elif spec[0] == "lavd":
+            command += ["--pinned-slice-us", "500", "--dd-max-wait-us", "0"]
         try:
             self.scx_child = subprocess.Popen(
                 command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -807,6 +829,15 @@ class ArmadaPower:
                 return self.quantize_pwm(pwm)
         return self.fan_config["min_pwm"]
 
+    def apply_sleep_charging_pwm(self):
+        path = self.fan_hwmon / "pwm1_sleep_charging" if self.fan_hwmon else None
+        if path and path.exists():
+            write_text(path, self.fan_config["charging_pwm"])
+
+    def charging_floor(self, target):
+        floor = self.fan_config["charging_pwm"]
+        return max(target, floor) if floor and external_power_online() else target
+
     def fan_tick(self):
         self.perf_tick()
         try:
@@ -814,11 +845,11 @@ class ArmadaPower:
                 sd_notify("WATCHDOG=1")
                 return True
             if self.fan_enable and self.fan_enable.exists():
-                write_text(self.fan_enable, "1")
+                write_text(self.fan_enable, fan_enable_mode(self.fan_hwmon))
 
             if self.suspended:
                 temp = self.read_temp_max()
-                target = self.suspend_target_pwm(temp)
+                target = self.charging_floor(self.suspend_target_pwm(temp))
                 self.smoothed_temp = float(temp)
                 self.last_pwm = clamp(target, 0, self.fan_config["max_pwm"])
             else:
@@ -829,6 +860,7 @@ class ArmadaPower:
                     target = self.target_pwm(int(self.smoothed_temp))
                 else:
                     target = FAN_SAFE_PWM
+                target = self.charging_floor(target)
                 if target > self.last_pwm:
                     next_pwm = min(target, self.last_pwm + self.fan_config["ramp_up"])
                 else:
@@ -855,7 +887,7 @@ class ArmadaPower:
         if not self.fan_pwm:
             return
         if self.fan_enable and self.fan_enable.exists():
-            write_text(self.fan_enable, "1")
+            write_text(self.fan_enable, fan_enable_mode(self.fan_hwmon))
         write_text(self.fan_pwm, FAN_SAFE_PWM)
         self.last_pwm = FAN_SAFE_PWM
 
@@ -1001,6 +1033,7 @@ class ArmadaPower:
                 if self.gpu_level == "manual" and self.manual_gpu_clock:
                     self.set_gpu_manual_clock(self.manual_gpu_clock)
                 self.apply_irq_affinity()
+                self.apply_sleep_charging_pwm()
             except Exception as exc:
                 print(f"armada-powerd: reload failed: {exc}", file=sys.stderr)
                 invocation.return_dbus_error(f"{BUS_NAME}.Error.ReloadFailed", str(exc))

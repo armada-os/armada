@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Diogo Trindade <diogotr7@gmail.com>
+Date: Sun, 11 Oct 2026 23:18:05 +0100
+Subject: [PATCH] media: iris: send the stream's POC type to the firmware
+
+The firmware raises a source change when a stream property differs from
+what the driver set. HFI_PROP_PIC_ORDER_CNT_TYPE is always set to 0, so
+an H.264 stream of another type raises the same change again every time
+the bitstream port is restarted. Set the type the firmware reported.
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+@@ -339,7 +339,7 @@ static int iris_hfi_gen2_set_picture_order_count(struct iris_inst *inst, u32 pla
+ {
+ 	struct iris_inst_hfi_gen2 *inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
+ 	u32 port = iris_hfi_gen2_get_port(inst, plane);
+-	u32 poc = 0;
++	u32 poc = inst->fw_caps[POC].value;
+ 
+ 	inst_hfi_gen2->src_subcr_params.pic_order_cnt = poc;
+ 

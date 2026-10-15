@@ -1,0 +1,48 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] regulator: apply regulator-state-mem in s2idle only for opted-in drivers
+
+Mapping s2idle to regulator-state-mem for every regulator changes
+behaviour for any board whose DT carries state-mem nodes. Add a
+regulator_desc opt-in and set it for qcom-rpmh-regulator, whose s2idle
+sleep reaches the same RSC sleep-set handoff as deep suspend.
+---
+--- a/include/linux/regulator/driver.h
++++ b/include/linux/regulator/driver.h
+@@ -359,6 +359,7 @@
+  * @n_ramp_values:	number of elements at @ramp_delay_table.
+  *
+  * @enable_time: Time taken for initial enable of regulator (in uS).
++ * @s2idle_uses_state_mem: apply regulator-state-mem constraints in s2idle as well
+  * @off_on_delay: guard time (in uS), before re-enabling a regulator
+  *
+  * @poll_enabled_time: The polling interval (in uS) to use while checking that
+@@ -437,6 +438,7 @@
+ 
+ 	unsigned int enable_time;
+ 
++	bool s2idle_uses_state_mem;
+ 	unsigned int off_on_delay;
+ 
+ 	unsigned int poll_enabled_time;
+--- a/drivers/regulator/core.c
++++ b/drivers/regulator/core.c
+@@ -577,6 +577,9 @@
+ 	 * has no PM_SUSPEND_TO_IDLE devicetree binding).
+ 	 */
+ 	case PM_SUSPEND_TO_IDLE:
++		if (!rdev->desc->s2idle_uses_state_mem)
++			return NULL;
++		fallthrough;
+ 	case PM_SUSPEND_MEM:
+ 		return &rdev->constraints->state_mem;
+ 	case PM_SUSPEND_MAX:
+--- a/drivers/regulator/qcom-rpmh-regulator.c
++++ b/drivers/regulator/qcom-rpmh-regulator.c
+@@ -669,6 +669,7 @@
+ 						"qcom,always-wait-for-ack");
+ 
+ 	vreg->rdesc.owner	= THIS_MODULE;
++	vreg->rdesc.s2idle_uses_state_mem = true;
+ 	vreg->rdesc.type	= REGULATOR_VOLTAGE;
+ 	vreg->rdesc.ops		= vreg->hw_data->ops;
+ 	vreg->rdesc.of_map_mode	= vreg->hw_data->of_map_mode;

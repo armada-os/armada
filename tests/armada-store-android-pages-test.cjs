@@ -1,0 +1,35 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const root = path.resolve(__dirname, '../decky/armada-store');
+const ts = require(path.join(root, 'node_modules/typescript'));
+const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/lib/android.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText;
+const context = { exports: {} };
+vm.runInNewContext(code, context);
+const pager = new context.exports.AndroidPages();
+const cursor = { kind: 'bundle', url: 'next' };
+const cluster = { kind: 'cluster', url: 'related' };
+const ids = Array.from({ length: 45 }, (_, i) => `app${i}`);
+pager.append(ids, [cursor, cursor]);
+assert.deepEqual(Array.from(pager.ids), ids.slice(0, 20));
+assert.equal(pager.cursors.length, 1);
+assert.equal(pager.next(), true);
+assert.deepEqual(Array.from(pager.ids), ids.slice(20, 40));
+pager.previous();
+assert.deepEqual(Array.from(pager.ids), ids.slice(0, 20));
+pager.next(); pager.next();
+assert.equal(pager.ids.length, 5);
+assert.equal(pager.next(), false);
+pager.append(['app44', 'app45', 'app45'], [cursor, cluster], cursor);
+assert.equal(pager.next(), true);
+assert.deepEqual(Array.from(pager.ids), ['app45']);
+assert.equal(pager.cursors.length, 1);
+assert.equal(pager.cursors[0].url, 'related');
+pager.append([], [cluster], cluster);
+assert.equal(pager.canNext, false);
+assert.equal(pager.pages.length, 4);
+assert.equal(new context.exports.AndroidPages().pages.length, 0);
+console.log('Android page history and cursor tests passed');

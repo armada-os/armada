@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+version: 2
+kind: CapabilityMap
+name: AYANEO Pocket MICRO 2 GPIO Keys
+id: ayaneo_pocket_micro2_keys
+
+mapping:
+  - name: AYA SPACE
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_PROG2
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+
+  - name: Home
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_PROG1
+          value_type: button
+    target_event:
+      gamepad:
+        button: Guide

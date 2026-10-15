@@ -5,6 +5,7 @@ from pathlib import Path
 
 CONFIG = Path("/etc/armada/input-calibration.json")
 CALIBRATION_BACKENDS = {
+    "mangmi": Path("/sys/module/mangmi_pocket_max/parameters"),
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
@@ -36,6 +37,26 @@ PARAM_NAMES = (
     "trigger_right_deadzone",
     "trigger_right_antideadzone",
 )
+# Unversioned files hold trigger values relative to trigger_*_max, not these references.
+LEGACY_TRIGGER_REFERENCE = {
+    "mangmi": {"trigger_left": 1910, "trigger_right": 1758},
+    "retroid": {"trigger_left": 1552, "trigger_right": 1552},
+}
+
+
+def migrate(params, backend):
+    references = LEGACY_TRIGGER_REFERENCE.get(backend)
+    if references is None or int(params.get("version", 1)) >= 2:
+        return params
+    params = dict(params)
+    for trigger, reference in references.items():
+        if f"{trigger}_max" not in params:
+            continue
+        shift = reference - int(params[f"{trigger}_max"])
+        params[f"{trigger}_max"] = reference
+        params[f"{trigger}_deadzone"] = int(params.get(f"{trigger}_deadzone", 0)) + shift
+        params[f"{trigger}_antideadzone"] = int(params.get(f"{trigger}_antideadzone", 0)) + shift
+    return params
 
 
 def main():
@@ -51,6 +72,7 @@ def main():
         return
     if not parameters.exists():
         return
+    params = migrate(params, backend)
     for name in PARAM_NAMES:
         if name in params:
             (parameters / name).write_text(str(int(params[name])), encoding="utf-8")

@@ -5,6 +5,16 @@ name: MANGMI Air Y Pro Gamepad
 id: air_y_pro_mcu
 
 mapping:
+  - name: Quick Access Button
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_VOLUMEDOWN
+          value_type: button
+    target_event:
+      gamepad:
+        button: QuickAccess
+
   - name: Guide Button
     source_events:
       - evdev:
@@ -16,7 +26,7 @@ mapping:
         button: Guide
 
   # The case is printed Nintendo-style - A east, B south, X north, Y west - so
-  # each letter is mapped to the position that letter holds on a DualSense.
+  # each letter is mapped to its corresponding Xbox/Steam button position.
   # The driver reports physical position; this is where the layout is applied.
   - name: A Button
     source_events:

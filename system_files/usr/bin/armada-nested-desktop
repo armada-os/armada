@@ -1,0 +1,3 @@
+#!/bin/bash
+# Existing Steam shortcuts store this path.
+exec /usr/libexec/armada/armada-plasma-session nested

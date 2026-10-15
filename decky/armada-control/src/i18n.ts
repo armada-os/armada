@@ -67,6 +67,11 @@ export function setCurrentLocale(locale: Locale): void {
   currentLocale = locale;
 }
 
+// Modals open through showModal, outside the tree useLocale() feeds.
+export function getCurrentLocale(): Locale {
+  return currentLocale;
+}
+
 function interpolate(text: string, variables?: Variables): string {
   if (!variables) return text;
   return Object.entries(variables).reduce(

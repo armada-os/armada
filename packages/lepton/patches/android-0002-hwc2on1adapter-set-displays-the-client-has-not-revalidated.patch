@@ -1,0 +1,28 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] hwc2on1adapter: set displays the client has not revalidated
+
+Every present makes the adapter set all displays in one HWC1 call, and
+Display::set refuses a display that holds type changes the client has not
+accepted. SurfaceFlinger validates and presents one display at a time,
+so with two displays and a HAL that asks for client composition the other
+display always has unaccepted changes, every set fails, and stale frames
+reach the screen. Only require that the display was prepared; a display
+the client has not revalidated keeps its previous client target.
+
+---
+diff --git a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+index 6a2253b..b3e494c 100644
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+@@ -1272,7 +1272,10 @@ bool HWC2On1Adapter::Display::hasChanges() const {
+ Error HWC2On1Adapter::Display::set(hwc_display_contents_1& hwcContents) {
+     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
+ 
+-    if (!mChanges || (mChanges->getNumTypes() > 0)) {
++    // Every present sets all displays, and the client validates and presents
++    // them one at a time, so the others still hold type changes it has not
++    // accepted this round. They keep their previous client target.
++    if (!mChanges) {
+         ALOGE("[%" PRIu64 "] set failed: not validated", mId);
+         return Error::NotValidated;
+     }

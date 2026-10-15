@@ -355,6 +355,19 @@
       }
     },
     {
+      "id": "nested-desktop",
+      "name": "Nested Desktop",
+      "summary": "Plasma Desktop in Game Mode",
+      "category": "applications",
+      "icon": "https://kde.org/stuff/clipart/logo/plasma-logo-colorful.svg",
+      "note": "Ships with Armada",
+      "controllerTemplate": "mouse",
+      "install": {
+        "type": "system",
+        "exec": "/usr/bin/armada-nested-desktop"
+      }
+    },
+    {
       "id": "flatseal",
       "name": "Flatseal",
       "summary": "Manage Flatpak permissions",

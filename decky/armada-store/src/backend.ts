@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import type { Catalog, Job, LaunchSpec, Status } from "./types";
+import type { AndroidPage, Catalog, Job, LaunchSpec, Status } from "./types";
 
 export const getCatalog = () => call<[], Catalog>("get_catalog");
 export const getStatus = () => call<[], Status>("get_status");
@@ -17,3 +17,6 @@ export const clearShortcutRecord = (appId: string, keepPending = false, expected
   call<[string, boolean, number | null], void>("clear_shortcut", appId, keepPending, expected ?? null);
 export const resetConfig = (appId: string) => call<[string], void>("reset_config", appId);
 export const switchToDesktop = () => call<[], void>("switch_to_desktop");
+export const searchAndroid = (query: string, page?: AndroidPage, category?: string) =>
+  call<[string, AndroidPage | null, string | null], { ids: string[]; pages: AndroidPage[] }>("search_android", query, page ?? null, category ?? null);
+export const importAndroid = (path: string) => call<[string], string>("import_android", path);

@@ -25,23 +25,19 @@ def run(name, **env):
         values = dict(line.split('=', 1) for line in output.read_text().splitlines()) if output.exists() else {}
         return result, values
 
-for event in ['push', 'workflow_dispatch']:
-    for branch, tag, channel in [('main', 'testing', 'preview'),
-                                 ('staging', 'staging', 'staging'),
-                                 ('feature-a', 'feature-a', '')]:
-        result, values = run('Resolve publication channel', EVENT_NAME=event, BUILD_REF=f'refs/heads/{branch}')
-        assert result.returncode == 0, result.stderr
-        assert values == {'tag': tag, 'channel': channel}
+for branch, tag, channel in [('main', 'testing', 'preview'),
+                             ('staging', 'staging', 'staging'),
+                             ('feature-a', 'feature-a', '')]:
+    result, values = run('Resolve publication channel', BUILD_REF=f'refs/heads/{branch}')
+    assert result.returncode == 0, result.stderr
+    assert values == {'tag': tag, 'channel': channel}, (branch, values)
 
 for branch in ['testing', 'preview', 'beta', 'stable', 'latest', 'feature/slash', 'bad tag', '$(false)']:
-    result, values = run('Resolve publication channel', EVENT_NAME='workflow_dispatch', BUILD_REF=f'refs/heads/{branch}')
+    result, values = run('Resolve publication channel', BUILD_REF=f'refs/heads/{branch}')
     assert result.returncode != 0 and not values, branch
 
-result, values = run('Resolve publication channel', EVENT_NAME='pull_request', BUILD_REF='refs/pull/123/merge')
-assert result.returncode == 0 and not values
-
-for ref in ['refs/tags/main', 'refs/tags/staging', 'refs/tags/v1.0', 'main', '']:
-    result, values = run('Resolve publication channel', EVENT_NAME='workflow_dispatch', BUILD_REF=ref)
+for ref in ['refs/pull/123/merge', 'refs/tags/main', 'refs/tags/staging', 'refs/tags/v1.0', 'main', '']:
+    result, values = run('Resolve publication channel', BUILD_REF=ref)
     assert result.returncode != 0 and not values, ref
 
 print('Build channel resolution tests passed')

@@ -7,10 +7,14 @@ from .privileged import call
 
 sys.path.insert(0, os.environ.get("ARMADA_GAME_TWEAKS_LIB", "/usr/lib/armada"))
 import armada_game_tweaks
+import armada_turnip
 
 COMPAT_APPLIED_STATE = Path("/var/lib/armada/compat-applied.json")
 FEX_PROFILES_CONFIG = Path("/usr/share/armada/fex-profiles.json")
 PLUGIN_FEX_PROFILES_CONFIG = Path(__file__).resolve().parent.parent / "fex-profiles.json"
+ENV_PRESETS_CONFIG = Path("/usr/share/armada/env-presets.json")
+ENV_PRESETS_OVERRIDE = Path("/etc/armada/env-presets.json")
+USER_HOME = Path("/var/home/armada")
 
 
 def load_fex_contract():
@@ -32,6 +36,25 @@ def fex_profile_labels(contract):
         for name, profile in contract["profiles"].items()
         if isinstance(profile, dict)
     }
+
+
+def turnip_drivers():
+    return armada_turnip.list_drivers(USER_HOME)
+
+
+def load_env_presets():
+    # Data, not code: an admin adds a variable in /etc without waiting for an OTA.
+    # A broken file costs the common-variable picker, never the Compatibility tab.
+    for path in (ENV_PRESETS_OVERRIDE, ENV_PRESETS_CONFIG):
+        try:
+            with path.open(encoding="utf-8") as f:
+                loaded = json.load(f)
+        except (OSError, ValueError):
+            continue
+        presets = loaded.get("presets") if isinstance(loaded, dict) else None
+        if isinstance(presets, list):
+            return presets
+    return []
 
 
 def load_tweaks():

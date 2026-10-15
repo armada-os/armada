@@ -3,7 +3,12 @@ version: 1
 kind: CompositeDevice
 name: MANGMI Air Y Pro
 
-matches: []
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: model
+          value: MANGMI Air Y Pro
 
 single_source: false
 
@@ -16,6 +21,12 @@ source_devices:
     capability_map_id: air_y_pro_mcu
   - group: gamepad
     evdev:
+      name: pm8941_resin
+      phys_path: pm8941_resin/input0
+      handler: event*
+    capability_map_id: air_y_pro_mcu
+  - group: gamepad
+    evdev:
       name: pwm-vibrator
       handler: event*
 
@@ -23,5 +34,5 @@ options:
   auto_manage: true
 
 target_devices:
-  - ds5
+  - deck-uhid
   - keyboard

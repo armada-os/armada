@@ -2,6 +2,7 @@
 # Game launch-option prefix wrapper ("armada-game-launch %command%"). Applies
 # per-game settings via FEX_APP_CONFIG, the only knob every compat tool's FEX reads
 # (the on-disk FEX config files are seen only by the system FEX, not arm64ec/wow64).
+import hashlib
 import json
 import os
 import pathlib
@@ -14,12 +15,19 @@ import time
 sys.path.insert(0, "/usr/lib/armada")
 import armada_game_tweaks
 import armada_perf
+import armada_turnip
 
 
 BASE_FEX_CONFIG = pathlib.Path("/usr/share/fex-emu/Config.json")
 FEX_PROFILES_CONFIG = pathlib.Path("/usr/share/armada/fex-profiles.json")
 PROTON_INJECT_SRC = pathlib.Path("/usr/share/armada/proton-inject/x86_64-linux-gnu")
 SYSTEM_EXEC_PATHS = ("/usr/bin", "/usr/local/bin", "/bin")
+# The guest rootfs's stock Turnip, for x86 games; absent on the host, so native loaders skip it.
+GUEST_TURNIP_MANIFESTS = (
+    "/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json",
+    "/usr/share/vulkan/icd.d/freedreno_icd.i686.json",
+)
+VK_DRIVER_ENV = ("VK_DRIVER_FILES", "VK_ICD_FILENAMES")
 
 def is_appimage(command):
     try:
@@ -81,14 +89,14 @@ def thunk_settings(settings, modules):
     return {name: 1 if thunks.get(name, True) else 0 for name in modules}
 
 
-def fex_config_dir():
+def cache_dir(name):
     # pressure-vessel shares this cache path into the container; a runtime-dir
     # config is invisible there and FEX silently skips an unseen FEX_APP_CONFIG.
     # Relative XDG_CACHE_HOME (invalid per XDG) would be re-anchored by portable FEX.
     cache = os.environ.get("XDG_CACHE_HOME")
     if cache and pathlib.Path(cache).is_absolute():
-        return pathlib.Path(cache) / "armada-fex"
-    return pathlib.Path.home() / ".cache" / "armada-fex"
+        return pathlib.Path(cache) / name
+    return pathlib.Path.home() / ".cache" / name
 
 
 def resolve_fex_config(settings, profiles):
@@ -115,7 +123,7 @@ def apply_fex(settings, game_id, profiles, env):
     config.setdefault("Config", {}).update({k: v for k, v in fex_config.items() if k in allowed})
     config["ThunksDB"] = thunk_settings(settings, config.get("ThunksDB", {}).keys())
 
-    config_dir = fex_config_dir()
+    config_dir = cache_dir("armada-fex")
     config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     cutoff = time.time() - 86400
     for old in config_dir.glob("*.json"):
@@ -209,6 +217,54 @@ def apply_perf(settings, game_id):
         print(f"armada-game-launch: session daemon unavailable: {exc}", file=sys.stderr)
 
 
+def apply_turnip(settings):
+    driver = settings.get("turnipDriver")
+    if not isinstance(driver, str) or driver in ("", armada_turnip.STABLE):
+        return
+    if any(key in os.environ for key in VK_DRIVER_ENV):
+        return
+    manifests = turnip_manifests(driver)
+    # the override replaces driver discovery, so a broken pick would leave no driver
+    if not manifests or any(os.pathsep in manifest for manifest in manifests):
+        print(f"armada-game-launch: no Turnip driver {driver!r}, using the default",
+              file=sys.stderr)
+        return
+    for key in VK_DRIVER_ENV:
+        os.environ[key] = os.pathsep.join(manifests)
+    # vkd3d-proton discards its one per-game pipeline cache when the driver changes
+    shader_path = pathlib.Path(os.environ.get("STEAM_COMPAT_SHADER_PATH", ""))
+    if shader_path.is_absolute() and "VKD3D_SHADER_CACHE_PATH" not in os.environ:
+        cache = shader_path / ("vkd3d-" + hashlib.sha256(driver.encode()).hexdigest()[:16])
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        os.environ["VKD3D_SHADER_CACHE_PATH"] = str(cache)
+
+
+def turnip_manifests(driver):
+    if not driver.startswith(armada_turnip.USER_PREFIX):
+        return armada_turnip.system_manifests(driver)
+    # Driver zips ship a relative-path manifest or none, so the manifest is written here.
+    name = driver[len(armada_turnip.USER_PREFIX):]
+    library = armada_turnip.user_library(pathlib.Path.home(), name)
+    if not library:
+        return None
+    manifest_dir = cache_dir("armada-turnip")
+    manifest_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    manifest = manifest_dir / f"{name}.json"
+    tmp = manifest.with_name(f".{name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump({"file_format_version": "1.0.1",
+                       "ICD": {"library_path": str(library), "api_version": "1.4.0"}}, f)
+            f.write("\n")
+        os.replace(tmp, manifest)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return [str(manifest), *GUEST_TURNIP_MANIFESTS]
+
+
 def repair_wedged_controller():
     # x86 Proton can leave the pad registered as a bare USB device, never promoted to
     # WINEXINPUT (dead under x86 too); an arm64ec Proton reusing that prefix then can't
@@ -271,6 +327,12 @@ def main():
         apply_perf(settings, game_id)
     except Exception as exc:
         print(f"armada-game-launch: perf settings skipped: {exc}", file=sys.stderr)
+
+    # after apply_perf so a driver override in the user's env settings wins
+    try:
+        apply_turnip(settings)
+    except Exception as exc:
+        print(f"armada-game-launch: Turnip driver skipped: {exc}", file=sys.stderr)
 
     try:
         inject_x86_protocol_libs()

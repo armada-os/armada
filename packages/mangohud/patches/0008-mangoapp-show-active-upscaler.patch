@@ -1,0 +1,125 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] mangoapp: show the active gamescope upscaler
+
+Read the appended active-upscaler field from gamescope and label the HUD
+row with the filter that produced the frame, including SGSR and HDR's FSR
+fallback. Keep the existing FSR row for senders without this field, and
+reset the active filter on short messages to avoid retaining stale state.
+
+Account for the message type excluded from msgrcv's returned payload size.
+The existing fsr configuration option still controls the row. Limit filter
+names to four characters to fit the existing value alignment.
+
+---
+diff --git a/src/app/mangoapp_proto.h b/src/app/mangoapp_proto.h
+--- a/src/app/mangoapp_proto.h
++++ b/src/app/mangoapp_proto.h
+@@ -1,4 +1,13 @@
+ #include <stdint.h>
++
++enum mangoapp_upscaler {
++    MANGOAPP_UPSCALER_LINEAR = 0,
++    MANGOAPP_UPSCALER_NEAREST,
++    MANGOAPP_UPSCALER_FSR,
++    MANGOAPP_UPSCALER_NIS,
++    MANGOAPP_UPSCALER_PIXEL,
++    MANGOAPP_UPSCALER_SGSR,
++};
+ 
+ struct mangoapp_msg_header {
+     long msg_type;  // Message queue ID, never change
+@@ -17,6 +26,11 @@
+     uint64_t latency_ns;
+     uint32_t outputWidth;
+     uint32_t outputHeight;
++    uint16_t displayRefresh;
++    uint8_t flags;
++    char engineName[40];
++    uint8_t upscaler;
++    uint8_t wantedUpscaler;
+     // WARNING: Always ADD fields, never remove or repurpose fields
+ } __attribute__((packed));
+ 
+diff --git a/src/app/main.cpp b/src/app/main.cpp
+--- a/src/app/main.cpp
++++ b/src/app/main.cpp
+@@ -210,8 +210,11 @@
+                         if (real_params->fsr_steam_sharpness < 0)
+                             HUDElements.g_fsrSharpness = mangoapp_v1->fsrSharpness;
+                         else
+-                        HUDElements.g_fsrSharpness = real_params->fsr_steam_sharpness - mangoapp_v1->fsrSharpness;
++                            HUDElements.g_fsrSharpness = real_params->fsr_steam_sharpness - mangoapp_v1->fsrSharpness;
+                     }
++                    // msgrcv counts the payload without the leading message type.
++                    HUDElements.g_upscaler = msg_size >= offsetof(mangoapp_msg_v1, upscaler) + sizeof(mangoapp_v1->upscaler) - sizeof(long)
++                        ? mangoapp_v1->upscaler : -1;
+                     if (!real_params->enabled[OVERLAY_PARAM_ENABLED_mangoapp_steam]){
+                         steam_focused = get_prop("GAMESCOPE_FOCUSED_APP_GFX") == 769;
+                     } else {
+diff --git a/src/hud_elements.h b/src/hud_elements.h
+--- a/src/hud_elements.h
++++ b/src/hud_elements.h
+@@ -38,6 +38,7 @@
+         int table_columns_count = 0;
+         pid_t g_gamescopePid = -1;
+         int g_fsrUpscale = -1;
++        int g_upscaler = -1;
+         int g_fsrSharpness = -1;
+         Clock::time_point last_exec;
+         std::vector<std::pair<std::string, std::string>> options;
+diff --git a/src/hud_elements.cpp b/src/hud_elements.cpp
+--- a/src/hud_elements.cpp
++++ b/src/hud_elements.cpp
+@@ -17,6 +17,7 @@
+ #include "mesa/util/macros.h"
+ #include "string_utils.h"
+ #include "app/mangoapp.h"
++#include "app/mangoapp_proto.h"
+ #include <IconsForkAwesome.h>
+ #include "version.h"
+ #include "blacklist.h"
+@@ -1299,20 +1300,30 @@
+ void HudElements::gamescope_fsr(){
+     if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_fsr] && HUDElements.g_fsrUpscale >= 0) {
+         ImguiNextColumnFirstItem();
+-        string FSR_TEXT;
+-        ImVec4 FSR_COLOR;
+-        if (HUDElements.g_fsrUpscale){
+-            FSR_TEXT = "ON";
+-            FSR_COLOR = HUDElements.colors.fps_value_high;
+-        } else {
+-            FSR_TEXT = "OFF";
+-            FSR_COLOR = HUDElements.colors.fps_value_low;
+-        }
+-
+-        HUDElements.TextColored(HUDElements.colors.engine, "%s", "FSR");
+-        ImguiNextColumnOrNewRow();
+-        right_aligned_text(FSR_COLOR, HUDElements.ralign_width, "%s", FSR_TEXT.c_str());
+-        if (HUDElements.g_fsrUpscale){
++        const char *label = "FSR";
++        bool active = HUDElements.g_fsrUpscale > 0;
++        bool sharpness = active;
++        const char *text = active ? "ON" : "OFF";
++        if (HUDElements.g_upscaler >= 0) {
++            label = "UPSCALER";
++            active = true;
++            sharpness = false;
++            switch (HUDElements.g_upscaler) {
++            case MANGOAPP_UPSCALER_LINEAR: text = "OFF"; active = false; break;
++            case MANGOAPP_UPSCALER_NEAREST: text = "NEAR"; break;
++            case MANGOAPP_UPSCALER_FSR: text = "FSR"; sharpness = true; break;
++            case MANGOAPP_UPSCALER_NIS: text = "NIS"; sharpness = true; break;
++            case MANGOAPP_UPSCALER_PIXEL: text = "PIX"; break;
++            case MANGOAPP_UPSCALER_SGSR: text = "SGSR"; sharpness = true; break;
++            default: text = "?"; active = false; break;
++            }
++        }
++        ImVec4 color = active ? HUDElements.colors.fps_value_high : HUDElements.colors.fps_value_low;
++
++        HUDElements.TextColored(HUDElements.colors.engine, "%s", label);
++        ImguiNextColumnOrNewRow();
++        right_aligned_text(color, HUDElements.ralign_width, "%s", text);
++        if (sharpness){
+             if (!HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_hide_fsr_sharpness]) {
+                 ImguiNextColumnOrNewRow();
+                 right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", HUDElements.g_fsrSharpness);

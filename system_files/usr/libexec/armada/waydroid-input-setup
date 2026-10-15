@@ -59,7 +59,6 @@ def publish_node(staging, inputs, name, device):
 
 def reconcile_nodes(dev, desired, published):
     inputs = dev / "input"
-    inputs.mkdir(mode=0o755, exist_ok=True)
     existing = set()
     for node in inputs.iterdir():
         if not EVENT_NAME.fullmatch(node.name):

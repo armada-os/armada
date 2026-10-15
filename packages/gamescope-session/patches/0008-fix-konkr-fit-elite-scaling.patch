@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Armada <armada@localhost>
+Date: Sat, 19 Sep 2026 00:00:00 +0800
+Subject: [PATCH] fix KONKR Pocket FIT Elite SteamUI scaling
+
+The device quirk names OUTPUT_MM, but gamescope-session-plus only forwards
+FAKE_OUTPUT_MM to gamescope. Correct the variable so the Elite uses the same
+177x100 SteamUI scaling basis as Odin 3.
+---
+ usr/share/gamescope-session-plus/device-quirks | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/usr/share/gamescope-session-plus/device-quirks b/usr/share/gamescope-session-plus/device-quirks
+--- a/usr/share/gamescope-session-plus/device-quirks
++++ b/usr/share/gamescope-session-plus/device-quirks
+@@ -327,7 +327,7 @@ if [[ ":KONKR Pocket FIT Elite:" =~ ":$SYS_ID:" ]]; then
+   ORIENTATION=right
+   OUTPUT_CONNECTOR='*,DSI-1'
+   CUSTOM_REFRESH_RATES=60,90,120,144
+-  OUTPUT_MM=177x100
++  FAKE_OUTPUT_MM=177x100
+ 
+   export STEAM_DISPLAY_REFRESH_LIMITS=60,90,120,144
+ fi
+-- 
+2.55.0

@@ -1,0 +1,22 @@
+Subject: [PATCH] arm64: dts: qcom: enable Air Y Pro logo LEDs
+
+The centre logo uses channels 24-29 on the left AW20036. Expose its
+two RGB LEDs alongside the existing stick LEDs.
+
+--- a/arch/arm64/boot/dts/qcom/sm8250-mangmi-air-y-pro.dts
++++ b/arch/arm64/boot/dts/qcom/sm8250-mangmi-air-y-pro.dts
+@@ -609,6 +609,14 @@
+ 		led@15 { reg = <21>; color = <LED_COLOR_ID_BLUE>;  function = LED_FUNCTION_INDICATOR; function-enumerator = <7>; led-max-microamp = <9780>; };
+ 		led@16 { reg = <22>; color = <LED_COLOR_ID_GREEN>; function = LED_FUNCTION_INDICATOR; function-enumerator = <7>; led-max-microamp = <9780>; };
+ 		led@17 { reg = <23>; color = <LED_COLOR_ID_RED>;   function = LED_FUNCTION_INDICATOR; function-enumerator = <7>; led-max-microamp = <9780>; };
++
++		/* Centre logo: two RGB LEDs after the eight stick LEDs. */
++		led@18 { reg = <24>; color = <LED_COLOR_ID_BLUE>;  function = LED_FUNCTION_INDICATOR; function-enumerator = <16>; led-max-microamp = <9780>; };
++		led@19 { reg = <25>; color = <LED_COLOR_ID_GREEN>; function = LED_FUNCTION_INDICATOR; function-enumerator = <16>; led-max-microamp = <9780>; };
++		led@1a { reg = <26>; color = <LED_COLOR_ID_RED>;   function = LED_FUNCTION_INDICATOR; function-enumerator = <16>; led-max-microamp = <9780>; };
++		led@1b { reg = <27>; color = <LED_COLOR_ID_BLUE>;  function = LED_FUNCTION_INDICATOR; function-enumerator = <17>; led-max-microamp = <9780>; };
++		led@1c { reg = <28>; color = <LED_COLOR_ID_GREEN>; function = LED_FUNCTION_INDICATOR; function-enumerator = <17>; led-max-microamp = <9780>; };
++		led@1d { reg = <29>; color = <LED_COLOR_ID_RED>;   function = LED_FUNCTION_INDICATOR; function-enumerator = <17>; led-max-microamp = <9780>; };
+ 	};
+ 
+ 	led-controller@3b {

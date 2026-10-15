@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mutable, so the overlay service applies it; the zygote cannot on this image. -->
+<config>
+    <overlay package="org.armada.lepton.overlay.android" enabled="true" mutable="true" />
+</config>

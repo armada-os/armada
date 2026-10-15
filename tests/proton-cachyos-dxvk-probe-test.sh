@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 root = pathlib.Path(sys.argv[1])
-patcher = root / "build_files/patch-proton-cachyos-dxvk-probe.py"
+patcher = root / "packages/proton-cachyos/patch-proton-cachyos-dxvk-probe.py"
 
 
 def run_patcher(source):

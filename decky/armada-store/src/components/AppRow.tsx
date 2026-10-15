@@ -1,24 +1,26 @@
 import { ButtonItem, PanelSectionRow } from "@decky/ui";
 import type { ReactNode } from "react";
+import { t, type TranslationKey } from "../i18n";
 import { stateIcons } from "../icons";
 import type { CatalogApp, InstalledInfo, Job } from "../types";
 
-const PHASE_LABELS: Record<string, string> = {
-  queued: "Queued",
-  resolving: "Finding release",
-  downloading: "Downloading",
-  installing: "Installing",
-  extracting: "Extracting",
-  removing: "Removing",
-  cancelled: "Cancelled",
-  done: "Done",
+const PHASE_LABELS: Record<string, TranslationKey> = {
+  queued: "jobs.queued",
+  resolving: "jobs.resolving",
+  downloading: "jobs.downloading",
+  installing: "jobs.installing",
+  extracting: "jobs.extracting",
+  removing: "jobs.removing",
+  cancelled: "jobs.cancelled",
+  done: "jobs.done",
 };
 
 export const TERMINAL_PHASES = ["done", "error", "cancelled"];
 
 export function jobLabel(job: Job): string {
-  if (job.phase === "error") return job.error || "Failed";
-  const label = PHASE_LABELS[job.phase] || job.phase;
+  if (job.phase === "error") return job.error || t("common.failed");
+  const key = PHASE_LABELS[job.phase];
+  const label = key ? t(key) : job.phase;
   return job.percent != null ? `${label} ${job.percent}%` : label;
 }
 

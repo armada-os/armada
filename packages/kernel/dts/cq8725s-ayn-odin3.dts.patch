@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering
+Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering and codec rail sleep modes
 
 --- a/arch/arm64/boot/dts/qcom/cq8725s-ayn-odin3.dts
 +++ b/arch/arm64/boot/dts/qcom/cq8725s-ayn-odin3.dts
@@ -13,3 +13,43 @@ Subject: [PATCH] arm64: dts: qcom: odin3: enable DPU dithering
  	reset-gpios = <&tlmm 98 GPIO_ACTIVE_LOW>;
  
  	vddio-supply = <&vreg_l12b_1p8>;
+@@ -350,3 +353,39 @@
+ 		};
+ 	};
+ };
++
++/* The codec keeps these rails enabled through s2idle; idle them in LPM */
++&vreg_bob1 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_l15b_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_l2i_1p2 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_s3g_1p8 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};
++
++&vreg_s7i_1p2 {
++	regulator-state-mem {
++		regulator-on-in-suspend;
++		regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
++	};
++};

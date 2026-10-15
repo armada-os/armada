@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+# gamescope picks its own display names and exits when this child does.
+ln -sfn "$GAMESCOPE_WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/gamescope-secondary"
+env_file="$XDG_RUNTIME_DIR/armada-bottom-env"
+gamescope_env="/proc/$ARMADA_BOTTOM_GAMESCOPE_PID/environ"
+[[ -r "$gamescope_env" ]]
+{
+    # What gamescope removed and set for its children, as clients started here would get it.
+    while IFS= read -r -d '' name; do
+        printf 'unset %s\n' "$name"
+    done < <(comm -z -23 <(cut -z -d= -f1 "$gamescope_env" | sort -z) <(cut -z -d= -f1 /proc/$$/environ | sort -z))
+    while IFS= read -r -d '' var; do
+        printf '%s=%q\n' "${var%%=*}" "${var#*=}"
+    done < <(comm -z -13 <(sort -z "$gamescope_env") <(sort -z /proc/$$/environ))
+    printf '%s\n' WAYLAND_DISPLAY=gamescope-secondary GAMESCOPE_WAYLAND_DISPLAY=gamescope-secondary
+} >"$env_file.new"
+mv -f "$env_file.new" "$env_file"
+exec sleep infinity

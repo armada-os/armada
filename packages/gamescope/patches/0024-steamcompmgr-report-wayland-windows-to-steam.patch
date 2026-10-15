@@ -1,0 +1,100 @@
+From: virtudude <virtudude@protonmail.com>
+Subject: [PATCH] steamcompmgr: report native Wayland windows to Steam
+
+GAMESCOPE_FOCUSABLE_APPS and GAMESCOPE_FOCUSABLE_WINDOWS are built from
+Xwayland windows only. Steam moves a launched app to the front of
+GAMESCOPECTRL_BASELAYER_APPID once it sees one of its windows there, so a
+game whose only window is an xdg-shell toplevel never leaves the launch
+spinner, although the window already carries the right appid.
+
+Report mapped xdg-shell windows that have an appid. They have no X11 id,
+so they are listed with the top bit set on their xdg id. The same id is
+published in GAMESCOPE_FOCUSED_WINDOW and honoured in
+GAMESCOPECTRL_BASELAYER_WINDOW. Record the client pid for the window
+triplet.
+
+---
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -4401,6 +4401,16 @@ static bool win_treat_as_per_window( ste
+ static void
+ handle_desktop_window(steamcompmgr_win_t *w);
+ 
++// xdg-shell windows have no X11 id. X resource ids fit in 29 bits, so the
++// top bit marks the ones reported to Steam for them.
++static uint32_t
++steam_window_id( steamcompmgr_win_t *w )
++{
++	if ( w->type == steamcompmgr_win_type_t::XDG )
++		return 0x80000000u | w->xdg().id;
++	return w->xwayland().id;
++}
++
+ static bool
+ pick_primary_focus_and_override(
+ 	focus_t *out,
+@@ -4423,10 +4433,11 @@ pick_primary_focus_and_override(
+ 			{
+ 				for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
+ 				{
+-					if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND )
++					if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND &&
++						focusable_window->type != steamcompmgr_win_type_t::XDG )
+ 						continue;
+ 
+-					if ( focusable_window->xwayland().id == focusControlWindow )
++					if ( steam_window_id( focusable_window ) == focusControlWindow )
+ 					{
+ 						focus = focusable_window;
+ 						localGameFocused = true;
+@@ -5226,14 +5237,17 @@ determine_and_apply_focus( global_focus_
+ 
+ 	for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
+ 	{
+-		if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND )
++		bool bXdgApp = focusable_window->type == steamcompmgr_win_type_t::XDG &&
++			focusable_window->xdg().surface.mapped && focusable_window->appID != 0;
++
++		if ( focusable_window->type != steamcompmgr_win_type_t::XWAYLAND && !bXdgApp )
+ 			continue;
+ 
+ 		// Exclude windows that are useless (1x1), skip taskbar + pager or override redirect windows
+ 		// from the reported focusable windows to Steam.
+-		if ( win_is_useless( focusable_window ) ||
++		if ( !bXdgApp && ( win_is_useless( focusable_window ) ||
+ 			win_skip_and_not_fullscreen( focusable_window ) ||
+-			focusable_window->xwayland().a.override_redirect )
++			focusable_window->xwayland().a.override_redirect ) )
+ 			continue;
+ 
+ 		unsigned int unAppID = focusable_window->appID;
+@@ -5254,7 +5268,7 @@ determine_and_apply_focus( global_focus_
+ 		}
+ 
+ 		// list of [window, appid, pid] triplets
+-		focusable_windows.push_back( focusable_window->xwayland().id );
++		focusable_windows.push_back( steam_window_id( focusable_window ) );
+ 		focusable_windows.push_back( focusable_window->appID );
+ 		focusable_windows.push_back( focusable_window->pid );
+ 	}
+@@ -5534,7 +5548,7 @@ determine_and_apply_focus( global_focus_
+ 
+ 	if ( pFocus->focusWindow )
+ 	{
+-		focusedWindow = (unsigned long)pFocus->focusWindow->id();
++		focusedWindow = steam_window_id( pFocus->focusWindow );
+ 		focusedBaseAppId = pFocus->focusWindow->appID;
+ 		// A focus window does not guarantee an input focus window.
+ 		if ( pFocus->inputFocusWindow )
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -2541,6 +2541,7 @@ wlserver_xdg_surface_info* waylandy_type
+ 	{
+ 		pid_t nPid = 0;
+ 		wl_client_get_credentials( client, &nPid, nullptr, nullptr );
++		window->pid = nPid;
+ 		window->appID = gamescope::Process::GetAppIdFromPid( nPid );
+ 	}
+ 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();

@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MaxsTechReview <maxjividen@gmail.com>
+Date: Mon, 28 Sep 2026 03:03:46 -0400
+Subject: [PATCH] tu: Invalidate bindless descriptors through the A8XX
+ registers
+
+A8XX dropped the bindless bits from SP_UPDATE_CNTL, so writing them left
+stale bindless descriptors cached after descriptor sets changed. Use
+SP_GFX_BINDLESS_INVALIDATE and SP_CS_BINDLESS_INVALIDATE instead, and also
+invalidate when the hardware is initialized and before blits.
+---
+diff --git a/src/freedreno/vulkan/tu_clear_blit.cc b/src/freedreno/vulkan/tu_clear_blit.cc
+index c3e6d7e..c3359ae 100644
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -1208,6 +1208,8 @@ r3d_common(struct tu_cmd_buffer *cmd, struct tu_cs *cs, enum r3d_type type,
+          .gfx_shared_const = true,
+          .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
+          .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,));
++   if (CHIP >= A8XX)
++      tu_emit_bindless_invalidate<CHIP>(cs, true, true);
+ 
+    with_crb (cs, 2 * 5 + 2 * 12) {
+       tu6_emit_xs_config<CHIP>(crb, { .vs = vs, .fs = fs });
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index e7846bf..9c2d36a 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -390,12 +390,8 @@ tu6_emit_flushes(struct tu_cmd_buffer *cmd_buffer,
+       tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CACHE_CLEAN);
+    if (flushes & TU_CMD_FLAG_CACHE_INVALIDATE)
+       tu_emit_event_write<CHIP>(cmd_buffer, cs, FD_CACHE_INVALIDATE);
+-   if (flushes & TU_CMD_FLAG_BINDLESS_DESCRIPTOR_INVALIDATE) {
+-      tu_cs_emit_regs(cs, SP_UPDATE_CNTL(CHIP,
+-            .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
+-            .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,
+-      ));
+-   }
++   if (flushes & TU_CMD_FLAG_BINDLESS_DESCRIPTOR_INVALIDATE)
++      tu_emit_bindless_invalidate<CHIP>(cs, true, true);
+ 
+    /* SUBPASS_SLICE_FENCE is a weaker version of:
+     * - CACHE_INVALIDATE (only invalidate UCHE GMEM aperture)
+@@ -2500,6 +2496,8 @@ tu_init_hw(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
+          .gfx_shared_const = true,
+          .cs_bindless = CHIP == A6XX ? 0x1f : 0xff,
+          .gfx_bindless = CHIP == A6XX ? 0x1f : 0xff,));
++   if (CHIP >= A8XX)
++      tu_emit_bindless_invalidate<CHIP>(cs, true, true);
+ 
+    tu_cs_emit_wfi(cs);
+ 
+@@ -4812,10 +4810,7 @@ tu6_emit_bindless_bases(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+       }
+    }
+ 
+-   tu_cs_emit_regs(cs, SP_UPDATE_CNTL(CHIP,
+-      .cs_bindless = compute ? CHIP == A6XX ? 0x1f : 0xff : 0,
+-      .gfx_bindless = !compute ? CHIP == A6XX ? 0x1f : 0xff : 0,
+-   ));
++   tu_emit_bindless_invalidate<CHIP>(cs, !compute, compute);
+ }
+ 
+ template <chip CHIP>
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.h b/src/freedreno/vulkan/tu_cmd_buffer.h
+index 2c4691e..49d71b3 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -935,6 +935,26 @@ void tu6_emit_blit_scissor(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+ 
+ void tu_disable_draw_states(struct tu_cmd_buffer *cmd, struct tu_cs *cs);
+ 
++/* A8XX dropped the bindless bits from SP_UPDATE_CNTL, the bindless descriptor
++ * caches are invalidated through dedicated registers instead.
++ */
++template <chip CHIP>
++static inline void
++tu_emit_bindless_invalidate(struct tu_cs *cs, bool gfx, bool compute)
++{
++   if (CHIP >= A8XX) {
++      if (gfx)
++         tu_cs_emit_regs(cs, A6XX_SP_GFX_BINDLESS_INVALIDATE(.dword = 1));
++      if (compute)
++         tu_cs_emit_regs(cs, A6XX_SP_CS_BINDLESS_INVALIDATE(.dword = 1));
++   } else {
++      tu_cs_emit_regs(cs, SP_UPDATE_CNTL(CHIP,
++         .cs_bindless = compute ? CHIP == A6XX ? 0x1f : 0xff : 0,
++         .gfx_bindless = gfx ? CHIP == A6XX ? 0x1f : 0xff : 0,
++      ));
++   }
++}
++
+ void tu6_apply_depth_bounds_workaround(struct tu_device *device,
+                                        uint32_t *rb_depth_cntl);
+ 

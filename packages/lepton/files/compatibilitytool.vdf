@@ -1,0 +1,13 @@
+"compatibilitytools"
+{
+  "compat_tools"
+  {
+    "lepton_armada"
+    {
+      "install_path" "."
+      "display_name" "Lepton (Armada)"
+      "from_oslist" "android"
+      "to_oslist" "linux"
+    }
+  }
+}

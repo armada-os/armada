@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Diogo Trindade <diogotr7@gmail.com>
+Date: Sun, 11 Oct 2026 23:18:05 +0100
+Subject: [PATCH] media: iris: stop the AV1 tier overwriting the HEVC tier
+
+The TIER_AV1 capability has a setter that runs for every codec and
+writes HFI_PROP_TIER to the bitstream port after
+iris_hfi_gen2_set_tier(), so a High tier HEVC stream never matches and
+raises the same source change on every restart. Drop the setter:
+iris_hfi_gen2_set_tier() already sets the AV1 tier.
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen2.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
+@@ -179,7 +179,6 @@ static const struct platform_inst_fw_cap inst_fw_cap_sm8550_dec[] = {
+ 		.value = 0,
+ 		.hfi_id = HFI_PROP_TIER,
+ 		.flags = CAP_FLAG_INPUT_PORT,
+-		.set = iris_set_u32,
+ 	},
+ 	{
+ 		.cap_id = DRAP,

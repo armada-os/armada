@@ -1,0 +1,26 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: unaligned atomics: cover the Load128 store-exclusive
+
+Load128 makes its 128-bit read single-copy atomic by writing the value back
+with stlxp, but only the ldaxp had an exception table entry. When the page
+is read-only (e.g. copy-on-write) the stlxp faults outside a uaccess
+routine and the kernel oopses instead of handling the fault, killing the
+emulated process. Give the store an entry like StoreCAS128 does.
+---
+--- a/arch/arm64/kernel/unaligned_atomic.c
++++ b/arch/arm64/kernel/unaligned_atomic.c
+@@ -129,10 +129,11 @@
+ 
+   uaccess_enable_privileged();
+   asm volatile("1: ldaxp %[ResultLower], %[ResultUpper], [%[Addr]]\n"
+-               "   stlxp %w[Tmp], %[ResultLower], %[ResultUpper], [%[Addr]]\n"
++               "2: stlxp %w[Tmp], %[ResultLower], %[ResultUpper], [%[Addr]]\n"
+                "   cbnz %w[Tmp], 1b\n"
+-               "2:\n"
+-               _ASM_EXTABLE_UACCESS_ERR(1b, 2b, %w[ret])
++               "3:\n"
++               _ASM_EXTABLE_UACCESS_ERR(1b, 3b, %w[ret])
++               _ASM_EXTABLE_UACCESS_ERR(2b, 3b, %w[ret])
+                : [Tmp] "=&r"(Tmp), [ResultLower] "=&r"(Lower), [ResultUpper] "=&r"(Upper), [ret] "+r"(ret)
+                : [Addr] "r"(Addr)
+                : "memory");

@@ -1,0 +1,38 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: qdsp6: q6apm: fail the graph open when the DSP rejects it
+
+q6apm_get_audioreach_graph() ignores the result of the graph-open
+command, so a rejected or timed-out open returns a graph the DSP does not
+have. Drop the reference and return the error.
+---
+--- a/sound/soc/qcom/qdsp6/q6apm.c
++++ b/sound/soc/qcom/qdsp6/q6apm.c
+@@ -38,11 +38,13 @@
+ 					NULL, &apm->wait, pkt, rsp_opcode);
+ }
+ 
++static void q6apm_put_audioreach_graph(struct kref *ref);
++
+ static struct audioreach_graph *q6apm_get_audioreach_graph(struct q6apm *apm, uint32_t graph_id)
+ {
+ 	struct audioreach_graph_info *info;
+ 	struct audioreach_graph *graph;
+-	int id;
++	int id, ret;
+ 
+ 	mutex_lock(&apm->lock);
+ 	graph = idr_find(&apm->graph_idr, graph_id);
+@@ -87,7 +89,12 @@
+ 
+ 	kref_init(&graph->refcount);
+ 
+-	q6apm_send_cmd_sync(apm, graph->graph, 0);
++	ret = q6apm_send_cmd_sync(apm, graph->graph, 0);
++	if (ret) {
++		dev_err(apm->dev, "Failed to open graph %d in the DSP (%d)\n", graph_id, ret);
++		kref_put(&graph->refcount, q6apm_put_audioreach_graph);
++		return ERR_PTR(ret);
++	}
+ 
+ 	return graph;
+ }

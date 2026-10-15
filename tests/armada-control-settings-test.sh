@@ -45,7 +45,8 @@ class Result:
         self.returncode = returncode
 
 
-unit_state = {"enabled": False, "game_mode": True}
+unit_state = {"enabled": False}
+bottom_starts = []
 systemctl_calls = []
 
 
@@ -53,8 +54,6 @@ def fake_session_systemctl(*args, check=True, timeout=30):
     systemctl_calls.append(args)
     if args[:2] == ("is-enabled", "--quiet"):
         return Result(0 if unit_state["enabled"] else 1)
-    if args[:2] == ("is-active", "--quiet"):
-        return Result(0 if unit_state["game_mode"] else 3)
     if args[0] == "enable":
         unit_state["enabled"] = True
     elif args[0] == "disable":
@@ -63,6 +62,7 @@ def fake_session_systemctl(*args, check=True, timeout=30):
 
 
 control.session_systemctl = fake_session_systemctl
+control.start_bottom_screen = lambda: bottom_starts.append(True)
 control.device_env = lambda: {
     "ARMADA_SECONDARY_CONNECTOR": "DSI-1",
     "ARMADA_SECONDARY_BACKLIGHT": "secondary",
@@ -71,15 +71,11 @@ control.device_env = lambda: {
 assert control.action_get_bottom_screen_enabled({}) == {"enabled": False}
 assert control.action_set_bottom_screen_enabled({"enabled": True}) == {"enabled": True}
 assert ("enable", control.BOTTOM_SCREEN_SERVICE) in systemctl_calls
-assert ("start", control.BOTTOM_SCREEN_SERVICE) in systemctl_calls
+assert bottom_starts == [True]
 assert control.action_set_bottom_screen_enabled({"enabled": False}) == {"enabled": False}
 assert ("disable", "--now", control.BOTTOM_SCREEN_SERVICE) in systemctl_calls
 
-unit_state["game_mode"] = False
-systemctl_calls.clear()
-assert control.action_set_bottom_screen_enabled({"enabled": True}) == {"enabled": True}
-assert ("start", control.BOTTOM_SCREEN_SERVICE) not in systemctl_calls
-control.action_set_bottom_screen_enabled({"enabled": False})
+assert bottom_starts == [True]
 
 control.device_env = lambda: {}
 try:

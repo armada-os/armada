@@ -1,0 +1,17 @@
+From: seilent <github@seilent.net>
+Subject: [PATCH] ASoC: wcd938x: treat a failed zdet ramp as floating impedance
+
+A ramp error left zdet at 0, so a failed measurement read as 0 ohm on
+both channels and the plug was classified as mono.
+
+---
+--- a/sound/soc/codecs/wcd938x.c
++++ b/sound/soc/codecs/wcd938x.c
+@@ -2097,6 +2097,7 @@
+ 	if (!c1 || !x1) {
+ 		dev_err(component->dev, "Impedance detect ramp error, c1=%d, x1=0x%x\n",
+ 			c1, x1);
++		*zdet = WCD938X_ZDET_FLOATING_IMPEDANCE;
+ 		goto ramp_down;
+ 	}
+ 	d1 = d1_a[c1];

@@ -65,11 +65,11 @@ jobs:
 
             echo "::notice::${pkg} changed by this PR, building it (${hash})"
             refs="${refs}${var}=localhost/armada/pkg/${pkg}:${hash}"$'\n'
-            # These two need an x86_64 host, so they cannot build on the arm64
+            # These need an x86_64 host, so they cannot build on the arm64
             # runner that builds the image.
             case "${pkg}" in
-              mesa-android|mesa-x86) target=cross ;;
-              *)                     target=native ;;
+              mesa-android|lepton|mesa-x86) target=cross ;;
+              *)                            target=native ;;
             esac
             entry="$(jq -c -n --arg p "${pkg}" --arg h "${hash}" '{package:$p, hash:$h}')"
             if [ "${target}" = cross ]; then
@@ -353,47 +353,21 @@ jobs:
           oci: false
 
       - name: Validate Chunkah output
-        run: |
-          set -euxo pipefail
-          CHUNKAH_LOG_FILE="${RUNNER_TEMP}/chunkah.log"
-          CHUNKAH_MANIFEST_FILE="${RUNNER_TEMP}/chunkah-manifest.json"
-          CHUNKAH_IMAGE_CONFIG_FILE="${RUNNER_TEMP}/chunkah-image-config.json"
-          for component in steam proton fex-rootfs; do
-            if ! grep -Eq "creating tar layer .*\"xattr/${component}\"" "${CHUNKAH_LOG_FILE}"; then
-              echo "::error::Chunkah did not emit an xattr/${component} component layer"
-              exit 1
-            fi
-          done
+        run: ./.github/scripts/validate-chunkah-output.sh pr
 
-          CHUNKED_REF="oci:${RUNNER_TEMP}/chunked"
-          skopeo inspect --raw "${CHUNKED_REF}" > "${CHUNKAH_MANIFEST_FILE}"
-          jq -e '(.layers | length) > 1 and (.layers | length) <= 128' \
-            "${CHUNKAH_MANIFEST_FILE}" || {
-              echo "::error::Chunkah output has an invalid layer count"
-              exit 1
-            }
-          jq -e '((.annotations // {}) | has("ostree.commit") | not) and
-            ((.annotations // {}) | has("ostree.final-diffid") | not)' \
-            "${CHUNKAH_MANIFEST_FILE}" || {
-              echo "::error::Chunkah output retained OSTree manifest annotations"
-              exit 1
-            }
-          skopeo inspect --config "${CHUNKED_REF}" > "${CHUNKAH_IMAGE_CONFIG_FILE}"
-          jq -e --slurpfile expected "${RUNNER_TEMP}/chunkah-config.json" \
-            '.config == $expected[0]' "${CHUNKAH_IMAGE_CONFIG_FILE}" || {
-              echo "::error::Chunkah output did not preserve the prepared runtime config"
-              exit 1
-            }
-          jq -e '.architecture == "arm64" and .os == "linux" and
-              .config.Cmd == ["/sbin/init"] and
-              .config.Labels["containers.bootc"] == "1" and
-              .config.Labels["ostree.bootable"] == "true" and
-              (.config.Labels | has("ostree.commit") | not) and
-              (.config.Labels | has("ostree.final-diffid") | not)' \
-            "${CHUNKAH_IMAGE_CONFIG_FILE}"
-          python3 build_files/verify-steam-bootstrap.py --oci "${RUNNER_TEMP}/chunked"
-          jq '{layers: (.layers | length), compressed_bytes: ([.layers[].size] | add)}' \
-            "${CHUNKAH_MANIFEST_FILE}" >> "${GITHUB_STEP_SUMMARY}"
+      - name: Export container image
+        run: |
+          skopeo copy "oci:${RUNNER_TEMP}/chunked" \
+            "oci-archive:${RUNNER_TEMP}/armada-${DISK_TAG}.tar"
+
+      - name: Upload container image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: armada-container-pr${{ github.event.pull_request.number }}
+          path: ${{ runner.temp }}/armada-${{ env.DISK_TAG }}.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
 
       - name: Load the image for the disk build
         run: |

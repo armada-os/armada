@@ -1,0 +1,29 @@
+From 3629c715113b875a1da8e8a4e0cc16953fb0209e Mon Sep 17 00:00:00 2001
+From: FeralAI <13342258+FeralAI@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 22:15:40 -0500
+Subject: [PATCH] fix KONKR Pocket FIT refresh rates
+
+---
+ usr/share/gamescope-session-plus/device-quirks | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/usr/share/gamescope-session-plus/device-quirks b/usr/share/gamescope-session-plus/device-quirks
+index 6599b04..f5605bb 100644
+--- a/usr/share/gamescope-session-plus/device-quirks
++++ b/usr/share/gamescope-session-plus/device-quirks
+@@ -335,11 +335,11 @@ fi
+ 
+ if [[ ":KONKR Pocket FIT:" =~ ":$SYS_ID:" ]]; then
+   ORIENTATION=right
+-  CUSTOM_REFRESH_RATES=144
++  CUSTOM_REFRESH_RATES=60,90,120,144
+   OUTPUT_CONNECTOR='*,DSI-1'
+   FAKE_OUTPUT_MM=177x100
+ 
+-  export STEAM_DISPLAY_REFRESH_LIMITS=144
++  export STEAM_DISPLAY_REFRESH_LIMITS=60,90,120,144
+ fi
+ 
+ if [[ ":Retroid Pocket 5:Retroid Pocket Flip2:" =~ ":$SYS_ID:" ]]; then
+-- 
+2.56.0

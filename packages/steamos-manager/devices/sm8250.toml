@@ -2,6 +2,12 @@
 # system_files/usr/lib/armada/devices/*.conf.
 
 [[device]]
+dt.compatible = "ayaneo,pocket-micro2"
+device        = "ayaneo_pocket_micro2"
+variant       = "PocketMICRO2"
+friendly_name = "AYANEO Pocket MICRO 2"
+
+[[device]]
 dt.compatible = "ayn,thor-lite"
 device        = "ayn_thor_lite"
 variant       = "ThorLite"

@@ -1,0 +1,13 @@
+# No bugreport keychord: with one, init opens every /dev/input node, and the display HAL's FIFOs there block.
+on init
+    export TERMINFO /system/etc/terminfo
+
+on post-fs-data
+    mkdir /cache/recovery 0770 system cache
+
+    chown root log /dev/fscklogs/log
+    chmod 0640 /dev/fscklogs/log
+
+service bugreport /system/bin/dumpstate -d -p -z
+    oneshot
+    disabled

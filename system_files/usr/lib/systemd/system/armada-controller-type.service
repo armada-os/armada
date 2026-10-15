@@ -6,6 +6,7 @@ Before=display-manager.service
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
 ExecStart=/usr/libexec/armada/controller-type apply
 
 [Install]

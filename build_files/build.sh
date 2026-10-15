@@ -12,6 +12,7 @@ run_step() {
 }
 
 run_step ./10-base-packages.sh
+run_step ./12-armada-packages.sh
 run_step ./20-install-kernel.sh
 run_step ./30-install-steam-session.sh
 run_step ./40-vendor-system-files.sh
@@ -21,4 +22,5 @@ run_step ./52-configure-os-release.sh
 run_step ./55-generate-initramfs.sh
 run_step ./60-set-default-target.sh
 run_step ./70-cleanup.sh
+run_step ./78-chunk-layers.sh
 run_step ./80-finalize-update-state.sh

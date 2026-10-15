@@ -1,13 +1,21 @@
 //! Hardware backends for RGB lighting.
 
-use crate::{ColorCorrection, LightingConfig};
+use crate::{rgb_saturation, ColorCorrection, LightingConfig};
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus};
+use std::thread;
+use std::time::Duration;
+
+const SERIAL_FRAME_GAP: Duration = Duration::from_millis(40);
+const SERIAL_FRAME_REPEATS: usize = 3;
 
 pub enum LightingBackend {
+    Serial(SerialBackend),
     Channels(ChannelBackend),
     Multicolor(MulticolorBackend),
     Unsupported(String),
@@ -16,6 +24,7 @@ pub enum LightingBackend {
 impl LightingBackend {
     pub fn apply(&self, config: &LightingConfig) -> Result<()> {
         match self {
+            Self::Serial(backend) => backend.apply(config),
             Self::Channels(backend) => backend.apply(config),
             Self::Multicolor(backend) => backend.apply(config),
             Self::Unsupported(reason) => bail!("{reason}"),
@@ -24,18 +33,128 @@ impl LightingBackend {
 
     pub fn unsupported_reason(&self) -> Option<&str> {
         match self {
-            Self::Channels(_) | Self::Multicolor(_) => None,
+            Self::Serial(_) | Self::Channels(_) | Self::Multicolor(_) => None,
             Self::Unsupported(reason) => Some(reason),
         }
     }
 
+    pub(crate) fn blanks_on_sleep(&self) -> bool {
+        matches!(self, Self::Serial(_))
+    }
+
     pub(crate) fn default_correction(&self) -> Option<ColorCorrection> {
         match self {
+            Self::Serial(backend) => backend.correction.clone(),
             Self::Channels(backend) => backend.correction.clone(),
             Self::Multicolor(backend) => backend.correction.clone(),
             Self::Unsupported(_) => None,
         }
     }
+}
+
+/// MCU packet family spoken over the serial device.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SerialProtocol {
+    /// 11-byte frame used by the AYANEO Pocket MICRO 2.
+    Micro2,
+    /// 27-byte frame used by the AYANEO Pocket S2 analogue-stick rings.
+    PocketS2,
+}
+
+pub struct SerialBackend {
+    root: PathBuf,
+    device: String,
+    protocol: SerialProtocol,
+    correction: Option<ColorCorrection>,
+}
+
+impl SerialBackend {
+    pub fn new(root: PathBuf, device: String, protocol: SerialProtocol) -> Self {
+        Self {
+            root,
+            device,
+            protocol,
+            correction: None,
+        }
+    }
+
+    pub(crate) fn with_correction(mut self, correction: Option<ColorCorrection>) -> Self {
+        self.correction = correction;
+        self
+    }
+
+    fn apply(&self, config: &LightingConfig) -> Result<()> {
+        validate_names(std::slice::from_ref(&self.device))?;
+        let path: PathBuf = self.root.join(&self.device);
+        let rgb: [u8; 3] = if config.enabled {
+            corrected_rgb(config, self.correction.as_ref())
+                .map(|channel| scale(config.brightness, u32::from(channel)) as u8)
+        } else {
+            [0, 0, 0]
+        };
+        let frame: Vec<u8> = match self.protocol {
+            SerialProtocol::Micro2 => serial_frame(rgb).to_vec(),
+            SerialProtocol::PocketS2 => pocket_s2_frame(rgb).to_vec(),
+        };
+        let name: &str = &self.device;
+        let mut device: File = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("open {name}"))?;
+
+        if device
+            .metadata()
+            .with_context(|| format!("stat {name}"))?
+            .file_type()
+            .is_char_device()
+        {
+            configure_serial(&path)?;
+        }
+        for index in 0..SERIAL_FRAME_REPEATS {
+            if index > 0 {
+                thread::sleep(SERIAL_FRAME_GAP);
+            }
+            device
+                .write_all(&frame)
+                .with_context(|| format!("write {name}"))?;
+        }
+        device.flush().with_context(|| format!("write {name}"))
+    }
+}
+
+fn serial_frame([red, green, blue]: [u8; 3]) -> [u8; 11] {
+    let mut frame: [u8; 11] = [0xF7, 0x01, red, green, blue, 0, 0, 0, 0, 0, 0xED];
+    frame[9] = frame[1..9]
+        .iter()
+        .fold(0u8, |sum, byte| sum.wrapping_add(*byte));
+    frame
+}
+
+/// The S2 MCU takes a per-channel brightness byte; the scaled colour is sent
+/// at full brightness so saturation and correction stay in one place.
+fn pocket_s2_frame([red, green, blue]: [u8; 3]) -> [u8; 27] {
+    let brightness: u8 = if red | green | blue == 0 { 0 } else { 0xFF };
+    let mut frame: [u8; 27] = [
+        0xF7, 0x00, 0x1C, 0x20, 0x01, 0x80, 0x00, 0x81, 0x00, 0x8B, 0x0F, 0x88, red, 0x89, green,
+        0x8A, blue, 0x86, brightness, 0x87, brightness, 0x58, 0x08, 0x45, 0x00, 0, 0xED,
+    ];
+    frame[25] = frame[1..25]
+        .iter()
+        .fold(0u8, |sum, byte| sum.wrapping_add(*byte));
+    frame
+}
+
+fn configure_serial(path: &Path) -> Result<()> {
+    let status: ExitStatus = Command::new("stty")
+        .arg("-F")
+        .arg(path)
+        .args(["115200", "-clocal", "-opost", "-isig", "-icanon", "-echo"])
+        .status()
+        .context("run stty")?;
+    if !status.success() {
+        bail!("stty failed for {}", path.display());
+    }
+    Ok(())
 }
 
 pub struct ChannelBackend {
@@ -333,7 +452,7 @@ fn channel_value(channel: &str, [red, green, blue]: [u8; 3], maximum: u32) -> u3
 }
 
 fn corrected_rgb(config: &LightingConfig, profile: Option<&ColorCorrection>) -> [u8; 3] {
-    let rgb: [u8; 3] = config.rgb();
+    let rgb: [u8; 3] = rgb_saturation::rgb_after_saturation(config.rgb(), config.saturation);
     let correction: Option<&ColorCorrection> = config.correction.as_ref().or(profile);
     let Some(correction) = correction else {
         return rgb;
@@ -365,5 +484,29 @@ mod tests {
         assert_eq!(gamma(128, 100), 22);
         assert_eq!(gamma(255, 255), 255);
         assert_eq!(scale(25, 255), 64);
+    }
+
+    #[test]
+    fn builds_pocket_s2_frames() {
+        assert_eq!(
+            pocket_s2_frame([0xFF, 0, 0]),
+            [
+                0xF7, 0x00, 0x1C, 0x20, 0x01, 0x80, 0x00, 0x81, 0x00, 0x8B, 0x0F, 0x88, 0xFF, 0x89,
+                0x00, 0x8A, 0x00, 0x86, 0xFF, 0x87, 0xFF, 0x58, 0x08, 0x45, 0x00, 0x22, 0xED
+            ]
+        );
+        assert_eq!(pocket_s2_frame([0, 0, 0])[25], 0x25);
+    }
+
+    #[test]
+    fn builds_serial_frames() {
+        assert_eq!(
+            serial_frame([0x10, 0, 0]),
+            [0xF7, 0x01, 0x10, 0, 0, 0, 0, 0, 0, 0x11, 0xED]
+        );
+        assert_eq!(
+            serial_frame([0xFF, 0xFF, 0xFF]),
+            [0xF7, 0x01, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0, 0xFE, 0xED]
+        );
     }
 }

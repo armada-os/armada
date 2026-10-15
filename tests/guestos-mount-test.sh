@@ -3,10 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-MOUNT_HELPER="$ROOT/system_files/usr/libexec/armada/armada-guestos-mount"
-SERVICE="$ROOT/system_files/usr/lib/systemd/system/armada-guestos.service"
-STEAM_BUILD="$ROOT/build_files/30-install-steam-session.sh"
-VENDOR_BUILD="$ROOT/build_files/40-vendor-system-files.sh"
+ROOTFS_PKG="$ROOT/packages/fex-rootfs-archlinux"
+MOUNT_HELPER="$ROOTFS_PKG/armada-guestos-mount"
+SERVICE="$ROOTFS_PKG/armada-guestos.service"
+ROOTFS_SPEC="$ROOTFS_PKG/fex-emu-rootfs-archlinux.spec"
+PACKAGES_BUILD="$ROOT/build_files/12-armada-packages.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -90,14 +91,18 @@ grep -qx 'ConditionPathExists=/usr/share/fex-emu/RootFS/ArchLinux.sqsh' "$SERVIC
 grep -qx 'ConditionPathExists=/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh' "$SERVICE" ||
     fail 'service does not require ArmadaMesa.sqsh'
 
-# Separate components keep Mesa-only updates from invalidating ArchLinux.sqsh.
-grep -F 'b"fex-rootfs"' "$STEAM_BUILD" | grep -Fq '/ArchLinux.sqsh' ||
-    fail 'ArchLinux.sqsh does not have its own rechunk component'
-grep -F 'b"fex-mesa"' "$VENDOR_BUILD" | grep -Fq '"${mesa_sqsh}"' ||
-    fail 'ArmadaMesa.sqsh does not have its own rechunk component'
-grep -Fq 'install -Dm0644 /packages/mesa-x86/ArmadaMesa.sqsh "${mesa_sqsh}"' "$VENDOR_BUILD" ||
+# The rootfs RPM ships ArchLinux.sqsh, the mountpoint, and the mount helper.
+grep -Fq '%{_datadir}/fex-emu/RootFS/ArchLinux.sqsh' "$ROOTFS_SPEC" ||
+    fail 'the rootfs package does not ship ArchLinux.sqsh'
+grep -Fq '%dir %{_datadir}/guestos/fex-mesa' "$ROOTFS_SPEC" ||
+    fail 'the rootfs package does not own the fex-mesa mountpoint'
+grep -Fq '%{_unitdir}/armada-guestos.service' "$ROOTFS_SPEC" ||
+    fail 'the rootfs package does not ship armada-guestos.service'
+grep -Fq '/packages/fex-rootfs-archlinux/*.rpm' "$PACKAGES_BUILD" ||
+    fail 'Armada does not install the rootfs package'
+grep -Fq 'install -Dm0644 /packages/mesa-x86/ArmadaMesa.sqsh "/usr/share/fex-emu/RootFS/ArmadaMesa.sqsh"' "$PACKAGES_BUILD" ||
     fail 'Armada regenerates rather than consumes the packaged Mesa image'
-if grep -q 'mksquashfs' "$VENDOR_BUILD"; then
+if grep -q 'mksquashfs' "$PACKAGES_BUILD"; then
     fail 'Armada regenerates the packaged Mesa image'
 fi
 

@@ -32,6 +32,9 @@ export STEAM_USE_MANGOAPP=1
 
 export STEAM_USE_DYNAMIC_VRS=1
 
+# Lepton only gives its dev context a window. Steam-launched Android titles run headless without this.
+export APP_WANTS_FLATSCREEN=true
+
 # Gamescope selects Vulkan queue priority before the runtime policy is published.
 _armada_game_tweaks="${ARMADA_GAME_TWEAKS_HELPER:-/usr/libexec/armada/armada-game-tweaks}"
 _armada_vulkan_realtime="$("$_armada_game_tweaks" get global.gamescopeVulkanRealtime 2>/dev/null)"
@@ -39,6 +42,21 @@ if [[ "$_armada_vulkan_realtime" == true ]]; then
     export GAMESCOPE_FORCE_VULKAN_REALTIME=1
 fi
 unset _armada_game_tweaks _armada_vulkan_realtime
+
+_armada_swipe_gestures_config="${ARMADA_SWIPE_GESTURES_CONFIG:-/etc/armada/swipe-gestures.conf}"
+if [[ -r "$_armada_swipe_gestures_config" ]]; then
+    while IFS= read -r _armada_line || [[ -n "$_armada_line" ]]; do
+        if [[ "$_armada_line" =~ ^[[:space:]]*enabled[[:space:]]*=[[:space:]]*([01])[[:space:]]*$ ]]; then
+            # Any nonempty value, including 0, disables gestures in the launcher.
+            if [[ "${BASH_REMATCH[1]}" == 0 ]]; then
+                export DISABLE_TOUCH_GESTURES=1
+            else
+                export DISABLE_TOUCH_GESTURES=
+            fi
+        fi
+    done <"$_armada_swipe_gestures_config"
+fi
+unset _armada_swipe_gestures_config _armada_line
 
 # Set up first time bootstrap status
 export STEAM_BOOTSTRAP_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/gamescope/bootstrap.cfg"

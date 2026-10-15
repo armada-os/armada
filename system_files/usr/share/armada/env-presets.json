@@ -1,0 +1,216 @@
+{
+  "presets": [
+    {
+      "name": "DXVK_FRAME_RATE",
+      "description": {
+        "en": "Applies a frame limit to games using DXVK.",
+        "pt-BR": "Aplica um limite de quadros aos jogos que usam DXVK.",
+        "pt-PT": "Aplica um limite de fotogramas aos jogos que usam DXVK.",
+        "zh-CN": "为使用 DXVK 的游戏设置帧率上限。"
+      },
+      "example": "60"
+    },
+    {
+      "name": "MESA_LOADER_DRIVER_OVERRIDE",
+      "description": {
+        "en": "Overrides the driver loaded by Mesa. Most often used for better compatibility with OpenGL using the Zink driver, which translates OpenGL to Vulkan.",
+        "pt-BR": "Substitui o driver carregado pelo Mesa. Costuma ser usado para melhorar a compatibilidade com OpenGL através do driver Zink, que traduz OpenGL para Vulkan.",
+        "pt-PT": "Substitui o controlador carregado pelo Mesa. É usado sobretudo para melhorar a compatibilidade com OpenGL através do controlador Zink, que traduz OpenGL para Vulkan.",
+        "zh-CN": "覆盖 Mesa 加载的驱动。最常用于通过 Zink 驱动改善 OpenGL 兼容性，Zink 会把 OpenGL 转换为 Vulkan。"
+      },
+      "example": "zink"
+    },
+    {
+      "name": "MESA_VK_WSI_PRESENT_MODE",
+      "description": {
+        "en": "Sets the Vulkan presentation mode, which is effectively V-sync mode.",
+        "pt-BR": "Define o modo de apresentação do Vulkan, que na prática é o modo de V-sync.",
+        "pt-PT": "Define o modo de apresentação do Vulkan, que na prática é o modo de V-sync.",
+        "zh-CN": "设置 Vulkan 呈现模式，实际上就是垂直同步模式。"
+      },
+      "options": [
+        {
+          "data": "immediate",
+          "label": {
+            "en": "immediate - Immediate, V-sync off",
+            "pt-BR": "immediate - Imediato, V-sync desligado",
+            "pt-PT": "immediate - Imediato, V-sync desligado",
+            "zh-CN": "immediate - 立即，关闭垂直同步"
+          }
+        },
+        {
+          "data": "mailbox",
+          "label": {
+            "en": "mailbox - Mailbox, V-sync on",
+            "pt-BR": "mailbox - Mailbox, V-sync ligado",
+            "pt-PT": "mailbox - Mailbox, V-sync ligado",
+            "zh-CN": "mailbox - 邮箱，开启垂直同步"
+          }
+        },
+        {
+          "data": "relaxed",
+          "label": {
+            "en": "relaxed - Relaxed FIFO, adaptive",
+            "pt-BR": "relaxed - FIFO relaxado, adaptativo",
+            "pt-PT": "relaxed - FIFO relaxado, adaptativo",
+            "zh-CN": "relaxed - 宽松 FIFO，自适应"
+          }
+        },
+        {
+          "data": "fifo",
+          "label": {
+            "en": "fifo - FIFO, V-sync on",
+            "pt-BR": "fifo - FIFO, V-sync ligado",
+            "pt-PT": "fifo - FIFO, V-sync ligado",
+            "zh-CN": "fifo - FIFO，开启垂直同步"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PROTON_USE_WINED3D",
+      "description": {
+        "en": "Use the WineD3D library instead of DXVK for DirectX 9-11 games. Can help with compatibility issues.",
+        "pt-BR": "Usa a biblioteca WineD3D em vez do DXVK para jogos DirectX 9-11. Pode ajudar com problemas de compatibilidade.",
+        "pt-PT": "Usa a biblioteca WineD3D em vez do DXVK para jogos DirectX 9-11. Pode ajudar com problemas de compatibilidade.",
+        "zh-CN": "对 DirectX 9-11 游戏使用 WineD3D 库而不是 DXVK。可以解决部分兼容性问题。"
+      },
+      "options": [
+        {
+          "data": "1",
+          "label": {
+            "en": "1 - Enabled",
+            "pt-BR": "1 - Habilitado",
+            "pt-PT": "1 - Ativado",
+            "zh-CN": "1 - 启用"
+          }
+        },
+        {
+          "data": "0",
+          "label": {
+            "en": "0 - Disabled",
+            "pt-BR": "0 - Desabilitado",
+            "pt-PT": "0 - Desativado",
+            "zh-CN": "0 - 禁用"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PROTON_USE_WOW64",
+      "description": {
+        "en": "Runs 32-bit binaries in 64-bit WOW64 mode. Can improve compatibility with older games and is sometimes required when using newer Proton builds with NTSYNC.",
+        "pt-BR": "Executa binários de 32 bits no modo WOW64 de 64 bits. Pode melhorar a compatibilidade com jogos antigos e às vezes é necessário com versões novas do Proton que usam NTSYNC.",
+        "pt-PT": "Executa binários de 32 bits no modo WOW64 de 64 bits. Pode melhorar a compatibilidade com jogos antigos e por vezes é necessário com versões recentes do Proton que usam NTSYNC.",
+        "zh-CN": "在 64 位 WOW64 模式下运行 32 位程序。可以改善老游戏的兼容性，使用带 NTSYNC 的新版 Proton 时有时是必需的。"
+      },
+      "options": [
+        {
+          "data": "1",
+          "label": {
+            "en": "1 - Enabled",
+            "pt-BR": "1 - Habilitado",
+            "pt-PT": "1 - Ativado",
+            "zh-CN": "1 - 启用"
+          }
+        },
+        {
+          "data": "0",
+          "label": {
+            "en": "0 - Disabled",
+            "pt-BR": "0 - Desabilitado",
+            "pt-PT": "0 - Desativado",
+            "zh-CN": "0 - 禁用"
+          }
+        }
+      ]
+    },
+    {
+      "name": "VKD3D_FEATURE_LEVEL",
+      "description": {
+        "en": "Sets the DirectX feature level exposed to the game when using VKD3D. Lower values can improve compatibility.",
+        "pt-BR": "Define o nível de recursos do DirectX exposto ao jogo ao usar o VKD3D. Valores menores podem melhorar a compatibilidade.",
+        "pt-PT": "Define o nível de funcionalidades do DirectX exposto ao jogo ao usar o VKD3D. Valores mais baixos podem melhorar a compatibilidade.",
+        "zh-CN": "设置使用 VKD3D 时向游戏公开的 DirectX 功能级别。数值越低，兼容性可能越好。"
+      },
+      "options": [
+        {
+          "data": "11_0",
+          "label": {
+            "en": "11_0 - DirectX 11.0-level features",
+            "pt-BR": "11_0 - Recursos de nível DirectX 11.0",
+            "pt-PT": "11_0 - Funcionalidades de nível DirectX 11.0",
+            "zh-CN": "11_0 - DirectX 11.0 级功能"
+          }
+        },
+        {
+          "data": "11_1",
+          "label": {
+            "en": "11_1 - DirectX 11.1-level features",
+            "pt-BR": "11_1 - Recursos de nível DirectX 11.1",
+            "pt-PT": "11_1 - Funcionalidades de nível DirectX 11.1",
+            "zh-CN": "11_1 - DirectX 11.1 级功能"
+          }
+        },
+        {
+          "data": "12_0",
+          "label": {
+            "en": "12_0 - DirectX 12.0-level features",
+            "pt-BR": "12_0 - Recursos de nível DirectX 12.0",
+            "pt-PT": "12_0 - Funcionalidades de nível DirectX 12.0",
+            "zh-CN": "12_0 - DirectX 12.0 级功能"
+          }
+        },
+        {
+          "data": "12_1",
+          "label": {
+            "en": "12_1 - DirectX 12.1-level features",
+            "pt-BR": "12_1 - Recursos de nível DirectX 12.1",
+            "pt-PT": "12_1 - Funcionalidades de nível DirectX 12.1",
+            "zh-CN": "12_1 - DirectX 12.1 级功能"
+          }
+        },
+        {
+          "data": "12_2",
+          "label": {
+            "en": "12_2 - DirectX 12.2-level features",
+            "pt-BR": "12_2 - Recursos de nível DirectX 12.2",
+            "pt-PT": "12_2 - Funcionalidades de nível DirectX 12.2",
+            "zh-CN": "12_2 - DirectX 12.2 级功能"
+          }
+        }
+      ]
+    },
+    {
+      "name": "VKD3D_FRAME_RATE",
+      "description": {
+        "en": "Applies a frame limit to games using VKD3D.",
+        "pt-BR": "Aplica um limite de quadros aos jogos que usam VKD3D.",
+        "pt-PT": "Aplica um limite de fotogramas aos jogos que usam VKD3D.",
+        "zh-CN": "为使用 VKD3D 的游戏设置帧率上限。"
+      },
+      "example": "60"
+    },
+    {
+      "name": "VKD3D_SHADER_MODEL",
+      "description": {
+        "en": "Sets the highest shader model a game can use when using VKD3D. Lower values can improve compatibility.",
+        "pt-BR": "Define o shader model mais alto que um jogo pode usar com o VKD3D. Valores menores podem melhorar a compatibilidade.",
+        "pt-PT": "Define o shader model mais alto que um jogo pode usar com o VKD3D. Valores mais baixos podem melhorar a compatibilidade.",
+        "zh-CN": "设置使用 VKD3D 时游戏可用的最高着色器模型。数值越低，兼容性可能越好。"
+      },
+      "options": [
+        { "data": "6_0", "label": "6_0 - Shader Model 6.0" },
+        { "data": "6_1", "label": "6_1 - Shader Model 6.1" },
+        { "data": "6_2", "label": "6_2 - Shader Model 6.2" },
+        { "data": "6_3", "label": "6_3 - Shader Model 6.3" },
+        { "data": "6_4", "label": "6_4 - Shader Model 6.4" },
+        { "data": "6_5", "label": "6_5 - Shader Model 6.5" },
+        { "data": "6_6", "label": "6_6 - Shader Model 6.6" },
+        { "data": "6_7", "label": "6_7 - Shader Model 6.7" },
+        { "data": "6_8", "label": "6_8 - Shader Model 6.8" },
+        { "data": "6_9", "label": "6_9 - Shader Model 6.9" }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 export image_name := env("IMAGE_NAME", "armada")
 export default_tag := env("DEFAULT_TAG", "latest")
-export bib_image := env("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder:latest")
+export bib_image := env("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder@sha256:2b52843ea2bfda73b0a08d97e76b734393b1d3a804681b9fabb26723bd3a2f0b")
 
 import? 'Justfile.local'
 

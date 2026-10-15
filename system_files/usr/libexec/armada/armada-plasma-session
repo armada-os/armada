@@ -1,0 +1,182 @@
+#!/bin/bash
+set -euo pipefail
+
+# The Game Mode session exports its shell functions to every child.
+for name in $(compgen -A function); do
+    unset -f "$name"
+done
+
+case "${1:-}" in
+    nested|bottom)
+        # Steam's xcb and input modules break panels and text input.
+        for name in $(compgen -e); do
+            case "$name" in
+                LC_ALL) unset "$name" ;;
+                HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_*|TZ|DISPLAY|XAUTHORITY|ARMADA_*) ;;
+                XDG_RUNTIME_DIR|XDG_DATA_DIRS|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|XDG_STATE_HOME) ;;
+                XDG_SEAT|XDG_SEAT_PATH|XDG_SESSION_ID|XDG_SESSION_PATH|XDG_SESSION_CLASS|XDG_VTNR) ;;
+                *) unset "$name" 2>/dev/null || true ;;
+            esac
+        done
+        export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin"
+        ;;
+    standalone|--start-bottom|--restore-bottom) ;;
+    *)
+        echo "usage: ${0##*/} <standalone|nested|bottom> [desktop|mobile]" >&2
+        exit 1
+        ;;
+esac
+unset name
+
+surface=$1
+shell=${2:-}
+systemctl=${ARMADA_SYSTEMCTL:-/usr/bin/systemctl}
+systemd_run=${ARMADA_SYSTEMD_RUN:-/usr/bin/systemd-run}
+game_mode_unit=gamescope-session-plus@steam.service
+bottom_unit=armada-bottom-screen.service
+nested_unit_glob='armada-plasma-nested-*.service'
+
+fail() {
+    echo "${0##*/}: $*" >&2
+    exit 1
+}
+
+# Two shells cannot share Plasma's config; bottom starts are serialized here.
+start_bottom() {
+    local self=${1:-} others
+
+    exec {lock}<>"${XDG_RUNTIME_DIR}/armada-plasma-session.lock"
+    flock "$lock"
+    "$systemctl" --user is-active --quiet "$game_mode_unit" || return 0
+    "$systemctl" --user is-enabled --quiet "$bottom_unit" || return 0
+    others=$("$systemctl" --user list-units --plain --no-legend --state=active "$nested_unit_glob" |
+        grep -v "^armada-plasma-nested-${self}\.service " || true)
+    [[ -z "$others" ]] || return 0
+    "$systemctl" --user start "$bottom_unit"
+}
+
+source "${ARMADA_PLASMA_SESSION_LIB:-/usr/lib/armada/plasma-session-lib}"
+
+case "$surface" in
+    --start-bottom)
+        start_bottom
+        exit
+        ;;
+    --restore-bottom)
+        tail --pid="$2" -f /dev/null
+        # Steam kills the launcher first; the shell flushes its settings after that.
+        while [[ -n "$(armada_plasma_nested_pids "$2")" ]]; do
+            sleep 1
+        done
+        start_bottom "$2"
+        exit
+        ;;
+    standalone) shell=${shell:-desktop} ;;
+    nested)     shell=${shell:-$(armada_plasma_shell)} ;;
+    bottom)     shell=${shell:-mobile} ;;
+esac
+case "$shell" in
+    desktop|mobile) ;;
+    *) fail "unknown shell: $shell" ;;
+esac
+
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+"${ARMADA_LOGGER:-/usr/bin/logger}" -t armada-plasma-session "starting surface=$surface shell=$shell pid=$$" || true
+
+if [[ "$surface" == standalone ]]; then
+    "$systemctl" --user stop graphical-session.target || true
+    armada_plasma_activate_config "$shell"
+
+    export XDG_CURRENT_DESKTOP=KDE
+    export XDG_SESSION_DESKTOP=KDE
+    export XDG_SESSION_TYPE=wayland
+    if command -v /usr/libexec/armada/device-env >/dev/null 2>&1; then
+        set -a
+        eval "$(/usr/libexec/armada/device-env)"
+        set +a
+    fi
+
+    if [[ "$shell" == mobile ]]; then
+        export DESKTOP_SESSION=plasma-mobile
+        exec "${ARMADA_STARTPLASMA:-/usr/bin/startplasmamobile}"
+    fi
+    export DESKTOP_SESSION=plasma
+    exec "${ARMADA_STARTPLASMA:-/usr/bin/startplasma-wayland}"
+fi
+
+[[ -n "${DISPLAY:-}" ]] || fail "nested Gamescope did not provide an X11 display"
+
+if [[ "$surface" == nested ]]; then
+    export ARMADA_PLASMA_NESTED=$$
+    exec {lock}<>"${XDG_RUNTIME_DIR}/armada-plasma-session.lock"
+    flock "$lock"
+    if "$systemctl" --user is-active --quiet "$nested_unit_glob"; then
+        fail "a nested session is already running"
+    fi
+    # The unit outlives Steam killing this tree, to bring the bottom shell back.
+    "$systemd_run" --user --quiet --collect --unit="armada-plasma-nested-$$" "$0" --restore-bottom "$$"
+    "$systemctl" --user stop "$bottom_unit"
+fi
+
+armada_plasma_activate_config "$shell"
+
+export XDG_CURRENT_DESKTOP=KDE
+export XDG_SESSION_TYPE=wayland
+export QT_QPA_PLATFORMTHEME=KDE
+export DISABLE_GAMESCOPE_WSI=1
+plasmashell=/usr/bin/plasmashell
+export XDG_CONFIG_DIRS=/etc/xdg
+# xdg-document-portal has no mount path option and would mount over Game Mode's.
+export XDG_DATA_DIRS="/usr/share/armada/plasma/bus:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+install -d -m 0700 "$XDG_RUNTIME_DIR/armada-plasma"
+# The portal looks up sandboxed callers in Flatpak's instance directory.
+ln -sfn ../.flatpak "$XDG_RUNTIME_DIR/armada-plasma/.flatpak"
+if [[ "$shell" == mobile ]]; then
+    plasmashell='/usr/bin/plasmashell -p org.kde.plasma.mobileshell'
+    export XDG_CONFIG_DIRS="$HOME/.config/plasma-mobile:$XDG_CONFIG_DIRS"
+    export QT_QUICK_CONTROLS_STYLE=org.kde.breeze
+    export QT_QUICK_CONTROLS_MOBILE=true
+    export PLASMA_INTEGRATION_USE_PORTAL=1
+    export PLASMA_PLATFORM=phone:handset
+
+    QT_QPA_PLATFORM=offscreen "${ARMADA_PLASMA_MOBILE_ENVMANAGER:-/usr/bin/plasma-mobile-envmanager}" --apply-settings || true
+fi
+
+# Nested KWin can overwrite physical panel settings.
+kwin_home="$config_home/armada/plasma/$surface"
+install -d -m 0700 "$kwin_home"
+if [[ "$surface" == bottom && ! -e "$kwin_home/kwinoutputconfig.json" && -e "$config_home/kwinoutputconfig.json" ]]; then
+    cp -p "$config_home/kwinoutputconfig.json" "$kwin_home/kwinoutputconfig.json.new"
+    mv -f "$kwin_home/kwinoutputconfig.json.new" "$kwin_home/kwinoutputconfig.json"
+fi
+# KWin reconfiguration must read the shared kwinrc.
+for file in kwinrc kwinrulesrc kdeglobals kxkbrc kcminputrc kglobalshortcutsrc; do
+    ln -sfn "../../../$file" "$kwin_home/$file"
+done
+
+kwin_args=()
+first_run=()
+if [[ "$surface" == nested ]]; then
+    # Mode 2 opens the keyboard for touch delivered as pointer clicks.
+    export XDG_CONFIG_DIRS="/usr/share/armada/plasma/nested:$XDG_CONFIG_DIRS"
+    # Plasma Mobile sets up its own keyboard.
+    [[ "$shell" == mobile ]] || kwin_args=(--inputmethod /usr/bin/plasma-keyboard)
+    if [[ ! -e "$kwin_home/kwinoutputconfig.json" ]]; then
+        first_run=("/usr/bin/kscreen-doctor output.X11-0.scale.1.5")
+    fi
+    exec {lock}>&-
+fi
+
+child_env="/usr/bin/env XDG_CONFIG_HOME=${config_home@Q}"
+exec "${ARMADA_DBUS_RUN_SESSION:-/usr/bin/dbus-run-session}" \
+    /usr/bin/env XDG_CONFIG_HOME="$kwin_home" \
+    "${ARMADA_KWIN_WAYLAND:-/usr/bin/kwin_wayland}" \
+    --x11-display "$DISPLAY" \
+    --socket "armada-plasma-$surface" \
+    --fullscreen \
+    --no-lockscreen \
+    --xwayland \
+    "${kwin_args[@]}" \
+    --exit-with-session "$child_env $plasmashell" \
+    "$child_env /usr/libexec/kf6/polkit-kde-authentication-agent-1" \
+    "${first_run[@]}"

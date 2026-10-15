@@ -29,6 +29,14 @@ ayaneo_xbox_mode() {
 
 ayaneo_default_mode() {
     local serial_device=/dev/ttyHS0
+    local mode_attr
+
+    for mode_attr in /sys/bus/serial/devices/*/gamepad_mode; do
+        if [[ -e "$mode_attr" ]]; then
+            echo default >"$mode_attr" && echo "device-quirks: AYANEO MCU switched back to default mode"
+            return 0
+        fi
+    done
 
     if [[ ! -e "$serial_device" ]]; then
         echo "device-quirks: $serial_device not present, skipping AYANEO default mode"
