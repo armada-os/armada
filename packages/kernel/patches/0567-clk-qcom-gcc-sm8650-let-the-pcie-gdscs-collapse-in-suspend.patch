@@ -1,0 +1,47 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] clk: qcom: gcc-sm8650: let the PCIe GDSCs collapse in suspend
+
+Same change as for SM8550: with PWRSTS_RET_ON, gdsc_disable() returns
+without touching the hardware, so the PCIe controllers and PHYs stay
+powered through s2idle, the sleep set has to keep a system-NoC vote for
+them, and DDR never enters self-refresh. pcie-qcom turns the link off
+whenever D3cold is possible and retrains it on resume, so the GDSCs can
+collapse.
+---
+--- a/drivers/clk/qcom/gcc-sm8650.c
++++ b/drivers/clk/qcom/gcc-sm8650.c
+@@ -3436,7 +3436,7 @@ static struct gdsc pcie_0_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_0_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
+ };
+
+@@ -3447,7 +3447,7 @@ static struct gdsc pcie_0_phy_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_0_phy_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
+ };
+
+@@ -3458,7 +3458,7 @@ static struct gdsc pcie_1_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_1_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
+ };
+
+@@ -3469,7 +3469,7 @@ static struct gdsc pcie_1_phy_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_1_phy_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | VOTABLE,
+ };

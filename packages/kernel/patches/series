@@ -124,6 +124,8 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0535-scsi-ufs-core-fast-abort-unsupported-query-idns.patch
 0536-scsi-ufs-core-dynamically-disable-timestamp-on-unsupported-devices.patch
 0537-usb-xhci-pci-renesas-let-the-controller-power-off-in-suspend.patch
+0566-clk-qcom-gcc-sm8550-let-the-pcie-gdscs-collapse-in-suspend.patch
+0567-clk-qcom-gcc-sm8650-let-the-pcie-gdscs-collapse-in-suspend.patch
 0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch
 0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch
 0556-remoteproc-qcom-pas-manage-the-sm8750-soccp.patch
@@ -137,9 +139,7 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 
 # ============== SM8550 DTSI prerequisites ==============
 0001-pcie-update-sm8550-dtsi.patch
-0520-arm64-dts-qcom-sm8550-add-a-pcie-suspend-opp.patch
 # 0521-arm64-dts-qcom-sm8750-add-a-pcie-suspend-opp.patch  # not needed: the SoCCP is managed (0556, 0557) and 0044 is not applied
-0527-arm64-dts-qcom-sm8650-add-a-pcie-suspend-opp.patch
 0120-20250728_konradybcio_gpu_cc_power_requirements_reality_check.patch
 0121-pmdomain-qcom-rpmhpd-presync-floor-gmu-rails.patch
 0122-interconnect__qcom__sm8550__Enable_QoS_configuration.patch

@@ -353,6 +353,12 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0537-usb-xhci-pci-renesas-let-the-controller-power-off-in-suspend.patch`
   source: armada
   upstream: local
+- `patches/0566-clk-qcom-gcc-sm8550-let-the-pcie-gdscs-collapse-in-suspend.patch`
+  source: armada
+  upstream: local
+- `patches/0567-clk-qcom-gcc-sm8650-let-the-pcie-gdscs-collapse-in-suspend.patch`
+  source: armada
+  upstream: local
 - `patches/0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch`
   source: armada
   upstream: local
@@ -389,17 +395,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0001-pcie-update-sm8550-dtsi.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0001-pcie-update-sm8550-dtsi.patch
   upstream: https://lore.kernel.org/r/20260611-wake-v2-33-2744251b1181@oss.qualcomm.com
-- `patches/0520-arm64-dts-qcom-sm8550-add-a-pcie-suspend-opp.patch`
-  source: armada
-  upstream: not submitted
-  notes: Companion DT for 0513. `opp-hz` is synthetic and `opp-level` is omitted so the OPP can never be selected for a trained link by either match in `qcom_pcie_icc_opp_update()`. pcie1 is disabled in the SM8550 board DTS files that use this table and gets no suspend OPP.
 - `patches/0521-arm64-dts-qcom-sm8750-add-a-pcie-suspend-opp.patch`
   source: armada
   upstream: local
   notes: Not applied (commented out in the series). The floor only worked because its path kept the PCIe and system NoCs on in the sleep set, for the PCIe controller that 0044 left powered and for the unmanaged SoCCP. 0556/0557 handle the SoCCP and 0044 is no longer applied, and without the floor the SoC reaches CX shutdown and DDR low power.
-- `patches/0527-arm64-dts-qcom-sm8650-add-a-pcie-suspend-opp.patch`
-  source: armada
-  upstream: local
 - `patches/0120-20250728_konradybcio_gpu_cc_power_requirements_reality_check.patch`
   source: https://github.com/ROCKNIX/distribution/blob/ef264a238d5e2ba960145e3fda663dc27de49a80/projects/ROCKNIX/devices/SM8550/patches/linux/0120-20250728_konradybcio_gpu_cc_power_requirements_reality_check.patch
   upstream: https://lore.kernel.org/r/20250728-topic-gpucc_power_plumbing-v1-22-09c2480fe3e6@oss.qualcomm.com
