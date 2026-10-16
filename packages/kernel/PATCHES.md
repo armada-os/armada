@@ -359,6 +359,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0567-clk-qcom-gcc-sm8650-let-the-pcie-gdscs-collapse-in-suspend.patch`
   source: armada
   upstream: local
+- `patches/0568-arm64-dts-qcom-sm8250-cpu-ddr-votes-active-only.patch`
+  source: https://github.com/kettlelinux/kettlelinux/blob/c2849b95b3af9bf6d1d52cefa1e66167a22c86b4/kernel/patches/21-sm8250/0114-arm64-dts-qcom-sm8250-cpu-ddr-votes-active-only.patch
+  upstream: unknown
 - `patches/0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch`
   source: armada
   upstream: local

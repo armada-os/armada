@@ -126,6 +126,7 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0537-usb-xhci-pci-renesas-let-the-controller-power-off-in-suspend.patch
 0566-clk-qcom-gcc-sm8550-let-the-pcie-gdscs-collapse-in-suspend.patch
 0567-clk-qcom-gcc-sm8650-let-the-pcie-gdscs-collapse-in-suspend.patch
+0568-arm64-dts-qcom-sm8250-cpu-ddr-votes-active-only.patch
 0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch
 0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch
 0556-remoteproc-qcom-pas-manage-the-sm8750-soccp.patch
