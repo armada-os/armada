@@ -1,3 +1,4 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
 Subject: [PATCH] media: qcom: iris: serialize controls with instance operations
 
 Dynamic controls currently use the control handler's private mutex while
@@ -13,8 +14,9 @@ pointer under the same lock before freeing the handler, so late responses
 cannot dereference a freed control.
 
 This closes the per-instance control/queue serialization gap. It does not
-establish the cause of the observed firmware fault or hard freeze. Runtime
-validation with concurrent controls and decoder source changes is pending.
+establish the cause of the observed firmware fault or hard freeze. Stress
+testing with concurrent controls, decoder source changes and control-event
+delivery remains pending.
 
 ---
 diff --git a/drivers/media/platform/qcom/iris/iris_ctrls.c b/drivers/media/platform/qcom/iris/iris_ctrls.c

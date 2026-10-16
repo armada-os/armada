@@ -15,18 +15,17 @@ capability enum and Gen2 capability/protocol definitions. Deliberately
 omit the three Gen1 file changes. No picture-type subscription changes,
 error-propagation changes or additional fixes are included.
 
-KPFE Steam recording rejects this control with EINVAL on the baseline.
-On the patched Linux 7.2.6 test image, a 90-frame encode using Steam's
-PREPEND_SPSPPS_TO_IDR=1 mode produced marked IDRs at both requested times
-and decoded completely. The separate-header test without prepended
-headers faulted after its first request. A shared HFI packet construction
-race is also under investigation; its connection to that fault is not
-proven. These unresolved cases remain blockers to declaring full stability.
+The review and sign-off trailers below are retained from the original
+upstream commit; they do not assert review of this Gen2-only backport.
 
 Link: https://lore.kernel.org/all/20260723-dynamic_encode-v4-2-5fd6bd549ead@oss.qualcomm.com/
 Link: https://lists.openwall.net/linux-kernel/2026/07/23/318
 Link: https://git.zx2c4.com/linux-rng/commit/?id=6f62dcefd2494aa9ac01538372353bf07755491e
+Reviewed-by: Bryan O'Donoghue <bryan.odonoghue@linaro.org>
+Reviewed-by: Vishnu Reddy <busanna.reddy@oss.qualcomm.com>
 Signed-off-by: Wangao Wang <wangao.wang@oss.qualcomm.com>
+Reviewed-by: Vikash Garodia <vikash.garodia@oss.qualcomm.com>
+Signed-off-by: Bryan O'Donoghue <bod@kernel.org>
 ---
 diff --git a/drivers/media/platform/qcom/iris/iris_ctrls.c b/drivers/media/platform/qcom/iris/iris_ctrls.c
 index 391e1fc5f6e2ec8e9cf5ba4e0f76b2d1da3e2a35..2918a7df0b403a886648e90ec00968f51c4660a0 100644
