@@ -1,0 +1,98 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: qcom: sc8280xp: release the board I2S clock across system suspend
+
+The optional "i2s_clk" board clock is enabled from the first MI2S
+startup to the last shutdown. System suspend only suspends an open PCM,
+it does not shut it down, so a stream that is still open when the device
+goes to sleep keeps the clock. It is a q6prm clock: the ADSP keeps LPASS
+powered for it and its RPMh DRV ("AUDIO" in the AOP CXPC violator log)
+holds CX up for the whole sleep.
+
+On the AYN Odin 3 the power key plays a UI sound, so a power-key suspend
+always has the speaker PCM open and never reached CX shutdown, while
+systemctl suspend with no sound playing did.
+
+Release the clock in the card's suspend_post, once the streams and the
+components are suspended, and take it back in resume_pre. A PCM opened
+or closed between the two only updates the count.
+---
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -25,6 +25,7 @@
+ 	struct snd_soc_jack dp_jack[8];
+ 	struct clk *i2s_clk;
+ 	int mi2s_clk_count;
++	bool mi2s_clk_suspended;
+ 	bool jack_setup;
+ 	bool wsa2_only;
+ };
+@@ -91,7 +92,7 @@
+ 	switch (cpu_dai->id) {
+ 	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
+ 	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
+-		if (++pdata->mi2s_clk_count == 1) {
++		if (++pdata->mi2s_clk_count == 1 && !pdata->mi2s_clk_suspended) {
+ 			ret = clk_prepare_enable(pdata->i2s_clk);
+ 			if (ret) {
+ 				pdata->mi2s_clk_count--;
+@@ -121,7 +122,7 @@
+ 	switch (cpu_dai->id) {
+ 	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
+ 	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
+-		if (--pdata->mi2s_clk_count == 0)
++		if (--pdata->mi2s_clk_count == 0 && !pdata->mi2s_clk_suspended)
+ 			clk_disable_unprepare(pdata->i2s_clk);
+ 		break;
+ 	default:
+@@ -234,6 +235,41 @@
+ 	}
+ }
+ 
++/*
++ * A PCM that is still open at suspend keeps the board I2S clock. It is a
++ * q6prm clock, so the ADSP keeps LPASS powered and holds CX up for the whole
++ * sleep. Release it once the streams and components are suspended and take
++ * it back before they resume.
++ */
++static int sc8280xp_snd_suspend_post(struct snd_soc_card *card)
++{
++	struct sc8280xp_snd_data *pdata = snd_soc_card_get_drvdata(card);
++
++	snd_soc_dpcm_mutex_lock(card);
++	if (pdata->mi2s_clk_count)
++		clk_disable_unprepare(pdata->i2s_clk);
++	pdata->mi2s_clk_suspended = true;
++	snd_soc_dpcm_mutex_unlock(card);
++
++	return 0;
++}
++
++static int sc8280xp_snd_resume_pre(struct snd_soc_card *card)
++{
++	struct sc8280xp_snd_data *pdata = snd_soc_card_get_drvdata(card);
++	int ret = 0;
++
++	snd_soc_dpcm_mutex_lock(card);
++	pdata->mi2s_clk_suspended = false;
++	if (pdata->mi2s_clk_count)
++		ret = clk_prepare_enable(pdata->i2s_clk);
++	snd_soc_dpcm_mutex_unlock(card);
++	if (ret)
++		dev_err(card->dev, "failed to re-enable the I2S clock: %d\n", ret);
++
++	return 0;
++}
++
+ static int sc8280xp_platform_probe(struct platform_device *pdev)
+ {
+ 	struct snd_soc_card *card;
+@@ -257,6 +293,9 @@
+ 	if (ret)
+ 		return ret;
+ 
++	card->suspend_post = sc8280xp_snd_suspend_post;
++	card->resume_pre = sc8280xp_snd_resume_pre;
++
+ 	data->i2s_clk = devm_clk_get_optional(dev, "i2s_clk");
+ 	if (IS_ERR(data->i2s_clk))
+ 		return dev_err_probe(dev, PTR_ERR(data->i2s_clk), "unable to get i2s clock\n");
