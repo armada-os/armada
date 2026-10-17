@@ -24,11 +24,7 @@ run_armada_power() {
 if [[ "$WRITE_PATH" == /sys/class/drm/card*/device/power_dpm_force_performance_level ]]; then
     case "$WRITE_VALUE" in
         auto) run_armada_power gpu-auto ;;
-        manual|high)
-            max_mhz="$(/usr/bin/armada-power status | awk -F= '/^manual_gpu_clock_max=/{print $2}')"
-            [[ -n "$max_mhz" ]] || exit 1
-            run_armada_power gpu-manual "$max_mhz"
-            ;;
+        manual|high) run_armada_power gpu-manual 0 ;;
         low)
             min_mhz="$(/usr/bin/armada-power status | awk -F= '/^manual_gpu_clock_min=/{print $2}')"
             [[ -n "$min_mhz" ]] || exit 1

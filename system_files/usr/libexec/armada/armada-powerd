@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import configparser
+import math
 import os
 import shutil
 import signal
@@ -193,7 +194,24 @@ def require_section(parser, section):
 
 
 def require_ratio(parser, section, key):
-    return clamp(parser.getfloat(section, key), 0.0, 1.0)
+    value = parser.getfloat(section, key)
+    if not math.isfinite(value):
+        raise ValueError(f"{key} must be a finite number")
+    return clamp(value, 0.0, 1.0)
+
+
+def optional_mhz(parser, section, key):
+    value = parser.get(section, key, fallback="").strip()
+    if not value:
+        return None
+    try:
+        mhz = int(value)
+    except ValueError:
+        mhz = 0
+    if mhz <= 0:
+        print(f"armada-powerd: ignoring invalid {key}={value} in [{section}]", file=sys.stderr)
+        return None
+    return mhz
 
 
 def fan_enable_mode(hwmon):
@@ -244,6 +262,8 @@ class ArmadaPower:
         self.profile = ""
         self.gpu_level = "auto"
         self.manual_gpu_clock = 0
+        self.gpu_manual_shown = {}
+        self.gpu_clamp_logged = set()
         self.smoothed_temp = 0.0
         self.last_pwm = 0
         self.suspended = False
@@ -262,8 +282,6 @@ class ArmadaPower:
             current = read_text(self.fan_pwm)
             self.last_pwm = int(current) if current.isdigit() else self.fan_config["min_pwm"]
         self.apply_profile()
-        if self.gpu_level == "manual" and self.manual_gpu_clock:
-            self.set_gpu_manual_clock(self.manual_gpu_clock)
         self.apply_irq_affinity()
         self.apply_sleep_charging_pwm()
         self.fan_tick()
@@ -287,14 +305,12 @@ class ArmadaPower:
             return
         for profile in PROFILES:
             config = self.profile_config[profile]
-            if config["cpu_max_policy"]:
-                continue
             level = config.get("cpu_underclock", "none")
-            if level in ("", "none", "stock"):
+            if level in ("", "none", "stock", "custom"):
                 continue
             caps = self.underclock_config.get(device_class, {}).get(level)
             if caps:
-                config["cpu_max_policy"] = dict(caps)
+                config["cpu_max_policy"] = {**caps, **config["cpu_max_policy"]}
 
     def parse_config(self, include_user=True):
         underclock_config = {}
@@ -352,7 +368,9 @@ class ArmadaPower:
                 "cpu_max": require_ratio(parser, section, "cpu_max"),
                 "cpu_underclock": parser.get(section, "cpu_underclock").strip().lower(),
                 "gpu_max": require_ratio(parser, section, "gpu_max"),
+                "gpu_max_mhz": optional_mhz(parser, section, "gpu_max_mhz"),
                 "gpu_min": require_ratio(parser, section, "gpu_min"),
+                "gpu_min_mhz": optional_mhz(parser, section, "gpu_min_mhz"),
                 "fan_curve": fan_curve,
                 "cpu_max_policy": {},
             }
@@ -430,10 +448,10 @@ class ArmadaPower:
         self.profile_labels = {p: self.profile_config[p].get("label", p) for p in PROFILES}
 
     def discover_gpu(self):
-        for path in Path("/sys/class/devfreq").glob("*.gpu"):
+        for path in sorted(Path("/sys/class/devfreq").glob("*.gpu")):
             if (path / "available_frequencies").exists():
                 return path
-        for path in Path("/sys/class/devfreq").glob("*"):
+        for path in sorted(Path("/sys/class/devfreq").glob("*")):
             if "gpu" in path.name.lower() and (path / "governor").exists() and (path / "available_frequencies").exists():
                 return path
         return None
@@ -605,15 +623,28 @@ class ArmadaPower:
     def closest(self, freqs, target):
         return min(freqs, key=lambda freq: abs(freq - target)) if freqs else 0
 
-    def choose_at_least(self, freqs, target):
-        for freq in freqs:
-            if freq >= target:
-                return freq
-        return freqs[-1] if freqs else 0
-
     def choose_at_most(self, freqs, target):
         below = [freq for freq in freqs if freq <= target]
         return below[-1] if below else freqs[0] if freqs else 0
+
+    def mhz_ceiling(self, mhz, unit):
+        return mhz * unit + unit - 1
+
+    def gpu_stock_max(self, freqs):
+        stock = self.env.get("ARMADA_GPU_STOCK_MAX_MHZ", "").strip()
+        if stock.isdigit() and int(stock) > 0:
+            return self.choose_at_most(freqs, self.mhz_ceiling(int(stock), 1_000_000))
+        return freqs[-1]
+
+    def gpu_max_target(self, settings, freqs):
+        if settings["gpu_max_mhz"]:
+            return self.mhz_ceiling(settings["gpu_max_mhz"], 1_000_000)
+        return int(self.gpu_stock_max(freqs) * settings["gpu_max"])
+
+    def gpu_min_target(self, settings, freqs):
+        if settings["gpu_min_mhz"]:
+            return self.mhz_ceiling(settings["gpu_min_mhz"], 1_000_000)
+        return int(self.gpu_stock_max(freqs) * settings["gpu_min"])
 
     def policy_id(self, policy):
         try:
@@ -622,8 +653,11 @@ class ArmadaPower:
             return -1
 
     def cpu_max_target(self, settings, policy_id, freqs):
+        caps = settings["cpu_max_policy"]
+        if policy_id in caps:
+            return caps[policy_id]
         if self.cpu_device_class() in self.underclock_config:
-            return settings["cpu_max_policy"].get(policy_id, freqs[-1])
+            return freqs[-1]
         return int(freqs[-1] * settings["cpu_max"])
 
     def profile_settings(self):
@@ -663,7 +697,20 @@ class ArmadaPower:
             target = self.cpu_max_target(settings, self.policy_id(policy), freqs)
             write_text(policy / "scaling_max_freq", self.choose_at_most(freqs, target))
         if self.gpu and self.gpu_level == "auto":
-            self.apply_gpu_auto(settings)
+            self.apply_gpu_auto()
+        elif self.gpu and self.gpu_level == "manual":
+            self.set_gpu_manual_clock()
+        self.publish_gpu_manual()
+
+    def publish_gpu_manual(self):
+        shown = {
+            "ManualGpuClockMax": self.gpu_manual_cap() // 1000000,
+            "ManualGpuClock": self.gpu_manual_effective(self.gpu_freqs()) // 1000000,
+        }
+        changed = {prop: value for prop, value in shown.items() if self.gpu_manual_shown.get(prop) != value}
+        self.gpu_manual_shown = shown
+        if changed and self.connection:
+            self.emit_properties({prop: GLib.Variant("u", value) for prop, value in changed.items()})
 
     def resolved_cpu_caps(self):
         settings = self.profile_settings()
@@ -682,9 +729,8 @@ class ArmadaPower:
         if not freqs:
             return (0, 0)
         settings = self.profile_settings()
-        max_freq = self.choose_at_most(freqs, int(freqs[-1] * settings["gpu_max"]))
-        min_target = int(freqs[-1] * settings["gpu_min"])
-        min_freq = self.choose_at_least(freqs, min_target) if min_target else freqs[0]
+        max_freq = self.choose_at_most(freqs, self.gpu_max_target(settings, freqs))
+        min_freq = self.choose_at_most(freqs, self.gpu_min_target(settings, freqs))
         return (min(min_freq, max_freq), max_freq)
 
     def suspend(self):
@@ -720,8 +766,6 @@ class ArmadaPower:
         self.smoothed_temp = 0.0
         if not self.suspend_save:
             self.apply_profile()
-            if self.gpu_level == "manual" and self.manual_gpu_clock:
-                self.set_gpu_manual_clock(self.manual_gpu_clock)
             self.fan_tick()
             return
         for policy, min_freq, max_freq in self.suspend_save.get("cpu", []):
@@ -745,34 +789,43 @@ class ArmadaPower:
                 write_text(self.gpu / "governor", gpu_save["governor"])
         self.suspend_save = {}
         self.apply_profile()
-        if self.gpu_level == "manual" and self.manual_gpu_clock:
-            self.set_gpu_manual_clock(self.manual_gpu_clock)
         self.fan_tick()
 
-    def apply_gpu_auto(self, settings=None):
+    def apply_gpu_auto(self):
         freqs = self.gpu_freqs()
         if not freqs:
             return
-        settings = settings or self.profile_settings()
+        min_freq, max_freq = self.resolved_gpu_auto_limits()
         write_text(self.gpu / "governor", "simple_ondemand")
-        max_freq = self.choose_at_most(freqs, int(freqs[-1] * settings["gpu_max"]))
-        min_target = int(freqs[-1] * settings["gpu_min"])
-        min_freq = self.choose_at_least(freqs, min_target) if min_target else freqs[0]
         write_text(self.gpu / "min_freq", freqs[0])
         write_text(self.gpu / "max_freq", max_freq)
-        write_text(self.gpu / "min_freq", min(min_freq, max_freq))
+        write_text(self.gpu / "min_freq", min_freq)
 
-    def set_gpu_manual_clock(self, mhz):
+    def gpu_manual_cap(self):
+        return self.resolved_gpu_auto_limits()[1]
+
+    def gpu_manual_effective(self, freqs):
+        cap = self.gpu_manual_cap()
+        if not self.manual_gpu_clock:
+            return cap
+        return self.closest([freq for freq in freqs if freq <= cap], self.manual_gpu_clock * 1000000)
+
+    def set_gpu_manual_clock(self):
         freqs = self.gpu_freqs()
         if not freqs:
-            return 0
-        hz = self.closest(freqs, mhz * 1000000)
+            return
+        hz = self.gpu_manual_effective(freqs)
+        cap = self.gpu_manual_cap()
+        clamp = (self.manual_gpu_clock, cap)
+        if (self.manual_gpu_clock and hz != self.closest(freqs, self.manual_gpu_clock * 1000000)
+                and clamp not in self.gpu_clamp_logged):
+            self.gpu_clamp_logged.add(clamp)
+            print(f"armada-powerd: manual GPU clock {self.manual_gpu_clock} MHz clamped to "
+                  f"{hz // 1000000} MHz by {self.profile} GPU max", file=sys.stderr)
         write_text(self.gpu / "min_freq", freqs[0])
         write_text(self.gpu / "governor", "userspace")
         write_text(self.gpu / "max_freq", hz)
         write_text(self.gpu / "min_freq", hz)
-        self.manual_gpu_clock = hz // 1000000
-        return self.manual_gpu_clock
 
     def read_temps(self):
         values = []
@@ -918,12 +971,11 @@ class ArmadaPower:
         if prop == "GpuPerformanceLevel":
             return GLib.Variant("s", self.gpu_level)
         if prop == "ManualGpuClock":
-            value = self.manual_gpu_clock or (freqs[-1] // 1000000 if freqs else 0)
-            return GLib.Variant("u", value)
+            return GLib.Variant("u", self.gpu_manual_effective(freqs) // 1000000)
         if prop == "ManualGpuClockMin":
             return GLib.Variant("u", freqs[0] // 1000000 if freqs else 0)
         if prop == "ManualGpuClockMax":
-            return GLib.Variant("u", freqs[-1] // 1000000 if freqs else 0)
+            return GLib.Variant("u", self.gpu_manual_cap() // 1000000)
         if prop == "AvailableCpuScalingGovernors":
             return GLib.Variant("as", self.available_governors())
         if prop == "CpuScalingGovernor":
@@ -955,10 +1007,7 @@ class ArmadaPower:
             if level == "auto":
                 self.apply_profile()
             else:
-                freqs = self.gpu_freqs()
-                target = self.manual_gpu_clock or (freqs[-1] // 1000000 if freqs else 0)
-                if target:
-                    self.set_gpu_manual_clock(target)
+                self.set_gpu_manual_clock()
             changed["GpuPerformanceLevel"] = GLib.Variant("s", self.gpu_level)
         elif prop == "CpuScalingGovernor":
             governor = value.get_string()
@@ -970,10 +1019,11 @@ class ArmadaPower:
                 self.write_governor(policy, governor)
             changed["CpuScalingGovernor"] = GLib.Variant("s", self.current_governor())
         elif prop == "ManualGpuClock":
-            mhz = value.get_uint32()
-            self.manual_gpu_clock = mhz
+            self.manual_gpu_clock = value.get_uint32()
             if self.gpu_level == "manual":
-                mhz = self.set_gpu_manual_clock(mhz)
+                self.set_gpu_manual_clock()
+            mhz = self.gpu_manual_effective(self.gpu_freqs()) // 1000000
+            self.gpu_manual_shown["ManualGpuClock"] = mhz
             changed["ManualGpuClock"] = GLib.Variant("u", mhz)
         else:
             raise KeyError(prop)
@@ -1030,8 +1080,6 @@ class ArmadaPower:
                 self.discover()
                 self.apply_underclock_refs()
                 self.apply_profile()
-                if self.gpu_level == "manual" and self.manual_gpu_clock:
-                    self.set_gpu_manual_clock(self.manual_gpu_clock)
                 self.apply_irq_affinity()
                 self.apply_sleep_charging_pwm()
             except Exception as exc:
@@ -1104,8 +1152,6 @@ class ArmadaPower:
     ):
         if not params.unpack()[0]:
             self.apply_profile()
-            if self.gpu_level == "manual" and self.manual_gpu_clock:
-                self.set_gpu_manual_clock(self.manual_gpu_clock)
 
 
 def main():
