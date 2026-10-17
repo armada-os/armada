@@ -3,10 +3,9 @@ Subject: [PATCH] arm64: dts: qcom: pocket-fit-elite: configure touch and DP audi
 
 Use the full Chipone binding expected by Armada's touchscreen driver,
 remove volume-up as a wakeup source, and add the DisplayPort audio link.
+Associate the touchscreen with the panel that supplies its power.
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts b/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
-index eba9f43..5bb5f29 100644
-
 --- a/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8750-konkr-pf-elite.dts
 @@ -122,7 +122,6 @@
@@ -17,7 +16,16 @@ index eba9f43..5bb5f29 100644
  		};
  		key-rc2 {
  			label = "Right-C2";
-@@ -913,14 +912,11 @@
+@@ -780,7 +779,7 @@
+ 	vdda-supply = <&vreg_l3g_1p2>;		/* DSI ctrl analog */
+ 	status = "okay";
+ 
+-	panel@0 {
++	kpfe_panel: panel@0 {
+ 		compatible = "ayaneo,ar14-144hz";	/* panel-ar14-144hz, patch 0055: 1080x1920, 144/120/90/60 Hz, DSC 8bpp v1.1 */
+ 		reg = <0>;
+ 
+@@ -913,32 +912,27 @@
  /* Touchscreen = Chipone TDDI (touch half of the display driver IC; powered
   * by the panel rails, no separate supplies — matches the stock node having
   * none). On stock it sits on i2c bus 4 addr 0x48, IRQ TLMM 162 (edge),
@@ -36,7 +44,10 @@ index eba9f43..5bb5f29 100644
  &i2c4 {
  	clock-frequency = <400000>;
  	status = "okay";
-@@ -930,15 +926,12 @@
+ 
+ 	touchscreen@48 {
+ 		compatible = "chipone-tddi";
++		panel = <&kpfe_panel>;
  		reg = <0x48>;
  		interrupt-parent = <&tlmm>;
  		interrupts = <162 IRQ_TYPE_EDGE_FALLING>;
@@ -58,7 +69,7 @@ index eba9f43..5bb5f29 100644
  		pinctrl-names = "default", "sleep";
  		pinctrl-0 = <&ts_int_default>;
  		pinctrl-1 = <&ts_int_sleep>;
-@@ -1517,6 +1510,18 @@
+@@ -1517,6 +1511,18 @@
  			cpu { sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>; };
  			platform { sound-dai = <&q6apm>; };
  		};
@@ -77,7 +88,7 @@ index eba9f43..5bb5f29 100644
  	};
  
  	wcn7860-pmu {
-@@ -1621,7 +1626,7 @@
+@@ -1621,7 +1627,7 @@
  };
  
  &pcieport0 {
@@ -86,7 +97,7 @@ index eba9f43..5bb5f29 100644
  	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
  
  	wifi@0 {
-@@ -1699,3 +1704,25 @@
+@@ -1699,3 +1705,25 @@
  			"qcom/sm8750/konkr/pfe/cdsp_dtb.mbn";
  	status = "okay";
  };
