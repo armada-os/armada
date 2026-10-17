@@ -1,0 +1,63 @@
+From b8ca90fafe6adc401601f91d1394ba76bacf67ed Mon Sep 17 00:00:00 2001
+From: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Date: Tue, 7 Jul 2026 15:13:13 +0530
+Subject: ASoC: codecs: lpass-{tx,rx}-macro: check clk_set_rate() return value
+
+clk_set_rate() returns 0 on success or a negative errno on failure but
+the TX and RX macro probe functions were ignoring it. Check the return
+value and bail out of probe on failure.
+
+Suggested-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Co-developed-by: Ravi Hothi <ravi.hothi@oss.qualcomm.com>
+Signed-off-by: Ravi Hothi <ravi.hothi@oss.qualcomm.com>
+Signed-off-by: Ajay Kumar Nandam <ajay.nandam@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260707-xo-sd-codec-tx-rx-v2-3-f61b4622f97f@oss.qualcomm.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+---
+ sound/soc/codecs/lpass-rx-macro.c | 9 +++++++--
+ sound/soc/codecs/lpass-tx-macro.c | 9 +++++++--
+ 2 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/codecs/lpass-rx-macro.c b/sound/soc/codecs/lpass-rx-macro.c
+index 927f75050c0fc..388cebf461a30 100644
+--- a/sound/soc/codecs/lpass-rx-macro.c
++++ b/sound/soc/codecs/lpass-rx-macro.c
+@@ -3863,8 +3863,13 @@ static int rx_macro_probe(struct platform_device *pdev)
+ 	rx->dev = dev;
+ 
+ 	/* set MCLK and NPL rates */
+-	clk_set_rate(rx->mclk, MCLK_FREQ);
+-	clk_set_rate(rx->npl, MCLK_FREQ);
++	ret = clk_set_rate(rx->mclk, MCLK_FREQ);
++	if (ret)
++		return ret;
++
++	ret = clk_set_rate(rx->npl, MCLK_FREQ);
++	if (ret)
++		return ret;
+ 
+ 	ret = devm_pm_clk_create(dev);
+ 	if (ret)
+diff --git a/sound/soc/codecs/lpass-tx-macro.c b/sound/soc/codecs/lpass-tx-macro.c
+index fc073a556fb54..b56605639a242 100644
+--- a/sound/soc/codecs/lpass-tx-macro.c
++++ b/sound/soc/codecs/lpass-tx-macro.c
+@@ -2319,8 +2319,13 @@ static int tx_macro_probe(struct platform_device *pdev)
+ 	tx->active_decimator[TX_MACRO_AIF3_CAP] = -1;
+ 
+ 	/* set MCLK and NPL rates */
+-	clk_set_rate(tx->mclk, MCLK_FREQ);
+-	clk_set_rate(tx->npl, MCLK_FREQ);
++	ret = clk_set_rate(tx->mclk, MCLK_FREQ);
++	if (ret)
++		goto err;
++
++	ret = clk_set_rate(tx->npl, MCLK_FREQ);
++	if (ret)
++		goto err;
+ 
+ 	ret = devm_pm_clk_create(dev);
+ 	if (ret)
+-- 
+cgit 1.3.1-korg
+

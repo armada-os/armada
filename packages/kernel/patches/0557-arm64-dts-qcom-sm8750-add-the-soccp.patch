@@ -1,0 +1,103 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: sm8750: add the SoCCP
+
+Describe the SoCCP and its SMP2P edge, following the vendor sun.dtsi:
+IPCC client 46, SMEM items 617/616, remote pid 19, watchdog SPI 167 and
+the aggre2 NoC to DDR path. qcom,soccp-dstate points at the TCSR
+register the SoCCP reports its D-state in (0x1fda000), so also describe
+the TCSR block at 0x1fc0000 as a plain syscon; on SM8750 the TCSR clock
+controller moved to its own block and nothing else uses it.
+
+The node is enabled in the SoC file on purpose. The bootloader starts
+the SoCCP on every SM8750 board, and the driver has to hold its bus path
+until the image it loads is in D3 (see the PAS driver change). A board
+that ships no soccp.mbn keeps that vote and still wakes from s2idle.
+---
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -665,6 +665,73 @@
+ 		/* TODO: smem mailbox in and out */
+ 	};
+ 
++	smp2p-soccp {
++		compatible = "qcom,smp2p";
++
++		/* IPCC client 46 is the SoCCP */
++		interrupts-extended = <&ipcc 46
++					     IPCC_MPROC_SIGNAL_SMP2P
++					     IRQ_TYPE_EDGE_RISING>;
++
++		mboxes = <&ipcc 46
++				IPCC_MPROC_SIGNAL_SMP2P>;
++
++		qcom,smem = <617>, <616>;
++		qcom,local-pid = <0>;
++		qcom,remote-pid = <19>;
++
++		soccp_smp2p_out: master-kernel {
++			qcom,entry-name = "master-kernel";
++			#qcom,smem-state-cells = <1>;
++		};
++
++		soccp_smp2p_in: slave-kernel {
++			qcom,entry-name = "slave-kernel";
++			interrupt-controller;
++			#interrupt-cells = <2>;
++		};
++	};
++
++	/*
++	 * The bootloader leaves an early SoCCP image running in D0 with no bus
++	 * vote of its own. The driver holds the SoCCP's path to DDR from probe
++	 * until the image it loads has parked itself in D3, as read from the
++	 * TCSR D-state register. Enabled for every board: without the firmware
++	 * the vote is simply kept, which is what lets the SoC wake from s2idle.
++	 */
++	remoteproc_soccp: remoteproc-soccp {
++		compatible = "qcom,sm8750-soccp-pas";
++
++		interrupts-extended = <&intc GIC_SPI 167 IRQ_TYPE_EDGE_RISING>,
++				      <&soccp_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
++				      <&soccp_smp2p_in 1 IRQ_TYPE_EDGE_RISING>,
++				      <&soccp_smp2p_in 2 IRQ_TYPE_EDGE_RISING>,
++				      <&soccp_smp2p_in 3 IRQ_TYPE_EDGE_RISING>;
++		interrupt-names = "wdog",
++				  "fatal",
++				  "ready",
++				  "handover",
++				  "stop-ack";
++
++		clocks = <&rpmhcc RPMH_CXO_CLK>;
++		clock-names = "xo";
++
++		power-domains = <&rpmhpd RPMHPD_CX>,
++				<&rpmhpd RPMHPD_MX>;
++		power-domain-names = "cx",
++				     "mx";
++
++		interconnects = <&aggre2_noc MASTER_SOCCP_AGGR_NOC QCOM_ICC_TAG_ALWAYS
++				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
++
++		memory-region = <&soccp_mem>;
++
++		qcom,smem-states = <&soccp_smp2p_out 0>;
++		qcom,smem-state-names = "stop";
++
++		qcom,soccp-dstate = <&tcsr 0x1a000>;
++	};
++
+ 	soc: soc@0 {
+ 		compatible = "simple-bus";
+ 
+@@ -2190,6 +2257,11 @@
+ 			#hwlock-cells = <1>;
+ 		};
+ 
++		tcsr: syscon@1fc0000 {
++			compatible = "syscon";
++			reg = <0x0 0x01fc0000 0x0 0x30000>;
++		};
++
+ 		remoteproc_mpss: remoteproc@4080000 {
+ 			compatible = "qcom,sm8750-mpss-pas";
+ 			reg = <0x0 0x04080000 0x0 0x10000>;

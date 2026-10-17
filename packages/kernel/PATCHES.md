@@ -360,6 +360,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: not submitted
   notes: On OPP-scaling platforms the OPP carries the only PCIe memory-path votes, so dropping it to NULL on non-S2RAM suspend leaves the RPMh sleep set with no DDR/LLCC contract and the AOP never resumes. Deliberately does not populate `pcie->icc_mem` on OPP platforms: `qcom_pcie_icc_opp_update()` prefers an `icc_mem` handle over the OPP branch, so providing one silently disables the post-link-training OPP update and pins the OPP at the probe-time maximum.
+- `patches/0556-remoteproc-qcom-pas-manage-the-sm8750-soccp.patch`
+  source: armada
+  upstream: local
+  notes: Fixes one of the two causes of the SM8750 s2idle wake hang (the other is 0044, no longer applied) and lets the 0521 PCIe suspend OPP floor go. The bootloader's early SoCCP image sits in D0 behind the system NoC with no bus vote; the driver reloads soccp.mbn, which parks itself in D3, and the SoC then reaches CX shutdown and DDR low power in suspend. Until the TCSR D-state register shows D3 the driver holds the SoCCP's path to DDR itself, so a board without soccp.mbn (Pocket FIT Elite today) still wakes, without the deeper sleep. Odin 3 firmware: `qcom/sm8750/ayn/odin3/soccp.mbn`, from the device's modem partition.
 - `patches/0522-PCI-host-common-let-only-endpoints-veto-d3cold.patch`
   source: armada
   upstream: local
@@ -392,6 +396,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0521-arm64-dts-qcom-sm8750-add-a-pcie-suspend-opp.patch`
   source: armada
   upstream: local
+  notes: Not applied (commented out in the series). The floor only worked because its path kept the PCIe and system NoCs on in the sleep set, for the PCIe controller that 0044 left powered and for the unmanaged SoCCP. 0556/0557 handle the SoCCP and 0044 is no longer applied, and without the floor the SoC reaches CX shutdown and DDR low power.
 - `patches/0527-arm64-dts-qcom-sm8650-add-a-pcie-suspend-opp.patch`
   source: armada
   upstream: local
@@ -587,6 +592,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/b1e9d07b251c5a013d303a518106c547db001b74/projects/ROCKNIX/devices/SM8750/patches/linux/0075-arm64-dts-qcom-sm8750-add-CPU-thermal-cooling.patch
   upstream: unknown
   notes: Linux 7.2 supplies the CPU cooling-cell properties; Armada retains the missing passive trips and cooling maps.
+- `patches/0557-arm64-dts-qcom-sm8750-add-the-soccp.patch`
+  source: armada
+  upstream: local
+  notes: Companion DT for 0556: the SoCCP remoteproc, its SMP2P edge, and the TCSR block as a syscon for the D-state register. Enabled in the SoC file so every SM8750 board gets at least the fallback bus vote; a board sets `firmware-name` to get the reload.
 - `patches/0049-drm-msm-a8xx-add-adreno-830-catalog.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0049-drm-msm-a8xx-add-adreno-830-catalog.patch
   upstream: unknown
@@ -609,6 +618,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch
   upstream: https://lore.kernel.org/r/20260102-pci_gdsc_fix-v1-3-b17ed3d175bc@oss.qualcomm.com
+  notes: Not applied (commented out in the series). With the PCIe GDSCs left on across suspend (PWRSTS_RET_ON) the controller stays powered on the PCIe NoC, and the SoC hangs on the s2idle wake unless a PCIe bus vote (SN4) is kept in the sleep set, which in turn blocks CX shutdown. Tested on the Odin 3 (7.2.6, SoCCP managed, no keepalive): with this patch the system-level PSCI call never returns; without it the SoC wakes and reaches CX shutdown, and the WCN7860 comes back because pwrctrl powers it off for suspend and the link retrains. Not tested on the Pocket FIT Elite.
 - `patches/0045-Bluetooth-qca-add-WCN7860-support.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0045-Bluetooth-qca-add-WCN7860-support.patch
   upstream: unknown
@@ -667,6 +677,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0530-ASoC-qdsp6-release-AudioReach-graphs-across-system-suspend.patch`
   source: armada
   upstream: local
+- `patches/0531-ASoC-qcom-sc8280xp-release-the-board-i2s-clock-across-system-suspend.patch`
+  source: armada
+  upstream: local
+  notes: A PCM still open at suspend (on the Odin 3, the power key's UI sound) kept the q6prm "i2s_clk" enabled, so the ADSP's AUDIO DRV blocked CX power collapse for the whole sleep. The card now drops the clock in suspend_post and restores it in resume_pre.
 - `patches/0532-hwmon-pwm-fan-optionally-run-the-fan-while-charging-in-s2idle.patch`
   source: armada
   upstream: local
@@ -835,6 +849,42 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0505a-arm64-unaligned-atomics-cover-the-load128-store-exclusive.patch`
   source: armada
   upstream: local
+- `patches/0557-ASoC-codecs-lpass-wsa-macro-switch-to-pm-clock-framework.patch`
+  source: https://git.kernel.org/torvalds/c/cd054a6e272caa97ab808ef6f5588749a1429108
+  upstream: https://patch.msgid.link/20260702-xo-sd-codec-v7-b4-v8-1-d39d0fdb7859@oss.qualcomm.com
+  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
+- `patches/0558-ASoC-codecs-lpass-va-macro-switch-to-pm-clock-framework.patch`
+  source: https://git.kernel.org/torvalds/c/eb667d0fbdd38d5a800b9e7aafc9a6c14530b9bf
+  upstream: https://patch.msgid.link/20260702-xo-sd-codec-v7-b4-v8-2-d39d0fdb7859@oss.qualcomm.com
+  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
+- `patches/0559-ASoC-codecs-lpass-wsa-macro-use-devm-clk-hw-register-for-mclk.patch`
+  source: https://git.kernel.org/torvalds/c/541735571578b84987868c5662089f73bac36895
+  upstream: https://patch.msgid.link/20260702-xo-sd-codec-v7-b4-v8-3-d39d0fdb7859@oss.qualcomm.com
+  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
+- `patches/0560-ASoC-codecs-lpass-tx-macro-switch-to-pm-clock-framework.patch`
+  source: https://git.kernel.org/torvalds/c/b9b23e72abef91ab4689f1467cefc2517042ab26
+  upstream: https://patch.msgid.link/20260707-xo-sd-codec-tx-rx-v2-1-f61b4622f97f@oss.qualcomm.com
+  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
+- `patches/0561-ASoC-codecs-lpass-rx-macro-switch-to-pm-clock-framework.patch`
+  source: https://git.kernel.org/torvalds/c/b05482e7ce1b110f86b08a99768ac41e4c9e4dfa
+  upstream: https://patch.msgid.link/20260707-xo-sd-codec-tx-rx-v2-2-f61b4622f97f@oss.qualcomm.com
+  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
+- `patches/0562-ASoC-codecs-lpass-tx-rx-macro-check-clk-set-rate-return-value.patch`
+  source: https://git.kernel.org/torvalds/c/b8ca90fafe6adc401601f91d1394ba76bacf67ed
+  upstream: https://patch.msgid.link/20260707-xo-sd-codec-tx-rx-v2-3-f61b4622f97f@oss.qualcomm.com
+  notes: Linux 7.3. Puts the macro clocks, including the q6prm HW macro/dcodec votes the 7.2 drivers hold from probe, under runtime PM.
+- `patches/0563-ASoC-codecs-lpass-macro-force-runtime-suspend-across-system-sleep.patch`
+  source: armada
+  upstream: local
+  notes: The macros stay runtime-active through s2idle while SoundWire is held; force-suspend so the ADSP (the "AUDIO" CXPC voter) can release LPASS.
+- `patches/0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch`
+  source: armada
+  upstream: local
+  notes: Same for the SoundWire controller; the WCD9390 peripherals are kept runtime-active for jack detection.
+- `patches/0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch`
+  source: armada
+  upstream: local
+  notes: Same for the LPASS LPI pin controller, which the SoundWire controllers keep runtime-active through their device links (held by 0603); otherwise it keeps LPASS_HW_MACRO/DCODEC voted in s2idle.
 
 - `patches/1021-wifi-ath12k-fix-single-pdev-frequency-ranges.patch`
   source: https://lore.kernel.org/r/20260715065218.41232-1-gsh20040816@gmail.com
