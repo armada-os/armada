@@ -421,6 +421,18 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1031-media-iris-stop-AV1-tier-overwriting-HEVC-tier.patch`
   source: armada
   upstream: local
+- `patches/0670-media-iris-subscribe-encoder-picture-type.patch`
+  source: armada
+  upstream: local
+  notes: Request encoder picture-type metadata through the existing HFI Gen2 subscription path. A 90-frame KPFE test produced correct V4L2 flags for all three IDRs and 87 P frames without changing the encoded H.264 bytes.
+- `patches/0671-media-iris-gen2-force-keyframe.patch`
+  source: https://git.zx2c4.com/linux-rng/commit/?id=6f62dcefd2494aa9ac01538372353bf07755491e
+  upstream: https://lore.kernel.org/all/20260723-dynamic_encode-v4-2-5fd6bd549ead@oss.qualcomm.com/
+  notes: Backport the five HFI Gen2/shared-control files to 7.2.6; omit the three Gen1-only changes. Adds the standard force-keyframe control rejected by the KPFE baseline. With 0672 in image 20261016.9bbb374, 90-frame tests with and without prefixed headers accepted both keyframe requests, produced correctly flagged frames and decoded cleanly. The earlier no-prefix IOMMU fault did not recur; its connection to the control race remains unproven.
+- `patches/0672-media-iris-serialize-instance-controls.patch`
+  source: armada
+  upstream: local
+  notes: Share the instance mutex with control handling so dynamic controls cannot race buffer submission in the same HFI packet buffer. Decoder response updates use the held lock; clear the cached control pointer before handler destruction. All 30 Iris translation units compile with W=1 without warnings. KPFE image 20261016.9bbb374 passed three 90-frame encoder cases and two 90-frame decoder sessions, including close/reopen, without Iris/IOMMU faults. Decoder resolution changes, control-event delivery and other hardware remain untested. The earlier hard freeze remains unexplained.
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown
@@ -766,7 +778,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/linux/dts/qcom/sm8750-konkr-pf-elite.dts
 - `dts/sm8750-konkr-pf-elite.dts.patch`
   source: armada
-  notes: Armada adapts the Elite touchscreen node to the full ROCKNIX Chipone fork shared with the SM8650 Pocket FIT, keeps volume-up from waking the system, and adds the DisplayPort playback link required for USB-C DP Alt Mode audio; the touchscreen driver is selected only by those two device-tree nodes. Armada also marks PCIe WAKE# active-low and idles the codec rails in LPM during s2idle.
+  notes: Armada adapts the Elite touchscreen node to the full ROCKNIX Chipone fork shared with the SM8650 Pocket FIT, keeps volume-up from waking the system, and adds the DisplayPort playback link required for USB-C DP Alt Mode audio; the touchscreen driver is selected only by those two device-tree nodes. Armada also marks PCIe WAKE# active-low and idles the codec rails in LPM during s2idle. Enables the SM8750 Iris video codec with the inherited SoC resources and default firmware.
 - `dts/cq8725s-ayn-common.dtsi`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0046-arm64-dts-qcom-Add-AYN-CQ8725S-Common.patch
   notes: Armada extracted this DTS from the cited ROCKNIX patch and then applied later ROCKNIX DTS updates, including the Odin 3 haptics nodes from ROCKNIX commit `81a31e3d0f`.

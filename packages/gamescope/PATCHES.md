@@ -58,3 +58,5 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0028-improve-frame-pacing.patch`
   source: https://github.com/ValveSoftware/gamescope/pull/2417
+- `patches/0029-pipewire-rework-buffer-sharing-to-be-thread-safe.patch`
+  source: https://github.com/OpenGamingCollective/gamescope/commit/fcee365797177dac3f14749eccfd29e38df6170c
