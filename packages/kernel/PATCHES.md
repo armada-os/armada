@@ -481,6 +481,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/chipone_tddi/commit/af27029fa2b27c4a77d16809298ed5d03c9da5a6
   upstream: unknown
   notes: ROCKNIX ships this full driver as an out-of-tree module for the SM8650 KONKR Pocket FIT. Armada converts the pinned fork to an in-tree patch; its C and header files are unchanged, while Kconfig and Kbuild are adapted for the combined kernel. The fork includes ROCKNIX's Linux 7.1 GPIO compatibility update.
+- `patches/0064a-input-touchscreen-chipone-follow-panel-lifecycle.patch`
+  source: armada
+  upstream: local
+  notes: Coordinates Chipone initialization, work and interrupts with an explicitly referenced DRM panel, following Linux's I2C-HID panel-follower pattern. KPFE supplies the panel reference through its DTS patch; other boards use standard system PM. The pre-fix KPFE trace shows touch reads after panel regulator shutdown and before panel restoration. Patched runtime validation is pending.
 - `patches/0014-sm8250-ath11k-fix-wifi-mac.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/patches/linux/0014-fix-wifi-and-bt-mac.patch
   upstream: unknown
