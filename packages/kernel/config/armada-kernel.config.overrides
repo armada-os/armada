@@ -221,6 +221,12 @@ CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y        # not defconfig's ALWAYS, which blo
 CONFIG_PSI=y                                 # Waydroid lmkd memory-pressure monitoring
 CONFIG_PSI_DEFAULT_DISABLED=y                # opt in with psi=1
 
+# ============== Power ==============
+CONFIG_RCU_EXPERT=y                          # exposes RCU_NOCB_CPU
+CONFIG_RCU_NOCB_CPU=y
+CONFIG_RCU_NOCB_CPU_DEFAULT_ALL=y
+CONFIG_RCU_LAZY=y                            # batch RCU callbacks instead of waking idle CPUs
+
 # ============== bootc / ostree / systemd ==============
 CONFIG_EROFS_FS=m
 CONFIG_EROFS_FS_BACKED_BY_FILE=y
