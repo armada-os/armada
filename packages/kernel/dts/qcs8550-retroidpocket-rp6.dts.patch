@@ -1,14 +1,12 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and LRA haptics
+Subject: [PATCH] arm64: dts: qcom: rp6: device-specific audio firmware, LRA haptics, ADSP remote heap for the sensors
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-retroidpocket-rp6.dts
-@@ -129,6 +129,54 @@
- 
- &gamepad {
+@@ -131,6 +131,54 @@
  	axis-range = <1024>;
-+};
-+
+ };
+ 
 +&pm8550b_hv_haptics {
 +	/*
 +	 * The RP6 has an LRA (~170 Hz), not an ERM. Driving it as an ERM feeds it
@@ -55,10 +53,12 @@ Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and L
 +		qcom,wf-vmax-mv = <1300>;
 +		qcom,wf-auto-res-disable;
 +	};
- };
- 
++};
++
  &{/gpio-keys} {
-@@ -377,15 +425,15 @@
+ 	pinctrl-0 = <&volume_up_n>, <&paddle_keys_default>;
+ 
+@@ -377,15 +425,37 @@
  };
  
  &remoteproc_adsp {
@@ -78,3 +78,25 @@ Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and L
 -	firmware-name = "qcom/sm8550/ayn/odin2/aw883xx_acf.bin";
 +	firmware-name = "qcom/sm8550/retroidpocket/rp6/aw883xx_acf.bin";
  };
++
++/*
++ * Qualcomm sensor core (SSC) on the ADSP: the FastRPC sensors process needs a
++ * remote heap, or it cannot start and the IMU (gyro/accel) never appears.
++ * Heap node and properties from the Odin 2 gyro work by justjoseorg in
++ * SteamOS-ARM-Port (qcs8550-ayn-odin2-gyro.dtsi): LPASS 0x16, ADSP_HEAP 0x25.
++ */
++&{/reserved-memory} {
++	adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
++		compatible = "shared-dma-pool";
++		alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++		alignment = <0x0 0x400000>;
++		size = <0x0 0xc00000>;
++		reusable;
++	};
++};
++
++&{/soc@0/remoteproc@6800000/glink-edge/fastrpc} {
++	memory-region = <&adsp_rpc_remote_heap_mem>;
++	qcom,fastrpc-adsp-sensors-pdr;
++	qcom,vmids = <0x16 0x25>;
++};
