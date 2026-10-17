@@ -1,0 +1,138 @@
+From: Diogo Trindade <diogotr7@gmail.com>
+Subject: [PATCH] input: rsinput: bound and serialize command writes
+
+Use serdev_device_write() with a timeout so success means the complete frame
+was accepted rather than an arbitrary prefix, and serialize all command TX.
+Reject status payloads shorter than the 14 bytes the parser reads and
+CMD_COMMOD responses without a sub-command byte.
+---
+diff --git a/drivers/input/joystick/rsinput.c b/drivers/input/joystick/rsinput.c
+index f00bf12..b1e80c5 100644
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -13,6 +13,7 @@
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/minmax.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/serdev.h>
+@@ -131,6 +132,9 @@ module_param(axis_righty_antideadzone,int,0660);
+
+ #define MCU_VERSION_MAX_LEN       64
+
++#define RSINPUT_TX_TIMEOUT_MS      250
++#define RSINPUT_STATUS_MIN_LEN     14
++
+ struct rsinput_driver {
+     struct serdev_device *serdev;
+     struct input_dev *input;
+@@ -149,6 +153,7 @@ struct rsinput_driver {
+     struct work_struct rumble_work;
+     int rumble_effect_id;
+     int rumble_val;
++    struct mutex tx_lock;
+ };
+
+ static const unsigned int keymap[] = {
+@@ -168,10 +173,13 @@ static uint8_t compute_checksum(const uint8_t *data, size_t len) {
+     return checksum;
+ }
+
+-static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd, const uint8_t *data, size_t len) {
++static int __rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd,
++                                  const uint8_t *data, size_t len)
++{
+     uint8_t frame[256];
+     uint8_t checksum = 0;
+     size_t frame_len = 0;
++    ssize_t written;
+
+     frame[frame_len++] = FRAME_HEAD_1;
+     frame[frame_len++] = FRAME_HEAD_2;
+@@ -194,7 +202,26 @@ static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd, const u
+     checksum = compute_checksum(frame, frame_len + 1);
+     frame[frame_len++] = checksum;
+
+-    return serdev_device_write_buf(drv->serdev, frame, frame_len);
++    written = serdev_device_write(drv->serdev, frame, frame_len,
++                                  msecs_to_jiffies(RSINPUT_TX_TIMEOUT_MS));
++    if (written < 0)
++        return written;
++    if (written != frame_len)
++        return -EIO;
++
++    return 0;
++}
++
++static int rsinput_send_command(struct rsinput_driver *drv, uint8_t cmd,
++                                const uint8_t *data, size_t len)
++{
++    int ret;
++
++    mutex_lock(&drv->tx_lock);
++    ret = __rsinput_send_command(drv, cmd, data, len);
++    mutex_unlock(&drv->tx_lock);
++
++    return ret;
+ }
+
+ static int rsinput_init_commands(struct rsinput_driver *drv) {
+@@ -239,9 +266,13 @@ static int rsinput_init_commands(struct rsinput_driver *drv) {
+ }
+
+ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
++    if (payload_length < 1) {
++        dev_warn(&drv->serdev->dev, "Invalid CMD_COMMOD response length\n");
++        return;
++    }
++
+     switch (data[FRAME_POS_DATA_1]) {
+         case DATA_COMMOD_VERSION:
+-            if (payload_length >= 1) {
+                 char mcu_version[MCU_VERSION_MAX_LEN] = {0};
+                 size_t version_length = payload_length;
+                 if (version_length > MCU_VERSION_MAX_LEN - 1) {
+@@ -250,9 +281,6 @@ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, s
+                 memcpy(mcu_version, &data[FRAME_POS_DATA_1], version_length);
+                 mcu_version[version_length] = '\0';
+                 dev_info(&drv->serdev->dev, "MCU Version: %s\n", mcu_version);
+-            } else {
+-                dev_err(&drv->serdev->dev, "Invalid MCU version response length\n");
+-            }
+             break;
+         case DATA_COMMOD_SET_PAR:
+             dev_info(&drv->serdev->dev, "MCU parameters set successfully\n");
+@@ -264,7 +292,7 @@ static void handle_cmd_commod(struct rsinput_driver *drv, const uint8_t *data, s
+ }
+
+ static void handle_cmd_status(struct rsinput_driver *drv, const uint8_t *data, size_t payload_length) {
+-    if (payload_length >= 6) {
++    if (payload_length >= RSINPUT_STATUS_MIN_LEN) {
+     static unsigned long prev_states;
+     unsigned long keys = data[FRAME_POS_DATA_1] | (data[FRAME_POS_DATA_2] << 8);
+     unsigned long current_states = keys, changes;
+@@ -446,8 +474,14 @@ static size_t rsinput_rx(struct serdev_device *serdev, const u8 *data, size_t co
+     return count;
+ }
+
++static void rsinput_write_wakeup(struct serdev_device *serdev)
++{
++    serdev_device_write_wakeup(serdev);
++}
++
+ static const struct serdev_device_ops rsinput_rx_ops = {
+     .receive_buf = rsinput_rx,
++    .write_wakeup = rsinput_write_wakeup,
+ };
+
+ static void rsinput_rumble_work(struct work_struct *work)
+@@ -585,6 +619,7 @@ static int rsinput_probe(struct serdev_device *serdev) {
+
+     drv->serdev = serdev;
+     drv->sequence_number = 0;
++    mutex_init(&drv->tx_lock);
+
+     serdev_device_set_drvdata(serdev, drv);
+

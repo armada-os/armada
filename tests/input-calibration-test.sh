@@ -386,13 +386,40 @@ except RuntimeError:
 else:
     raise AssertionError("failed range reload was reported as success")
 calibration.call = record
-calibration.begin_session("modal")
+# A failed Close must retry without needing to open a new modal.
 calibration.end_session("modal")
 assert calls[-1][0] == "reload_input_ranges"
 reloads = len(calls)
 calibration.begin_session("modal")
 calibration.end_session("modal")
 assert len(calls) == reloads
+
+ended = []
+calibration.end_calibration_intercept = lambda: ended.append(True) or True
+mcu_state = {"state": "applying"}
+
+
+def mcu_call(action, **payload):
+    if action == "rsinput_calibration":
+        return dict(mcu_state)
+    return record(action, **payload)
+
+
+calibration.call = mcu_call
+calibration.begin_session("modal")
+calibration.mcu_calibration("start", "sensor")
+try:
+    calibration.end_session("modal")
+except RuntimeError as error:
+    assert "still applying" in str(error)
+else:
+    raise AssertionError("Close released input during a sensor Apply")
+assert not ended and len(calls) == reloads
+mcu_state["state"] = "applied"
+calibration.end_session("modal")
+assert ended and calls[-1][0] == "reload_input_ranges"
+calibration.end_calibration_intercept = lambda: True
+calibration.call = record
 saves = len(calls)
 (retroid_params / "trigger_left_max").unlink()
 try:
@@ -547,5 +574,8 @@ except ValueError:
 else:
     raise AssertionError("unknown calibration backend was accepted")
 PYEOF
+
+python3 -B "$ROOT/tests/input-calibration-policy-test.py"
+python3 -B "$ROOT/tests/mcu-calibration-test.py"
 
 echo "Input calibration tests passed"
