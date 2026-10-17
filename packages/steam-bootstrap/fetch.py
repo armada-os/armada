@@ -7,7 +7,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-MANIFEST = "steam_client_steamdeck_publicbeta_linuxarm64"
+MANIFEST = "steam_client_steamdeck_stable_linuxarm64"
 CDN = "https://client-update.steamstatic.com"
 
 

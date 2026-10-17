@@ -17,6 +17,7 @@ PROTON_11_VERSIONED = re.compile(r"proton-cachyos-11\.0-[^\"\s]+-arm64")
 PROTON_11_STABLE = "proton-cachyos-11.0-arm64"
 
 FIXUP_STATE_DIR = pathlib.Path("/var/lib/armada/fixups")
+STEAM_OOBE_IMAGE = pathlib.Path("/etc/steamos-oobe-image")
 
 
 def fix_desktop_ownership():
@@ -154,11 +155,37 @@ def migrate_sddm_autologin():
     print("Migrated autologin config to zz-holo-autologin.conf")
 
 
+def sync_steam_oobe():
+    steam = HOME_DIR / ".local/share/Steam"
+    if not steam.is_dir():
+        return
+
+    completed = False
+    for registry in (HOME_DIR / ".steam/registry.vdf", steam / "registry.vdf"):
+        try:
+            text = registry.read_text()
+        except FileNotFoundError:
+            continue
+        if re.search(r'"CompletedOOBE(?:Stage1)?"\s+"1"', text):
+            completed = True
+    try:
+        loginusers = (steam / "config/loginusers.vdf").read_text()
+    except FileNotFoundError:
+        loginusers = ""
+    completed = completed or '"AccountName"' in loginusers
+
+    if completed:
+        STEAM_OOBE_IMAGE.unlink(missing_ok=True)
+    else:
+        STEAM_OOBE_IMAGE.touch(exist_ok=True)
+
+
 def main():
     fix_desktop_ownership()
     fix_proton_11_tool_id()
     strip_compat_wildcard()
     migrate_sddm_autologin()
+    sync_steam_oobe()
 
 
 if __name__ == "__main__":
