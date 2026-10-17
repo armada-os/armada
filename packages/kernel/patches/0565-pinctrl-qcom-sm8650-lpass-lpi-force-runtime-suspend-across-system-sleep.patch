@@ -1,0 +1,24 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] pinctrl: qcom: sm8650-lpass-lpi: force runtime suspend across system sleep
+
+The LPI pin controller only has runtime PM ops, and it is a device-link
+supplier of the SoundWire controllers. When a SoundWire peripheral is
+kept runtime-active (the WCD9390 on the AYN Odin 3, held for jack
+detection), the controllers are force-suspended for system sleep but
+keep their link references, so the pin controller stays active with
+its LPASS_HW_MACRO and LPASS_HW_DCODEC votes, and the ADSP keeps LPASS
+(and CX) up through s2idle. Force the runtime suspend across system
+sleep, like the macros and the SoundWire controller.
+---
+diff --git a/drivers/pinctrl/qcom/pinctrl-sm8650-lpass-lpi.c b/drivers/pinctrl/qcom/pinctrl-sm8650-lpass-lpi.c
+index bc7889c99..e33d4360c 100644
+--- a/drivers/pinctrl/qcom/pinctrl-sm8650-lpass-lpi.c
++++ b/drivers/pinctrl/qcom/pinctrl-sm8650-lpass-lpi.c
+@@ -220,6 +220,7 @@ static const struct of_device_id lpi_pinctrl_of_match[] = {
+ MODULE_DEVICE_TABLE(of, lpi_pinctrl_of_match);
+ 
+ static const struct dev_pm_ops lpi_pinctrl_pm_ops = {
++	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
+ 	RUNTIME_PM_OPS(pm_clk_suspend, pm_clk_resume, NULL)
+ };
+ 

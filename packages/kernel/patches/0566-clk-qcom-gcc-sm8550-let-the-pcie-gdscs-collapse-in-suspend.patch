@@ -1,0 +1,54 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] clk: qcom: gcc-sm8550: let the PCIe GDSCs collapse in suspend
+
+Undo the effect of upstream 967e011013ed ("clk: qcom: gcc-sm8550: Do
+not turn off PCIe GDSCs during gdsc_disable()"). With PWRSTS_RET_ON,
+gdsc_disable() returns without touching the hardware, so the PCIe
+controllers and PHYs stay powered through s2idle. A powered controller
+still needs its system-NoC path, so the sleep set has to keep a NoC
+bandwidth vote or the system-level low power mode never returns, and
+that vote in turn keeps DDR out of self-refresh.
+
+The RET_ON change dates from when pcie-qcom kept the link in L1ss across
+non-S2RAM suspend. pcie-qcom now turns the link off (PME_Turn_Off, host
+deinit, pwrctrl power-off) whenever D3cold is possible and retrains it on
+resume, so the GDSCs can collapse. The Qualcomm downstream driver
+(pci-msm) also disables both PCIe GDSCs in its clock deinit.
+---
+--- a/drivers/clk/qcom/gcc-sm8550.c
++++ b/drivers/clk/qcom/gcc-sm8550.c
+@@ -3003,7 +3003,7 @@ static struct gdsc pcie_0_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_0_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = VOTABLE | POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+
+@@ -3014,7 +3014,7 @@ static struct gdsc pcie_0_phy_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_0_phy_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = VOTABLE | POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+
+@@ -3025,7 +3025,7 @@ static struct gdsc pcie_1_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_1_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = VOTABLE | POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+
+@@ -3036,7 +3036,7 @@ static struct gdsc pcie_1_phy_gdsc = {
+ 	.pd = {
+ 		.name = "pcie_1_phy_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = VOTABLE | POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };

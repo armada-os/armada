@@ -124,8 +124,12 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 0535-scsi-ufs-core-fast-abort-unsupported-query-idns.patch
 0536-scsi-ufs-core-dynamically-disable-timestamp-on-unsupported-devices.patch
 0537-usb-xhci-pci-renesas-let-the-controller-power-off-in-suspend.patch
+0566-clk-qcom-gcc-sm8550-let-the-pcie-gdscs-collapse-in-suspend.patch
+0567-clk-qcom-gcc-sm8650-let-the-pcie-gdscs-collapse-in-suspend.patch
+0568-arm64-dts-qcom-sm8250-cpu-ddr-votes-active-only.patch
 0512-PCI-qcom-skip-L23-ready-poll-on-SM8550.patch
 0513-PCI-qcom-honour-an-opp-suspend-opp-as-the-non-s2ram-memory-floor.patch
+0556-remoteproc-qcom-pas-manage-the-sm8750-soccp.patch
 0522-PCI-host-common-let-only-endpoints-veto-d3cold.patch
 0523-regulator-qcom-rpmh-add-suspend-state-support.patch
 0524-regulator-core-apply-mem-state-for-s2idle.patch
@@ -136,9 +140,7 @@ v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
 
 # ============== SM8550 DTSI prerequisites ==============
 0001-pcie-update-sm8550-dtsi.patch
-0520-arm64-dts-qcom-sm8550-add-a-pcie-suspend-opp.patch
-0521-arm64-dts-qcom-sm8750-add-a-pcie-suspend-opp.patch
-0527-arm64-dts-qcom-sm8650-add-a-pcie-suspend-opp.patch
+# 0521-arm64-dts-qcom-sm8750-add-a-pcie-suspend-opp.patch  # not needed: the SoCCP is managed (0556, 0557) and 0044 is not applied
 0120-20250728_konradybcio_gpu_cc_power_requirements_reality_check.patch
 0121-pmdomain-qcom-rpmhpd-presync-floor-gmu-rails.patch
 0122-interconnect__qcom__sm8550__Enable_QoS_configuration.patch
@@ -209,13 +211,14 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0038a-arm64-dts-qcom-sm8750-map-A8xx-RSCC-registers.patch
 0035-arm64-dts-qcom-sm8750-set-CPU-capacity-dmips-mhz.patch
 0037-arm64-dts-qcom-sm8750-add-CPU-thermal-cooling.patch
+0557-arm64-dts-qcom-sm8750-add-the-soccp.patch
 0049-drm-msm-a8xx-add-adreno-830-catalog.patch
 0039-wifi-ath12k-add-initial-hardware-definition-for-WCN7.patch
 0040-wifi-ath12k-send-QDSS-config-when-CNSS_QDSS_CFG_MISS.patch
 0041-wifi-ath12k-disable-CNSS_QDSS_CFG_MISS_V01-for-the-W.patch
 0042-PCI-pwrctrl-pwrseq-add-support-for-WCN7860.patch
 0043-power-sequencing-qcom-wcn-add-support-for-WCN7860.patch
-0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch
+# 0044-clk-qcom-gcc-sm8750-Do-not-turn-off-PCIe-GDSCs-durin.patch  # hangs the s2idle wake once no PCIe bus vote is kept, see PATCHES.md
 0045-Bluetooth-qca-add-WCN7860-support.patch
 0066-scsi-ufs-ufs-qcom-add-sm8750-compatible.patch
 0509-soc-qcom-pmic_glink_altmode-defer-until-mux-switch-ready.patch
@@ -233,7 +236,19 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0538-ASoC-qcom-sc8280xp-cap-Pocket-DS-speaker-digital-volume.patch
 0529-ASoC-qdsp6-q6apm-fail-the-graph-open-when-the-DSP-rejects-it.patch
 0530-ASoC-qdsp6-release-AudioReach-graphs-across-system-suspend.patch
+0531-ASoC-qcom-sc8280xp-release-the-board-i2s-clock-across-system-suspend.patch
 0532-hwmon-pwm-fan-optionally-run-the-fan-while-charging-in-s2idle.patch
 1021-wifi-ath12k-fix-single-pdev-frequency-ranges.patch
 1022-wifi-ath12k-split-WCN7860-scans-by-firmware-ranges.patch
 1023-wifi-ath12k-protect-TX-during-associated-range-scans.patch
+
+# ============== LPASS clocks released in s2idle (7.3 backports + force suspend) ==============
+0557-ASoC-codecs-lpass-wsa-macro-switch-to-pm-clock-framework.patch
+0558-ASoC-codecs-lpass-va-macro-switch-to-pm-clock-framework.patch
+0559-ASoC-codecs-lpass-wsa-macro-use-devm-clk-hw-register-for-mclk.patch
+0560-ASoC-codecs-lpass-tx-macro-switch-to-pm-clock-framework.patch
+0561-ASoC-codecs-lpass-rx-macro-switch-to-pm-clock-framework.patch
+0562-ASoC-codecs-lpass-tx-rx-macro-check-clk-set-rate-return-value.patch
+0563-ASoC-codecs-lpass-macro-force-runtime-suspend-across-system-sleep.patch
+0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch
+0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch
