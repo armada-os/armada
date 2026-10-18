@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP audio, fix PCIe WAKE# polarity, keep the Wi-Fi PMU rails on
+Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP audio, fix PCIe WAKE# polarity, keep the Wi-Fi PMU rails on, disable the unused WSA macros
 
 --- a/arch/arm64/boot/dts/qcom/cq8725s-ayn-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/cq8725s-ayn-common.dtsi
@@ -74,7 +74,23 @@ Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP 
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  			regulator-allow-set-load;
  			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
-@@ -982,7 +1002,7 @@
+@@ -932,6 +952,15 @@
+ 	qcom,dmic-sample-rate = <4800000>;
+ };
+ 
++/* Unused (I2S speakers); bound WSA macros keep the ADSP waking in s2idle */
++&lpass_wsa2macro {
++	status = "disabled";
++};
++
++&lpass_wsamacro {
++	status = "disabled";
++};
++
+ &mdss {
+ 	status = "okay";
+ };
+@@ -982,7 +1011,7 @@
  };
  
  &pcieport0 {
@@ -83,7 +99,7 @@ Subject: [PATCH] arm64: dts: qcom: cq8725s: configure the Odin 3 gamepad and DP 
  	reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
  
  	wifi@0 {
-@@ -1390,6 +1410,8 @@
+@@ -1390,6 +1419,8 @@
  
  	gamepad {
  		compatible = "gamepad,rsinput";

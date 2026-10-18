@@ -1,4 +1,4 @@
-From 8fa8cdaf858be266de4bd1c6a5d1c609a83f5b75 Mon Sep 17 00:00:00 2001
+From cf83687734596e6eba27dadc3a60e5a0a2aa39a0 Mon Sep 17 00:00:00 2001
 From: Arun Raghavan <arunr@valvesoftware.com>
 Date: Tue, 19 May 2026 11:52:38 -0700
 Subject: [PATCH] Add a custom platform profile mechanism
@@ -82,10 +82,10 @@ index 80fcb99..e8b0412 100644
  
  #[derive(Clone, Deserialize, Debug)]
 diff --git a/steamos-manager/src/manager/root.rs b/steamos-manager/src/manager/root.rs
-index f27a3aa..c79171b 100644
+index 4b98c1c..25c118d 100644
 --- a/steamos-manager/src/manager/root.rs
 +++ b/steamos-manager/src/manager/root.rs
-@@ -720,8 +720,8 @@ impl SteamOSManager {
+@@ -711,8 +711,8 @@ impl SteamOSManager {
          Ok(())
      }
  
@@ -111,7 +111,7 @@ index 59c49dc..5d8a9f1 100644
              }),
              inputplumber: None,
 diff --git a/steamos-manager/src/power.rs b/steamos-manager/src/power.rs
-index 83e5251..f2ec3a0 100644
+index 5e1ca26..652d3a3 100644
 --- a/steamos-manager/src/power.rs
 +++ b/steamos-manager/src/power.rs
 @@ -31,7 +31,7 @@ use zbus::{Connection, ObjectServer, fdo};
@@ -197,7 +197,7 @@ index 83e5251..f2ec3a0 100644
  async fn write_cpu_governor_sysfs_contents(contents: String) -> Result<()> {
      // Iterate over all policyX paths
      let mut dir = read_dir(path(CPU_PREFIX).join(CPUFREQ_PREFIX)).await?;
-@@ -735,6 +780,7 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
+@@ -732,6 +777,7 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
  pub(crate) enum PlatformProfileDriverType {
      #[default] // historical default
      Acpi,
@@ -205,7 +205,7 @@ index 83e5251..f2ec3a0 100644
  }
  
  #[derive(Debug)]
-@@ -742,6 +788,12 @@ pub(crate) struct AcpiPlatformProfileDriver {
+@@ -739,6 +785,12 @@ pub(crate) struct AcpiPlatformProfileDriver {
      path: PathBuf,
  }
  
@@ -218,7 +218,7 @@ index 83e5251..f2ec3a0 100644
  #[async_trait]
  pub(crate) trait PlatformProfileDriver: Send + Sync {
      // This can be used from the user and root managers
-@@ -749,7 +801,7 @@ pub(crate) trait PlatformProfileDriver: Send + Sync {
+@@ -746,7 +798,7 @@ pub(crate) trait PlatformProfileDriver: Send + Sync {
      // This can be used from the user and root managers
      async fn get_platform_profile(&self) -> Result<String>;
      // This can only be used from the root manager
@@ -227,7 +227,7 @@ index 83e5251..f2ec3a0 100644
  }
  
  impl AcpiPlatformProfileDriver {
-@@ -779,13 +831,49 @@ impl PlatformProfileDriver for AcpiPlatformProfileDriver {
+@@ -776,13 +828,49 @@ impl PlatformProfileDriver for AcpiPlatformProfileDriver {
              .to_string())
      }
  
@@ -278,7 +278,7 @@ index 83e5251..f2ec3a0 100644
  pub(crate) async fn register_tdp_limit1(
      ctx: &mut Option<UnboundedSender<TdpManagerCommand>>,
      proxy: TdpLimit1Proxy<'_>,
-@@ -1941,7 +2029,8 @@ pub(crate) mod test {
+@@ -1938,7 +2026,8 @@ pub(crate) mod test {
          let config = DeviceConfig {
              performance_profile: Some(PerformanceProfileConfig {
                  platform_profile_driver: PlatformProfileDriverType::Acpi,
@@ -288,3 +288,6 @@ index 83e5251..f2ec3a0 100644
                  suggested_default: String::from("custom"),
              }),
              tdp_limit: Some(TdpLimitConfig {
+-- 
+2.56.0
+

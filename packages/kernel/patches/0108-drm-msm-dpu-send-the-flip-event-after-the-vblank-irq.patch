@@ -15,11 +15,18 @@ only once the hardware has taken this kickoff's flush bits, which stay
 in the software mask until the next commit, and only after it has
 updated the vblank count and timestamp.
 
+Armada: only the encoders that receive the vblank irq wait for the
+count. A bonded DSI slave never registers it, yet on DPU 5+ every
+commit triggers its own flush and raises its count, so the count never
+drains and every commit hit the 50 ms timeout on dual-DSI panels such
+as the AYANEO Pocket S 2K. The slave waits on the flush register alone,
+as it did before this patch.
+
 Source: https://github.com/portare-ch/portareos/blob/be06100b6d127692ed99401d23980fc04888ae01/projects/PortareOS/devices/SM8550/patches/linux/1098-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch
 ---
 --- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
 +++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
-@@ -607,8 +607,18 @@
+@@ -607,8 +607,23 @@
  	if (!hw_ctl)
  		return 0;
  
@@ -31,11 +38,16 @@ Source: https://github.com/portare-ch/portareos/blob/be06100b6d127692ed99401d239
 +	 * irq has run: with AVR a commit made during a held front porch starts
 +	 * its frame at once, and 37 of 2700 flips went out with the previous
 +	 * frame's count and time.
++	 *
++	 * Only an encoder that gets the vblank irq can wait for it. A bonded
++	 * DSI slave never registers it, yet its count still rises with every
++	 * commit, so the slave waits on the flush register alone, as before.
 +	 */
  	ret = wait_event_timeout(phys_enc->pending_kickoff_wq,
 -		(hw_ctl->ops.get_flush_register(hw_ctl) == 0),
 +		(hw_ctl->ops.get_flush_register(hw_ctl) == 0 &&
-+		 atomic_read(&phys_enc->pending_kickoff_cnt) == 0),
++		 (!dpu_encoder_phys_vid_is_master(phys_enc) ||
++		  atomic_read(&phys_enc->pending_kickoff_cnt) == 0)),
  		msecs_to_jiffies(50));
  	if (ret <= 0) {
  		DPU_ERROR("vblank timeout: %x\n", hw_ctl->ops.get_flush_register(hw_ctl));

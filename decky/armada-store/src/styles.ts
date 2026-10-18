@@ -1,4 +1,8 @@
+export const SIMPLIFIED_CHINESE_FONT_FAMILY =
+  '"Motiva Sans", "Noto Sans CJK SC", "Source Han Sans SC", Arial, Helvetica, sans-serif';
+
 export const styles = `
+      .armada-store-zh-cn, .armada-store-zh-cn * { font-family: ${SIMPLIFIED_CHINESE_FONT_FAMILY}; }
       .armada-store-search { position: relative; }
       .armada-store-search > span {
         position: absolute;

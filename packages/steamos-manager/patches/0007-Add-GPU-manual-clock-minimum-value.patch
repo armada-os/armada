@@ -1,4 +1,4 @@
-From 7d9a1ad9ed68c486f58d715146914e0a68949c5c Mon Sep 17 00:00:00 2001
+From f60c2400ae2567daaee3ed5cd9f023c6eda802c5 Mon Sep 17 00:00:00 2001
 From: Matthieu Bucchianeri <mbucchia@valvesoftware.com>
 Date: Fri, 21 Aug 2026 15:37:14 -0700
 Subject: [PATCH] Add GPU manual clock minimum value.
@@ -25,7 +25,7 @@ index bbf5785..78dc8e1 100644
  [performance_profile]
  platform_profile_driver = "custom"
 diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
-index 3ed6f25..18aaaf6 100644
+index 66c5d23..aaa7424 100644
 --- a/steamos-manager/src/gpu.rs
 +++ b/steamos-manager/src/gpu.rs
 @@ -139,6 +139,7 @@ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
@@ -119,3 +119,6 @@ index 831a425..c197063 100644
                  sysfs_path: None,
              }),
              gpu_power_profile: Some(GpuPowerProfileConfig {
+-- 
+2.56.0
+

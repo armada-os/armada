@@ -333,6 +333,9 @@ CONFIG_PLAYSTATION_FF=y
 CONFIG_SONY_FF=y
 CONFIG_STEAM_FF=y
 
+# ============== USB networking / phone tethering ==============
+CONFIG_USB_NET_RNDIS_HOST=m              # Android USB tethering
+
 # ============== Bluetooth peripherals ==============
 CONFIG_BT_LE=y
 CONFIG_BT_RFCOMM=m

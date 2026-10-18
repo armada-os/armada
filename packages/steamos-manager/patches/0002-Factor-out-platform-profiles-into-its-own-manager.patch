@@ -1,4 +1,4 @@
-From 2e8cb87726e39709e78266c0380afde4e6b37c51 Mon Sep 17 00:00:00 2001
+From 6f312a4125fc6e21139406865ff98af508e3bf56 Mon Sep 17 00:00:00 2001
 From: Arun Raghavan <arunr@valvesoftware.com>
 Date: Sat, 16 May 2026 16:51:17 -0700
 Subject: [PATCH] Factor out platform profiles into its own manager
@@ -37,7 +37,7 @@ index 793ce9c..80fcb99 100644
  
  #[derive(Clone, Deserialize, Debug)]
 diff --git a/steamos-manager/src/manager/root.rs b/steamos-manager/src/manager/root.rs
-index 4fe59ed..f27a3aa 100644
+index 1bcbcbd..4b98c1c 100644
 --- a/steamos-manager/src/manager/root.rs
 +++ b/steamos-manager/src/manager/root.rs
 @@ -34,9 +34,9 @@ use crate::hardware::{
@@ -60,8 +60,8 @@ index 4fe59ed..f27a3aa 100644
 +    platform_profile: Option<Box<dyn PlatformProfileDriver>>,
      gpu_performance_level: Option<Box<dyn GpuPerformanceLevelDriver>>,
      gpu_power_profile: Option<Box<dyn GpuPowerProfileDriver>>,
-     // Whether we should use trace-cmd or not.
-@@ -83,6 +84,10 @@ impl SteamOSManager {
+     job_manager: JobManager,
+@@ -80,6 +81,10 @@ impl SteamOSManager {
                  .await
                  .inspect_err(|e| info!("Could not set up TDP limiting: {e}"))
                  .ok(),
@@ -72,7 +72,7 @@ index 4fe59ed..f27a3aa 100644
              gpu_performance_level: gpu_performance_level_driver()
                  .await
                  .inspect_err(|e| info!("Could not set up GPU performance management: {e}"))
-@@ -716,14 +721,13 @@ impl SteamOSManager {
+@@ -707,14 +712,13 @@ impl SteamOSManager {
      }
  
      async fn set_performance_profile(&self, profile: &str) -> fdo::Result<()> {
@@ -177,7 +177,7 @@ index 4927723..59c49dc 100644
                  suggested_default: String::from("balanced"),
              }),
 diff --git a/steamos-manager/src/power.rs b/steamos-manager/src/power.rs
-index 5255428..83e5251 100644
+index 21c8d01..5e1ca26 100644
 --- a/steamos-manager/src/power.rs
 +++ b/steamos-manager/src/power.rs
 @@ -123,6 +123,20 @@ pub enum CPUBoostState {
@@ -201,7 +201,7 @@ index 5255428..83e5251 100644
  #[derive(Deserialize, Display, EnumString, VariantNames, PartialEq, Debug, Clone)]
  #[strum(serialize_all = "snake_case")]
  #[serde(rename_all = "snake_case")]
-@@ -437,10 +451,6 @@ pub(crate) async fn find_hwmon(hwmon: &str) -> Result<PathBuf> {
+@@ -434,10 +448,6 @@ pub(crate) async fn find_hwmon(hwmon: &str) -> Result<PathBuf> {
      find_sysdir(path(HWMON_PREFIX), hwmon).await
  }
  
@@ -212,7 +212,7 @@ index 5255428..83e5251 100644
  #[async_trait]
  impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
      async fn get_tdp_limit(&self) -> Result<u32> {
-@@ -494,12 +504,8 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
+@@ -491,12 +501,8 @@ impl TdpLimitManager for AmdgpuHwmonTdpLimitManager {
          let Some(ref performance_profile) = self.performance_profile else {
              return Ok(true);
          };
@@ -227,7 +227,7 @@ index 5255428..83e5251 100644
          } else {
              Ok(true)
          }
-@@ -597,12 +603,8 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
+@@ -594,12 +600,8 @@ impl TdpLimitManager for FirmwareAttributeLimitManager {
          let Some(ref performance_profile) = self.performance_profile else {
              return Ok(true);
          };
@@ -242,7 +242,7 @@ index 5255428..83e5251 100644
          } else {
              Ok(true)
          }
-@@ -727,31 +729,61 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
+@@ -724,31 +726,61 @@ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver
      sysfs_queued_write(path, data.as_bytes().to_owned()).await
  }
  
@@ -325,7 +325,7 @@ index 5255428..83e5251 100644
  }
  
  pub(crate) async fn register_tdp_limit1(
-@@ -1540,7 +1572,7 @@ pub(crate) mod test {
+@@ -1537,7 +1569,7 @@ pub(crate) mod test {
          let _h = testing::start();
  
          assert!(
@@ -334,7 +334,7 @@ index 5255428..83e5251 100644
                  .await
                  .is_err()
          );
-@@ -1548,7 +1580,7 @@ pub(crate) mod test {
+@@ -1545,7 +1577,7 @@ pub(crate) mod test {
          let base = path(PLATFORM_PROFILE_PREFIX).join("platform-profile0");
          create_dir_all(&base).await.unwrap();
          assert!(
@@ -343,7 +343,7 @@ index 5255428..83e5251 100644
                  .await
                  .is_err()
          );
-@@ -1557,7 +1589,10 @@ pub(crate) mod test {
+@@ -1554,7 +1586,10 @@ pub(crate) mod test {
              .await
              .unwrap();
          assert!(
@@ -355,7 +355,7 @@ index 5255428..83e5251 100644
                  .await
                  .is_err()
          );
-@@ -1566,7 +1601,10 @@ pub(crate) mod test {
+@@ -1563,7 +1598,10 @@ pub(crate) mod test {
              .await
              .unwrap();
          assert_eq!(
@@ -367,7 +367,7 @@ index 5255428..83e5251 100644
                  .await
                  .unwrap(),
              &["a", "b", "c"]
-@@ -1902,6 +1940,7 @@ pub(crate) mod test {
+@@ -1899,6 +1937,7 @@ pub(crate) mod test {
          let connection = h.new_dbus().await.expect("new_dbus");
          let config = DeviceConfig {
              performance_profile: Some(PerformanceProfileConfig {
@@ -375,3 +375,6 @@ index 5255428..83e5251 100644
                  platform_profile_name: String::from("platform-profile0"),
                  suggested_default: String::from("custom"),
              }),
+-- 
+2.56.0
+

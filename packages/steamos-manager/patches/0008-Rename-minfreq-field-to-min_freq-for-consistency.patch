@@ -1,4 +1,4 @@
-From ea660e4f3f547d1fdeee19261fb2e87e3fc9f0c0 Mon Sep 17 00:00:00 2001
+From 1c229b7dfd340f6a5149382487214da34791eebb Mon Sep 17 00:00:00 2001
 From: Matthieu Bucchianeri <mbucchia@valvesoftware.com>
 Date: Wed, 26 Aug 2026 10:37:45 -0700
 Subject: [PATCH] Rename minfreq field to min_freq for consistency.
@@ -24,7 +24,7 @@ index 78dc8e1..f58b92a 100644
  [performance_profile]
  platform_profile_driver = "custom"
 diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
-index 18aaaf6..676b720 100644
+index aaa7424..09d1807 100644
 --- a/steamos-manager/src/gpu.rs
 +++ b/steamos-manager/src/gpu.rs
 @@ -139,7 +139,7 @@ pub(crate) struct DevfreqGpuPerformanceLevelDriver {
@@ -107,3 +107,6 @@ index c197063..79f2ee2 100644
                  sysfs_path: None,
              }),
              gpu_power_profile: Some(GpuPowerProfileConfig {
+-- 
+2.56.0
+

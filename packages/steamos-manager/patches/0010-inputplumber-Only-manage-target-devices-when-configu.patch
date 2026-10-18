@@ -1,4 +1,4 @@
-From 9db6d38b4505298fd8c4ecf797ee45400f447a99 Mon Sep 17 00:00:00 2001
+From 9901e6dd4f533b6f1fb986c9872610beb16e99ab Mon Sep 17 00:00:00 2001
 From: Radical <radical@radical.fun>
 Date: Mon, 21 Sep 2026 20:30:16 +0200
 Subject: [PATCH] inputplumber: Only manage target devices when configured to
@@ -50,3 +50,6 @@ index 0da1ea7..0a0a05b 100644
          let object_manager = ObjectManagerProxy::new(
              &self.connection,
              "org.shadowblip.InputPlumber",
+-- 
+2.56.0
+

@@ -17,6 +17,11 @@ function short_session_recover {
 }
 
 function post_gamescope_start {
+	# The session unsets DISPLAY in the systemd environment, so units
+	# steamos-manager starts (orca) read gamescope's displays from here
+	printf 'DISPLAY=%s\nGAMESCOPE_WAYLAND_DISPLAY=%s\n' "$DISPLAY" "$GAMESCOPE_WAYLAND_DISPLAY" \
+		>"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gamescope-environment"
+
 	# Run steam-tweaks if exists
 	if command -v steam-tweaks > /dev/null; then
 		steam-tweaks

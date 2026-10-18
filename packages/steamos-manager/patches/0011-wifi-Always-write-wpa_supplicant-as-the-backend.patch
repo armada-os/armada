@@ -1,4 +1,4 @@
-From b904686fc1df43ba2b3aef59a2253c21c3688c6c Mon Sep 17 00:00:00 2001
+From 73f5839e320ebe39b5b196e3080dca31194324ab Mon Sep 17 00:00:00 2001
 From: Radical <radical@radical.fun>
 Date: Wed, 23 Sep 2026 12:25:01 +0200
 Subject: [PATCH] wifi: Always write wpa_supplicant as the backend
@@ -58,3 +58,6 @@ index 1b7dce1..e98918c 100644
      #[tokio::test]
      async fn test_set_nm_settings_no_restart() {
          let mut h = testing::start();
+-- 
+2.56.0
+

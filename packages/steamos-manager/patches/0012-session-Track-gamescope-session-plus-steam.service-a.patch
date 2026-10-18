@@ -1,0 +1,47 @@
+From 486685ede90adc298382e654cc3d7b28c5800ca4 Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Sat, 17 Oct 2026 17:48:03 +0200
+Subject: [PATCH] session: Track gamescope-session-plus@steam.service as game
+ mode
+
+Armada runs game mode under gamescope-session-plus, so
+gamescope-session.service never exists and the session manager reports
+Desktop forever. The screen reader interfaces are only exported on a
+switch to Game, so Steam's screen reader calls go nowhere.
+---
+ steamos-manager/src/session.rs | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/steamos-manager/src/session.rs b/steamos-manager/src/session.rs
+index 1754f46..87f592b 100644
+--- a/steamos-manager/src/session.rs
++++ b/steamos-manager/src/session.rs
+@@ -40,6 +40,7 @@ const TEMPORARY_CONFIG_PATH_LEGACY: &str = "zzt-steamos-temp-login.conf";
+ const SESSION_CHECK_PATH: &str = "holo.conf";
+ const CONFIG_PATH: &str = "zz-holo-autologin.conf";
+ const TEMPORARY_CONFIG_PATH: &str = "zzt-holo-temp-login.conf";
++const GAME_MODE_UNIT: &str = "gamescope-session-plus@steam.service";
+ 
+ #[cfg(not(test))]
+ static CONFIG_PATHS: OnceCell<ConfigPaths> = OnceCell::const_new();
+@@ -274,7 +275,7 @@ impl SessionManager {
+     }
+ 
+     pub(crate) async fn current_login_mode(&self) -> Result<LoginMode> {
+-        if self.unit_is_active("gamescope-session.service").await? {
++        if self.unit_is_active(GAME_MODE_UNIT).await? {
+             return Ok(LoginMode::Game);
+         }
+         Ok(LoginMode::Desktop)
+@@ -435,7 +436,7 @@ impl Service for SessionManagerService {
+     const NAME: &'static str = "session-manager";
+ 
+     async fn run(&mut self) -> Result<()> {
+-        let unit = SystemdUnit::new(&self.session, "gamescope-session.service").await?;
++        let unit = SystemdUnit::new(&self.session, GAME_MODE_UNIT).await?;
+ 
+         let stream = unit
+             .proxy
+-- 
+2.56.0
+

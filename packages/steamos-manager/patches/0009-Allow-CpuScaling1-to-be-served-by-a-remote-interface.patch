@@ -1,4 +1,4 @@
-From a86abc884d7f86e2235e752c71ad74c84cb3d3dd Mon Sep 17 00:00:00 2001
+From f3b25c1b7df2cc43119368e21befd49275a69697 Mon Sep 17 00:00:00 2001
 From: Radical <radical@radical.fun>
 Date: Mon, 21 Sep 2026 20:30:15 +0200
 Subject: [PATCH] Allow CpuScaling1 to be served by a remote interface
@@ -12,10 +12,10 @@ config ask for no local driver instead. The default is unchanged.
  3 files changed, 38 insertions(+), 6 deletions(-)
 
 diff --git a/README.md b/README.md
-index 47c68d1..0a0571e 100644
+index 6b3a986..fcf94bb 100644
 --- a/README.md
 +++ b/README.md
-@@ -162,6 +162,7 @@ the future.
+@@ -146,6 +146,7 @@ the future.
  
  - BatteryChargeLimit1
  - CpuBoost1
@@ -137,3 +137,6 @@ index 79f2ee2..d703d62 100644
              tdp_limit: Some(TdpLimitConfig {
                  method: TdpLimitingMethod::AmdgpuHwmon,
                  range: Some(RangeConfig::new(3, 15)),
+-- 
+2.56.0
+

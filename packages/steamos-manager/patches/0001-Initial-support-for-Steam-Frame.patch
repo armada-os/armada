@@ -1,4 +1,4 @@
-From 27b26394218fd3fe3d95e6ab501b178c945f2914 Mon Sep 17 00:00:00 2001
+From 01b2ab04e544e04942e4c73c9a695c9cb0341d4c Mon Sep 17 00:00:00 2001
 From: Arun Raghavan <arunr@valvesoftware.com>
 Date: Thu, 14 May 2026 19:26:32 -0700
 Subject: [PATCH] Initial support for Steam Frame
@@ -25,7 +25,7 @@ index 317707b..af265fa 100644
 +driver = "devfreq"
 +sysfs_path = "/sys/devices/platform/soc@0/3d00000.gpu/devfreq/3d00000.gpu"
 diff --git a/steamos-manager/src/gpu.rs b/steamos-manager/src/gpu.rs
-index e5da50d..e894594 100644
+index 8668206..4024bc1 100644
 --- a/steamos-manager/src/gpu.rs
 +++ b/steamos-manager/src/gpu.rs
 @@ -7,6 +7,7 @@
@@ -78,7 +78,7 @@ index e5da50d..e894594 100644
  }
  
  #[derive(Debug)]
-@@ -118,6 +133,12 @@ pub(crate) struct IntelGpuConfig {
+@@ -118,6 +133,12 @@ struct IntelGpuConfig {
      range_max: &'static str,
  }
  
@@ -277,3 +277,6 @@ index 8e5e30b..4927723 100644
              }),
              gpu_power_profile: Some(GpuPowerProfileConfig {
                  driver: GpuPowerProfileDriverType::Amdgpu,
+-- 
+2.56.0
+
