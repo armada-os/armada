@@ -1,0 +1,26 @@
+From: Kettle Linux <kettlelinux@kettlelinux.org>
+Subject: [PATCH] media: iris: a resolution change's last buffer is not an error
+
+When the firmware reports a resolution change, it returns an empty
+capture buffer flagged PSC_LAST, which the driver passes on as
+V4L2_BUF_FLAG_LAST. An empty buffer returned while streaming is also
+flagged as an error unless it is a drain's last buffer, so the
+resolution change's last buffer went to userspace with both LAST and
+ERROR set.
+
+That happens for the first sequence too when the client starts both
+queues before the first frame, which Valve's arm64 Steam Remote Play
+client does. It took the ERROR flag as a failed frame and restarted
+the decoder at every frame. Exempt PSC_LAST as well.
+---
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -391,7 +391,7 @@
+ 	buf->flags = iris_hfi_gen2_get_driver_buffer_flags(inst, hfi_buffer->flags);
+ 
+ 	if (!buf->data_size && inst->state == IRIS_INST_STREAMING &&
+-	    !(hfi_buffer->flags & HFI_BUF_FW_FLAG_LAST)) {
++	    !(hfi_buffer->flags & (HFI_BUF_FW_FLAG_LAST | HFI_BUF_FW_FLAG_PSC_LAST))) {
+ 		buf->flags |= V4L2_BUF_FLAG_ERROR;
+ 	}
+ 

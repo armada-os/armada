@@ -420,6 +420,30 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1031-media-iris-stop-AV1-tier-overwriting-HEVC-tier.patch`
   source: armada
   upstream: local
+- `patches/v9_20260801_sachin_garg_media_iris_cache_work_mode_in_iris_set_stage.patch`
+  source: https://lore.kernel.org/r/20260801-iris_multi_slice-v9-1-bddf1449c280@oss.qualcomm.com
+  upstream: https://lore.kernel.org/r/20260801-iris_multi_slice-v9-1-bddf1449c280@oss.qualcomm.com
+- `patches/1032-media-iris-count-CABAC-cost-in-the-decoder-VSP-clock.patch`
+  source: armada
+  upstream: local
+- `patches/1033-media-iris-add-decoder-display-delay-controls.patch`
+  source: armada
+  upstream: local
+- `patches/1034-media-iris-decode-in-stage-1-for-decode-order.patch`
+  source: armada
+  upstream: local
+- `patches/1035-media-iris-run-decode-order-sessions-at-the-highest-clock.patch`
+  source: armada
+  upstream: local
+- `patches/1036-media-iris-only-rescale-decoder-power-on-bitstream-queue.patch`
+  source: armada
+  upstream: local
+- `patches/1037-media-iris-decode-in-stage-1-at-the-top-clock-by-default.patch`
+  source: armada
+  upstream: local
+- `patches/1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch`
+  source: https://github.com/kettlelinux/kettlelinux/blob/2b7661b4d937d7efbb487c4bba84f8705be7cc5d/kernel/patches/40-kettle/1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch
+  upstream: unknown
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown

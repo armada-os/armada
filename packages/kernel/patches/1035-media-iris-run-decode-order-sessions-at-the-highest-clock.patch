@@ -1,0 +1,75 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] media: iris: run decode order sessions at the highest clock
+
+The clock is the lowest rate that sustains the stream, so each frame
+takes longer to decode than at the top OPP. Vote the top OPP for
+sessions that ask for decode order output. The downstream driver raises
+the clock for low latency clients through the operating rate they set.
+
+The top OPP vote plus another session's vote does not fit in a u32, so
+iris_vpu_power_on() restores the vote as an unsigned long.
+---
+--- a/drivers/media/platform/qcom/iris/iris_ctrls.c
++++ b/drivers/media/platform/qcom/iris/iris_ctrls.c
+@@ -515,7 +515,7 @@ int iris_set_u32(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id)
+ 					     &hfi_value, sizeof(u32));
+ }
+ 
+-static bool iris_dec_decode_order(struct iris_inst *inst)
++bool iris_dec_decode_order(struct iris_inst *inst)
+ {
+ 	return inst->domain == DECODER &&
+ 		inst->fw_caps[DISPLAY_DELAY_ENABLE].value &&
+--- a/drivers/media/platform/qcom/iris/iris_ctrls.h
++++ b/drivers/media/platform/qcom/iris/iris_ctrls.h
+@@ -15,6 +15,7 @@ int iris_ctrls_init(struct iris_inst *inst);
+ void iris_session_init_caps(struct iris_core *core);
+ int iris_set_u32_enum(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_stage(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
++bool iris_dec_decode_order(struct iris_inst *inst);
+ int iris_set_decode_order(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_pipe(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_u32(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+--- a/drivers/media/platform/qcom/iris/iris_power.c
++++ b/drivers/media/platform/qcom/iris/iris_power.c
+@@ -8,6 +8,7 @@
+ #include <media/v4l2-mem2mem.h>
+ 
+ #include "iris_buffer.h"
++#include "iris_ctrls.h"
+ #include "iris_instance.h"
+ #include "iris_power.h"
+ #include "iris_resources.h"
+@@ -114,7 +115,10 @@ static int iris_scale_clocks(struct iris_inst *inst)
+ 	if (!inst->max_input_data_size)
+ 		return 0;
+ 
+-	inst->power.min_freq = vpu_ops->calc_freq(inst, inst->max_input_data_size);
++	if (iris_dec_decode_order(inst))
++		inst->power.min_freq = U32_MAX;
++	else
++		inst->power.min_freq = vpu_ops->calc_freq(inst, inst->max_input_data_size);
+ 
+ 	return iris_set_clocks(inst);
+ }
+--- a/drivers/media/platform/qcom/iris/iris_vpu_common.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+@@ -473,7 +473,7 @@ u64 iris_vpu3x_vpu4x_calculate_frequency(struct iris_inst *inst, size_t data_siz
+ 
+ int iris_vpu_power_on(struct iris_core *core)
+ {
+-	u32 freq;
++	unsigned long freq;
+ 	int ret;
+ 
+ 	ret = iris_set_icc_bw(core, INT_MAX);
+@@ -488,8 +488,7 @@ int iris_vpu_power_on(struct iris_core *core)
+ 	if (ret)
+ 		goto err_power_off_ctrl;
+ 
+-	freq = core->power.clk_freq ? core->power.clk_freq :
+-				      (u32)ULONG_MAX;
++	freq = core->power.clk_freq ? core->power.clk_freq : ULONG_MAX;
+ 
+ 	iris_opp_set_rate(core->dev, freq);
+ 

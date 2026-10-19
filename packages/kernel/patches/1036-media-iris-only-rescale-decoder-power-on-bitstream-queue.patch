@@ -1,0 +1,39 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] media: iris: only rescale decoder power when a bitstream
+ buffer is queued
+
+A capture QBUF with no bitstream buffer pending sets max_input_data_size
+to 0, which drops the session from the bandwidth total. In a live stream
+that happens every frame, so the DDR vote flaps between the floor and the
+session's vote and each frame pays two interconnect commits on the QBUF
+path.
+
+Rescale on bitstream QBUF only, and drop the session from the totals when
+its bitstream queue stops.
+---
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -244,6 +244,9 @@ void iris_vb2_stop_streaming(struct vb2_queue *q)
+ 	if (ret)
+ 		goto exit;
+ 
++	if (V4L2_TYPE_IS_OUTPUT(q->type))
++		inst->max_input_data_size = 0;
++
+ exit:
+ 	iris_helper_buffers_done(inst, q->type, VB2_BUF_STATE_ERROR);
+ 	if (ret)
+--- a/drivers/media/platform/qcom/iris/iris_vdec.c
++++ b/drivers/media/platform/qcom/iris/iris_vdec.c
+@@ -459,9 +459,9 @@ int iris_vdec_qbuf(struct iris_inst *inst, struct vb2_v4l2_buffer *vbuf)
+ 						   MAXIMUM_FPS);
+ 			inst->frame_counter = 0;
+ 		}
+-	}
+ 
+-	iris_scale_power(inst);
++		iris_scale_power(inst);
++	}
+ 
+ 	return iris_queue_buffer(inst, buf);
+ }
