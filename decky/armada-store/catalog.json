@@ -416,6 +416,18 @@
         "releases": "https://api.github.com/repos/justradical/decky-optiscaler-arm64ec/releases/394141296",
         "asset": "^OptiScaler\\.zip$"
       }
+    },
+    {
+      "id": "abl-dualboot",
+      "name": "ABL Dual Boot",
+      "summary": "One-tap restart into Android or another Linux",
+      "category": "plugins",
+      "icon": "https://raw.githubusercontent.com/kingsleydon/abl-dualboot/main/docs/icon.png",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/kingsleydon/abl-dualboot/releases/407811273",
+        "asset": "^abl-dualboot-decky\\.zip$"
+      }
     }
   ]
 }
