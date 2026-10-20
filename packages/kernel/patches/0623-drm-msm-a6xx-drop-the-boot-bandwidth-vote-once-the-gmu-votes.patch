@@ -1,0 +1,34 @@
+From: ouroboros420 <ouroboros420@users.noreply.github.com>
+Subject: [PATCH] drm/msm/a6xx: drop the boot bandwidth vote once the GMU votes
+
+a6xx_gmu_resume() places a host gfx-mem vote at the OPP the GPU resumes
+at so the GMU can boot ("bus quota ... for boot"). With GMU bandwidth
+voting, a6xx_gmu_set_freq() then leaves the host vote alone because the
+GMU votes for all resources, so the boot vote stays until runtime
+suspend, which does not happen while frames keep coming. RPMh takes the
+max of the host and GMU votes, so DDR cannot drop below the resume
+level for a whole gaming session.
+
+Drop the host vote once the GMU has acked its own vote. The GMU votes
+from the same OPP bandwidth table, so the active level is unchanged; the
+only difference is that DDR now follows the GMU instead of a stale floor.
+---
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index db36249..51a7531 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -225,10 +225,13 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 		return;
+ 
+ 	if (!gmu->legacy) {
+-		a6xx_hfi_set_freq(gmu, perf_index, bw_index);
++		ret = a6xx_hfi_set_freq(gmu, perf_index, bw_index);
+ 		/* With Bandwidth voting, we now vote for all resources, so skip OPP set */
+ 		if (!bw_index)
+ 			dev_pm_opp_set_opp(&gpu->pdev->dev, opp);
++		/* ...and drop the vote a6xx_gmu_set_initial_bw() placed for GMU boot */
++		else if (!ret)
++			dev_pm_opp_set_opp(&gpu->pdev->dev, NULL);
+ 		return;
+ 	}
+ 
