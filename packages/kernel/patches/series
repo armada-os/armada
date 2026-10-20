@@ -169,6 +169,7 @@ v9_20260801_sachin_garg_media_iris_cache_work_mode_in_iris_set_stage.patch
 0901-power-supply-qcom-battmgr-fix-charge-unit.patch
 0902-power-supply-qcom-battmgr-expose-charge-now.patch
 0903-power-supply-qcom-battmgr-expose-the-charge-current-limit.patch
+0904-power-supply-qcom-battmgr-report-charge-threshold-set-failures.patch
 0540-arm64-signal-reapply-the-ssbs-policy-on-sigreturn.patch
 
 # ============== SM8650 (AYANEO Pocket S2, KONKR Pocket FIT) ==============

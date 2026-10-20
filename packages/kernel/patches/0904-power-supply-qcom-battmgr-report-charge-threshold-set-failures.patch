@@ -1,0 +1,28 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] power: supply: qcom_battmgr: report charge threshold set failures
+
+Both charge control threshold setters return 0 whatever the firmware
+request returned. When the request fails or times out, which happens on
+firmware without charge control, userspace sees the write succeed and a
+threshold that never applies. Return the request's error.
+---
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -715,7 +715,7 @@
+ 		battmgr->info.charge_ctrl_end = target_soc;
+ 	}
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int qcom_battmgr_set_charge_end_threshold(struct qcom_battmgr *battmgr, int end_soc)
+@@ -736,7 +736,7 @@
+ 		battmgr->info.charge_ctrl_end = end_soc;
+ 	}
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static int qcom_battmgr_charge_control_thresholds_init(struct qcom_battmgr *battmgr)

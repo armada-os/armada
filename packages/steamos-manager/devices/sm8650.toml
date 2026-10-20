@@ -16,3 +16,8 @@ friendly_name = "KONKR Pocket FIT"
 # armada-powerd owns the governor and serves CpuScaling1 over remotes.d.
 [cpu_scaling]
 driver = "none"
+
+# qcom_battmgr raises end thresholds below 55 to 55.
+[battery_charge_limit]
+suggested_minimum_limit = 55
+method = "power_supply"

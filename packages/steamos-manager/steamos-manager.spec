@@ -33,6 +33,7 @@ Patch9:         0009-Allow-CpuScaling1-to-be-served-by-a-remote-interface.patch
 Patch10:        0010-inputplumber-Only-manage-target-devices-when-configu.patch
 Patch11:        0011-wifi-Always-write-wpa_supplicant-as-the-backend.patch
 Patch12:        0012-session-Track-gamescope-session-plus-steam.service-a.patch
+Patch13:        0013-power-Add-a-power_supply-battery-charge-limit-method.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust

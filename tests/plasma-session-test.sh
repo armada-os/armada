@@ -62,6 +62,7 @@ printf '%s\n' \
 printf '%s\n' \
     '#!/usr/bin/env bash' \
     'printf '\''%s\n'\'' "$(readlink "$XDG_CONFIG_HOME/plasmashellrc")" "$DESKTOP_SESSION" "$XDG_SESSION_TYPE" "${TEST_UNTOUCHED-unset}" >"$ARMADA_TEST_ARGS"' \
+    'env | sort >"$ARMADA_TEST_ENV"' \
     >"$tmp/bin/startplasma"
 chmod +x "$tmp/bin"/*
 
@@ -71,6 +72,7 @@ session() {
     env -i \
         HOME=/test/home USER=armada LANG=C.UTF-8 LANGUAGE=de LC_TIME=de_DE.UTF-8 "${display[@]}" \
         XDG_RUNTIME_DIR="$tmp/run" XDG_CONFIG_HOME="$home" XDG_DATA_DIRS=/test/share XDG_SESSION_ID=9 \
+        "${cache[@]}" \
         PATH="/steam/runtime/bin:$PATH" LD_PRELOAD= LC_ALL=C QT_QPA_PLATFORM=xcb QT_IM_MODULE=steam \
         GTK_IM_MODULE=Steam SteamAppId=1 STEAM_COMPAT_APP_ID=1 XCURSOR_THEME=steam VK_INSTANCE_LAYERS=x \
         XDG_CONFIG_DIRS=/steam/xdg XDG_CURRENT_DESKTOP=gamescope XDG_SESSION_TYPE=x11 \
@@ -86,6 +88,7 @@ session() {
         "$SESSION" "$@"
 }
 display=(DISPLAY=:7)
+cache=(XDG_CACHE_HOME="$tmp/cache")
 extra=()
 args() {
     mapfile -d '' -t actual <"$tmp/args"
@@ -115,6 +118,7 @@ session "$home" standalone mobile
 session "$home" standalone desktop
 [[ "$(<"$tmp/args")" == $'plasmashellrc.desktop\nplasma\nwayland\n1' ]]
 [[ ! -e "$home/armada" ]]
+[[ "$(envval XDG_CACHE_HOME)" == "$tmp/cache" && ! -e "$tmp/cache/armada" ]]
 
 home="$tmp/bottom"
 mkdir -p "$home"
@@ -122,9 +126,9 @@ printf 'shared kwin settings\n' >"$home/kwinrc"
 printf 'shared outputs\n' >"$home/kwinoutputconfig.json"
 : >"$log"
 session "$home" bottom
-child_env="/usr/bin/env XDG_CONFIG_HOME='$home'"
+child_env="/usr/bin/env XDG_CONFIG_HOME='$home' XDG_CACHE_HOME='$tmp/cache'"
 expect_args \
-    /usr/bin/env "XDG_CONFIG_HOME=$home/armada/plasma/bottom" /test/kwin \
+    /usr/bin/env "XDG_CONFIG_HOME=$home/armada/plasma/bottom" "XDG_CACHE_HOME=$tmp/cache/armada/plasma/bottom" /test/kwin \
     --x11-display :7 --socket armada-plasma-bottom --fullscreen --no-lockscreen --xwayland \
     --exit-with-session "$child_env /usr/bin/plasmashell -p org.kde.plasma.mobileshell" \
     "$child_env /usr/libexec/kf6/polkit-kde-authentication-agent-1"
@@ -145,6 +149,7 @@ for leaked in LD_PRELOAD LC_ALL QT_QPA_PLATFORM QT_IM_MODULE GTK_IM_MODULE Steam
 done
 ! grep -q '^BASH_FUNC_' "$tmp/env" || fail 'an exported shell function reached the bottom session'
 kwin="$home/armada/plasma/bottom"
+[[ "$(stat -c %a "$tmp/cache/armada/plasma/bottom")" == 700 ]]
 [[ "$(<"$kwin/kwinoutputconfig.json")" == 'shared outputs' && ! -L "$kwin/kwinoutputconfig.json" ]]
 for file in kwinrc kwinrulesrc kdeglobals kxkbrc kcminputrc kglobalshortcutsrc; do
     [[ "$(readlink "$kwin/$file")" == "../../../$file" ]]
@@ -164,11 +169,11 @@ extra=(ARMADA_PLASMA_MOBILE_ENVMANAGER=/usr/bin/false)
 session "$home" bottom
 extra=()
 args
-[[ "${actual[2]}" == /test/kwin ]] || fail 'a failing settings helper kept the mobile session from starting'
+[[ "${actual[3]}" == /test/kwin ]] || fail 'a failing settings helper kept the mobile session from starting'
 
 session "$home" bottom desktop
 args
-[[ "${actual[11]}" == "$child_env /usr/bin/plasmashell" ]]
+[[ "${actual[12]}" == "$child_env /usr/bin/plasmashell" ]]
 [[ "$(readlink "$home/plasmashellrc")" == plasmashellrc.desktop ]]
 [[ "$(envval XDG_CONFIG_DIRS)" == /etc/xdg ]]
 ! grep -q '^PLASMA_PLATFORM=' "$tmp/env"
@@ -185,10 +190,10 @@ mkdir -p "$home/steamos-manager"
 printf 'desktop_session = "armada-plasma.desktop"\n' >"$home/steamos-manager/state.toml"
 : >"$log"
 session "$home" nested
-child_env="/usr/bin/env XDG_CONFIG_HOME='$home'"
+child_env="/usr/bin/env XDG_CONFIG_HOME='$home' XDG_CACHE_HOME='$tmp/cache'"
 kwin="$home/armada/plasma/nested"
 expect_args \
-    /usr/bin/env "XDG_CONFIG_HOME=$kwin" /test/kwin \
+    /usr/bin/env "XDG_CONFIG_HOME=$kwin" "XDG_CACHE_HOME=$tmp/cache/armada/plasma/nested" /test/kwin \
     --x11-display :7 --socket armada-plasma-nested --fullscreen --no-lockscreen --xwayland \
     --inputmethod /usr/bin/plasma-keyboard \
     --exit-with-session "$child_env /usr/bin/plasmashell" \
@@ -208,7 +213,7 @@ done
 printf 'desktop_session = "armada-plasma-mobile.desktop"\n' >"$home/steamos-manager/state.toml"
 session "$home" nested
 expect_args \
-    /usr/bin/env "XDG_CONFIG_HOME=$kwin" /test/kwin \
+    /usr/bin/env "XDG_CONFIG_HOME=$kwin" "XDG_CACHE_HOME=$tmp/cache/armada/plasma/nested" /test/kwin \
     --x11-display :7 --socket armada-plasma-nested --fullscreen --no-lockscreen --xwayland \
     --exit-with-session "$child_env /usr/bin/plasmashell -p org.kde.plasma.mobileshell" \
     "$child_env /usr/libexec/kf6/polkit-kde-authentication-agent-1" \
@@ -217,7 +222,27 @@ expect_args \
 printf 'saved layout\n' >"$kwin/kwinoutputconfig.json"
 session "$home" nested desktop
 args
-[[ "${#actual[@]}" == 15 && "${actual[13]}" == "$child_env /usr/bin/plasmashell" ]]
+[[ "${#actual[@]}" == 16 && "${actual[14]}" == "$child_env /usr/bin/plasmashell" ]]
+
+home="$tmp/default-cache-config"
+cache=()
+extra=(HOME="$tmp/default-cache-home")
+session "$home" bottom desktop
+args
+[[ "${actual[2]}" == "XDG_CACHE_HOME=$tmp/default-cache-home/.cache/armada/plasma/bottom" ]]
+[[ "${actual[12]}" == "/usr/bin/env XDG_CONFIG_HOME='$home' XDG_CACHE_HOME='$tmp/default-cache-home/.cache' /usr/bin/plasmashell" ]]
+[[ -d "$tmp/default-cache-home/.cache/armada/plasma/bottom" ]]
+
+cache_home="$tmp/cache path 'quoted'"
+cache=(XDG_CACHE_HOME="$cache_home")
+extra=()
+session "$home" bottom desktop
+args
+[[ "${actual[2]}" == "XDG_CACHE_HOME=$cache_home/armada/plasma/bottom" ]]
+child_command=${actual[12]% /usr/bin/plasmashell}
+[[ "$(XDG_CACHE_HOME="$cache_home/armada/plasma/bottom" bash -c "$child_command /usr/bin/printenv XDG_CACHE_HOME")" == "$cache_home" ]]
+[[ "$(stat -c %a "$cache_home/armada/plasma/bottom")" == 700 ]]
+cache=(XDG_CACHE_HOME="$tmp/cache")
 
 : >"$log"
 extra=(ARMADA_TEST_NESTED_UNITS=armada-plasma-nested-1.service)

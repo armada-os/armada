@@ -1,0 +1,174 @@
+From 0b3028a9adb549c8ce6a50f808947d97f97aff8d Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Mon, 19 Oct 2026 20:45:34 -0400
+Subject: [PATCH] power: Add a power_supply battery charge limit method
+
+acpi_sb only looks for the battery under the ACPI battery driver's
+paths, so a battery that has charge_control_end_threshold but comes
+from another driver (Qualcomm's qcom_battmgr on ARM handhelds) is
+never found. The power_supply method searches /sys/class/power_supply
+for it instead. Its entries are symlinks, so check that the target is
+a directory rather than the entry itself.
+
+Steam resets the limit by asking for -1, which becomes 0, but an end
+threshold of 0 is not "no limit": qcom_battmgr clamps it to its
+minimum of 55. Write 100 instead.
+---
+ steamos-manager/src/power.rs | 106 ++++++++++++++++++++++++++---------
+ 1 file changed, 81 insertions(+), 25 deletions(-)
+
+diff --git a/steamos-manager/src/power.rs b/steamos-manager/src/power.rs
+index 710f2ef..847004f 100644
+--- a/steamos-manager/src/power.rs
++++ b/steamos-manager/src/power.rs
+@@ -75,6 +75,10 @@ const SB_PATHS: &[&str] = &[
+ ];
+ #[cfg(test)]
+ const SB_PATHS: &[&str] = &["power_supply", "power_supply_legacy"];
++#[cfg(not(test))]
++const POWER_SUPPLY_PATHS: &[&str] = &["/sys/class/power_supply"];
++#[cfg(test)]
++const POWER_SUPPLY_PATHS: &[&str] = &["power_supply_class"];
+ pub const BATTERY_DEFAULT_SUGGESTED_MINIMUM_LIMIT: i32 = 10;
+ const SB_LIMIT_PATH: &str = "charge_control_end_threshold";
+ 
+@@ -271,6 +275,7 @@ pub(crate) enum TdpManagerCommand {
+ pub(crate) enum BatteryChargeLimitMethod {
+     #[default]
+     AcpiSb,
++    PowerSupply,
+     HwmonAttribute {
+         hwmon: String,
+         attribute: String,
+@@ -719,36 +724,40 @@ async fn find_battery_charge_path() -> Result<PathBuf> {
+         .and_then(|config| config.battery_charge_limit.as_ref())
+         .ok_or(anyhow!("No battery charge limit configured"))?;
+ 
+-    match &config.method {
+-        BatteryChargeLimitMethod::AcpiSb => {
+-            for base in SB_PATHS {
+-                let mut dir = match read_dir(path(base)).await {
+-                    Ok(dir) => dir,
+-                    Err(e) if e.kind() == ErrorKind::NotFound => continue,
+-                    Err(e) => return Err(e.into()),
+-                };
+-                while let Some(entry) = dir.next_entry().await? {
+-                    if !entry.file_type().await?.is_dir() {
+-                        continue;
+-                    }
+-                    let path = entry.path();
+-                    let path = match read_to_string(path.join("type")).await {
+-                        Ok(s) if s.trim() == "Battery" => path.join(SB_LIMIT_PATH),
+-                        Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
+-                        _ => continue,
+-                    };
+-                    if try_exists(&path).await? {
+-                        return Ok(path);
+-                    }
+-                }
+-            }
+-        }
++    let bases = match &config.method {
++        BatteryChargeLimitMethod::AcpiSb => SB_PATHS,
++        BatteryChargeLimitMethod::PowerSupply => POWER_SUPPLY_PATHS,
+         BatteryChargeLimitMethod::HwmonAttribute { hwmon, attribute } => {
+             let base = find_hwmon(hwmon.as_str()).await?;
+             let path = base.join(attribute);
+             if try_exists(&path).await? {
+                 return Ok(path);
+             }
++            bail!("Battery not found");
++        }
++    };
++    for base in bases {
++        let mut dir = match read_dir(path(base)).await {
++            Ok(dir) => dir,
++            Err(e) if e.kind() == ErrorKind::NotFound => continue,
++            Err(e) => return Err(e.into()),
++        };
++        while let Some(entry) = dir.next_entry().await? {
++            let path = entry.path();
++            // /sys/class/power_supply entries are symlinks
++            match fs::metadata(&path).await {
++                Ok(m) if m.is_dir() => (),
++                Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
++                _ => continue,
++            }
++            let path = match read_to_string(path.join("type")).await {
++                Ok(s) if s.trim() == "Battery" => path.join(SB_LIMIT_PATH),
++                Err(e) if e.kind() != ErrorKind::NotFound => return Err(e.into()),
++                _ => continue,
++            };
++            if try_exists(&path).await? {
++                return Ok(path);
++            }
+         }
+     }
+     bail!("Battery not found");
+@@ -773,8 +782,14 @@ pub(crate) async fn get_max_charge_level() -> Result<i32> {
+ 
+ pub(crate) async fn set_max_charge_level(limit: i32) -> Result<oneshot::Receiver<SysfsWritten>> {
+     ensure!((0..=100).contains(&limit), "Invalid limit");
+-    let data = limit.to_string();
+     let path = find_battery_charge_path().await?;
++    // A power supply's end threshold has no off value: no limit is 100
++    let limit = if limit == 0 && path.ends_with(SB_LIMIT_PATH) {
++        100
++    } else {
++        limit
++    };
++    let data = limit.to_string();
+     sysfs_queued_write(path, data.as_bytes().to_owned()).await
+ }
+ 
+@@ -1594,6 +1609,47 @@ pub(crate) mod test {
+         assert!(set_max_charge_level(-1).await.is_err());
+     }
+ 
++    #[tokio::test]
++    async fn read_max_charge_level_power_supply() {
++        let handle = testing::start();
++
++        let config = DeviceConfig {
++            battery_charge_limit: Some(BatteryChargeLimitConfig {
++                suggested_minimum_limit: 55,
++                method: BatteryChargeLimitMethod::PowerSupply,
++            }),
++            ..DeviceConfig::default()
++        };
++        handle.test.set_device_config(config).await;
++
++        let usb = path("devices/usb");
++        create_dir_all(&usb).await.expect("create_dir_all");
++        write(usb.join("type"), "USB\n").await.expect("write");
++        let battery = path("devices/battery");
++        create_dir_all(&battery).await.expect("create_dir_all");
++        write(battery.join("type"), "Battery\n")
++            .await
++            .expect("write");
++        write(battery.join(SB_LIMIT_PATH), "80\n")
++            .await
++            .expect("write");
++
++        let class = path(POWER_SUPPLY_PATHS[0]);
++        create_dir_all(&class).await.expect("create_dir_all");
++        tokio::fs::symlink(&usb, class.join("usb"))
++            .await
++            .expect("symlink");
++        tokio::fs::symlink(&battery, class.join("battery"))
++            .await
++            .expect("symlink");
++
++        assert_eq!(
++            find_battery_charge_path().await.unwrap(),
++            class.join("battery/charge_control_end_threshold")
++        );
++        assert_eq!(get_max_charge_level().await.unwrap(), 80);
++    }
++
+     #[tokio::test]
+     async fn read_max_charge_level_acpi_sb_legacy_path() {
+         let handle = testing::start();
+-- 
+2.56.0
+

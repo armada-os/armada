@@ -465,6 +465,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0903-power-supply-qcom-battmgr-expose-the-charge-current-limit.patch`
   source: armada
   upstream: local
+- `patches/0904-power-supply-qcom-battmgr-report-charge-threshold-set-failures.patch`
+  source: armada
+  upstream: local
 - `patches/0001-pcie-update-sm8650-dtsi.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8650/patches/linux/0001-pcie-update-sm8650-dtsi.patch
   upstream: https://lore.kernel.org/r/20260611-wake-v2-35-2744251b1181@oss.qualcomm.com

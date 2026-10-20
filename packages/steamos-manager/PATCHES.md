@@ -39,3 +39,6 @@ already upstream, and `468ae09` only adds a README troubleshooting section.
 - `patches/0012-session-Track-gamescope-session-plus-steam.service-a.patch`
   source: armada
   notes: Upstream hardcodes `gamescope-session.service` as game mode, which we never run, so the session manager reports Desktop forever. The screen reader setup only exports `ScreenReader0`/`ScreenReader1` on a switch to Game, so Steam's screen reader toggle hit a missing interface and orca never started.
+- `patches/0013-power-Add-a-power_supply-battery-charge-limit-method.patch`
+  source: armada
+  notes: `acpi_sb` only searches the ACPI battery driver's paths, so `qcom_battmgr`'s `charge_control_end_threshold` was never found and `BatteryChargeLimit1` could not register on ARM. Adds `method = "power_supply"`, which searches `/sys/class/power_supply` (symlinked entries) with the same logic. Also writes 100 for Steam's reset (`-1`, sent as 0): an end threshold has no off value, and `qcom_battmgr` clamps 0 to 55.
