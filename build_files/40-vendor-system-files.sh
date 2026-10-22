@@ -17,9 +17,10 @@ ln -sf libz.so.1 /usr/lib64/libz.so
 update-desktop-database -q /usr/share/applications
 
 # Status text font for armada-splash (falls back to its embedded bitmap font
-# if this link dangles). Static face: stb_truetype renders a VF's default
-# instance only. Exact name: condensed faces sort first.
-splash_font="$(rpm -ql google-noto-sans-mono-fonts | grep -m1 '/NotoSansMono-SemiBold\.ttf$')"
+# if this link dangles). Localized status text is CJK, so point at the
+# Simplified-Chinese monospace face; load_font() selects it from the
+# collection by name.
+splash_font="$(rpm -ql google-noto-sans-cjk-fonts | grep -m1 '/NotoSansCJK-Regular\.ttc$')"
 [ -n "${splash_font}" ]
 ln -sf "${splash_font}" /usr/share/armada/splash/font.ttf
 

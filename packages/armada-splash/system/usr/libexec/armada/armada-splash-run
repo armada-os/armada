@@ -41,7 +41,8 @@ say "Starting Steam"
 splash_pid=""
 splash_args=()
 if [[ "$MODE" == "x11" && -n "${DISPLAY:-}" && -x "$SPLASH_BIN" ]]; then
-    splash_args=(--backend x11 --image "$ASSET" --status "$STATUS" --font "$FONT")
+    splash_args=(--backend x11 --image "$ASSET" --status "$STATUS" --font "$FONT" \
+        --language "${ARMADA_SPLASH_LANGUAGE:-auto}")
     [[ -n "$W" && -n "$H" ]] && splash_args+=(--width "$W" --height "$H")
     read -r -a extra <<<"${ARMADA_SPLASH_ARGS:-}"
     splash_args+=("${extra[@]}")
