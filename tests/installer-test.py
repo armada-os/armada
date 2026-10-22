@@ -378,9 +378,18 @@ class ExecutionTests(unittest.TestCase):
                     self.assertEqual(scratch.parent, job.work / "target")
                     self.assertTrue(scratch.is_dir())
                     (Path(env["ESP"]) / "KERNEL").write_bytes(b"boot image")
+                elif args[0] == i.EFIUPDATE:
+                    esp = Path(kwargs["env"]["ESP"])
+                    self.assertTrue((esp / "KERNEL").is_file())
+                    (esp / "EFI/BOOT").mkdir(parents=True)
+                    (esp / "EFI/BOOT/BOOTAA64.EFI").write_bytes(b"loader")
             with patch.dict(i.os.environ, TMPDIR="/sd/slow"), patch.object(i.tempfile, "mkdtemp", side_effect=temporary), patch.object(i, "output", return_value="valid-uuid"), patch.object(i, "run", side_effect=command) as run, patch.object(i, "configure_deployment"):
                 job.deploy(source, [])
                 self.assertTrue(any(call.args[0] == i.BOOTIMG for call in run.call_args_list))
+                self.assertTrue(any(call.args[0] == i.EFIUPDATE for call in run.call_args_list))
+                self.assertTrue(any(call.args[:7] == ("mkfs.vfat", "-F", "16", "-S", 4096, "-s", 4)
+                                    for call in run.call_args_list))
+                self.assertTrue(any(call.args[-2:] == ("sysroot.bootprefix", "true") for call in run.call_args_list))
                 self.assertTrue(any(call.args[-2:] == ("sysroot.readonly", "true") for call in run.call_args_list))
                 self.assertEqual(list((job.work / "target").glob(".armada-bootimg.*")), [])
                 job.close()
