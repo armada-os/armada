@@ -1,0 +1,39 @@
+From 7d35fa4197ce600a3322ab456c866893c2953001 Mon Sep 17 00:00:00 2001
+From: tycosnh <98500718+tycosnh@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 15:30:44 -0400
+Subject: [PATCH] fix(ssc): keep SSC libraries loaded (RTLD_NODELETE)
+
+Dropping the SSC IMU source dlclose()d libssc/gio/gobject/glib while libssc and
+libqmi still had sources on the default GLib main context, so the next QMI report
+jumped into unmapped code (SIGSEGV in report_large_received on shutdown).
+---
+ src/drivers/ssc/bindings.rs | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index ff93513..5bbb7fe 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -144,12 +144,19 @@ pub struct SscDylibs {
+     pub ssc_sensor_accelerometer_open_sync: FnSscSensorOpenSync,
+ }
+ 
+-/// Helper function for Library::new to return a nice error
++/// Helper function for Library::new to return a nice error.
++/// Libraries are opened with RTLD_NODELETE: libssc/libqmi keep GLib sources alive on the
++/// default main context, so unmapping them when the IMU source is dropped (e.g. on
++/// shutdown) makes the next QMI report jump into unmapped code.
+ #[macro_export]
+ macro_rules! load_library {
+     ( $library_name:expr ) => {
+-        Library::new($library_name)
+-            .map_err(|e| format!("Library {} not found: {}", $library_name, e))
++        libloading::os::unix::Library::open(
++            Some($library_name),
++            libloading::os::unix::RTLD_NOW | nix::libc::RTLD_NODELETE,
++        )
++        .map(Library::from)
++        .map_err(|e| format!("Library {} not found: {}", $library_name, e))
+     };
+ }
+ 

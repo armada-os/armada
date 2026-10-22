@@ -1,0 +1,42 @@
+From 7e13ea2d11c369303a625f031a6d24830f91a1a9 Mon Sep 17 00:00:00 2001
+From: Armada <noreply@armada.local>
+Date: Thu, 1 Oct 2026 12:00:00 +0200
+Subject: [PATCH] fix(ssc): drain the GLib main context on every poll
+
+One non-blocking iteration per poll handles about one QRTR message, so
+the SSC stream backs up and eventually stalls; dispatch until idle.
+---
+ src/drivers/ssc/runtime.rs | 19 ++++++++++++++-----
+ 1 file changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/src/drivers/ssc/runtime.rs b/src/drivers/ssc/runtime.rs
+index 5ccff21..f1df504 100644
+--- a/src/drivers/ssc/runtime.rs
++++ b/src/drivers/ssc/runtime.rs
+@@ -147,12 +147,21 @@ impl SscRuntime {
+         }
+     }
+ 
+-    /// Safe wrapper for GLib's g_main_context_iteration
++    /// Safe wrapper for GLib's g_main_context_iteration. Dispatches everything
++    /// that is ready: a single iteration usually handles one QRTR message, so at
++    /// sensor rates above the poll rate the socket backlog grows until the
++    /// stream stalls for good.
+     pub fn iterate_glib_main_loop(&self) {
+-        // SAFETY: This function may have side effects if other parts of InputPlumber start using the main context.
+-        // This function handle is always non-null and we don't have to pass anything to it that isn't NULL / 0.
+-        unsafe {
+-            (self.dylibs.g_main_context_iteration)(std::ptr::null_mut(), GFALSE);
++        // Bound the work per poll so a flood can't starve the source loop.
++        const MAX_DISPATCHES: usize = 256;
++        for _ in 0..MAX_DISPATCHES {
++            // SAFETY: This function may have side effects if other parts of InputPlumber start using the main context.
++            // This function handle is always non-null and we don't have to pass anything to it that isn't NULL / 0.
++            let dispatched =
++                unsafe { (self.dylibs.g_main_context_iteration)(std::ptr::null_mut(), GFALSE) };
++            if dispatched == GFALSE {
++                break;
++            }
+         }
+     }
+ 

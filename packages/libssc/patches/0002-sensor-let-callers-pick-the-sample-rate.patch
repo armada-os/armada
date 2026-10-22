@@ -1,0 +1,59 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] sensor: let callers pick the sample rate with LIBSSC_SAMPLE_RATE
+
+Continuous sensors are enabled at the first advertised sample rate, which is
+usually the lowest: 12.5 Hz on the AYN Odin 2 ICM-426xx, far too slow for gyro
+aiming. LIBSSC_SAMPLE_RATE=<Hz> picks the lowest advertised rate at or above
+it instead, or the highest one if none reaches it. Unset, nothing changes.
+
+diff --git a/src/libssc-sensor.c b/src/libssc-sensor.c
+index 2cf686f..de93146 100644
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -383,16 +383,40 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 					if (attr_msg->attr[i]->value_array->n_v == 1 && attr_msg->attr[i]->value_array->v[0]->has_b)
+ 						priv->available = attr_msg->attr[i]->value_array->v[0]->b;
+ 					break;
+-				case SSC_ATTRIBUTE_SAMPLE_RATE:
+-					/* Only a single sample rate is supported for now. */
++				case SSC_ATTRIBUTE_SAMPLE_RATE: {
++					/*
++					 * By default the first advertised rate is used, which is
++					 * usually the lowest. LIBSSC_SAMPLE_RATE=<Hz> picks the
++					 * lowest advertised rate at or above it instead, or the
++					 * highest one if none reaches it.
++					 */
++					const gchar *want_env = g_getenv ("LIBSSC_SAMPLE_RATE");
++					gfloat want = want_env ? (gfloat) g_ascii_strtod (want_env, NULL) : 0.0f;
++					gfloat best = 0.0f, highest = 0.0f;
++
+ 					for (gsize j = 0; j < attr_msg->attr[i]->value_array->n_v; j++) {
+-						if (attr_msg->attr[i]->value_array->v[j]->has_f
+-						 && attr_msg->attr[i]->value_array->v[j]->f > 0) {
+-							priv->sample_rate = attr_msg->attr[i]->value_array->v[j]->f;
+-							break;
++						gfloat rate;
++
++						if (!attr_msg->attr[i]->value_array->v[j]->has_f
++						 || attr_msg->attr[i]->value_array->v[j]->f <= 0)
++							continue;
++
++						rate = attr_msg->attr[i]->value_array->v[j]->f;
++						g_debug ("  advertised sample-rate: %f Hz", rate);
++
++						if (want <= 0.0f) {
++							if (best <= 0.0f)
++								best = rate;
++							continue;
+ 						}
++						if (rate > highest)
++							highest = rate;
++						if (rate >= want && (best <= 0.0f || rate < best))
++							best = rate;
+ 					}
++					priv->sample_rate = best > 0.0f ? best : highest;
+ 					break;
++				}
+ 				case SSC_ATTRIBUTE_STREAM_TYPE:
+ 					if (attr_msg->attr[i]->value_array->n_v == 1 && attr_msg->attr[i]->value_array->v[0]->has_i)
+ 						priv->stream_type = attr_msg->attr[i]->value_array->v[0]->i;

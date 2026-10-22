@@ -18,6 +18,7 @@ from armada_control.system import (
     reapply_perf,
     restart_game_mode,
     set_abl_auto_enabled,
+    set_gyro_enabled,
     set_bottom_screen_brightness,
     set_bottom_screen_enabled,
     get_sleep_logs_enabled,
@@ -69,6 +70,9 @@ class Plugin:
 
     async def set_abl_auto_enabled(self, enabled):
         return await asyncio.to_thread(set_abl_auto_enabled, enabled)
+
+    async def set_gyro_enabled(self, enabled):
+        return await asyncio.to_thread(set_gyro_enabled, enabled)
 
     async def set_bottom_screen_enabled(self, enabled):
         return await asyncio.to_thread(set_bottom_screen_enabled, enabled)

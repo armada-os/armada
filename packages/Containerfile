@@ -77,6 +77,16 @@ FROM scratch AS out-inputplumber
 COPY --from=pkg-inputplumber /work/out/ /rpms/
 
 
+FROM builder-base AS pkg-libssc
+COPY TERRA.env /src/
+COPY libssc/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-libssc
+COPY --from=pkg-libssc /work/out/ /rpms/
+
+
 FROM builder-base AS pkg-jupiter-hw-support
 COPY jupiter-hw-support/ /work/
 WORKDIR /work

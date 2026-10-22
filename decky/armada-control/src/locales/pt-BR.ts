@@ -59,6 +59,7 @@ export const ptBR = {
   "settings.ablVersion": "Versão do ABL",
   "common.unknown": "desconhecido",
   "settings.experimental": "Experimental",
+  "settings.enableGyro": "Enable Gyro",
   "settings.diagnostics": "Diagnósticos",
   "settings.sleepMode": "Modo de descanso",
   "settings.sleepLogs": "Ativar logs de suspensão",

@@ -1,0 +1,16 @@
+[Unit]
+Description=Hand the Qualcomm sensor core to InputPlumber once it is up
+ConditionFirmware=|device-tree-compatible(ayn,odin2)
+ConditionFirmware=|device-tree-compatible(ayn,odin2mini)
+ConditionFirmware=|device-tree-compatible(ayn,odin2portal)
+Requires=armada-ssc.service
+After=armada-ssc.service inputplumber.service
+
+[Service]
+# simple, not oneshot: the wait must not hold up boot targets.
+Type=simple
+EnvironmentFile=-/etc/armada/gyro.conf
+ExecStart=/usr/libexec/armada/armada-ssc ready
+
+[Install]
+WantedBy=multi-user.target

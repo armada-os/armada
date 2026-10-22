@@ -1,0 +1,30 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: odin2mini: ADSP remote heap for the sensors
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-odin2mini.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-odin2mini.dts
+@@ -190,3 +190,24 @@
+ 	firmware-name = "qcom/sm8550/ayn/odin2mini/aw883xx_acf.bin";
+ };
+ 
++/*
++ * Qualcomm sensor core (SSC) on the ADSP: the FastRPC sensors process needs a
++ * remote heap, or it cannot start and the IMU (gyro/accel) never appears.
++ * Heap node and properties from the Odin 2 gyro work by justjoseorg in
++ * SteamOS-ARM-Port (qcs8550-ayn-odin2-gyro.dtsi): LPASS 0x16, ADSP_HEAP 0x25.
++ */
++&{/reserved-memory} {
++	adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
++		compatible = "shared-dma-pool";
++		alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++		alignment = <0x0 0x400000>;
++		size = <0x0 0xc00000>;
++		reusable;
++	};
++};
++
++&{/soc@0/remoteproc@6800000/glink-edge/fastrpc} {
++	memory-region = <&adsp_rpc_remote_heap_mem>;
++	qcom,fastrpc-adsp-sensors-pdr;
++	qcom,vmids = <0x16 0x25>;
++};

@@ -1,0 +1,18 @@
+[Unit]
+Description=Qualcomm sensor core (gyro) FastRPC listeners
+ConditionFirmware=|device-tree-compatible(ayn,odin2)
+ConditionFirmware=|device-tree-compatible(ayn,odin2mini)
+ConditionFirmware=|device-tree-compatible(ayn,odin2portal)
+After=local-fs.target
+# No Conflicts=suspend.target: the ADSP stays up in s2idle, and listeners
+# restarted after boot never get the sensors PD back.
+
+[Service]
+ExecStartPre=/usr/libexec/armada/armada-ssc prepare
+ExecStart=/usr/libexec/armada/armada-ssc listen
+KillMode=control-group
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

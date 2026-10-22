@@ -86,6 +86,8 @@ systemctl enable seatd.service
 systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
+systemctl enable armada-ssc.service
+systemctl enable armada-ssc-ready.service
 systemctl enable armada-guestos.service
 systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service

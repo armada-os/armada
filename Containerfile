@@ -50,6 +50,9 @@ FROM ${KERNEL_REF} AS kernel
 ARG INPUTPLUMBER_REF
 FROM ${INPUTPLUMBER_REF} AS inputplumber
 
+ARG LIBSSC_REF
+FROM ${LIBSSC_REF} AS libssc
+
 ARG STEAMOS_MANAGER_REF
 FROM ${STEAMOS_MANAGER_REF} AS steamos-manager
 
@@ -127,6 +130,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=protontricks,source=/rpms,target=/packages/protontricks \
     --mount=type=bind,from=kernel,source=/kernel,target=/packages/kernel \
     --mount=type=bind,from=inputplumber,source=/rpms,target=/packages/inputplumber \
+    --mount=type=bind,from=libssc,source=/rpms,target=/packages/libssc \
     --mount=type=bind,from=steamos-manager,source=/rpms,target=/packages/steamos-manager \
     --mount=type=bind,from=networkmanager,source=/rpms,target=/packages/networkmanager \
     --mount=type=bind,from=wpa_supplicant,source=/rpms,target=/packages/wpa_supplicant \

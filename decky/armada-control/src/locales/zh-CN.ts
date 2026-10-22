@@ -59,6 +59,7 @@ export const zhCN = {
   "settings.ablVersion": "ABL 版本",
   "common.unknown": "未知",
   "settings.experimental": "实验性功能",
+  "settings.enableGyro": "Enable Gyro",
   "settings.diagnostics": "诊断",
   "settings.sleepMode": "休眠模式",
   "settings.sleepLogs": "启用休眠日志",

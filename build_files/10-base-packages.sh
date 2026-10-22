@@ -89,6 +89,13 @@ dnf5 -y install --nogpgcheck \
 
 dnf5 -y install --setopt=install_weak_deps=False "${pkgs[@]}"
 
+# Gyro (Qualcomm SSC): FastRPC listeners and the super-partition mapper used by
+# armada-ssc. Not msm-firmware-loader: it repoints the kernel firmware path at
+# the Android partitions and can replace Armada's own DSP firmware.
+dnf5 -y install --setopt=install_weak_deps=False \
+    hexagonrpc \
+    make-dynpart-mappings
+
 
 #
 # Desktop

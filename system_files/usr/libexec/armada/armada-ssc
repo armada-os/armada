@@ -1,0 +1,104 @@
+#!/bin/bash
+# Qualcomm sensor core (SSC: gyro/accel) bring-up. Boards opt in through the
+# ConditionFirmware= lists in armada-ssc.service and armada-ssc-ready.service.
+#
+#   prepare  mount the Android persist, dsp_<slot> and vendor_<slot> partitions
+#            read-only and stage the hexagonfs tree hexagonrpcd serves to the
+#            ADSP (sensor registry with factory calibration, sensor configs,
+#            DSP libraries, ACDB)
+#   listen   start the ADSP sensors-PD and root-PD FastRPC listeners
+#   ready    wait for the SSC, then restart InputPlumber once if gyro is on
+#
+# Deliberately not msm-firmware-loader: that repoints the kernel firmware path
+# at the Android partitions and can replace Armada's own DSP firmware.
+set -euo pipefail
+
+BASE=/run/armada-ssc
+MNT="${BASE}/mnt"
+ROOT="${BASE}/root"
+
+log() { echo "armada-ssc: $*"; }
+
+mount_ro() {
+    mkdir -p "$2"
+    mountpoint -q "$2" || mount -o ro,nodev,noexec,nosuid "$1" "$2"
+}
+
+prepare() {
+    local slot dsp="" vendor=""
+
+    mount_ro /dev/disk/by-partlabel/persist "${MNT}/persist"
+
+    # ABL does not pass androidboot.slot_suffix, so take the first slot whose
+    # dsp partition carries ADSP libraries.
+    for slot in _a _b; do
+        [ -e "/dev/disk/by-partlabel/dsp${slot}" ] || continue
+        mount_ro "/dev/disk/by-partlabel/dsp${slot}" "${MNT}/dsp${slot}"
+        if [ -d "${MNT}/dsp${slot}/adsp" ]; then
+            dsp="${MNT}/dsp${slot}"
+            break
+        fi
+    done
+    [ -n "${dsp}" ] || { log "no dsp partition with ADSP libraries"; exit 1; }
+    slot="${dsp##*dsp}"
+
+    # vendor lives in the dynamic super partition.
+    [ -e "/dev/mapper/vendor${slot}" ] ||
+        make-dynpart-mappings "$(readlink -f /dev/disk/by-partlabel/super)"
+    mount_ro "/dev/mapper/vendor${slot}" "${MNT}/vendor${slot}"
+    vendor="${MNT}/vendor${slot}"
+
+    for p in "${MNT}/persist/sensors/registry/registry" \
+             "${vendor}/etc/sensors/config" \
+             "${vendor}/etc/sensors/sns_reg_config" \
+             "${vendor}/etc/acdbdata"; do
+        [ -e "${p}" ] || { log "missing ${p}"; exit 1; }
+    done
+
+    rm -rf "${ROOT}"
+    mkdir -p "${ROOT}/sensors"
+    ln -s "${dsp}" "${ROOT}/dsp"
+    ln -s "${vendor}/etc/acdbdata" "${ROOT}/acdb"
+    ln -s "${vendor}/etc/sensors/config" "${ROOT}/sensors/config"
+    ln -s "${vendor}/etc/sensors/sns_reg_config" "${ROOT}/sensors/sns_reg.conf"
+    ln -s "${MNT}/persist/sensors/registry/registry" "${ROOT}/sensors/registry"
+    ln -s /sys/devices/soc0 "${ROOT}/socinfo"
+    log "staged ${ROOT} from dsp${slot}/vendor${slot}"
+}
+
+listen() {
+    # Audio shares the ADSP, so wait for the sound card as well. Listeners that
+    # attach long after the ADSP boots never get the sensors PD back.
+    for _ in $(seq 60); do
+        [ -e /dev/fastrpc-adsp ] && [ -e /proc/asound/card0 ] && break
+        sleep 1
+    done
+    log "ADSP ready after ${SECONDS}s, starting listeners"
+    hexagonrpcd -f /dev/fastrpc-adsp -d adsp -s -R "${ROOT}" &
+    sleep 1
+    exec hexagonrpcd -f /dev/fastrpc-adsp -d adsp -R "${ROOT}"
+}
+
+ready() {
+    for _ in $(seq 60); do
+        if timeout 3 ssccli --sensor accelerometer --timeout 1 2>/dev/null | grep -q measurement; then
+            log "SSC ready after ${SECONDS}s"
+            # InputPlumber's SSC source opens once at startup and does not retry,
+            # so it has to come up after the SSC when gyro is enabled.
+            if [ "${INPUTPLUMBER_FASTRPC:-0}" = 1 ] && systemctl -q is-active inputplumber.service; then
+                systemctl restart inputplumber.service
+            fi
+            return 0
+        fi
+        sleep 1
+    done
+    log "SSC not ready after ${SECONDS}s"
+    return 1
+}
+
+case "${1:-}" in
+    prepare) prepare ;;
+    listen) listen ;;
+    ready) ready ;;
+    *) echo "usage: $0 prepare|listen|ready" >&2; exit 2 ;;
+esac

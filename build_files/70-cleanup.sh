@@ -57,6 +57,7 @@ for package in \
     gamescope-session \
     gamescope-session-steam \
     inputplumber \
+    libssc \
     mangohud \
     mesa-vulkan-drivers \
     NetworkManager \

@@ -147,6 +147,8 @@ export interface Config {
   osVersion: string;
   ablVersion: string;
   ablAutoEnabled: boolean;
+  gyroSupported: boolean;
+  gyroEnabled: boolean;
   bottomScreenSupported: boolean;
   bottomScreenEnabled: boolean;
   bottomScreenBrightnessSupported: boolean;
