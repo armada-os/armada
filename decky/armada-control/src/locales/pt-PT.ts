@@ -20,6 +20,7 @@ export const ptPT = {
   "options.eco": "Economia",
   "options.balanced": "Equilibrado",
   "options.performance": "Desempenho",
+  "options.conservative": "Conservative",
   "options.ondemand": "Ondemand",
   "options.userspace": "Userspace",
   "options.schedutil": "Schedutil",
