@@ -1,0 +1,121 @@
+#!/bin/bash
+# Mirror the BLS entries and their kernels onto the ESP for systemd-boot and OpenABL.
+set -euo pipefail
+
+ESP=${ESP:-/boot/efi}
+BOOTROOT=${BOOTROOT:-/boot}
+SYSROOT=${SYSROOT:-/}
+ARGS_FILE=${ARGS_FILE:-/usr/lib/armada/bootimg-args}
+
+die() {
+    echo "armada-efi-update: $*" >&2
+    exit 1
+}
+
+findmnt -rn "${ESP}" >/dev/null || die "ESP is not mounted: ${ESP}"
+. "${ARGS_FILE}"
+
+entry=$(armada_default_bls_entry "${BOOTROOT}")
+[ -n "${entry}" ] || die "no default BLS entry under ${BOOTROOT}/loader/entries"
+for key in linux initrd; do
+    path=$(sed -n "s/^${key} //p" "${entry}" | head -1)
+    [ -n "${path}" ] || die "missing ${key} path in ${entry}"
+    [ -s "${BOOTROOT}${path#/boot}" ] || die "missing or empty ${key}: ${BOOTROOT}${path#/boot}"
+done
+ostree=
+for arg in $(sed -n 's/^options //p' "${entry}" | head -1); do
+    case "${arg}" in ostree=*) ostree=${arg#ostree=} ;; esac
+done
+[ -n "${ostree}" ] || die "missing ostree= option in ${entry}"
+deploy=$(realpath -e "${SYSROOT%/}${ostree}") || die "cannot resolve deployment: ${SYSROOT%/}${ostree}"
+
+# Older deployments only update /KERNEL; leave no EFI loader or BLS entry to
+# shadow it, since OpenABL boots the ESP's entries before /KERNEL.
+if [ ! -x "${deploy}/usr/libexec/armada/armada-efi-update" ]; then
+    disabled=
+    for file in "${ESP}/EFI/BOOT/BOOTAA64.EFI" "${ESP}/EFI/systemd/systemd-bootaa64.efi" \
+        "${ESP}/loader" "${ESP}/ostree"; do
+        [ -e "${file}" ] || continue
+        rm -rf "${file}"
+        disabled=1
+    done
+    sync
+    if [ -n "${disabled}" ]; then
+        echo "armada-efi-update: disabled EFI for older deployment ${deploy##*/}; using /KERNEL"
+    fi
+    exit 0
+fi
+
+loader=${deploy}/usr/lib/systemd/boot/efi/systemd-bootaa64.efi
+dtbloader=${deploy}/usr/lib/dtbloader/dtbloaderaa64.efi
+for file in "${loader}" "${dtbloader}"; do
+    [ -s "${file}" ] || die "missing or empty EFI asset: ${file}"
+done
+linux=$(sed -n 's/^linux //p' "${entry}" | head -1)
+dtbs=${BOOTROOT}$(dirname "${linux#/boot}")/dtb/qcom
+[ -d "${dtbs}" ] || die "missing DTB directory: ${dtbs}"
+
+work=$(mktemp -d)
+trap 'rm -rf "${work}"' EXIT
+mkdir -p "${work}/entries"
+# The ESP holds the kernels at its root, without the /boot prefix.
+for file in "${BOOTROOT}/loader/entries"/*.conf; do
+    [ -f "${file}" ] || continue
+    sed -e 's|^linux /boot/|linux /|' -e 's|^initrd /boot/|initrd /|' \
+        "${file}" > "${work}/entries/${file##*/}"
+done
+printf 'default %s\ntimeout menu-hidden\neditor no\n' "${entry##*/}" > "${work}/loader.conf"
+
+sources=() targets=()
+needed=$((4 * 1024 * 1024))
+cluster=$(stat -f -c %S "${ESP}")
+stage() {
+    rm -f "$2.new"
+    cmp -s "$1" "$2" && return 0
+    sources+=("$1") targets+=("$2")
+    local size
+    size=$(stat -c %s "$1")
+    needed=$((needed + (size + cluster - 1) / cluster * cluster))
+}
+while IFS= read -r -d '' file; do
+    stage "${file}" "${ESP}/${file#"${BOOTROOT}/"}"
+done < <(find "${BOOTROOT}/ostree" -type f -print0)
+# dtbloader and OpenABL's device model menu both search \dtbs\qcom.
+for dtb in "${dtbs}"/*.dtb; do
+    stage "${dtb}" "${ESP}/dtbs/qcom/${dtb##*/}"
+done
+stage "${dtbloader}" "${ESP}/EFI/systemd/drivers/dtbloaderaa64.efi"
+for file in "${work}/entries"/*.conf; do
+    stage "${file}" "${ESP}/loader/entries/${file##*/}"
+done
+stage "${work}/loader.conf" "${ESP}/loader/loader.conf"
+# Bootloaders discover these paths, so install them last.
+stage "${loader}" "${ESP}/EFI/systemd/systemd-bootaa64.efi"
+stage "${loader}" "${ESP}/EFI/BOOT/BOOTAA64.EFI"
+available=$(df -B1 --output=avail "${ESP}" | tail -1)
+[ "${available}" -ge "${needed}" ] || die "insufficient space on ${ESP} (need ${needed} bytes)"
+for i in "${!sources[@]}"; do
+    target=${targets[i]}
+    mkdir -p "$(dirname "${target}")"
+    cp -f "${sources[i]}" "${target}.new" || die "could not stage ${sources[i]} at ${target}.new"
+    sync "${target}.new" || die "could not sync ${target}.new"
+    mv -f "${target}.new" "${target}" || die "could not install ${target}"
+done
+
+# bootc-image-builder installs shim and GRUB, which would shadow systemd-boot.
+rm -f "${ESP}/EFI/BOOT/fbaa64.efi" "${ESP}/EFI/BOOT/BOOTAA64.CSV" \
+    "${ESP}/EFI/BOOT/grub.cfg" "${ESP}/EFI/BOOT/grubaa64.efi"
+rm -rf "${ESP}/EFI/fedora" "${ESP}/EFI.disabled"
+for file in "${ESP}/ostree"/*; do
+    [ ! -e "${file}" ] || [ -e "${BOOTROOT}/ostree/${file##*/}" ] || rm -rf "${file}"
+done
+for file in "${ESP}/loader/entries"/*.conf; do
+    [ ! -e "${file}" ] || [ -e "${work}/entries/${file##*/}" ] || rm -f "${file}"
+done
+for dtb in "${ESP}/dtbs/qcom"/*.dtb; do
+    [ ! -e "${dtb}" ] || [ -f "${dtbs}/${dtb##*/}" ] || rm -f "${dtb}"
+done
+sync
+if [ "${#sources[@]}" -gt 0 ]; then
+    echo "armada-efi-update: synced ${#sources[@]} files for ${deploy##*/}"
+fi
