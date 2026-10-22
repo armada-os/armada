@@ -199,6 +199,15 @@ FROM scratch AS out-steamos-manager
 COPY --from=pkg-steamos-manager /work/out/ /rpms/
 
 
+FROM builder-base AS pkg-dtbloader
+COPY dtbloader/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-dtbloader
+COPY --from=pkg-dtbloader /work/out/ /rpms/
+
+
 FROM builder-base AS pkg-umtp-responder
 COPY umtp-responder/ /work/
 WORKDIR /work
