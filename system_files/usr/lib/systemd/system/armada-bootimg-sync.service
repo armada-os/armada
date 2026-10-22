@@ -1,5 +1,5 @@
 [Unit]
-Description=Rebuild the ABL boot.img for the next-boot deployment before reboot
+Description=Sync ABL and EFI boot files for the next deployment
 ConditionPathExists=/run/ostree-booted
 DefaultDependencies=no
 RequiresMountsFor=/sysroot /boot /boot/efi
@@ -13,14 +13,14 @@ Conflicts=final.target
 Type=oneshot
 RemainAfterExit=yes
 # Must outlast the lock wait plus a slow-card regen, or systemd kills it mid-write.
-TimeoutStopSec=180
+TimeoutStopSec=300
 # Completes a regen that died in the previous shutdown. '-' is load-bearing: a
 # failed start would fail the unit and skip ExecStop.
-ExecStart=-/usr/bin/ionice -c 2 -n 7 /usr/libexec/armada/armada-bootimg-update --snapshot-prev
+ExecStart=-/usr/bin/ionice -c 2 -n 7 /usr/libexec/armada/armada-boot-update --snapshot-prev
 # Keep manual rollback and other non-staged BLS changes in sync. Staged-update
 # failure handling belongs to the OSTree finalization hook.
-ExecStop=/usr/libexec/armada/armada-bootimg-update
-# ABL writes are allowed only after /KERNEL sync succeeds.
+ExecStop=/usr/libexec/armada/armada-boot-update
+# ABL writes are allowed only after the boot files are synced.
 ExecStop=-/usr/libexec/armada/armada-abl-finalize
 
 [Install]

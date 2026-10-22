@@ -15,6 +15,11 @@ pkgs=(
     polkit
     sudo
 
+    # Bootloader
+    dtc
+    edk2-ext4
+    systemd-boot-unsigned
+
     # Radio 
     bluez
     NetworkManager

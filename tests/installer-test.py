@@ -378,9 +378,19 @@ class ExecutionTests(unittest.TestCase):
                     self.assertEqual(scratch.parent, job.work / "target")
                     self.assertTrue(scratch.is_dir())
                     (Path(env["ESP"]) / "KERNEL").write_bytes(b"boot image")
+                elif args[0] == i.EFIUPDATE:
+                    esp = Path(kwargs["env"]["ESP"])
+                    self.assertTrue((esp / "KERNEL").is_file())
+                    self.assertEqual(kwargs["env"]["CMDLINE"], "/dev/null")
+                    (esp / "EFI/BOOT").mkdir(parents=True)
+                    (esp / "EFI/BOOT/BOOTAA64.EFI").write_bytes(b"loader")
             with patch.dict(i.os.environ, TMPDIR="/sd/slow"), patch.object(i.tempfile, "mkdtemp", side_effect=temporary), patch.object(i, "output", return_value="valid-uuid"), patch.object(i, "run", side_effect=command) as run, patch.object(i, "configure_deployment"):
                 job.deploy(source, [])
                 self.assertTrue(any(call.args[0] == i.BOOTIMG for call in run.call_args_list))
+                self.assertTrue(any(call.args[0] == i.EFIUPDATE for call in run.call_args_list))
+                self.assertTrue(any(call.args[:7] == ("mkfs.vfat", "-F", "16", "-S", 4096, "-s", 4)
+                                    for call in run.call_args_list))
+                self.assertTrue(any(call.args[-2:] == ("sysroot.bootprefix", "true") for call in run.call_args_list))
                 self.assertTrue(any(call.args[-2:] == ("sysroot.readonly", "true") for call in run.call_args_list))
                 self.assertEqual(list((job.work / "target").glob(".armada-bootimg.*")), [])
                 job.close()
@@ -468,7 +478,7 @@ class ExecutionTests(unittest.TestCase):
                     gui.progress(["install"])
             message = str(error.exception)
             self.assertIn("ERROR: missing source layer", message)
-            self.assertIn("select SD as the boot source in ABL", message)
+            self.assertIn("select SD as the boot source in your bootloader", message)
             self.assertIn("available until reboot", message)
             self.assertLess(len(message), 5000)
 
@@ -477,7 +487,7 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         result = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0)
-        self.assertIn("UNINSTALL CFW", result.stdout)
+        self.assertIn("uninstall option in your bootloader", result.stdout)
         self.assertNotIn("reset", result.stdout)
 
     def test_toml_kargs_are_parsed_and_filtered(self):

@@ -57,6 +57,7 @@ export const zhCN = {
   "settings.enableSsh": "启用 SSH",
   "settings.osVersion": "系统版本",
   "settings.ablVersion": "ABL 版本",
+  "settings.efiVersion": "EFI 版本",
   "common.unknown": "未知",
   "settings.experimental": "实验性功能",
   "settings.diagnostics": "诊断",

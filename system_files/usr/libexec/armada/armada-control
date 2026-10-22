@@ -28,6 +28,11 @@ ABL_PARTITIONS = (
     ("A", "/dev/disk/by-partlabel/abl_a"),
     ("B", "/dev/disk/by-partlabel/abl_b"),
 )
+BOOT_BACKEND_TOOL = "/usr/libexec/armada/armada-boot-backend"
+EFI_BOOTLOADER_PATHS = (
+    Path("/boot/efi/EFI/BOOT/BOOTAA64.EFI"),
+    Path("/usr/lib/armada/efi/armada-boot.efi"),
+)
 MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xbox-series", "xb360", "ds5"}
@@ -379,6 +384,43 @@ def abl_version():
     )
 
 
+def boot_backend():
+    try:
+        result = subprocess.run(
+            [BOOT_BACKEND_TOOL],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            backend = result.stdout.strip()
+            if backend in ("abl", "efi"):
+                return backend
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "unknown"
+
+
+def efi_version():
+    version_file = Path("/usr/lib/armada/efi/version")
+    if version_file.is_file():
+        version = read_text(version_file).strip()
+        if version:
+            return version
+    for path in EFI_BOOTLOADER_PATHS:
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            match = re.search(rb"Bootloader Version:\s*([^\r\n\x00]+)", data)
+            if match:
+                return match.group(1).decode("utf-8", errors="replace").strip()
+        except OSError:
+            continue
+    return "Unknown"
+
+
 def action_set_controller_type(request):
     value = str(request.get("value", ""))
     if value not in CONTROLLER_TYPES:
@@ -548,8 +590,16 @@ def action_set_bottom_screen_enabled(request):
     return {"enabled": bottom_screen_enabled()}
 
 
+def action_get_boot_backend(request):
+    return {"backend": boot_backend()}
+
+
 def action_get_abl_version(request):
     return {"version": abl_version()}
+
+
+def action_get_efi_version(request):
+    return {"version": efi_version()}
 
 
 def rgb_supported():
@@ -875,7 +925,9 @@ ACTIONS = {
     "get_device_env": action_get_device_env,
     "get_bottom_screen_enabled": action_get_bottom_screen_enabled,
     "get_bottom_screen_brightness": action_get_bottom_screen_brightness,
+    "get_boot_backend": action_get_boot_backend,
     "get_abl_version": action_get_abl_version,
+    "get_efi_version": action_get_efi_version,
     "get_rgb": action_get_rgb,
     "set_rgb": action_set_rgb,
     "get_abl_auto_enabled": action_get_abl_auto_enabled,

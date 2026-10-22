@@ -161,6 +161,10 @@ def fake_plugin_call(action, **payload):
         return {"supported": True, "brightness": 50, "active": True}
     if action == "set_bottom_screen_brightness":
         return {"brightness": int(payload["brightness"])}
+    if action == "get_boot_backend":
+        return {"backend": "efi"}
+    if action == "get_efi_version":
+        return {"version": "0.7"}
     return {"enabled": action == "get_bottom_screen_enabled" or bool(payload.get("enabled"))}
 
 
@@ -208,6 +212,32 @@ except RuntimeError:
     pass
 else:
     raise AssertionError("unavailable s2idle sleep setting was accepted")
+
+fake_backend_tool = work / "fake-boot-backend"
+fake_backend_tool.write_text("#!/bin/sh\necho efi\n")
+fake_backend_tool.chmod(0o755)
+control.BOOT_BACKEND_TOOL = str(fake_backend_tool)
+assert control.action_get_boot_backend({}) == {"backend": "efi"}
+
+mock_efi = work / "BOOTAA64.EFI"
+mock_efi.write_bytes(b"\x00\x00Bootloader Version: 0.7\r\n\x00")
+control.EFI_BOOTLOADER_PATHS = (mock_efi,)
+assert control.action_get_efi_version({}) == {"version": "0.7"}
+
+from armada_control import config as plugin_config
+plugin_config.load_fex_contract = lambda: {"profiles": {}}
+plugin_config.device_env = lambda: {}
+plugin_config.parse_power = lambda: {"fan": {}}
+plugin_config.factory_power_defaults = lambda: {}
+plugin_config.load_tweaks = lambda: {}
+plugin_config.load_env_presets = lambda: {}
+plugin_config.perf_info = lambda: {}
+plugin_config.rgb_supported = lambda: False
+cfg = plugin_config.build_config(include_games=False)
+assert cfg["bootBackend"] == "efi"
+assert cfg["efiVersion"] == "0.7"
+assert cfg["ablVersion"] == ""
+assert cfg["ablAutoEnabled"] is False
 PYEOF
 
 grep -Fq 'After=armada-device-quirks.service inputplumber.service armada-powerd.service' \
