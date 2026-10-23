@@ -279,9 +279,16 @@ def bottom_screen_enabled():
     ).returncode == 0
 
 
-def secondary_backlight():
+def secondary_backlight_name():
     name = device_env().get("ARMADA_SECONDARY_BACKLIGHT", "")
     if not name or name in {".", ".."} or "/" in name:
+        return None
+    return name
+
+
+def secondary_backlight():
+    name = secondary_backlight_name()
+    if name is None:
         return None
     path = BACKLIGHT_ROOT / name
     if not path.is_dir():
@@ -348,8 +355,10 @@ def apply_bottom_screen_brightness(brightness, path=None):
 
 def restore_bottom_screen_brightness(path=None):
     brightness = saved_bottom_screen_brightness()
+    if brightness is None:
+        return
     path = path or secondary_backlight()
-    if brightness is None or read_backlight_brightness(path) == brightness:
+    if read_backlight_brightness(path) == brightness:
         return
     try:
         apply_bottom_screen_brightness(brightness, path)
@@ -966,8 +975,13 @@ def main():
     SOCKET.parent.mkdir(parents=True, exist_ok=True)
     selector = selectors.DefaultSelector()
     PERF = PerfManager(selector)
-    bottom_screen_backlight = secondary_backlight()
-    restore_bottom_screen_brightness(bottom_screen_backlight)
+    # Only dual-screen devices need the periodic brightness restore.
+    backlight_name = secondary_backlight_name()
+    bottom_screen_backlight = BACKLIGHT_ROOT / backlight_name if backlight_name else None
+    restore_interval = None
+    if bottom_screen_backlight is not None:
+        restore_interval = BOTTOM_SCREEN_BRIGHTNESS_RESTORE_INTERVAL
+        restore_bottom_screen_brightness(bottom_screen_backlight)
     # Root-only socket; config rendering still belongs to the plugin client.
     control = bind_socket(SOCKET, 0o600)
     session = bind_socket(SESSION_SOCKET, 0o660, group="armada")
@@ -983,9 +997,10 @@ def main():
     selector.register(control, selectors.EVENT_READ, accept_control)
     selector.register(session, selectors.EVENT_READ, accept_session)
     while True:
-        for key, _events in selector.select(BOTTOM_SCREEN_BRIGHTNESS_RESTORE_INTERVAL):
+        for key, _events in selector.select(restore_interval):
             key.data()
-        restore_bottom_screen_brightness(bottom_screen_backlight)
+        if bottom_screen_backlight is not None:
+            restore_bottom_screen_brightness(bottom_screen_backlight)
 
 
 def handle(request):
