@@ -148,6 +148,8 @@ export const zhCN = {
   "compatibility.missingTool": "{tool} 已被卸载。请为游戏选择新的默认工具。",
   "compatibility.applyToNewGames": "应用于新游戏",
   "compatibility.gameResolution": "游戏分辨率",
+  "compatibility.autoHdr": "自动 HDR",
+  "compatibility.autoHdrDescription": "在支持的显示器上将 SDR 游戏转换为 HDR。",
   "compatibility.tool": "兼容性工具",
   "compatibility.fexPreset": "FEX 预设",
   "compatibility.turnipStable": "稳定版",

@@ -890,6 +890,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
             <SelectEdit label={t("compatibility.gameResolution")} value={resolution} options={resolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamResolution} />
           </>
         )}
+        {config.autoHdrSupported ? (
+          <ToggleRow
+            label={t("compatibility.autoHdr")}
+            description={t("compatibility.autoHdrDescription")}
+            value={values.autoHdr === true}
+            onChange={(enabled) => patchSettings({ autoHdr: enabled })}
+          />
+        ) : null}
         {resolutionMessage ? <Field label={t("common.status")} description={resolutionMessage} /> : null}
         <SelectEdit label={t("compatibility.fexPreset")} value={fexValue} options={fexOptions} onChange={onSelectFex} />
         {isCustom

@@ -8,6 +8,7 @@ from .privileged import call
 sys.path.insert(0, os.environ.get("ARMADA_GAME_TWEAKS_LIB", "/usr/lib/armada"))
 import armada_game_tweaks
 import armada_turnip
+from armada_auto_hdr import auto_hdr_supported
 
 COMPAT_APPLIED_STATE = Path("/var/lib/armada/compat-applied.json")
 FEX_PROFILES_CONFIG = Path("/usr/share/armada/fex-profiles.json")
