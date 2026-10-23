@@ -9,7 +9,7 @@ import sys
 import tarfile
 
 
-MANIFEST_NAME = "steam_client_steamdeck_publicbeta_linuxarm64.installed"
+MANIFEST_NAME = "steam_client_steamdeck_stable_linuxarm64.installed"
 STEAM_PREFIX = "var/home/armada/.local/share/Steam"
 
 

@@ -21,6 +21,22 @@ if [[ ! -x "${steam_arm}" ]]; then
     exit 127
 fi
 
+# Remove this eventually - temporary switch to steam client stable whilst armada
+# migrates future images to stable. After soaking for long enough this can be
+# dropped
+(
+    flock 9
+    if [[ ! -e "${steam_root}/.armada-stable-client-v1" ]]; then
+        mkdir -p "${steam_root}/package"
+        channel_file=$(mktemp "${steam_root}/package/.beta.armada.XXXXXX")
+        trap 'rm -f "${channel_file}"' EXIT
+        printf '%s\n' steamdeck_stable > "${channel_file}"
+        chmod 0644 "${channel_file}"
+        mv -f "${channel_file}" "${steam_root}/package/beta"
+        touch "${steam_root}/.armada-stable-client-v1"
+    fi
+) 9>"${steam_root}/.armada-client-channel.lock"
+
 steam_ld_path="${steam_arm_dir}"
 if [[ -d "${steam_shim_dir}" ]]; then
     steam_ld_path="${steam_ld_path}:${steam_shim_dir}"

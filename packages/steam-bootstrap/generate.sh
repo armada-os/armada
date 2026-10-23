@@ -10,7 +10,7 @@ source /work/BASE.env
 STEAM_BOOTSTRAP_HOME=/work/work/home
 STEAM="${STEAM_BOOTSTRAP_HOME}/.local/share/Steam"
 DOT_STEAM="${STEAM_BOOTSTRAP_HOME}/.steam"
-STEAM_ARM_CHANNEL="steamdeck_publicbeta"
+STEAM_ARM_CHANNEL="steamdeck_stable"
 STEAM_ARM_MANIFEST_NAME="steam_client_${STEAM_ARM_CHANNEL}_linuxarm64"
 STEAM_BOOTSTRAP_TIMEOUT="${STEAM_BOOTSTRAP_TIMEOUT:-900}"
 
@@ -194,6 +194,8 @@ rm -f \
 
 # Steam opens Decky's localhost CEF debugger only when this marker exists.
 touch "${STEAM}/.cef-enable-remote-debugging"
+# Fresh images already use stable; the launcher only migrates older homes.
+touch "${STEAM}/.armada-stable-client-v1"
 if ! verify_installed_manifest; then
     echo "ERROR: Steam bootstrap cleanup removed manifest content" >&2
     exit 1
