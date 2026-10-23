@@ -3,6 +3,18 @@ set -euxo pipefail
 
 cp -a /ctx/system_files/. /
 
+# The SSC registry is only valid for the ADSP firmware it was captured with;
+# see packages/armada-ssc/README.md.
+for source in /usr/share/armada/ssc/*/SOURCE; do
+    version=$(sed -n 's/^adsp_firmware=//p' "${source}")
+    firmware="/usr/lib/firmware/$(sed -n 's/^adsp_firmware_path=//p' "${source}")"
+    shipped=$(grep -ao -m1 'QC_IMAGE_VERSION_STRING=[A-Za-z0-9._-]*' "${firmware}" | cut -d= -f2)
+    [[ -n ${version} && ${shipped} == "${version}" ]] || {
+        echo "ERROR: ${source} was captured with ADSP ${version:-unknown}; ${firmware} is ${shipped:-unknown}" >&2
+        exit 1
+    }
+done
+
 # feedbackd's role-routing sinks can wedge Steam audio during session startup.
 rm -f /usr/share/wireplumber/wireplumber.conf.d/media-role-nodes.conf
 
@@ -86,6 +98,7 @@ systemctl enable seatd.service
 systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
+systemctl enable armada-ssc.service
 systemctl enable armada-guestos.service
 systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service

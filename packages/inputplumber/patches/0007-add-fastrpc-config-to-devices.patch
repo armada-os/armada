@@ -1,0 +1,52 @@
+From 431573c7a304feff4f0469a7f467692dc91b23b5 Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Sun, 13 Sep 2026 21:36:48 +0200
+Subject: [PATCH] add fastrpc config to devices
+
+---
+ .../usr/share/inputplumber/devices/50-ayn_odin2.yaml   | 11 +++++++++++
+ .../usr/share/inputplumber/devices/50-ayn_odin3.yaml   | 11 +++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
+index a9beeb5..ba8b6af 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
+@@ -34,5 +34,16 @@ source_devices:
+       name: gpio-keys-paddles
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        # ICM-426xx orientation; an SH5001 unit may need another matrix
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [0, 0, 1]
++          z: [-1, 0, 0]
++
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
+index 885ad4f..2b23de1 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
+@@ -35,5 +35,16 @@ source_devices:
+       phys_path: gpio-keys/input0
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp-secure
++    config:
++      imu:
++        # QMI8658 orientation; an LSM6DSO unit may need another matrix
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [0, 0, 1]
++          z: [-1, 0, 0]
++
+ target_devices:
+   - xbox-elite

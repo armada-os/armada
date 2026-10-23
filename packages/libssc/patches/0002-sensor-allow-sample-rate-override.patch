@@ -1,0 +1,64 @@
+From 6f7f01f5cb7df9d463da02815dbd9b42d1206244 Mon Sep 17 00:00:00 2001
+From: suckbluefrog <suckbluefrog@proton.me>
+Date: Wed, 15 Jul 2026 00:00:00 +000
+Subject: [PATCH] sensor: allow clients to override the sample rate
+
+Sensor discovery currently retains the first positive rate advertised by
+SSC.  That is 20 Hz on the QMI8658 even though motion-control clients need a
+higher report rate and the sensor supports it.
+
+Add a small public setter which clients can call after discovery and before
+opening the sensor.  Keep the discovered rate as the default for existing
+users.
+---
+ libssc.map          |  1 +
+ src/libssc-sensor.c | 12 ++++++++++++
+ src/libssc-sensor.h |  1 +
+ 3 files changed, 14 insertions(+)
+
+diff --git a/libssc.map b/libssc.map
+index c4ca8cb..7439e93 100644
+--- a/libssc.map
++++ b/libssc.map
+@@ -63,6 +63,7 @@ LIBSSC_0.4.0 {
+ 		ssc_sensor_close;
+ 		ssc_sensor_close_finish;
+ 		ssc_sensor_close_sync;
++		ssc_sensor_set_sample_rate;
+ 		ssc_sensor_get_type;
+ 		ssc_sensor_accelerometer_get_type;
+ 		ssc_sensor_compass_get_type;
+diff --git a/src/libssc-sensor.c b/src/libssc-sensor.c
+index 63f7ed1..37fd489 100644
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -263,6 +263,18 @@ ssc_sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback
+ 	SSC_SENSOR_GET_CLASS (self)->open (self, cancellable, callback, user_data);
+ }
+ 
++void
++ssc_sensor_set_sample_rate (SSCSensor *self, gfloat sample_rate)
++{
++	SSCSensorPrivate *priv = NULL;
++
++	g_return_if_fail (SSC_IS_SENSOR (self));
++	g_return_if_fail (sample_rate > 0.0f);
++
++	priv = ssc_sensor_get_instance_private (self);
++	priv->sample_rate = sample_rate;
++}
++
+ /*****************************************************************************/
+ 
+ static void
+diff --git a/src/libssc-sensor.h b/src/libssc-sensor.h
+index 0e7ced4..cd915b3 100644
+--- a/src/libssc-sensor.h
++++ b/src/libssc-sensor.h
+@@ -54,5 +54,6 @@ SSCSensor 	*ssc_sensor_new_finish (GAsyncResult *result, GError **error);
+ void		 ssc_sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
+ gboolean	 ssc_sensor_open_finish (SSCSensor *self, GAsyncResult *result, GError **error);
++void		 ssc_sensor_set_sample_rate (SSCSensor *self, gfloat sample_rate);
+ void		 ssc_sensor_close (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
+ gboolean	 ssc_sensor_close_finish (SSCSensor *self, GAsyncResult *result, GError **error);
+ 

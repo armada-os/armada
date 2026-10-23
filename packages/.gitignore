@@ -16,6 +16,8 @@ fex-sysroot-macros.inc
 *.so
 # built by hand and checked by hash, see lepton/build-android.sh
 !lepton/prebuilt/**/*.so
+# captured per board, see armada-ssc/README.md
+!armada-ssc/data/*.tar.gz
 
 # ccache for build-local.sh runs
 .ccache/

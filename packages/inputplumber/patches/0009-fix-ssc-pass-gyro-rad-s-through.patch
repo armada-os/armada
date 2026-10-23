@@ -1,0 +1,35 @@
+From cd4fa8a348573a2f6866ac2fa13e4b55e24a9e1d Mon Sep 17 00:00:00 2001
+From: Armada <noreply@armada.local>
+Date: Thu, 1 Oct 2026 12:00:00 +0200
+Subject: [PATCH] fix(ssc): pass gyro rad/s through, targets do the scaling
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+InputPlumber carries IMU values in SI units (m/s², rad/s) and each target
+denormalizes them, so pre-scaling the gyro to Deck units here scaled it
+twice (about 917x on deck-uhid).
+---
+ src/input/source/fastrpc/ssc_imu.rs | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/src/input/source/fastrpc/ssc_imu.rs b/src/input/source/fastrpc/ssc_imu.rs
+index 15c5f78..81f03f0 100644
+--- a/src/input/source/fastrpc/ssc_imu.rs
++++ b/src/input/source/fastrpc/ssc_imu.rs
+@@ -90,11 +90,10 @@ fn translate_event(event: ssc::event::Event) -> NativeEvent {
+         ssc::event::Event::Gyro(data) => {
+             let cap = Capability::Gyroscope(Source::Center);
+             let value = InputValue::Vector3 {
+-                // Similar to bmi_imu, these values needs to be scaled a bunch
+-                // This seems close to correct, needs some more testing
+-                x: Some(data.roll.to_degrees() * 16.0),
+-                y: Some(data.pitch.to_degrees() * 16.0),
+-                z: Some(data.yaw.to_degrees() * 16.0),
++                // libssc reports rad/s, the unit InputPlumber carries; targets scale it
++                x: Some(data.roll),
++                y: Some(data.pitch),
++                z: Some(data.yaw),
+             };
+             NativeEvent::new(cap, value)
+         }

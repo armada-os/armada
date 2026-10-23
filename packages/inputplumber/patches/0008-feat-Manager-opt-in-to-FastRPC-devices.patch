@@ -1,0 +1,46 @@
+From 6fbaf21acaaa94deb6177206d9d3337ce554c180 Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Thu, 1 Oct 2026 12:00:00 +0200
+Subject: [PATCH] feat(Manager): opt in to FastRPC devices with
+ INPUTPLUMBER_FASTRPC
+
+---
+ src/input/manager.rs | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/input/manager.rs b/src/input/manager.rs
+index aae8efb..9c51c34 100644
+--- a/src/input/manager.rs
++++ b/src/input/manager.rs
+@@ -194,6 +194,8 @@ pub struct Manager {
+     /// Devices that udev has not finished initializing, keyed by
+     /// (subsystem, sysname) with the recheck attempt count
+     uninitialized_udev_devices: HashMap<(String, String), u32>,
++    /// Whether FastRPC source devices are managed, opted in with INPUTPLUMBER_FASTRPC=1
++    fastrpc_enabled: bool,
+ }
+ 
+ impl Manager {
+@@ -234,6 +236,7 @@ impl Manager {
+             composite_device_targets: HashMap::new(),
+             composite_device_tasks: Default::default(),
+             manage_all_devices: false,
++            fastrpc_enabled: std::env::var("INPUTPLUMBER_FASTRPC").is_ok_and(|v| v == "1"),
+             target_gamepad_order: vec![],
+             target_gamepad_order_changing: false,
+             uninitialized_udev_devices: HashMap::new(),
+@@ -1608,8 +1611,12 @@ impl Manager {
+                     device.sysname()
+                 );
+ 
+-                // Check to see if the device is virtual
+-                if device.is_virtual() {
++                if !self.fastrpc_enabled {
++                    log::debug!(
++                        "FastRPC devices are disabled, skipping {dev_name} ({dev_sysname})"
++                    );
++                    notify_device_added = false;
++                } else if device.is_virtual() {
+                     // note: FastRPC devices seem to always be virtual, allow it
+                     log::trace!(
+                         "{dev_name} ({dev_sysname}) is virtual, using it anyways (fastrpc)"

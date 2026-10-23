@@ -29,6 +29,15 @@ FROM scratch AS out-armada-rgb
 COPY --from=pkg-armada-rgb /work/out/ /rpms/
 
 
+FROM builder-base AS pkg-armada-ssc
+COPY armada-ssc/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-armada-ssc
+COPY --from=pkg-armada-ssc /work/out/ /rpms/
+
+
 FROM builder-base AS pkg-armada-splash
 COPY armada-splash/ /work/
 WORKDIR /work
@@ -75,6 +84,26 @@ RUN ./build.sh && /src/scrub-scratch.sh
 
 FROM scratch AS out-inputplumber
 COPY --from=pkg-inputplumber /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-libssc
+COPY TERRA.env /src/
+COPY libssc/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-libssc
+COPY --from=pkg-libssc /work/out/ /rpms/
+
+
+FROM builder-base AS pkg-hexagonrpc
+COPY TERRA.env /src/
+COPY hexagonrpc/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-hexagonrpc
+COPY --from=pkg-hexagonrpc /work/out/ /rpms/
 
 
 FROM builder-base AS pkg-jupiter-hw-support

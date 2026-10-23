@@ -718,6 +718,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0622-drm-msm-a6xx-mask-the-hfi-interrupt-before-booting-the-gmu.patch`
   source: armada
   upstream: local
+- `patches/0623-arm64-dts-qcom-sm8550-sm8650-add-the-ADSP-FastRPC-remote-heap.patch`
+  source: https://github.com/hashtagbasit/SteamOS-ARM-Port/blob/162a3d97e61d94e0740193a8af49fc95de408439/external-and-mods/kernel-sm8550/dts/qcs8550-ayn-odin2-gyro.dtsi
+  upstream: not submitted
+  notes: justjoseorg's heap node, memory-region and qcom,vmids, moved from a board file into the SM8550, QCS8550 and SM8650 SoC dtsi so every board on those SoCs has them; qcom,fastrpc-adsp-sensors-pdr is dropped because this kernel does not read it.
 - `dts/qcs8550-ayaneo-pocketace.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/linux/dts/qcom/qcs8550-ayaneo-pocketace.dts
 - `dts/qcs8550-ayaneo-pocket-common.dtsi`

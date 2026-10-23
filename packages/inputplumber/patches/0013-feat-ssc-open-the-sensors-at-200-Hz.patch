@@ -1,0 +1,79 @@
+From 38a07fa0ca257e557a9847c861ba25a0f1c0d8f0 Mon Sep 17 00:00:00 2001
+From: Armada <noreply@armada.local>
+Date: Thu, 22 Oct 2026 12:00:00 +0200
+Subject: [PATCH] feat(ssc): open the sensors at 200 Hz
+
+libssc opens continuous sensors at their first advertised rate, which on
+some IMUs is 12.5 Hz, far too slow for gyro aiming. Request 200 Hz through
+ssc_sensor_set_sample_rate() where libssc has it; the SSC adjusts the
+request to a rate the sensor supports.
+---
+ src/drivers/ssc/bindings.rs | 11 +++++++++++
+ src/drivers/ssc/runtime.rs  |  8 ++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index 026a4c8..300cfe9 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -121,6 +121,10 @@ pub type FnSscSensorOpenSync = unsafe extern "C" fn(
+     error: *mut *mut GError,
+ ) -> u32;
+ 
++/// ssc_sensor_set_sample_rate:
++/// Sets the rate a sensor is opened at; call it between new and open.
++pub type FnSscSensorSetSampleRate = unsafe extern "C" fn(sensor: *mut GObject, sample_rate: f32);
++
+ /// Holds handles to the symbols in libssc and its dependencies.
+ /// This should stay thin (just bindings), keep the helper stuff elsewhere (like runtime.rs)
+ /// In the future this file could be replaced using bindgen's dylib support.
+@@ -148,6 +152,8 @@ pub struct SscDylibs {
+     pub ssc_sensor_gyroscope_open_sync: FnSscSensorOpenSync,
+     pub ssc_sensor_accelerometer_new_sync: FnSscSensorNewSync,
+     pub ssc_sensor_accelerometer_open_sync: FnSscSensorOpenSync,
++    /// Not in every libssc; without it sensors open at their first advertised rate.
++    pub ssc_sensor_set_sample_rate: Option<FnSscSensorSetSampleRate>,
+ }
+ 
+ /// Helper function for Library::new to return a nice error
+@@ -206,6 +212,11 @@ impl SscDylibs {
+                     ssc,
+                     "ssc_sensor_accelerometer_open_sync"
+                 )?,
++                ssc_sensor_set_sample_rate: unsafe {
++                    ssc.get::<FnSscSensorSetSampleRate>(b"ssc_sensor_set_sample_rate\0")
++                }
++                .ok()
++                .map(|symbol| *symbol),
+ 
+                 _glib: glib,
+                 _gio: gio,
+diff --git a/src/drivers/ssc/runtime.rs b/src/drivers/ssc/runtime.rs
+index 2de66c3..ca0c12a 100644
+--- a/src/drivers/ssc/runtime.rs
++++ b/src/drivers/ssc/runtime.rs
+@@ -5,6 +5,9 @@ use crate::drivers::ssc::bindings::{
+     GObject, SscDylibs, GFALSE,
+ };
+ 
++/// The first advertised rate libssc otherwise uses is 12.5 Hz on some IMUs.
++const SAMPLE_RATE_HZ: f32 = 200.0;
++
+ pub type MeasurementHandlerCb = Box<dyn FnMut(f32, f32, f32)>;
+ 
+ /// "Trampoline" for the sensor measurement callback. Bounces to the function stored in the data ptr.
+@@ -156,6 +159,11 @@ impl SscRuntime {
+         let sensor = SscObject::new(ptr, self.clone())
+             .map_err(|_| "Failed to instantiate SSC sensor: (got a null pointer)")?;
+ 
++        if let Some(set_sample_rate) = self.dylibs.ssc_sensor_set_sample_rate {
++            // SAFETY: ptr is a live sensor that has not been opened yet.
++            unsafe { set_sample_rate(ptr as *mut GObject, SAMPLE_RATE_HZ) };
++        }
++
+         // "Open" the sensor (make it start doing stuff)
+         // note: We set the data callback later using set_measurement_handler, so this is just new sensor -> open sensor
+         let opened = unsafe {
+-- 
+2.56.0
+

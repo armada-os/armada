@@ -1,0 +1,28 @@
+From cab83c051b9004957666cf81aec25b675307ed6a Mon Sep 17 00:00:00 2001
+From: Armada <noreply@armada.local>
+Date: Thu, 22 Oct 2026 12:00:00 +0200
+Subject: [PATCH] fix(ssc): load libssc by its versioned soname
+
+The unversioned libssc.so is a development symlink that distributions
+ship in a -devel package, so the SSC source failed to load on a runtime
+install. Load libssc.so.2 like the GLib libraries next to it.
+---
+ src/drivers/ssc/bindings.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index 44c0d8a..026a4c8 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -177,7 +177,7 @@ impl SscDylibs {
+         let glib = unsafe { load_library!("libglib-2.0.so.0")? };
+         let gio = unsafe { load_library!("libgio-2.0.so.0")? };
+         let gobject = unsafe { load_library!("libgobject-2.0.so.0")? };
+-        let ssc = unsafe { load_library!("libssc.so")? };
++        let ssc = unsafe { load_library!("libssc.so.2")? };
+ 
+         // SAFETY: Handles possible errors when a symbol doesn't exist, so this is safe as long as our function &
+         // type definitions are correct. The symbols should always be valid as we also keep references to the library handles.
+-- 
+2.56.0
+

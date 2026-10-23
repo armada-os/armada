@@ -1,0 +1,486 @@
+From 8cb6ba9d8471657c05488c67faf7ae1908d76e7f Mon Sep 17 00:00:00 2001
+From: Armada <noreply@armada.local>
+Date: Thu, 22 Oct 2026 12:00:00 +0200
+Subject: [PATCH] fix(ssc): keep retrying until the SSC answers
+
+The SSC usually comes up after InputPlumber starts, and the source only
+tried to open the sensors once, so gyro stayed off until something
+restarted InputPlumber. Open them from poll() and retry whichever is still
+closed every 2 s. An open sensor is kept, since libssc callbacks may still
+reference it.
+
+Each failed libssc open leaks its QRTR socket and name-service lookup, and
+retrying through it hits the kernel's per-node lookup limit, after which no
+QRTR lookup on the system works. So ask the name service for the SSC with a
+short-lived socket first, and only open through libssc once it is listed.
+
+Sensor creation was cancelled after 1 s and open after 4 s. Client setup
+can take longer than 1 s, so creation failed sensors that would have come
+up, and libssc's late completion then used the freed init task; its open
+path frees its task on cancel the same way. Let libssc's own timeouts apply
+instead.
+
+A FastRPC node created after InputPlumber starts was looked up in udev's
+fastrpc subsystem, but udev files it under misc, so the SSC source never
+appeared when the ADSP came up late.
+
+Retrying also made the GError leak matter: free them. A sensor whose open
+failed is deliberately not released, since libssc keeps a report callback
+on it. Treat a FALSE return from open as a failure even when no GError is
+set.
+---
+ src/drivers/ssc/bindings.rs |   7 +++
+ src/drivers/ssc/driver.rs   | 107 ++++++++++++++++++++++++--------
+ src/drivers/ssc/mod.rs      |   1 +
+ src/drivers/ssc/qrtr.rs     | 118 ++++++++++++++++++++++++++++++++++++
+ src/drivers/ssc/runtime.rs  |  67 +++++++-------------
+ src/input/manager.rs        |   3 +-
+ 6 files changed, 233 insertions(+), 70 deletions(-)
+ create mode 100644 src/drivers/ssc/qrtr.rs
+
+diff --git a/src/drivers/ssc/bindings.rs b/src/drivers/ssc/bindings.rs
+index ff93513..44c0d8a 100644
+--- a/src/drivers/ssc/bindings.rs
++++ b/src/drivers/ssc/bindings.rs
+@@ -63,6 +63,11 @@ pub type FnGMainContextIteration =
+ /// https://docs.gtk.org/glib/func.quark_to_string.html
+ pub type FnGQuarkToString = unsafe extern "C" fn(quark: GQuark) -> *const std::ffi::c_char;
+ 
++/// g_error_free:
++/// Frees a GError and its message.
++/// https://docs.gtk.org/glib/method.Error.free.html
++pub type FnGErrorFree = unsafe extern "C" fn(error: *mut GError);
++
+ /* GObject functions */
+ /// g_object_unref:
+ /// Decreases the reference count of the provided object.
+@@ -128,6 +133,7 @@ pub struct SscDylibs {
+     /* GLib */
+     pub g_main_context_iteration: FnGMainContextIteration,
+     pub g_quark_to_string: FnGQuarkToString,
++    pub g_error_free: FnGErrorFree,
+ 
+     /* Gio */
+     pub g_cancellable_new: FnGCancellableNew,
+@@ -179,6 +185,7 @@ impl SscDylibs {
+             Ok(Self {
+                 g_main_context_iteration: *load_symbol!(glib, "g_main_context_iteration")?,
+                 g_quark_to_string: *load_symbol!(glib, "g_quark_to_string")?,
++                g_error_free: *load_symbol!(glib, "g_error_free")?,
+ 
+                 g_cancellable_new: *load_symbol!(gio, "g_cancellable_new")?,
+                 g_cancellable_cancel: *load_symbol!(gio, "g_cancellable_cancel")?,
+diff --git a/src/drivers/ssc/driver.rs b/src/drivers/ssc/driver.rs
+index 49bacad..6c675f9 100644
+--- a/src/drivers/ssc/driver.rs
++++ b/src/drivers/ssc/driver.rs
+@@ -1,6 +1,7 @@
+ use std::collections::HashSet;
+ use std::error::Error;
+ use std::sync::Arc;
++use std::time::{Duration, Instant};
+ use tokio::{sync::mpsc, sync::mpsc::error::TryRecvError};
+ 
+ use crate::config::MountMatrix;
+@@ -9,12 +10,22 @@ use crate::input::capability::{Capability, Source};
+ use super::event::{AxisData, Event};
+ use super::runtime::{SscObject, SscRuntime};
+ 
++/// How long to wait between attempts to open the sensors while the SSC is down.
++const OPEN_RETRY: Duration = Duration::from_secs(2);
++/// QMI service number of the Snapdragon Sensor Core.
++const SSC_SERVICE: u32 = 400;
++
+ pub struct Driver {
+     runtime: Arc<SscRuntime>,
+-    _gyroscope: SscObject,
+-    _accelerometer: SscObject,
++    // Opened from poll() once the SSC answers. An open sensor is never torn
++    // down to retry the other one: libssc callbacks may still reference it.
++    gyroscope: Option<SscObject>,
++    accelerometer: Option<SscObject>,
++    next_open: Instant,
++    open_failed: bool,
+ 
+     // Event handling / polling
++    tx: mpsc::Sender<Event>,
+     rx: mpsc::Receiver<Event>,
+     filtered_events: HashSet<Capability>,
+ 
+@@ -26,36 +37,82 @@ impl Driver {
+         let runtime = SscRuntime::load()?;
+         let (tx, rx) = mpsc::channel::<Event>(1024);
+ 
+-        let gyroscope = runtime.clone().create_gyroscope()?;
+-        let gyroscope_tx = tx.clone();
+-        gyroscope.set_measurement_handler(move |x, y, z| {
+-            _ = gyroscope_tx.try_send(Event::Gyro(AxisData {
+-                roll: x as f64,
+-                pitch: y as f64,
+-                yaw: z as f64,
+-            }));
+-        });
+-
+-        let accelerometer = runtime.clone().create_accelerometer()?;
+-        let accelerometer_tx = tx.clone();
+-        accelerometer.set_measurement_handler(move |x, y, z| {
+-            _ = accelerometer_tx.try_send(Event::Accelerometer(AxisData {
+-                roll: x as f64,
+-                pitch: y as f64,
+-                yaw: z as f64,
+-            }));
+-        });
+-
+         Ok(Self {
+             runtime,
+-            _gyroscope: gyroscope,
+-            _accelerometer: accelerometer,
++            gyroscope: None,
++            accelerometer: None,
++            next_open: Instant::now(),
++            open_failed: false,
++            tx,
+             rx,
+             filtered_events: Default::default(),
+             mount_matrix: mount_matrix.unwrap_or_default(),
+         })
+     }
+ 
++    /// Open whichever sensors are still closed, at most once per OPEN_RETRY.
++    fn try_open(&mut self) {
++        if (self.gyroscope.is_some() && self.accelerometer.is_some())
++            || Instant::now() < self.next_open
++        {
++            return;
++        }
++
++        // libssc leaks a QRTR lookup per failed open; see qrtr.rs.
++        if !super::qrtr::service_present(SSC_SERVICE) {
++            self.next_open = Instant::now() + OPEN_RETRY;
++            return;
++        }
++
++        let mut error = None;
++        if self.gyroscope.is_none() {
++            match self.runtime.clone().create_gyroscope() {
++                Ok(sensor) => {
++                    let tx = self.tx.clone();
++                    sensor.set_measurement_handler(move |x, y, z| {
++                        _ = tx.try_send(Event::Gyro(AxisData {
++                            roll: x as f64,
++                            pitch: y as f64,
++                            yaw: z as f64,
++                        }));
++                    });
++                    self.gyroscope = Some(sensor);
++                }
++                Err(e) => error = Some(e),
++            }
++        }
++        if self.accelerometer.is_none() {
++            match self.runtime.clone().create_accelerometer() {
++                Ok(sensor) => {
++                    let tx = self.tx.clone();
++                    sensor.set_measurement_handler(move |x, y, z| {
++                        _ = tx.try_send(Event::Accelerometer(AxisData {
++                            roll: x as f64,
++                            pitch: y as f64,
++                            yaw: z as f64,
++                        }));
++                    });
++                    self.accelerometer = Some(sensor);
++                }
++                Err(e) => error = Some(e),
++            }
++        }
++
++        // Samples queued while an open blocked are stale.
++        while self.rx.try_recv().is_ok() {}
++
++        match error {
++            None => log::info!("SSC sensors opened"),
++            Some(e) => {
++                if !self.open_failed {
++                    log::warn!("SSC not ready, will keep retrying: {e}");
++                    self.open_failed = true;
++                }
++                self.next_open = Instant::now() + OPEN_RETRY;
++            }
++        }
++    }
++
+     pub fn update_filtered_events(&mut self, events: HashSet<Capability>) {
+         self.filtered_events = events;
+     }
+@@ -68,6 +125,8 @@ impl Driver {
+ 
+     /// Poll the device for data
+     pub fn poll(&mut self) -> Result<Vec<Event>, Box<dyn Error + Send + Sync>> {
++        self.try_open();
++
+         // libssc uses GLib and relies on the GLib main loop
+         // Instead of creating a main loop and main context then managing it alongside InputPlumber's loop etc,
+         // we can just perform an iteration of the GLib context every poll
+diff --git a/src/drivers/ssc/mod.rs b/src/drivers/ssc/mod.rs
+index e173c8d..d3062e4 100644
+--- a/src/drivers/ssc/mod.rs
++++ b/src/drivers/ssc/mod.rs
+@@ -2,3 +2,4 @@ mod bindings;
+ pub mod driver;
+ pub mod event;
+ mod runtime;
++mod qrtr;
+diff --git a/src/drivers/ssc/qrtr.rs b/src/drivers/ssc/qrtr.rs
+new file mode 100644
+index 0000000..e759bca
+--- /dev/null
++++ b/src/drivers/ssc/qrtr.rs
+@@ -0,0 +1,118 @@
++//! QRTR name-service lookup without libssc: each failed libssc open leaks a
++//! QRTR lookup, and retrying through it exhausts the kernel's per-node limit.
++
++use std::mem::size_of;
++use std::time::{Duration, Instant};
++
++use nix::libc;
++
++const AF_QIPCRTR: libc::c_int = 42;
++const QRTR_PORT_CTRL: u32 = 0xffff_fffe;
++const QRTR_TYPE_NEW_SERVER: u32 = 4;
++const QRTR_TYPE_NEW_LOOKUP: u32 = 10;
++
++#[repr(C)]
++struct SockaddrQrtr {
++    sq_family: libc::sa_family_t,
++    sq_node: u32,
++    sq_port: u32,
++}
++
++/// struct qrtr_ctrl_pkt with the server member of its union.
++#[repr(C)]
++#[derive(Default)]
++struct CtrlPkt {
++    cmd: u32,
++    service: u32,
++    instance: u32,
++    node: u32,
++    port: u32,
++}
++
++struct Fd(libc::c_int);
++
++impl Drop for Fd {
++    fn drop(&mut self) {
++        // SAFETY: the descriptor is owned here and closed once.
++        unsafe { libc::close(self.0) };
++    }
++}
++
++/// True if the name service lists at least one server for `service`.
++pub fn service_present(service: u32) -> bool {
++    // SAFETY: plain socket calls on a descriptor this function owns; every
++    // buffer passed matches the size given with it.
++    unsafe {
++        let fd = libc::socket(AF_QIPCRTR, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0);
++        if fd < 0 {
++            return false;
++        }
++        let fd = Fd(fd);
++
++        let timeout = libc::timeval { tv_sec: 1, tv_usec: 0 };
++        if libc::setsockopt(
++            fd.0,
++            libc::SOL_SOCKET,
++            libc::SO_RCVTIMEO,
++            &timeout as *const _ as *const libc::c_void,
++            size_of::<libc::timeval>() as libc::socklen_t,
++        ) < 0
++        {
++            return false;
++        }
++
++        let mut local: SockaddrQrtr = std::mem::zeroed();
++        let mut len = size_of::<SockaddrQrtr>() as libc::socklen_t;
++        if libc::getsockname(fd.0, &mut local as *mut _ as *mut libc::sockaddr, &mut len) < 0 {
++            return false;
++        }
++
++        let ctrl = SockaddrQrtr {
++            sq_family: AF_QIPCRTR as libc::sa_family_t,
++            sq_node: local.sq_node,
++            sq_port: QRTR_PORT_CTRL,
++        };
++        let lookup = CtrlPkt {
++            cmd: QRTR_TYPE_NEW_LOOKUP.to_le(),
++            service: service.to_le(),
++            ..Default::default()
++        };
++        if libc::sendto(
++            fd.0,
++            &lookup as *const _ as *const libc::c_void,
++            size_of::<CtrlPkt>(),
++            0,
++            &ctrl as *const _ as *const libc::sockaddr,
++            size_of::<SockaddrQrtr>() as libc::socklen_t,
++        ) < 0
++        {
++            return false;
++        }
++
++        // The name service answers with one NEW_SERVER per match, then an
++        // all-zero NEW_SERVER.
++        let deadline = Instant::now() + Duration::from_secs(1);
++        while Instant::now() < deadline {
++            let mut pkt = CtrlPkt::default();
++            let n = libc::recv(
++                fd.0,
++                &mut pkt as *mut _ as *mut libc::c_void,
++                size_of::<CtrlPkt>(),
++                0,
++            );
++            if n < size_of::<CtrlPkt>() as isize {
++                return false;
++            }
++            if u32::from_le(pkt.cmd) != QRTR_TYPE_NEW_SERVER {
++                continue;
++            }
++            if pkt.service == 0 && pkt.instance == 0 && pkt.node == 0 && pkt.port == 0 {
++                return false;
++            }
++            if u32::from_le(pkt.service) == service {
++                return true;
++            }
++        }
++        false
++    }
++}
+diff --git a/src/drivers/ssc/runtime.rs b/src/drivers/ssc/runtime.rs
+index f1df504..2de66c3 100644
+--- a/src/drivers/ssc/runtime.rs
++++ b/src/drivers/ssc/runtime.rs
+@@ -1,7 +1,7 @@
+-use std::{error::Error, ptr::null_mut, sync::Arc, time::Duration};
++use std::{error::Error, ptr::null_mut, sync::Arc};
+ 
+ use crate::drivers::ssc::bindings::{
+-    gpointer, FnSscSensorNewSync, FnSscSensorOpenSync, GCallback, GCancellable, GClosure, GError,
++    gpointer, FnSscSensorNewSync, FnSscSensorOpenSync, GCallback, GClosure, GError,
+     GObject, SscDylibs, GFALSE,
+ };
+ 
+@@ -78,38 +78,6 @@ impl SscObject {
+     }
+ }
+ 
+-/// Wrapper for GCancellable
+-struct Cancellable {
+-    _ptr: *mut GCancellable,
+-}
+-
+-impl Cancellable {
+-    fn new(ptr: *mut GCancellable) -> Self {
+-        Self { _ptr: ptr }
+-    }
+-
+-    pub fn ptr(&self) -> *mut GCancellable {
+-        self._ptr
+-    }
+-
+-    pub fn cancel_after(timeout: Duration, runtime: Arc<SscRuntime>) -> Self {
+-        // SAFETY: g_cancellable_new is valid as long as runtime is valid.
+-        let this = unsafe { Self::new((runtime.dylibs.g_cancellable_new)()) };
+-        let this_ptr_u64 = this.ptr() as std::ffi::c_ulong;
+-
+-        std::thread::spawn(move || {
+-            std::thread::sleep(timeout);
+-            // SAFETY: These handles are valid, we keep the runtime instance alive for this thread's lifetime
+-            unsafe {
+-                (runtime.dylibs.g_cancellable_cancel)(this_ptr_u64 as *mut GCancellable);
+-                (runtime.dylibs.g_object_unref)(this_ptr_u64 as *mut _);
+-            }
+-        });
+-
+-        this
+-    }
+-}
+-
+ /// Contains the dynamic libraries and all method pointers needed for libssc to work.
+ /// This currently consists of: glib-2.0, gobject-2.0, gio-2.0, libssc
+ pub struct SscRuntime {
+@@ -139,6 +107,8 @@ impl SscRuntime {
+ 
+             let domain = unsafe { (*error).domain };
+             let code = unsafe { (*error).code };
++            // SAFETY: the caller owns error and does not use it after this.
++            unsafe { (self.dylibs.g_error_free)(error) };
+ 
+             Some(format!(
+                 "GLib error: domain = {} / {}, code = {}",
+@@ -173,8 +143,9 @@ impl SscRuntime {
+     ) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
+         let mut err: *mut GError = null_mut();
+         let ptr = unsafe {
+-            let cancellable = Cancellable::cancel_after(Duration::from_secs(1), self.clone());
+-            (new_fn)(cancellable.ptr(), &mut err)
++            // No cancellables: libssc frees its init and open tasks on cancel
++            // while QMI replies for them are still in flight.
++            (new_fn)(std::ptr::null_mut(), &mut err)
+         };
+ 
+         // Instantiate the sensor and get our GObject ptr from it
+@@ -182,23 +153,29 @@ impl SscRuntime {
+             return Err(format!("Failed to instantiate SSC sensor: {v}").into());
+         }
+ 
+-        if ptr.is_null() {
+-            return Err("Failed to instantiate SSC sensor: (got a null pointer)".into());
+-        }
++        let sensor = SscObject::new(ptr, self.clone())
++            .map_err(|_| "Failed to instantiate SSC sensor: (got a null pointer)")?;
+ 
+         // "Open" the sensor (make it start doing stuff)
+         // note: We set the data callback later using set_measurement_handler, so this is just new sensor -> open sensor
+-        unsafe {
++        let opened = unsafe {
+             err = std::ptr::null_mut();
+-            let cancellable = Cancellable::cancel_after(Duration::from_secs(4), self.clone());
+-            (open_fn)(ptr, cancellable.ptr(), &mut err)
++            (open_fn)(ptr, std::ptr::null_mut(), &mut err)
+         };
+ 
+-        if let Some(v) = self.convert_glib_error(err) {
+-            return Err(format!("Failed to open SSC sensor: {v}").into());
++        let failed = match self.convert_glib_error(err) {
++            Some(v) => Some(format!("Failed to open SSC sensor: {v}")),
++            None if opened == 0 => Some("Failed to open SSC sensor".to_string()),
++            None => None,
++        };
++        if let Some(msg) = failed {
++            // libssc keeps a report callback on a sensor whose open failed, so
++            // releasing it could leave that callback with a freed pointer.
++            std::mem::forget(sensor);
++            return Err(msg.into());
+         }
+ 
+-        SscObject::new(ptr, self).map_err(|_| "Failed to create SSC measurement sensor".into())
++        Ok(sensor)
+     }
+ 
+     pub fn create_gyroscope(self: Arc<Self>) -> Result<SscObject, Box<dyn Error + Send + Sync>> {
+diff --git a/src/input/manager.rs b/src/input/manager.rs
+index 9c51c34..3e2cce1 100644
+--- a/src/input/manager.rs
++++ b/src/input/manager.rs
+@@ -1755,7 +1755,8 @@ impl Manager {
+                         match base_path.as_str() {
+                             "/dev" => match &name {
+                                 x if x.starts_with("hidraw") => Some("hidraw"),
+-                                x if x.starts_with("fastrpc") => Some("fastrpc"),
++                                // udev files FastRPC nodes under misc
++                                x if x.starts_with("fastrpc") => Some("misc"),
+                                 _ => None,
+                             },
+                             "/dev/input" => Some("input"),
+-- 
+2.56.0
+
