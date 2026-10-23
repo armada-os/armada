@@ -15,5 +15,13 @@
       "asound": true
     },
     "wineTopology": true
+  },
+  "games": {
+    "1145350": {
+      "name": "Hades II",
+      "env": {
+        "VKD3D_FEATURE_LEVEL": "12_0"
+      }
+    }
   }
 }
