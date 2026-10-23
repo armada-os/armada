@@ -394,6 +394,20 @@
       }
     },
     {
+      "id": "quiver-launcher",
+      "name": "Quiver Launcher",
+      "summary": "App manager and launcher",
+      "category": "applications",
+      "icon": "https://raw.githubusercontent.com/tgeorgiadis/quiver-launcher/main/Assets/quiver-icon.png",
+      "note": "v3.5.1 and later supported",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/tgeorgiadis/quiver-launcher/releases?per_page=15",
+        "asset": "QuiverLauncher-linux-arm64\\.AppImage$",
+        "filename": "QuiverLauncher.AppImage"
+      }
+    },
+    {
       "id": "decky-lsfg-vk",
       "name": "Decky LSFG-VK",
       "summary": "Lossless Scaling frame generation",
