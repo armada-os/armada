@@ -3,7 +3,6 @@ Description=Apply Armada Input Calibration
 DefaultDependencies=no
 After=systemd-modules-load.service
 Before=inputplumber.service
-ConditionPathExists=/etc/armada/input-calibration.json
 
 [Service]
 Type=oneshot
