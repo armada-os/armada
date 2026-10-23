@@ -83,6 +83,7 @@ case "${ARMADA_SOC_CLASS:-}" in
         # references run SM8250 unrestricted; the A55s are too weak to
         # carry all IRQ handling
         : "${ARMADA_IRQ_CORES=}"
+        : "${ARMADA_GPU_STOCK_MAX_MHZ:=587}"
         ;;
     SM8550)
         : "${ARMADA_LITTLE_CORES=0-2}"
@@ -129,6 +130,7 @@ vars=(
     ARMADA_BIG_CORES
     ARMADA_PRIME_CORES
     ARMADA_IRQ_CORES
+    ARMADA_GPU_STOCK_MAX_MHZ
 )
 
 for var in "${vars[@]}"; do

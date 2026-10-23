@@ -51,13 +51,40 @@ printf '{"global":{}}\n' > "$TWEAKS_FIXTURE"
     exit 1
 }
 
+PRIV_WRITE="$WORK/steamos-priv-write"
+PRIV_WRITE_CALLS="$WORK/armada-power-calls"
+cat > "$WORK/armada-power" <<'EOF'
+#!/usr/bin/bash
+if [[ "$1" == status ]]; then
+    printf 'manual_gpu_clock_min=305\nmanual_gpu_clock_max=441\n'
+else
+    printf '%s\n' "$*" >> "$ARMADA_POWER_CALLS"
+fi
+EOF
+chmod +x "$WORK/armada-power"
+sed -e "s|/usr/bin/armada-power|$WORK/armada-power|g" -e 's|\$EUID -ne 0|1 -eq 0|' \
+    -e 's|systemd-cat -t armada-steamos-priv-write -p info|cat >/dev/null|' \
+    "$ROOT/system_files/usr/bin/steamos-polkit-helpers/steamos-priv-write" > "$PRIV_WRITE"
+for level in high manual low; do
+    ARMADA_POWER_CALLS="$PRIV_WRITE_CALLS" bash "$PRIV_WRITE" \
+        /sys/class/drm/card0/device/power_dpm_force_performance_level "$level"
+done
+[[ "$(cat "$PRIV_WRITE_CALLS")" == $'gpu-manual 0\ngpu-manual 0\ngpu-manual 305' ]] || {
+    printf 'FAIL: steamos-priv-write high/manual must request the profile cap, low the floor\n' >&2
+    exit 1
+}
+
 python3 - "$ROOT" "$WORK" <<'PYEOF'
+import configparser
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import pathlib
 import selectors
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -517,6 +544,16 @@ check("device-env AYANEO Pocket MICRO 2 profile",
       pocket_micro2.get("ARMADA_SOC_CLASS") == "SM8250" and
       pocket_micro2.get("ARMADA_PANEL_ORIENTATION") == "right" and
       pocket_micro2.get("ARMADA_GAMESCOPE_FAKE_OUTPUT_MM") == "177x118")
+check("device-env PM2 stock GPU max", pocket_micro2.get("ARMADA_GPU_STOCK_MAX_MHZ") == "587")
+check("device-env RP5 stock GPU max", pocket5.get("ARMADA_GPU_STOCK_MAX_MHZ") == "587")
+check("device-env SM8750 stock GPU max empty", odin3.get("ARMADA_GPU_STOCK_MAX_MHZ") == "''")
+override_devices = os.path.join(WORK, "devices")
+shutil.copytree(devices_dir, override_devices)
+with open(os.path.join(override_devices, "ayaneo-pocket-micro2.conf"), "a") as f:
+    f.write("ARMADA_GPU_STOCK_MAX_MHZ=670\n")
+pocket_micro2_override = run_device_env("AYANEO Pocket MICRO 2", {"ARMADA_DEVICE_DIR": override_devices})
+check("device-env device conf overrides stock GPU max",
+      pocket_micro2_override.get("ARMADA_GPU_STOCK_MAX_MHZ") == "670")
 
 # --- armada-powerd: config parsing ------------------------------------------
 powerd = load_script("armada-powerd")
@@ -547,6 +584,340 @@ full_mask = sum(1 << c for c in ALL)
 check("irq auto empty = all", power.irq_mask() == full_mask)
 power.system_config = {"irq_cores": "garbage!"}
 check("irq bad falls back to all", power.irq_mask() == full_mask)
+
+factory_parser = configparser.ConfigParser()
+factory_parser.read(factory)
+check("factory profiles carry no _mhz keys",
+      not any(factory_parser.has_option(section, key)
+              for section in factory_parser.sections()
+              for key in ("gpu_max_mhz", "gpu_min_mhz", "cpu_max_mhz")))
+check("factory profiles carry no cpu_max_policy keys",
+      not any(key.startswith("cpu_max_policy")
+              for section in factory_parser.sections() if section.startswith("profile.")
+              for key in factory_parser.options(section)))
+
+sysfs = os.path.join(WORK, "sys")
+fake_gpu = os.path.join(sysfs, "class/devfreq/3d00000.gpu")
+os.makedirs(fake_gpu)
+with open(os.path.join(fake_gpu, "available_frequencies"), "w") as f:
+    f.write("305000000 400000000 441600000 490000000 525000000 587000000 650000000 670000000 "
+            "700000000 725000000 750000000 800000000 855000000 905000000 925000000\n")
+with open(os.path.join(fake_gpu, "governor"), "w") as f:
+    f.write("simple_ondemand\n")
+fake_cpufreq = os.path.join(sysfs, "devices/system/cpu/cpufreq")
+ladder0 = "300000 1075200 1171200 1420800 1612800 1804800"
+ladder4 = "710400 1497600 1612800 1804800 2419200"
+ladder7 = "844800 1670400 1785600 2841600"
+
+
+def write_policies(cpufreq, policies):
+    for policy, freqs, related in policies:
+        os.makedirs(os.path.join(cpufreq, policy))
+        with open(os.path.join(cpufreq, policy, "scaling_available_frequencies"), "w") as f:
+            f.write(freqs + "\n")
+        if related is not None:
+            with open(os.path.join(cpufreq, policy, "related_cpus"), "w") as f:
+                f.write(related + "\n")
+
+
+write_policies(fake_cpufreq, (("policy0", ladder0, "0 1 2 3"),
+                              ("policy4", ladder4, "4 5 6"),
+                              ("policy7", ladder7, "7")))
+sys8550 = os.path.join(WORK, "sys8550")
+fake_cpufreq8550 = os.path.join(sys8550, "devices/system/cpu/cpufreq")
+write_policies(fake_cpufreq8550, (("policy0", ladder0, "0 1 2"),
+                                  ("policy3", ladder4, "3 4 5 6"),
+                                  ("policy7", ladder7, None)))
+sys8250 = os.path.join(WORK, "sys8250")
+write_policies(os.path.join(sys8250, "devices/system/cpu/cpufreq"),
+               (("policy0", "300000 1075200 1708800 1804800", "0 1 2 3"),
+                ("policy4", "710400 1478400 1862400 2246400 2419200", "4 5 6"),
+                ("policy7", "844800 1862400 2073600 3091200", "7")))
+
+
+def use_tree(path):
+    power.cpu_policies = sorted(powerd.Path(path, "devices/system/cpu/cpufreq").glob("policy*"))
+
+
+power.gpu = powerd.Path(fake_gpu)
+use_tree(sysfs)
+limits_etc = os.path.join(WORK, "etc-limits.conf")
+
+
+def load_limits(etc_text="", env=None):
+    with open(limits_etc, "w") as f:
+        f.write(etc_text)
+    powerd.CONFIG_FILE = powerd.Path(limits_etc)
+    parsed_limits = power.parse_config()
+    power.underclock_config = parsed_limits[1]
+    power.profile_config = parsed_limits[3]
+    power.env = env or {"ARMADA_SOC_CLASS": "SM8250", "ARMADA_GPU_STOCK_MAX_MHZ": "587"}
+    power.profile = "balanced"
+    power.apply_underclock_refs()
+    return power.profile_config
+
+
+def gpu_limits(profile):
+    power.profile = profile
+    return power.resolved_gpu_auto_limits()
+
+
+def cpu_caps(profile):
+    power.profile = profile
+    return power.resolved_cpu_caps()
+
+
+mhz_profiles = load_limits("[profile.eco]\ngpu_max_mhz=490\n")
+check("gpu_max_mhz parsed", mhz_profiles["eco"].get("gpu_max_mhz") == 490)
+check("absent _mhz parses as None",
+      "gpu_max_mhz" in mhz_profiles["balanced"] and mhz_profiles["balanced"]["gpu_max_mhz"] is None)
+ratio_half = load_limits("[profile.eco]\ngpu_max=0.5\n")
+ratio_half_target = gpu_limits("eco")
+for bad in ("abc", "0", "-5", "nan", "inf"):
+    bad_log = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(bad_log):
+            bad_profiles = load_limits(f"[profile.eco]\ngpu_max_mhz={bad}\ngpu_max=0.5\n")
+        check(f"gpu_max_mhz={bad} parses as None", bad_profiles["eco"]["gpu_max_mhz"] is None)
+        check(f"gpu_max_mhz={bad} falls back to gpu_max ratio", gpu_limits("eco") == ratio_half_target)
+        check(f"gpu_max_mhz={bad} logs a warning", f"gpu_max_mhz={bad}" in bad_log.getvalue())
+    except ValueError as exc:
+        check(f"gpu_max_mhz={bad} falls back to gpu_max ratio ({exc})", False)
+
+fallback_etc = os.path.join(WORK, "etc-fallback.conf")
+with open(fallback_etc, "w") as f:
+    f.write("[profile.eco]\ngpu_max_mhz=abc\ngpu_max=0.5\n")
+powerd.CONFIG_FILE = powerd.Path(fallback_etc)
+with contextlib.redirect_stderr(io.StringIO()):
+    power.load_config()
+check("powerd invalid gpu_max_mhz keeps /etc", os.path.exists(fallback_etc))
+check("powerd invalid gpu_max_mhz keeps gpu_max ratio", power.profile_config["eco"]["gpu_max"] == 0.5)
+
+with open(fallback_etc, "w") as f:
+    f.write("[profile.eco]\ngpu_max=nan\n")
+with contextlib.redirect_stderr(io.StringIO()):
+    power.load_config()
+factory_gpu_max = power.parse_config(include_user=False)[3]["eco"]["gpu_max"]
+check("powerd non finite ratio restores factory", power.profile_config["eco"]["gpu_max"] == factory_gpu_max)
+check("powerd non finite ratio removes /etc", not os.path.exists(fallback_etc))
+check("powerd non finite ratio keeps a backup",
+      any(powerd.Path(WORK).glob("etc-fallback.conf.invalid-*")))
+
+load_limits()
+check("SM8250 balanced GPU max is stock", gpu_limits("balanced")[1] == 587000000)
+check("SM8250 eco GPU max is ratio of stock", gpu_limits("eco")[1] == 441600000)
+check("SM8250 performance GPU min clamped to stock", gpu_limits("performance") == (587000000, 587000000))
+load_limits("[profile.eco]\ngpu_max_mhz=700\n")
+check("gpu_max_mhz above stock", gpu_limits("eco")[1] == 700000000)
+load_limits("[profile.eco]\ngpu_max_mhz=441\n")
+check("gpu_max_mhz floor semantics", gpu_limits("eco")[1] == 441600000)
+load_limits(env={"ARMADA_SOC_CLASS": "SM8250", "ARMADA_GPU_STOCK_MAX_MHZ": ""})
+check("empty stock GPU max uses ladder top", gpu_limits("balanced")[1] == 925000000)
+check("empty stock GPU max eco ratio of top", gpu_limits("eco")[1] == 725000000)
+check("empty stock GPU max performance uses ladder top", gpu_limits("performance") == (925000000, 925000000))
+
+load_limits("[profile.eco]\ngpu_min_mhz=490\ngpu_max_mhz=587\n")
+check("gpu_min_mhz parsed", power.profile_config["eco"].get("gpu_min_mhz") == 490)
+check("gpu_min_mhz sets the GPU floor", gpu_limits("eco") == (490000000, 587000000))
+load_limits("[profile.eco]\ngpu_min_mhz=490\n")
+check("gpu_min_mhz clamped to GPU max", gpu_limits("eco") == (441600000, 441600000))
+load_limits("[profile.eco]\ngpu_min=0.5\n")
+check("gpu_min ratio of stock GPU max", gpu_limits("eco")[0] == 305000000)
+load_limits("[profile.balanced]\ngpu_min=0.8\n")
+check("gpu_min ratio floor semantics", gpu_limits("balanced")[0] == 441600000)
+check("absent gpu_min_mhz parses as None",
+      "gpu_min_mhz" in power.profile_config["balanced"] and power.profile_config["balanced"]["gpu_min_mhz"] is None)
+try:
+    with contextlib.redirect_stderr(io.StringIO()):
+        load_limits("[profile.eco]\ngpu_min_mhz=0\n")
+    check("gpu_min_mhz=0 parses as None", power.profile_config["eco"]["gpu_min_mhz"] is None)
+    check("gpu_min_mhz=0 falls back to gpu_min ratio", gpu_limits("eco")[0] == 305000000)
+except ValueError as exc:
+    check(f"gpu_min_mhz=0 parses as None ({exc})", False)
+
+generic_env = {"ARMADA_SOC_CLASS": "", "ARMADA_GPU_STOCK_MAX_MHZ": "587"}
+load_limits(env=generic_env)
+check("unknown class eco cpu_max ratio caps",
+      cpu_caps("eco") == {"policy0": 1171200, "policy4": 1497600, "policy7": 1785600})
+load_limits("[profile.eco]\ncpu_max=0.64\n", env=generic_env)
+check("unknown class eco cpu_max 0.64 differs on silver only",
+      cpu_caps("eco") == {"policy0": 1075200, "policy4": 1497600, "policy7": 1785600})
+load_limits("[profile.eco]\ncpu_max_policy7=1670400\n", env=generic_env)
+check("unknown class explicit cpu_max_policy7 applies",
+      cpu_caps("eco") == {"policy0": 1171200, "policy4": 1497600, "policy7": 1670400})
+load_limits(env=generic_env)
+check("unknown class performance caps are tops",
+      cpu_caps("performance") == {"policy0": 1804800, "policy4": 2419200, "policy7": 2841600})
+
+use_tree(sys8250)
+sm8250_env = {"ARMADA_SOC_CLASS": "SM8250", "ARMADA_GPU_STOCK_MAX_MHZ": "587"}
+load_limits(env=sm8250_env)
+check("SM8250 eco large caps",
+      cpu_caps("eco") == {"policy0": 1708800, "policy4": 1478400, "policy7": 1862400})
+check("SM8250 balanced medium caps",
+      cpu_caps("balanced") == {"policy0": 1804800, "policy4": 1862400, "policy7": 2073600})
+check("SM8250 performance caps are tops",
+      cpu_caps("performance") == {"policy0": 1804800, "policy4": 2419200, "policy7": 3091200})
+load_limits("[profile.eco]\ncpu_max=0.65\n", env=sm8250_env)
+check("SM8250 eco ignores cpu_max ratio",
+      cpu_caps("eco") == {"policy0": 1708800, "policy4": 1478400, "policy7": 1862400})
+load_limits("[profile.eco]\ncpu_underclock=none\ncpu_max=0.65\n", env=sm8250_env)
+check("SM8250 eco none ignores cpu_max ratio",
+      cpu_caps("eco") == {"policy0": 1804800, "policy4": 2419200, "policy7": 3091200})
+load_limits("[profile.eco]\ncpu_max_policy7=2073600\n", env=sm8250_env)
+check("SM8250 explicit cpu_max_policy7 wins over the table",
+      cpu_caps("eco") == {"policy0": 1708800, "policy4": 1478400, "policy7": 2073600})
+use_tree(sysfs)
+
+use_tree(sys8550)
+sm8550_env = {"ARMADA_SOC_CLASS": "SM8550"}
+load_limits(env=sm8550_env)
+check("SM8550 eco large caps",
+      cpu_caps("eco") == {"policy0": 1420800, "policy3": 1612800, "policy7": 1785600})
+check("SM8550 balanced medium caps",
+      cpu_caps("balanced") == {"policy0": 1420800, "policy3": 1804800, "policy7": 1785600})
+check("SM8550 performance caps are tops",
+      cpu_caps("performance") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+load_limits("[profile.eco]\ncpu_underclock=none\n", env=sm8550_env)
+check("SM8550 eco none ignores cpu_max ratio",
+      cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+load_limits("[profile.eco]\ncpu_underclock=custom\ncpu_max_policy0=1171200\n"
+            "cpu_max_policy3=1497600\ncpu_max_policy7=1670400\n", env=sm8550_env)
+check("SM8550 custom uses explicit keys",
+      cpu_caps("eco") == {"policy0": 1171200, "policy3": 1497600, "policy7": 1670400})
+load_limits("[profile.eco]\ncpu_underclock=custom\n", env=sm8550_env)
+check("SM8550 custom without keys is tops",
+      cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+load_limits("[profile.eco]\ncpu_underclock=large\ncpu_max_policy7=1670400\n", env=sm8550_env)
+check("SM8550 partial keys merge with the table",
+      cpu_caps("eco") == {"policy0": 1420800, "policy3": 1612800, "policy7": 1670400})
+load_limits("[underclock.SM8550.custom]\ncpu_max_policy0=1171200\ncpu_max_policy3=1497600\n"
+            "cpu_max_policy7=1670400\n[profile.eco]\ncpu_underclock=custom\n", env=sm8550_env)
+check("SM8550 custom ignores an underclock custom table",
+      cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+try:
+    load_limits("[profile.eco]\ncpu_underclock=bogus\n", env=sm8550_env)
+    check("SM8550 unknown underclock level is tops",
+          cpu_caps("eco") == {"policy0": 1804800, "policy3": 2419200, "policy7": 2841600})
+except Exception as exc:
+    check(f"SM8550 unknown underclock level loads ({exc})", False)
+use_tree(sysfs)
+load_limits()
+
+
+class FakeVariant:
+    def __init__(self, signature, value):
+        self.signature = signature
+        self.value = value
+
+    def unpack(self):
+        return self.value
+
+    def get_uint32(self):
+        return self.value
+
+    def get_string(self):
+        return self.value
+
+
+powerd.GLib = type("FakeGLib", (), {"Variant": FakeVariant})
+powerd.STATE_FILE = powerd.Path(os.path.join(WORK, "powerd-state"))
+emitted = []
+power.emit_properties = lambda changed: emitted.append({k: v.unpack() for k, v in changed.items()})
+power.gpu_manual_shown = {}
+power.gpu_clamp_logged = set()
+
+
+def gpu_prop(prop):
+    return power.get_property(prop).unpack()
+
+
+def gpu_file(name):
+    with open(os.path.join(fake_gpu, name)) as f:
+        return f.read().strip()
+
+
+def gpu_pinned():
+    return (gpu_file("governor"), int(gpu_file("min_freq")), int(gpu_file("max_freq")))
+
+
+def manual_max(profile):
+    power.profile = profile
+    return gpu_prop("ManualGpuClockMax")
+
+
+def switch_profile(profile):
+    power.profile = profile
+    power.apply_profile()
+
+
+load_limits()
+power.gpu_level = "auto"
+power.manual_gpu_clock = 0
+power.connection = None
+check("manual GPU max is balanced stock", manual_max("balanced") == 587)
+check("manual GPU max follows eco", manual_max("eco") == 441)
+check("manual GPU min is ladder floor", gpu_prop("ManualGpuClockMin") == 305)
+load_limits("[profile.eco]\ngpu_max_mhz=700\n")
+check("manual GPU max follows gpu_max_mhz", manual_max("eco") == 700)
+
+clamp_log = io.StringIO()
+with contextlib.redirect_stderr(clamp_log):
+    load_limits()
+    power.set_property("GpuPerformanceLevel", FakeVariant("s", "manual"))
+    power.set_property("ManualGpuClock", FakeVariant("u", 900))
+    check("manual 900 pinned to balanced cap", gpu_pinned() == ("userspace", 587000000, 587000000))
+    check("manual 900 reads back as cap", gpu_prop("ManualGpuClock") == 587)
+    check("manual request kept raw", power.manual_gpu_clock == 900)
+
+    power.connection = object()
+    emitted.clear()
+    switch_profile("eco")
+    check("manual clamped on eco switch", gpu_pinned() == ("userspace", 441600000, 441600000))
+    check("eco switch emits clamped manual props",
+          emitted and emitted[-1].get("ManualGpuClockMax") == 441 and emitted[-1].get("ManualGpuClock") == 441)
+    emitted.clear()
+    switch_profile("eco")
+    check("unchanged profile emits nothing", not emitted)
+    load_limits("[profile.eco]\ngpu_max_mhz=700\n")
+    switch_profile("eco")
+    check("manual request survives clamps", gpu_pinned() == ("userspace", 700000000, 700000000))
+
+    load_limits()
+    switch_profile("eco")
+    power.set_property("ManualGpuClock", FakeVariant("u", 442))
+    check("manual 442 pinned to eco OPP", gpu_pinned() == ("userspace", 441600000, 441600000))
+clamp_lines = clamp_log.getvalue().splitlines()
+for request, effective, profile in ((900, 587, "balanced"), (900, 441, "eco"), (900, 700, "eco")):
+    line = f"armada-powerd: manual GPU clock {request} MHz clamped to {effective} MHz by {profile} GPU max"
+    check(f"clamp {request} to {effective} logged once", clamp_lines.count(line) == 1)
+check("clamp log has no other lines", len(clamp_lines) == 3)
+
+load_limits()
+power.connection = None
+power.set_property("ManualGpuClock", FakeVariant("u", 490))
+check("manual 490 pinned", gpu_pinned() == ("userspace", 490000000, 490000000))
+check("manual 490 reads back", gpu_prop("ManualGpuClock") == 490)
+switch_profile("performance")
+check("manual 490 kept on performance", gpu_pinned() == ("userspace", 490000000, 490000000))
+switch_profile("balanced")
+check("manual 490 kept on balanced", gpu_pinned() == ("userspace", 490000000, 490000000))
+
+load_limits(env={"ARMADA_SOC_CLASS": "SM8250", "ARMADA_GPU_STOCK_MAX_MHZ": ""})
+check("manual GPU max without stock is ladder top", gpu_prop("ManualGpuClockMax") == 925)
+power.set_property("ManualGpuClock", FakeVariant("u", 900))
+check("manual 900 without stock picks closest", gpu_pinned() == ("userspace", 905000000, 905000000))
+
+load_limits()
+power.manual_gpu_clock = 0
+power.set_property("GpuPerformanceLevel", FakeVariant("s", "auto"))
+power.set_property("GpuPerformanceLevel", FakeVariant("s", "manual"))
+check("manual without request applies cap", gpu_pinned() == ("userspace", 587000000, 587000000))
+check("manual without request reads back cap", gpu_prop("ManualGpuClock") == 587)
+power.set_property("ManualGpuClock", FakeVariant("u", 640))
+check("manual 640 never rounds above cap", gpu_pinned() == ("userspace", 587000000, 587000000))
+power.set_property("GpuPerformanceLevel", FakeVariant("s", "auto"))
+check("auto restores ondemand", gpu_pinned() == ("simple_ondemand", 305000000, 587000000))
 
 # --- armada-control: PerfManager lifecycle ----------------------------------
 control = load_script("armada-control")
@@ -872,22 +1243,292 @@ finally:
 # --- plugin: power render with editable governor ----------------------------
 sys.path.insert(0, os.path.join(ROOT, "decky/armada-control/py_modules"))
 from armada_control import power as plugin_power
+from armada_control import system as plugin_system
+
+plugin_limits = plugin_system.freq_limits(env={"ARMADA_GPU_STOCK_MAX_MHZ": "587"},
+                                          sysfs=plugin_system.Path(sysfs))
+check("plugin freq_limits stock GPU max", plugin_limits["gpuStockMaxMhz"] == 587)
+check("plugin freq_limits floors GPU MHz", 441 in plugin_limits["gpuMhz"])
+check("plugin freq_limits CPU policies",
+      plugin_limits["cpuPolicies"] == [
+          {"id": 0, "cpus": "0-3", "khz": [300000, 1075200, 1171200, 1420800, 1612800, 1804800],
+           "mhz": [300, 1075, 1171, 1420, 1612, 1804]},
+          {"id": 4, "cpus": "4-6", "khz": [710400, 1497600, 1612800, 1804800, 2419200],
+           "mhz": [710, 1497, 1612, 1804, 2419]},
+          {"id": 7, "cpus": "7", "khz": [844800, 1670400, 1785600, 2841600],
+           "mhz": [844, 1670, 1785, 2841]},
+      ])
+check("plugin freq_limits keys", set(plugin_limits) == {"gpuMhz", "gpuStockMaxMhz", "gpuStockHz", "gpuHz", "cpuPolicies"})
+limits8550 = plugin_system.freq_limits(env={}, sysfs=plugin_system.Path(sys8550))
+check("plugin freq_limits SM8550 topology",
+      [(pol["id"], pol["cpus"]) for pol in limits8550["cpuPolicies"]] == [(0, "0-2"), (3, "3-6"), (7, "7")])
+check("plugin freq_limits ladder top without stock",
+      plugin_system.freq_limits(env={}, sysfs=plugin_system.Path(sysfs))["gpuStockMaxMhz"] == 925)
+sys_topo = os.path.join(WORK, "sys-topo")
+fake_cpufreq_topo = os.path.join(sys_topo, "devices/system/cpu/cpufreq")
+write_policies(fake_cpufreq_topo, (("policy0", ladder0, "0 1 2 3"),
+                                   ("policy4", ladder4, None),
+                                   ("policy7", ladder7, "7"),
+                                   ("policy10", ladder7, "10 12 13")))
+with open(os.path.join(fake_cpufreq_topo, "policy4", "affected_cpus"), "w") as f:
+    f.write("4 5 6\n")
+check("plugin freq_limits topology fallbacks",
+      [(pol["id"], pol["cpus"]) for pol in
+       plugin_system.freq_limits(env={}, sysfs=plugin_system.Path(sys_topo))["cpuPolicies"]]
+      == [(0, "0-3"), (4, "4-6"), (7, "7"), (10, "10,12,13")])
 
 plugin_power.FACTORY_POWER_CONFIG = plugin_power.Path(factory)
 plugin_power.POWER_CONFIG = plugin_power.Path(os.path.join(WORK, "etc-armada-power.conf"))
-data = plugin_power.parse_power()
-factory_data = plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG)
+data = plugin_power.resolve_limits(plugin_power.parse_power(), plugin_limits, "SM8250")
+factory_data = plugin_power.resolve_limits(
+    plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), plugin_limits, "SM8250")
 check("governor exposed in parse", data["profiles"]["eco"]["cpu_governor"] == "conservative")
 
 # untouched config renders no /etc profile sections (factory keeps tracking /usr)
-rendered = plugin_power.render_power(data, factory_data)
+rendered = plugin_power.render_power(data, factory_data, plugin_limits, "SM8250")
 check("unedited render stays factory-tracking", "[profile.eco]" not in rendered)
 
 # editing only the governor writes the override
 data["profiles"]["eco"]["cpu_governor"] = "performance"
-rendered = plugin_power.render_power(data, factory_data)
+rendered = plugin_power.render_power(data, factory_data, plugin_limits, "SM8250")
 check("edited governor written", "cpu_governor = performance" in rendered)
 check("other profiles untouched", "[profile.performance]" not in rendered)
+
+check("plugin resolves balanced GPU max to stock", factory_data["profiles"]["balanced"]["gpu_max_mhz"] == 587)
+check("plugin resolves eco GPU max from ratio", factory_data["profiles"]["eco"]["gpu_max_mhz"] == 441)
+factory8550 = plugin_power.resolve_limits(
+    plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), limits8550, "SM8550")
+factory_generic = plugin_power.resolve_limits(
+    plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), plugin_limits, "")
+limits8250 = plugin_system.freq_limits(env={}, sysfs=plugin_system.Path(sys8250))
+factory8250 = plugin_power.resolve_limits(
+    plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), limits8250, "SM8250")
+
+
+def policy_caps(profile, ids):
+    return tuple(profile.get(f"cpu_max_policy{policy_id}") for policy_id in ids)
+
+
+def section_caps(out, section, ids):
+    return tuple(out.get(section, f"cpu_max_policy{policy_id}", fallback=None) for policy_id in ids)
+
+
+def has_policy_keys(out, section):
+    return out.has_section(section) and any(key.startswith("cpu_max_policy") for key in out.options(section))
+
+
+check("plugin resolves unknown class eco CPU caps from ratio",
+      policy_caps(factory_generic["profiles"]["eco"], (0, 4, 7)) == (1171200, 1497600, 1785600))
+check("plugin resolves SM8250 eco CPU caps from table",
+      policy_caps(factory8250["profiles"]["eco"], (0, 4, 7)) == (1708800, 1478400, 1862400))
+check("plugin resolves SM8250 balanced CPU caps from table",
+      policy_caps(factory8250["profiles"]["balanced"], (0, 4, 7)) == (1804800, 1862400, 2073600))
+check("plugin resolves SM8250 performance CPU caps to top",
+      policy_caps(factory_data["profiles"]["performance"], (0, 4, 7)) == (1804800, 2419200, 2841600))
+check("plugin resolves SM8550 eco CPU caps from table",
+      policy_caps(factory8550["profiles"]["eco"], (0, 3, 7)) == (1420800, 1612800, 1785600))
+check("plugin resolves SM8550 balanced CPU caps from table",
+      policy_caps(factory8550["profiles"]["balanced"], (0, 3, 7)) == (1420800, 1804800, 1785600))
+check("plugin resolves SM8550 performance CPU caps to top",
+      policy_caps(factory8550["profiles"]["performance"], (0, 3, 7)) == (1804800, 2419200, 2841600))
+
+
+def plugin_render(etc_text, edits=(), soc="SM8250", lim=plugin_limits, fac=factory_data):
+    plugin_power.POWER_CONFIG.write_text(etc_text)
+    resolved = plugin_power.resolve_limits(plugin_power.parse_power(), lim, soc)
+    for name, key, value in edits:
+        resolved["profiles"][name][key] = value
+    out = configparser.ConfigParser()
+    out.read_string(plugin_power.render_power(resolved, fac, lim, soc))
+    return out
+
+
+def render8550(etc_text, edits=()):
+    return plugin_render(etc_text, edits, "SM8550", limits8550, factory8550)
+
+
+def render_generic(etc_text, edits=()):
+    return plugin_render(etc_text, edits, "", plugin_limits, factory_generic)
+
+
+def render8250(etc_text, edits=()):
+    return plugin_render(etc_text, edits, "SM8250", limits8250, factory8250)
+
+
+custom8550 = "[profile.eco]\ncpu_underclock=custom\ncpu_max_policy0=1171200\ncpu_max_policy3=1497600\ncpu_max_policy7=1670400\n"
+out = render8550("")
+check("plugin SM8550 unedited renders no profile",
+      not any(section.startswith("profile.") for section in out.sections()))
+out = render8550("", [("eco", "cpu_max_policy3", 1497600)])
+check("plugin SM8550 moved slider switches to custom",
+      out.get("profile.eco", "cpu_underclock", fallback=None) == "custom")
+check("plugin SM8550 moved slider writes every policy",
+      section_caps(out, "profile.eco", (0, 3, 7)) == ("1420800", "1497600", "1785600"))
+out = render8550(custom8550, [("eco", "cpu_underclock", "medium")]
+                 + [("eco", f"cpu_max_policy{policy_id}", None) for policy_id in (0, 3, 7)])
+check("plugin SM8550 preset pick writes the level",
+      out.get("profile.eco", "cpu_underclock", fallback=None) == "medium")
+check("plugin SM8550 preset pick drops policy keys", not has_policy_keys(out, "profile.eco"))
+reset8550 = dict(factory8550["profiles"]["eco"], gpu_max_mhz=None, gpu_min_mhz=None,
+                 cpu_max_policy0=None, cpu_max_policy3=None, cpu_max_policy7=None)
+out = render8550(custom8550, [("eco", key, value) for key, value in reset8550.items()])
+check("plugin SM8550 reset clears custom profile", not out.has_section("profile.eco"))
+out = render8550(custom8550, [("balanced", "cpu_governor", "performance")])
+check("plugin SM8550 untouched custom profile kept",
+      out.get("profile.eco", "cpu_underclock", fallback=None) == "custom"
+      and section_caps(out, "profile.eco", (0, 3, 7)) == ("1171200", "1497600", "1670400"))
+
+out = render8250("")
+check("plugin SM8250 unedited renders no profile",
+      not any(section.startswith("profile.") for section in out.sections()))
+out = render8250("", [("eco", "cpu_max_policy4", 1862400)])
+check("plugin SM8250 moved slider switches to custom",
+      out.get("profile.eco", "cpu_underclock", fallback=None) == "custom")
+check("plugin SM8250 moved slider writes every policy",
+      section_caps(out, "profile.eco", (0, 4, 7)) == ("1708800", "1862400", "1862400"))
+out = render8250("[profile.eco]\ncpu_max_policy7=2073600\n")
+check("plugin SM8250 explicit cpu_max_policy7 renders custom",
+      out.get("profile.eco", "cpu_underclock", fallback=None) == "custom")
+check("plugin SM8250 explicit cpu_max_policy7 wins over the table",
+      section_caps(out, "profile.eco", (0, 4, 7)) == ("1708800", "1478400", "2073600"))
+
+out = render_generic("", [("eco", "cpu_max_policy7", 1670400)])
+check("plugin unknown class moved slider writes every policy",
+      section_caps(out, "profile.eco", (0, 4, 7)) == ("1171200", "1497600", "1670400"))
+check("plugin unknown class moved slider drops cpu_max", not out.has_option("profile.eco", "cpu_max"))
+check("plugin unknown class moved slider never forces custom",
+      out.get("profile.eco", "cpu_underclock", fallback="large") == "large")
+caps_generic = "[profile.eco]\ncpu_max_policy0=1171200\ncpu_max_policy4=1497600\ncpu_max_policy7=1785600\n"
+out = render_generic(caps_generic)
+check("plugin unknown class keeps explicit policy keys equal to derived",
+      section_caps(out, "profile.eco", (0, 4, 7)) == ("1171200", "1497600", "1785600"))
+reset_generic = dict(factory_generic["profiles"]["eco"], gpu_max_mhz=None, gpu_min_mhz=None,
+                     cpu_max_policy0=None, cpu_max_policy4=None, cpu_max_policy7=None)
+out = render_generic(caps_generic, [("eco", key, value) for key, value in reset_generic.items()])
+check("plugin unknown class reset clears explicit policy keys", not out.has_section("profile.eco"))
+out = render_generic("[profile.eco]\ncpu_max_policy7=1700000\n")
+check("plugin off ladder policy key snaps on write",
+      section_caps(out, "profile.eco", (0, 4, 7)) == ("1171200", "1497600", "1670400"))
+out = plugin_render("[profile.eco]\ncpu_max_policy3=1000000\n", [("eco", "cpu_governor", "performance")])
+check("plugin edited save drops keys for missing policies",
+      out.get("profile.eco", "cpu_governor", fallback=None) == "performance"
+      and not out.has_option("profile.eco", "cpu_max_policy3"))
+out = plugin_render("[profile.eco]\ncpu_max_policy07=1670400\n")
+check("plugin normalises cpu_max_policy07 to cpu_max_policy7",
+      [key for key in out.options("profile.eco") if key.startswith("cpu_max_policy")]
+      == ["cpu_max_policy0", "cpu_max_policy4", "cpu_max_policy7"]
+      and out.get("profile.eco", "cpu_max_policy7") == "1670400")
+
+
+out = plugin_render("")
+check("plugin unedited limits render no profile",
+      not any(section.startswith("profile.") for section in out.sections()))
+
+out = plugin_render("", [("eco", "gpu_max_mhz", 700)])
+check("plugin moved GPU max writes MHz", out.get("profile.eco", "gpu_max_mhz", fallback=None) == "700")
+check("plugin moved GPU max drops ratio", not out.has_option("profile.eco", "gpu_max"))
+
+out = render_generic("[profile.eco]\ncpu_max=0.64\n", [("balanced", "gpu_max_mhz", 441)])
+check("plugin keeps unmoved legacy cpu_max", out.get("profile.eco", "cpu_max", fallback=None) == "0.64")
+check("plugin legacy cpu_max gains no policy keys", not has_policy_keys(out, "profile.eco"))
+check("plugin other profile GPU max written", out.get("profile.balanced", "gpu_max_mhz", fallback=None) == "441")
+
+out = plugin_render("[profile.balanced]\ngpu_max=0.80\n")
+check("plugin keeps unmoved legacy gpu_max", out.get("profile.balanced", "gpu_max", fallback=None) == "0.80")
+check("plugin legacy gpu_max gains no MHz", not out.has_option("profile.balanced", "gpu_max_mhz"))
+out = plugin_render("[profile.balanced]\ngpu_max=0.80\n", [("balanced", "gpu_max_mhz", 587)])
+check("plugin moved legacy GPU max writes MHz",
+      out.get("profile.balanced", "gpu_max_mhz", fallback=None) == "587")
+check("plugin moved legacy GPU max drops ratio", not out.has_option("profile.balanced", "gpu_max"))
+
+check("plugin resolves performance GPU min to stock", factory_data["profiles"]["performance"]["gpu_min_mhz"] == 587)
+check("plugin resolves eco GPU min to ladder floor", factory_data["profiles"]["eco"]["gpu_min_mhz"] == 305)
+
+plugin_power.POWER_CONFIG.write_text("")
+resolved = plugin_power.resolve_limits(plugin_power.parse_power(), plugin_limits, "SM8250")
+resolved["profiles"]["eco"]["gpu_min_mhz"] = 490
+rendered = plugin_power.render_power(resolved, factory_data, plugin_limits, "SM8250")
+check("plugin moved GPU min writes MHz", "gpu_min_mhz = 490" in rendered)
+check("plugin moved GPU min drops ratio", "gpu_min =" not in rendered)
+
+out = plugin_render("[profile.eco]\ngpu_min=0.50\n", [("balanced", "gpu_max_mhz", 441)])
+check("plugin keeps unmoved legacy gpu_min", out.get("profile.eco", "gpu_min", fallback=None) == "0.50")
+check("plugin legacy gpu_min gains no MHz", not out.has_option("profile.eco", "gpu_min_mhz"))
+
+reset_eco = dict(factory_data["profiles"]["eco"], gpu_max_mhz=None, gpu_min_mhz=None,
+                 cpu_max_policy0=None, cpu_max_policy4=None, cpu_max_policy7=None)
+out = plugin_render("[profile.eco]\ngpu_min_mhz=490\n", [("eco", key, value) for key, value in reset_eco.items()])
+check("plugin reset clears explicit GPU min MHz", not out.has_section("profile.eco"))
+
+reset_eco = dict(factory_data["profiles"]["eco"], gpu_max_mhz=None, gpu_min_mhz=None,
+                 cpu_max_policy0=None, cpu_max_policy4=None, cpu_max_policy7=None)
+out = plugin_render("[profile.eco]\ngpu_max_mhz=700\n", [("eco", key, value) for key, value in reset_eco.items()])
+check("plugin reset clears explicit MHz profile", not out.has_section("profile.eco"))
+plugin_power.POWER_CONFIG.unlink()
+
+plugin_power.POWER_CONFIG.write_text("[profile.eco]\ngpu_max=abc\n")
+invalid_data = plugin_power.parse_power()
+check("plugin invalid legacy ratio restores factory",
+      invalid_data["profiles"]["eco"]["gpu_max"] == factory_data["profiles"]["eco"]["gpu_max"])
+check("plugin invalid legacy ratio removes /etc", not plugin_power.POWER_CONFIG.exists())
+check("plugin invalid legacy ratio keeps a backup",
+      any(plugin_power.POWER_CONFIG.parent.glob(plugin_power.POWER_CONFIG.name + ".invalid-*")))
+
+for backup in plugin_power.POWER_CONFIG.parent.glob(plugin_power.POWER_CONFIG.name + ".invalid-*"):
+    backup.unlink()
+plugin_power.POWER_CONFIG.write_text("[profile.eco]\ngpu_max=nan\n")
+invalid_data = plugin_power.parse_power()
+check("plugin non finite ratio restores factory",
+      invalid_data["profiles"]["eco"]["gpu_max"] == factory_data["profiles"]["eco"]["gpu_max"])
+check("plugin non finite ratio keeps a backup",
+      any(plugin_power.POWER_CONFIG.parent.glob(plugin_power.POWER_CONFIG.name + ".invalid-*")))
+check("plugin and powerd agree on non finite ratio",
+      invalid_data["profiles"]["eco"]["gpu_max"] == factory_data["profiles"]["eco"]["gpu_max"]
+      and float(invalid_data["profiles"]["eco"]["gpu_max"]) == factory_gpu_max)
+
+plugin_power.POWER_CONFIG.write_text("[profile.eco]\ngpu_max=0.5\n")
+half_data = plugin_power.resolve_limits(plugin_power.parse_power(), plugin_limits, "SM8250")
+for bad in ("abc", "0", "-5", "nan", "inf"):
+    plugin_power.POWER_CONFIG.write_text(f"[profile.eco]\ngpu_max_mhz={bad}\ngpu_max=0.5\n")
+    try:
+        bad_data = plugin_power.resolve_limits(plugin_power.parse_power(), plugin_limits, "SM8250")
+        check(f"plugin gpu_max_mhz={bad} falls back to gpu_max ratio",
+              bad_data["profiles"]["eco"]["gpu_max_mhz"] == half_data["profiles"]["eco"]["gpu_max_mhz"])
+        check(f"plugin gpu_max_mhz={bad} keeps /etc", plugin_power.POWER_CONFIG.exists())
+    except ValueError as exc:
+        check(f"plugin gpu_max_mhz={bad} falls back to gpu_max ratio ({exc})", False)
+
+sys_nogpu = os.path.join(WORK, "sys-nogpu")
+write_policies(os.path.join(sys_nogpu, "devices/system/cpu/cpufreq"), (("policy0", ladder0, "0 1 2 3"),))
+limits_nogpu = plugin_system.freq_limits(env={}, sysfs=plugin_system.Path(sys_nogpu))
+factory_nogpu = plugin_power.resolve_limits(
+    plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), limits_nogpu, "SM8250")
+out = plugin_render("[profile.eco]\ngpu_max_mhz=700\ngpu_max=0.30\n", [("eco", "cpu_governor", "performance")],
+                    lim=limits_nogpu, fac=factory_nogpu)
+check("plugin explicit gpu_max_mhz keeps MHz", out.get("profile.eco", "gpu_max_mhz", fallback=None) == "700")
+check("plugin explicit gpu_max_mhz drops shadowed ratio", not out.has_option("profile.eco", "gpu_max"))
+out = plugin_render("[profile.eco]\ngpu_max_mhz=abc\ngpu_max=0.5\n", [("eco", "cpu_governor", "performance")],
+                    lim=limits_nogpu, fac=factory_nogpu)
+check("plugin invalid gpu_max_mhz keeps shadowed ratio", out.get("profile.eco", "gpu_max", fallback=None) == "0.5")
+out = render8550("[profile.eco]\ncpu_max=0.50\n", [("eco", "cpu_max_policy7", 1670400)])
+check("plugin policy keys written", has_policy_keys(out, "profile.eco"))
+check("plugin policy keys drop shadowed cpu_max", not out.has_option("profile.eco", "cpu_max"))
+
+sys_nocpu = os.path.join(WORK, "sys-nocpu")
+shutil.copytree(os.path.join(sysfs, "class"), os.path.join(sys_nocpu, "class"))
+limits_nocpu = plugin_system.freq_limits(env={"ARMADA_GPU_STOCK_MAX_MHZ": "587"},
+                                         sysfs=plugin_system.Path(sys_nocpu))
+check("plugin fake sysfs has no CPU policies", limits_nocpu["cpuPolicies"] == [])
+factory_nocpu = plugin_power.resolve_limits(
+    plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), limits_nocpu, "")
+out = plugin_render("[profile.eco]\ncpu_max_policy7=1670400\n", [("eco", "cpu_governor", "performance")],
+                    "", limits_nocpu, factory_nocpu)
+check("plugin no CPU policies keeps existing policy keys",
+      out.get("profile.eco", "cpu_max_policy7", fallback=None) == "1670400")
+out = plugin_render("[profile.eco]\ncpu_max_policy7=abc\ncpu_max=0.7\n", [("eco", "cpu_governor", "performance")],
+                    "", limits_nocpu, factory_nocpu)
+check("plugin invalid policy key keeps shadowed cpu_max", out.get("profile.eco", "cpu_max", fallback=None) == "0.70")
+plugin_power.POWER_CONFIG.unlink()
 
 if failures:
     print(f"{len(failures)} check(s) failed", file=sys.stderr)
