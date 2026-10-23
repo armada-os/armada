@@ -179,7 +179,7 @@ fi
 abl_dropin="$ROOT/packages/openabl-updater/src/armada-bootimg-sync-openabl-updater.conf"
 mapfile -t sync_stops < <(sed -n 's/^ExecStop=//p' "$sync_unit" "$abl_dropin")
 assert_eq "sync bootimg ordering" "${sync_stops[0]:-}" \
-    "/usr/libexec/armada/armada-bootimg-update"
+    "/usr/libexec/armada/armada-boot-update"
 assert_eq "sync ABL ordering" "${sync_stops[1]:-}" \
     "-/usr/libexec/openabl-updater/armada-abl-finalize"
 

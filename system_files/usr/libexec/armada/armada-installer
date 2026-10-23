@@ -32,6 +32,7 @@ BTRFS_OPTS = "noatime,compress=zstd:1,discard=async"
 SELF = "/usr/libexec/armada/armada-installer"
 BOOTIMG = "/usr/libexec/armada/armada-bootimg-update"
 ICON = "armada-installer"
+EFIUPDATE = "/usr/libexec/armada/armada-efi-update"
 RECOVERY = ("To retry from SD, select SD as the boot source in ABL and re-run the installer. "
             "To abandon the internal installation, select UNINSTALL CFW in ABL.")
 
@@ -564,12 +565,16 @@ class Installation:
         run("cp", "-a", f"{seed}/.", f"{target}/var/")
         shutil.rmtree(seed)
         configure_deployment(target, source, uuids, kargs)
-        print("Writing the internal boot image...", flush=True)
+        print("Writing the internal boot files...", flush=True)
+        env = dict(os.environ, ESP=str(target / "boot/efi"),
+                   BOOTROOT=str(target / "boot"), SYSROOT=str(target))
         with tempfile.TemporaryDirectory(prefix=".armada-bootimg.", dir=target) as scratch:
-            run(BOOTIMG, env=dict(os.environ, TMPDIR=scratch, ESP=str(target / "boot/efi"),
-                                 BOOTROOT=str(target / "boot"), SYSROOT=str(target)))
-        if not (target / "boot/efi/KERNEL").is_file() or not (target / "boot/efi/KERNEL").stat().st_size:
-            raise Error("The internal boot image was not created")
+            run(BOOTIMG, env=dict(env, TMPDIR=scratch))
+        run(EFIUPDATE, env=env)
+        for name in ("KERNEL", "EFI/BOOT/BOOTAA64.EFI"):
+            result = target / "boot/efi" / name
+            if not result.is_file() or not result.stat().st_size:
+                raise Error(f"The internal boot file {name} was not created")
 
     def recovery(self):
         android = " Android userdata and earlier partitions are unchanged." if self.plan.operation == "replace" else ""
@@ -617,7 +622,7 @@ def inhibit_sleep():
 
 def require_commands():
     needed = ["sfdisk", "lsblk", "findmnt", "partprobe", "udevadm", "dd", "systemd-inhibit", "mount"]
-    needed += ["btrfs", "mkfs.btrfs", "mkfs.ext4", "mkfs.vfat", "umount", "ostree", "blkid", "cp", BOOTIMG]
+    needed += ["btrfs", "mkfs.btrfs", "mkfs.ext4", "mkfs.vfat", "umount", "ostree", "blkid", "cp", BOOTIMG, EFIUPDATE]
     missing = [name for name in needed if not shutil.which(name)]
     if missing:
         raise Error("Missing required tools: " + ", ".join(missing))

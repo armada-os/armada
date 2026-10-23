@@ -60,6 +60,9 @@ pkgs=(
     # binaries armada-powerd reports the scheduler choice as unavailable.
     /packages/scx-scheds/scx-scheds-[0-9]*.rpm
 
+    # Devicetree for EFI platforms without OpenABL
+    /packages/dtbloader/dtbloader-*.rpm
+
     # MTP support
     /packages/umtp-responder/umtp-responder-*.rpm
 
