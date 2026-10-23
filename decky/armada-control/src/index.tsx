@@ -11,9 +11,11 @@ import {
   sweepInstalledGames,
 } from "./lib/steamCompat";
 import { factoryDefaultTransition } from "./lib/protonPolicy";
+import { registerSteamProfileLocalization } from "./lib/steamProfileLocalization";
 
 export default definePlugin(() => {
   let unregisterDownloadWatcher = () => {};
+  const unregisterProfileLocalization = registerSteamProfileLocalization();
   const persistHandledGames = () => {
     saveCompatApplied(handledGameAppids()).catch(() => {});
   };
@@ -73,6 +75,7 @@ export default definePlugin(() => {
     onDismount() {
       cancelled = true;
       unregisterDownloadWatcher();
+      unregisterProfileLocalization();
     },
     icon: (
       <svg
