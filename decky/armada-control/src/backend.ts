@@ -22,6 +22,7 @@ export const setMtpEnabled = (enabled: boolean) => call<[boolean], boolean>("set
 export const setBottomScreenEnabled = (enabled: boolean) => call<[boolean], boolean>("set_bottom_screen_enabled", enabled);
 export const setBottomScreenBrightness = (brightness: number) => call<[number], number>("set_bottom_screen_brightness", brightness);
 export const getBottomScreenActive = () => call<[], boolean>("get_bottom_screen_active");
+export const setCompanionLocked = (locked: boolean) => call<[boolean], boolean>("set_companion_locked", locked);
 export const setDesktopMode = (value: string) => call<[string], string>("set_desktop_mode", value);
 export const setSleepMode = (value: string) => call<[string], string>("set_sleep_mode", value);
 export const getSleepLogsEnabled = () => call<[], boolean>("get_sleep_logs_enabled");

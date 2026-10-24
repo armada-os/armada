@@ -530,6 +530,22 @@ def action_set_bottom_screen_enabled(request):
     return {"enabled": bottom_screen_enabled()}
 
 
+def action_set_companion_locked(request):
+    locked = request.get("locked")
+    if not isinstance(locked, bool):
+        raise ValueError("invalid companion locked state")
+    # gamescope sleeps the bottom screen and drops its touch while this is set.
+    subprocess.run(
+        session_user_command(
+            "DISPLAY=:0", "/usr/bin/xprop", "-root",
+            "-f", "GAMESCOPE_COMPANION_LOCKED", "32c",
+            "-set", "GAMESCOPE_COMPANION_LOCKED", str(int(locked)),
+        ),
+        check=True, capture_output=True, timeout=5,
+    )
+    return {"locked": locked}
+
+
 def action_get_abl_version(request):
     return {"version": abl_version()}
 
@@ -867,6 +883,7 @@ ACTIONS = {
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_bottom_screen_enabled": action_set_bottom_screen_enabled,
     "set_bottom_screen_brightness": action_set_bottom_screen_brightness,
+    "set_companion_locked": action_set_companion_locked,
     "get_desktop_mode": action_get_desktop_mode,
     "set_desktop_mode": action_set_desktop_mode,
     "set_sleep_mode": action_set_sleep_mode,

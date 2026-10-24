@@ -150,6 +150,10 @@ def set_bottom_screen_brightness(brightness):
     return int(call("set_bottom_screen_brightness", brightness=brightness).get("brightness", 0))
 
 
+def set_companion_locked(locked):
+    return bool(call("set_companion_locked", locked=bool(locked)).get("locked"))
+
+
 def desktop_mode() -> str:
     try:
         value = str(call("get_desktop_mode").get("value", ""))

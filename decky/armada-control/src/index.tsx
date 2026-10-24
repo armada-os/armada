@@ -11,10 +11,12 @@ import {
   sweepInstalledGames,
 } from "./lib/steamCompat";
 import { factoryDefaultTransition } from "./lib/protonPolicy";
+import { registerLockWatcher } from "./lib/lockWatcher";
 import { registerLowPowerDownloadEntry } from "./lib/lowPowerDownloads";
 
 export default definePlugin(() => {
   let unregisterDownloadWatcher = () => {};
+  const unregisterLockWatcher = registerLockWatcher();
   const unregisterLowPowerDownloadEntry = registerLowPowerDownloadEntry();
   const persistHandledGames = () => {
     saveCompatApplied(handledGameAppids()).catch(() => {});
@@ -75,6 +77,7 @@ export default definePlugin(() => {
     onDismount() {
       cancelled = true;
       unregisterDownloadWatcher();
+      unregisterLockWatcher();
       unregisterLowPowerDownloadEntry();
     },
     icon: (
