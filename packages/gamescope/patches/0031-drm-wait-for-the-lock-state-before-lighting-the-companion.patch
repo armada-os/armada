@@ -1,0 +1,22 @@
+From: Radical <radical@radical.fun>
+Subject: [PATCH] drm: wait for the lock state before lighting the companion
+
+The lock atom only arrives once Steam and armada-control are up, so the
+companion was usable until then, including past a lock screen Steam shows
+on start. With GAMESCOPE_COMPANION_WAIT_FOR_LOCK=1 it starts locked and
+follows the atom from its first value.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index a857f05..194eba2 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1661,7 +1661,8 @@ static bool g_bLeaseClientYields = false;
+ static bool g_bLeaseClientSuspendPending = false;
+ static bool g_bLeaseClientSuspended = false;
+ static uint64_t g_uLeaseClientGeneration = 0;
+-static bool g_bLeaseCompanionLocked = false;
++// Keep the companion locked until the first GAMESCOPE_COMPANION_LOCKED value arrives.
++static bool g_bLeaseCompanionLocked = getenv( "GAMESCOPE_COMPANION_WAIT_FOR_LOCK" ) && !strcmp( getenv( "GAMESCOPE_COMPANION_WAIT_FOR_LOCK" ), "1" );
+ static bool g_bLeaseCompanionAsleep = false;
+ 
+ extern gamescope::ConVar<bool> cv_drm_sleep_screens[];

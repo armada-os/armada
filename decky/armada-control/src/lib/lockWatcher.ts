@@ -8,7 +8,9 @@ export function registerLockWatcher(): () => void {
   let busy = false;
   let lockPending = false;
   let resumedAt: number | undefined;
-  const timer = window.setInterval(() => {
+  let timer: number | undefined;
+  let stopped = false;
+  const tick = () => {
     const store = window.securitystore;
     if (busy || !store?.IsLockScreenActive) return;
     const active = !!store.IsLockScreenActive();
@@ -30,6 +32,16 @@ export function registerLockWatcher(): () => void {
       .then(() => { sent = locked; })
       .catch(() => {})
       .finally(() => { busy = false; });
-  }, 250);
-  return () => window.clearInterval(timer);
+  };
+  // gamescope keeps the bottom screen locked until the first report; an early
+  // "unlocked" would beat the lock screen Steam shows on start.
+  Promise.resolve((window as any).App?.WaitForServicesInitialized?.())
+    .catch(() => {})
+    .then(() => {
+      if (!stopped) timer = window.setInterval(tick, 250);
+    });
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+  };
 }
