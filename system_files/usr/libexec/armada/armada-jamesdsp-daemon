@@ -18,18 +18,12 @@ done
 
 # check if jamesDSP is running and launch it if not
 jamesdsp_check() {
-	retries=0
     if ! pgrep -f "jamesdsp" > /dev/null; then
        	echo "JamesDSP not running. Launching..."
 		flatpak --user run $FLATPAK_ID --tray &
         sleep 10
         if ! pgrep -f "jamesdsp" > /dev/null; then
             echo "ERROR: Failed to launch JamesDSP."
-			((retries++))
-			if [[ $retries >= 10 ]]; then
-					echo "ERROR: Too many retries for JamesDSP. Exiting script."
-					exit 127
-			fi
         fi
     fi
 }
