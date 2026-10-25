@@ -58,7 +58,7 @@ Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and L
  };
  
  &{/gpio-keys} {
-@@ -377,15 +425,15 @@
+@@ -377,15 +425,19 @@
  };
  
  &remoteproc_adsp {
@@ -78,3 +78,7 @@ Subject: [PATCH] arm64: dts: qcom: rp6: use device-specific audio firmware and L
 -	firmware-name = "qcom/sm8550/ayn/odin2/aw883xx_acf.bin";
 +	firmware-name = "qcom/sm8550/retroidpocket/rp6/aw883xx_acf.bin";
  };
++
++&wcd938x {
++	qcom,ground-jack-type-normally-closed;
++};
