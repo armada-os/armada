@@ -3,9 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-UPDATE="$ROOT/system_files/usr/libexec/armada/armada-abl-update"
-FINALIZE="$ROOT/system_files/usr/libexec/armada/armada-abl-finalize"
-VERSION_TOOL="$ROOT/system_files/usr/lib/armada/abl-version"
+PKG="$ROOT/packages/openabl-updater"
+UPDATE="$PKG/src/armada-abl-update"
+FINALIZE="$PKG/src/armada-abl-finalize"
+VERSION_TOOL="$PKG/src/abl-version"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -13,10 +14,12 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_contains() { [[ "$1" == *"$2"* ]] || fail "expected ${2@Q} in ${1@Q}"; }
 
 TARGET="$WORK/target"
-PAYLOAD_DIR="$TARGET/usr/lib/armada/abl"
+PAYLOAD_DIR="$TARGET/usr/lib/openabl-updater"
 mkdir -p "$PAYLOAD_DIR" "$WORK/bin"
 payload="$PAYLOAD_DIR/abl_signed-SM8550.elf"
-old="$WORK/old"
+rocknix="$WORK/rocknix"
+rocknix_newer_number="$WORK/rocknix-1.2"
+old_openabl="$WORK/old-openabl"
 unknown="$WORK/unknown"
 newer="$WORK/newer"
 same_version="$WORK/same-version"
@@ -33,43 +36,44 @@ with open(path, "wb") as output:
     output.write((pattern * (size // len(pattern) + 1))[:size])
 PY
 }
-make_blob "$payload" target-1.1.8-sm8550
-make_blob "$old" old-1.1.7-sm8550
+hash_of() { sha256sum "$1" | cut -d' ' -f1; }
+make_blob "$payload" openabl-1.1-sm8550
+make_blob "$rocknix" rocknix-1.1.7-sm8550
+make_blob "$rocknix_newer_number" rocknix-1.2-sm8550
+make_blob "$old_openabl" openabl-1.0-sm8550
 make_blob "$unknown" unknown-stock
-make_blob "$newer" newer-1.1.9-sm8550
-make_blob "$same_version" alternate-1.1.8-sm8550
-make_blob "$wrong_soc" old-1.1.7-sm8650
-make_blob "$short_old" old-1.1.6-sm8550 4096
-target_hash=$(sha256sum "$payload" | cut -d' ' -f1)
+make_blob "$newer" openabl-1.2-sm8550
+make_blob "$same_version" alternate-openabl-1.1-sm8550
+make_blob "$wrong_soc" rocknix-1.1.7-sm8650
+make_blob "$short_old" rocknix-1.1.6-sm8550 4096
+target_hash=$(hash_of "$payload")
 target_size=$(stat -c %s "$payload")
-old_hash=$(sha256sum "$old" | cut -d' ' -f1)
-newer_hash=$(sha256sum "$newer" | cut -d' ' -f1)
-wrong_soc_hash=$(sha256sum "$wrong_soc" | cut -d' ' -f1)
-short_old_hash=$(sha256sum "$short_old" | cut -d' ' -f1)
 
-cat > "$PAYLOAD_DIR/releases.tsv" <<EOF
-version	soc	size	sha256
-1.1.6	SM8550	4096	${short_old_hash}
-1.1.7	SM8550	8192	${old_hash}
-1.1.7	SM8650	8192	${wrong_soc_hash}
-1.1.8	SM8550	8192	${target_hash}
-1.1.9	SM8550	8192	${newer_hash}
+cat > "$PAYLOAD_DIR/legacy-releases.tsv" <<EOF
+abl	version	soc	size	sha256
+ROCKNIX	1.1.6	SM8550	4096	$(hash_of "$short_old")
+ROCKNIX	1.1.7	SM8550	8192	$(hash_of "$rocknix")
+ROCKNIX	1.1.7	SM8650	8192	$(hash_of "$wrong_soc")
+ROCKNIX	1.2	SM8550	8192	$(hash_of "$rocknix_newer_number")
+OpenABL	1.0	SM8550	8192	$(hash_of "$old_openabl")
+OpenABL	1.1	SM8550	8192	${target_hash}
+OpenABL	1.2	SM8550	8192	$(hash_of "$newer")
 EOF
-catalog="$PAYLOAD_DIR/releases.tsv"
-[[ "$(ARMADA_ABL_RELEASES="$catalog" python3 "$VERSION_TOOL" --with-soc "$payload")" == "1.1.8 SM8550" ]] ||
+catalog="$PAYLOAD_DIR/legacy-releases.tsv"
+identify() { ARMADA_ABL_RELEASES="$catalog" python3 "$VERSION_TOOL" "$@"; }
+[[ "$(identify --with-soc "$payload")" == "OpenABL 1.1 SM8550" ]] ||
     fail "hash catalog did not identify target payload"
-[[ "$(ARMADA_ABL_RELEASES="$catalog" python3 "$VERSION_TOOL" --lookup 1.1.8 SM8550)" == "8192 ${target_hash}" ]] ||
+[[ "$(identify "$rocknix")" == "ROCKNIX 1.1.7" ]] ||
+    fail "hash catalog did not identify a ROCKNIX payload"
+[[ "$(identify --lookup OpenABL 1.1 SM8550)" == "8192 ${target_hash}" ]] ||
     fail "catalog lookup did not return target metadata"
+! identify --lookup ROCKNIX 1.1 SM8550 >/dev/null || fail "lookup matched another ABL's version"
 
-write_manifest() {
-    local auto=$1
-    cat > "$PAYLOAD_DIR/manifest" <<EOF
-ARMADA_ABL_VERSION=1.1.8
-ARMADA_ABL_AUTO=${auto}
+cat > "$PAYLOAD_DIR/manifest" <<EOF
+ARMADA_ABL_NAME=OpenABL
+ARMADA_ABL_VERSION=1.1
 ARMADA_ABL_SHA256_SM8550=${target_hash}
 EOF
-}
-write_manifest 1
 
 cat > "$WORK/bin/dd" <<'EOF'
 #!/usr/bin/env bash
@@ -89,6 +93,10 @@ chmod +x "$WORK/splash"
 
 ABL_A="$WORK/abl_a"
 ABL_B="$WORK/abl_b"
+EFIVARS="$WORK/efivars"
+ESRT="$WORK/esrt"
+SOC_ID="$WORK/soc_id"
+echo 603 > "$SOC_ID"
 base_env=(
     ARMADA_ABL_TESTING=1
     ARMADA_ABL_DEVICE_ID=ayn-odin-2
@@ -99,32 +107,70 @@ base_env=(
     ARMADA_TEST_PAYLOAD="$payload"
     ARMADA_TEST_WRITE_LOG="$WORK/writes"
     ARMADA_TEST_SPLASH_LOG="$WORK/splash-log"
+    ARMADA_EFIVARS="$EFIVARS"
+    ARMADA_ESRT="$ESRT"
+    ARMADA_ABL_SOC_ID_PATH="$SOC_ID"
     ABL_VERSION_TOOL="$VERSION_TOOL"
     ARMADA_ABL_RELEASES="$catalog"
     SPLASH="$WORK/splash"
     PATH="$WORK/bin:$PATH"
 )
 run_update() { env "${base_env[@]}" "$UPDATE" "$@" --target-root "$TARGET" 2>&1; }
+install_both() { cp "$1" "$ABL_A"; cp "$1" "$ABL_B"; : > "$WORK/writes"; }
+expect_updated() {
+    local what=$1 out
+    out=$(run_update) || fail "$what: update failed: $out"
+    cmp -s -n "$target_size" "$payload" "$ABL_A" || fail "$what: ABL A copy was not updated"
+    cmp -s -n "$target_size" "$payload" "$ABL_B" || fail "$what: ABL B copy was not updated"
+}
+expect_refused() {
+    local what=$1 message=$2 out rc before
+    before=$(cat "$ABL_A" "$ABL_B" | sha256sum)
+    set +e; out=$(run_update); rc=$?; set -e
+    [[ $rc -eq 7 ]] || fail "$what returned $rc instead of 7"
+    assert_contains "$out" "$message"
+    [[ ! -s "$WORK/writes" ]] || fail "$what was overwritten"
+    [[ "$(cat "$ABL_A" "$ABL_B" | sha256sum)" == "$before" ]] || fail "$what was modified"
+}
+# efivarfs values start with 4 bytes of attributes.
+set_efivar() {
+    mkdir -p "$EFIVARS"
+    python3 - "$EFIVARS/$1" "$2" <<'PY'
+import sys
 
-cp "$old" "$ABL_A"; cp "$old" "$ABL_B"
-: > "$WORK/writes"
-run_update >/dev/null
-cmp -s "$payload" "$ABL_A" || fail "ABL A copy was not updated"
-cmp -s "$payload" "$ABL_B" || fail "ABL B copy was not updated"
+path, text = sys.argv[1:]
+with open(path, "wb") as output:
+    output.write(b"\x06\x00\x00\x00" + (text + "\0").encode("utf-16-le"))
+PY
+}
+LOADER_INFO=LoaderInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+SETTINGS=SettingsSchema-8c5f2b7e-3a41-4d6c-9e2f-5b7a1c0d4e93
+
+# socinfo must confirm the configured SoC before anything is written.
+install_both "$rocknix"
+echo 682 > "$SOC_ID"
+expect_refused "mismatched SoC id" "SoC id '682' does not confirm SM8550"
+echo 519 > "$SOC_ID"
+expect_refused "unknown SoC id" "SoC id '519' does not confirm SM8550"
+rm "$SOC_ID"
+expect_refused "missing SoC id" "SoC id 'unknown' does not confirm SM8550"
+echo 601 > "$SOC_ID"
+# Every approved ROCKNIX release migrates, even one numbered above the target.
+expect_updated "ROCKNIX 1.1.7"
 mapfile -t writes < "$WORK/writes"
 [[ "${writes[0]:-}" == "$ABL_A" && "${writes[1]:-}" == "$ABL_B" ]] ||
     fail "expected abl_a-then-abl_b writes, got: ${writes[*]:-none}"
+install_both "$rocknix_newer_number"
+expect_updated "ROCKNIX 1.2"
+install_both "$old_openabl"
+expect_updated "older OpenABL"
 
 : > "$WORK/writes"
-assert_contains "$(run_update)" "already installed"
+assert_contains "$(run_update)" "OpenABL 1.1 already installed"
 [[ ! -s "$WORK/writes" ]] || fail "matching ABL copies were rewritten"
 
-cp "$unknown" "$ABL_A"; cp "$unknown" "$ABL_B"
-before=$(sha256sum "$ABL_A")
-set +e; out=$(run_update); rc=$?; set -e
-[[ $rc -eq 7 ]] || fail "unknown ABL returned $rc instead of 7"
-assert_contains "$out" "not an identifiable ROCKNIX ABL"
-[[ "$(sha256sum "$ABL_A")" == "$before" ]] || fail "unknown ABL was modified"
+install_both "$unknown"
+expect_refused "unknown ABL" "not a recognized ROCKNIX or OpenABL image"
 
 # Recognize a historical payload by its own length even with a stale tail.
 short_tail="$WORK/short-tail"
@@ -135,16 +181,14 @@ import sys
 with open(sys.argv[1], "ab") as output:
     output.write(b"stale partition tail" * 300)
 PY
-[[ "$(ARMADA_ABL_RELEASES="$catalog" python3 "$VERSION_TOOL" --with-soc "$short_tail")" == "1.1.6 SM8550" ]] ||
+[[ "$(identify --with-soc "$short_tail")" == "ROCKNIX 1.1.6 SM8550" ]] ||
     fail "known historical prefix with stale tail was not identified"
-cp "$short_tail" "$ABL_A"; cp "$short_tail" "$ABL_B"; : > "$WORK/writes"
-run_update >/dev/null
-cmp -s -n "$target_size" "$payload" "$ABL_A" || fail "short historical payload was not updated"
-cmp -s -n "$target_size" "$payload" "$ABL_B" || fail "short historical payload was not updated"
+install_both "$short_tail"
+expect_updated "short historical payload"
 
 # Known bytes outside an approved prefix must not identify a payload.
 stale="$WORK/stale-tail"
-python3 - "$stale" "$old" <<'PY'
+python3 - "$stale" "$rocknix" <<'PY'
 import struct
 import sys
 
@@ -160,39 +204,85 @@ with open(path, "wb") as output, open(old, "rb") as trailing:
     output.write(image)
     output.write(trailing.read())
 PY
-cp "$stale" "$ABL_A"; cp "$stale" "$ABL_B"
-set +e; out=$(run_update); rc=$?; set -e
-[[ $rc -eq 7 ]] || fail "stale-tail ABL returned $rc instead of 7"
-assert_contains "$out" "not an identifiable ROCKNIX ABL"
+install_both "$stale"
+expect_refused "stale-tail ABL" "not a recognized ROCKNIX or OpenABL image"
 
-# Even an approved ROCKNIX payload must match the DT-confirmed target SoC.
-cp "$wrong_soc" "$ABL_A"; cp "$wrong_soc" "$ABL_B"; : > "$WORK/writes"
-set +e; out=$(run_update); rc=$?; set -e
-[[ $rc -eq 7 ]] || fail "wrong-SoC ABL returned $rc instead of 7"
-assert_contains "$out" "for SM8650, expected SM8550; refusing to overwrite"
-[[ ! -s "$WORK/writes" ]] || fail "wrong-SoC ABL was overwritten"
+# Even an approved payload must match the DT-confirmed target SoC.
+install_both "$wrong_soc"
+expect_refused "wrong-SoC ABL" "is ROCKNIX 1.1.7 for SM8650, expected SM8550; refusing to overwrite"
 
-cp "$payload" "$ABL_A"; cp "$old" "$ABL_B"
-: > "$WORK/writes"
+cp "$payload" "$ABL_A"; cp "$rocknix" "$ABL_B"; : > "$WORK/writes"
 run_update >/dev/null
 mapfile -t writes < "$WORK/writes"
 [[ "${#writes[@]}" -eq 1 && "${writes[0]}" == "$ABL_B" ]] ||
     fail "mixed-state repair rewrote the wrong copies: ${writes[*]:-none}"
 
 # Approved newer and unknown divergent same-version images must never be replaced.
-cp "$newer" "$ABL_A"; cp "$newer" "$ABL_B"; : > "$WORK/writes"
-set +e; out=$(run_update); rc=$?; set -e
-[[ $rc -eq 7 ]] || fail "newer ABL returned $rc instead of 7"
-assert_contains "$out" "is newer than target"
-[[ ! -s "$WORK/writes" ]] || fail "newer ABL was overwritten"
+install_both "$newer"
+expect_refused "newer OpenABL" "OpenABL 1.2 is newer than target 1.1"
+install_both "$same_version"
+expect_refused "unknown same-version ABL" "not a recognized ROCKNIX or OpenABL image"
 
-cp "$same_version" "$ABL_A"; cp "$same_version" "$ABL_B"; : > "$WORK/writes"
-set +e; out=$(run_update); rc=$?; set -e
-[[ $rc -eq 7 ]] || fail "unknown same-version ABL returned $rc instead of 7"
-assert_contains "$out" "not an identifiable ROCKNIX ABL"
-[[ ! -s "$WORK/writes" ]] || fail "unknown same-version ABL was overwritten"
+# Unlisted copies are replaced when the booted OpenABL reports an older version.
+set_efivar "$SETTINGS" ""
+install_both "$unknown"
+expect_refused "OpenABL build of unknown version" "not a recognized ROCKNIX or OpenABL image"
+[[ "$(env "${base_env[@]}" python3 "$VERSION_TOOL" --firmware)" == "OpenABL" ]] ||
+    fail "OpenABL settings variables were not detected"
+set_efivar "$LOADER_INFO" "OpenABL 1.0"
+[[ "$(env "${base_env[@]}" python3 "$VERSION_TOOL" --firmware)" == "OpenABL 1.0" ]] ||
+    fail "LoaderInfo version was not read"
+expect_updated "booted OpenABL 1.0 over unknown copies"
+cp "$unknown" "$ABL_A"; cp "$same_version" "$ABL_B"; : > "$WORK/writes"
+expect_updated "booted OpenABL 1.0 over divergent copies"
+cp "$payload" "$ABL_A"; cp "$unknown" "$ABL_B"; : > "$WORK/writes"
+run_update >/dev/null
+mapfile -t writes < "$WORK/writes"
+[[ "${#writes[@]}" -eq 1 && "${writes[0]}" == "$ABL_B" ]] ||
+    fail "reported-version repair rewrote the wrong copies: ${writes[*]:-none}"
 
-cp "$old" "$ABL_A"; cp "$old" "$ABL_B"; : > "$WORK/splash-log"
+# Hashes beat the reported version.
+install_both "$newer"
+expect_refused "listed newer copy under a stale report" "OpenABL 1.2 is newer than target 1.1"
+cp "$payload" "$ABL_A"; cp "$wrong_soc" "$ABL_B"; : > "$WORK/writes"
+expect_refused "listed wrong-SoC copy under a report" "for SM8650, expected SM8550; refusing to overwrite"
+set_efivar "$LOADER_INFO" "OpenABL 1.3"
+install_both "$rocknix"
+expect_updated "listed ROCKNIX copy under a newer report"
+set_efivar "$LOADER_INFO" "OpenABL 1.0"
+
+# Custom builds of the same or a newer version are left alone.
+expect_left() {
+    local what=$1 out rc before
+    before=$(cat "$ABL_A" "$ABL_B" | sha256sum)
+    set +e; out=$(run_update); rc=$?; set -e
+    [[ $rc -eq 0 ]] || fail "$what returned $rc instead of 0: $out"
+    assert_contains "$out" "is not older than 1.1; leaving it"
+    [[ ! -s "$WORK/writes" ]] || fail "$what was overwritten"
+    [[ "$(cat "$ABL_A" "$ABL_B" | sha256sum)" == "$before" ]] || fail "$what was modified"
+}
+install_both "$unknown"
+set_efivar "$LOADER_INFO" "OpenABL 1.1"
+expect_left "CI build of the packaged version"
+set_efivar "$LOADER_INFO" "OpenABL 1.3"
+expect_left "newer booted OpenABL"
+# A version OpenABL could never report is no evidence at all.
+set_efivar "$LOADER_INFO" "OpenABL 1.1-ci.42"
+expect_refused "malformed reported version" "not a recognized ROCKNIX or OpenABL image"
+rm -rf "$EFIVARS"
+
+mkdir -p "$ESRT/entries/entry0"
+printf 'c02d2ab2-3223-42be-9608-e28009010000\n' > "$ESRT/entries/entry0/fw_class"
+printf '%s\n' $(( (1 << 16) | 0 )) > "$ESRT/entries/entry0/fw_version"
+[[ "$(env "${base_env[@]}" python3 "$VERSION_TOOL" --firmware)" == "OpenABL 1.0" ]] ||
+    fail "ESRT version was not read"
+install_both "$unknown"
+expect_updated "OpenABL 1.0 reported through the ESRT"
+rm -rf "$ESRT"
+! env "${base_env[@]}" python3 "$VERSION_TOOL" --firmware >/dev/null ||
+    fail "firmware reported OpenABL without any evidence"
+
+install_both "$rocknix"; : > "$WORK/splash-log"
 set +e
 out=$(env "${base_env[@]}" ARMADA_TEST_DD_FAIL=1 \
     "$UPDATE" --target-root "$TARGET" 2>&1)
@@ -202,36 +292,26 @@ set -e
 grep -q '^--error Bootloader update failed' "$WORK/splash-log" ||
     fail "write failure did not replace the splash with an error"
 
-# The privileged settings service persists an explicit preference and falls
-# back to the image policy only while the preference is absent.
-python3 - "$ROOT" "$WORK" <<'PY'
+# armada-control has no ABL update toggle.
+python3 - "$ROOT" <<'PY'
 import importlib.machinery
 import importlib.util
 import pathlib
 import sys
 
-root, work = map(pathlib.Path, sys.argv[1:])
+root = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(root / "system_files/usr/lib/armada"))
 path = root / "system_files/usr/libexec/armada/armada-control"
 loader = importlib.machinery.SourceFileLoader("armada_control_service", str(path))
 spec = importlib.util.spec_from_loader("armada_control_service", loader)
 control = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(control)
-
-control.ABL_CONFIG = work / "abl.conf"
-control.ABL_MANIFEST = work / "abl-manifest"
-control.ABL_MANIFEST.write_text("ARMADA_ABL_AUTO=0\n")
-assert control.abl_auto_enabled() is False
-assert control.action_set_abl_auto_enabled({"enabled": True}) == {"enabled": True}
-assert control.ABL_CONFIG.read_text() == "auto_update_enabled=1\n"
-control.ABL_MANIFEST.write_text("ARMADA_ABL_AUTO=1\n")
-assert control.action_set_abl_auto_enabled({"enabled": False}) == {"enabled": False}
-assert control.ABL_CONFIG.read_text() == "auto_update_enabled=0\n"
+assert not any("abl_auto" in action for action in control.ACTIONS)
 PY
 
 FROOT="$WORK/finalize"; FBOOT="$FROOT/boot"; FSYS="$FROOT/sysroot"
 mkdir -p "$FBOOT/loader/entries" "$FSYS/ostree/deploy/old" \
-    "$FSYS/ostree/deploy/target/usr/lib/armada/abl"
+    "$FSYS/ostree/deploy/target/usr/lib/openabl-updater"
 cat > "$FBOOT/loader/entries/ostree-1.conf" <<EOF
 version 1
 options ostree=/ostree/deploy/old
@@ -240,7 +320,7 @@ cat > "$FBOOT/loader/entries/ostree-2.conf" <<EOF
 version 2
 options quiet ostree=/ostree/deploy/target wildcard=*
 EOF
-printf 'ARMADA_ABL_AUTO=1\n' > "$FSYS/ostree/deploy/target/usr/lib/armada/abl/manifest"
+printf 'ARMADA_ABL_NAME=OpenABL\n' > "$FSYS/ostree/deploy/target/usr/lib/openabl-updater/manifest"
 cat > "$FROOT/updater" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ARMADA_FINALIZE_LOG"
@@ -248,8 +328,7 @@ EOF
 chmod +x "$FROOT/updater"
 finalize_env=(BOOTROOT="$FBOOT" SYSROOT="$FSYS"
     ARGS_FILE="$ROOT/system_files/usr/lib/armada/bootimg-args"
-    UPDATER="$FROOT/updater" ARMADA_FINALIZE_LOG="$FROOT/finalize-log"
-    ABL_CONFIG="$FROOT/abl.conf")
+    UPDATER="$FROOT/updater" ARMADA_FINALIZE_LOG="$FROOT/finalize-log")
 env "${finalize_env[@]}" "$FINALIZE"
 assert_contains "$(cat "$FROOT/finalize-log")" \
     "--target-root $FSYS/ostree/deploy/target"
@@ -262,42 +341,33 @@ env "${finalize_env[@]}" "$FINALIZE"
 assert_contains "$(cat "$FROOT/finalize-log")" \
     "--target-root $FSYS/ostree/deploy/target"
 
-# AUTO gates the shutdown finalizer, not direct operator invocation.
-printf 'ARMADA_ABL_AUTO=0\n' > "$FSYS/ostree/deploy/target/usr/lib/armada/abl/manifest"
+# A stale ARMADA_ABL_AUTO=0 is ignored.
+printf 'ARMADA_ABL_AUTO=0\n' >> "$FSYS/ostree/deploy/target/usr/lib/openabl-updater/manifest"
 : > "$FROOT/finalize-log"
-env "${finalize_env[@]}" "$FINALIZE"
-[[ ! -s "$FROOT/finalize-log" ]] || fail "disabled automatic target invoked writer"
-
-# A persistent user choice overrides the image default in either direction.
-printf 'auto_update_enabled=1\n' > "$FROOT/abl.conf"
-env "${finalize_env[@]}" "$FINALIZE"
+printf 'auto_update_enabled=0\n' > "$FROOT/abl.conf"
+env "${finalize_env[@]}" ABL_CONFIG="$FROOT/abl.conf" "$FINALIZE"
 assert_contains "$(cat "$FROOT/finalize-log")" \
     "--target-root $FSYS/ostree/deploy/target"
-printf 'ARMADA_ABL_AUTO=1\n' > "$FSYS/ostree/deploy/target/usr/lib/armada/abl/manifest"
-printf 'auto_update_enabled=0\n' > "$FROOT/abl.conf"
-: > "$FROOT/finalize-log"
-env "${finalize_env[@]}" "$FINALIZE"
-[[ ! -s "$FROOT/finalize-log" ]] || fail "user-disabled automatic target invoked writer"
 
-# Deployments predating the vendored ABL payload silently remain ineligible.
-rm -f "$FROOT/abl.conf" "$FSYS/ostree/deploy/target/usr/lib/armada/abl/manifest"
+# Deployments predating the packaged ABL payload silently remain ineligible.
+rm -f "$FSYS/ostree/deploy/target/usr/lib/openabl-updater/manifest"
 : > "$FROOT/finalize-log"
 env "${finalize_env[@]}" "$FINALIZE"
 [[ ! -s "$FROOT/finalize-log" ]] || fail "manifest-less target invoked writer"
-printf 'auto_update_enabled=1\n' > "$FROOT/abl.conf"
-env "${finalize_env[@]}" "$FINALIZE"
-[[ ! -s "$FROOT/finalize-log" ]] || fail "user-enabled manifest-less target invoked writer"
 
-write_manifest 0
-cp "$old" "$ABL_A"; cp "$old" "$ABL_B"
-run_update >/dev/null
-cmp -s "$payload" "$ABL_A" || fail "explicit AUTO=0 qualification did not update A"
-cmp -s "$payload" "$ABL_B" || fail "explicit AUTO=0 qualification did not update B"
-
-grep -q '^ARMADA_ABL_AUTO=0$' "$ROOT/abl/release.env" ||
-    fail "release manifest enables automatic flashing"
 sync_unit="$ROOT/system_files/usr/lib/systemd/system/armada-bootimg-sync.service"
-grep -q '^ExecStop=-/usr/libexec/armada/armada-abl-finalize$' "$sync_unit" ||
+! grep -q 'armada-abl-finalize' "$sync_unit" ||
+    fail "the base unit still runs the ABL finalizer; openabl-updater owns that hook"
+grep -q '^ExecStop=-/usr/libexec/openabl-updater/armada-abl-finalize$' "$PKG/src/armada-bootimg-sync-openabl-updater.conf" ||
     fail "shutdown ABL finalizer is not non-fatal"
+
+# Every chipset's image is checksummed and the legacy catalog loads.
+spec="$PKG/openabl-updater.spec"
+for soc in $(sed -n 's/^%global openabl_socs //p' "$spec"); do
+    grep -q "/abl_signed-${soc}.elf$" "$spec" || fail "spec does not download $soc"
+    grep -q "/abl_signed-${soc}.elf.sha256$" "$spec" || fail "spec does not download the $soc checksum"
+done
+ARMADA_ABL_RELEASES="$PKG/legacy-releases.tsv" python3 "$VERSION_TOOL" \
+    --lookup ROCKNIX 1.2 SM8550 >/dev/null || fail "legacy catalog does not load"
 
 printf 'ABL update test passed\n'

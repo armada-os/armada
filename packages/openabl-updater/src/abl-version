@@ -1,0 +1,164 @@
+#!/usr/bin/python3
+# Identify ABL builds by their bytes or by what a running OpenABL reports.
+import csv
+import glob
+import hashlib
+import os
+import re
+import sys
+
+FIELDS = ["abl", "version", "soc", "size", "sha256"]
+MAX_SIZE = 4 * 1024 * 1024
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+SUPPORTED_ABLS = {"ROCKNIX", "OpenABL"}
+SUPPORTED_SOCS = {"SM8250", "SM8550", "SM8650", "SM8750"}
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?")
+
+# OpenABL's ESRT firmware class; its last four bytes are the ChipInfo id.
+OPENABL_ESRT_CLASS = "c02d2ab2-3223-42be-9608-e280"
+# systemd's Boot Loader Interface vendor GUID, where OpenABL sets LoaderInfo.
+BLI_GUID = "4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+# OpenABL keeps its settings under this GUID on every boot path.
+OPENABL_SETTINGS_GUID = "8c5f2b7e-3a41-4d6c-9e2f-5b7a1c0d4e93"
+
+
+def load_catalog(path):
+    entries = []
+    keys = set()
+    identities = set()
+    with open(path, encoding="ascii", newline="") as source:
+        lines = (
+            line for line in source
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        rows = csv.DictReader(lines, delimiter="\t", strict=True)
+        if rows.fieldnames != FIELDS:
+            raise ValueError("invalid catalog header")
+        for row in rows:
+            if None in row or None in row.values():
+                raise ValueError("invalid catalog row")
+            abl = row["abl"]
+            version = row["version"]
+            soc = row["soc"]
+            size = int(row["size"])
+            digest = row["sha256"]
+            key = (abl, version, soc)
+            identity = (size, digest)
+            if (abl not in SUPPORTED_ABLS or not VERSION_RE.fullmatch(version) or
+                    soc not in SUPPORTED_SOCS or not 0 < size <= MAX_SIZE or
+                    not SHA256_RE.fullmatch(digest) or
+                    key in keys or identity in identities):
+                raise ValueError("invalid catalog row")
+            keys.add(key)
+            identities.add(identity)
+            entries.append((abl, version, soc, size, digest))
+    if not entries:
+        raise ValueError("empty catalog")
+    return entries
+
+
+def identify(entries, path):
+    with open(path, "rb", buffering=0) as firmware:
+        image = firmware.read(max(entry[3] for entry in entries))
+    hashes = {}
+    matches = set()
+    for abl, version, soc, size, digest in entries:
+        if len(image) < size:
+            continue
+        if size not in hashes:
+            hashes[size] = hashlib.sha256(image[:size]).hexdigest()
+        if hashes[size] == digest:
+            matches.add((abl, version, soc))
+    if len(matches) != 1:
+        raise ValueError("payload identity is not unique")
+    return matches.pop()
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="ascii") as source:
+            return source.read().strip()
+    except (OSError, UnicodeError):
+        return ""
+
+
+def esrt_version(root):
+    for entry in sorted(glob.glob(os.path.join(root, "entries", "entry*"))):
+        if not read_text(os.path.join(entry, "fw_class")).lower().startswith(OPENABL_ESRT_CLASS):
+            continue
+        try:
+            raw = int(read_text(os.path.join(entry, "fw_version")), 0)
+        except ValueError:
+            continue
+        if raw:
+            return f"{raw >> 16}.{raw & 0xffff}"
+    return ""
+
+
+def efivar(directory, name, guid):
+    # efivarfs prefixes each value with its 4-byte attributes.
+    try:
+        with open(os.path.join(directory, f"{name}-{guid}"), "rb") as source:
+            return source.read()[4:]
+    except OSError:
+        return None
+
+
+def loader_info_version(directory):
+    data = efivar(directory, "LoaderInfo", BLI_GUID)
+    if not data:
+        return ""
+    try:
+        text = data.decode("utf-16-le").rstrip("\0")
+    except UnicodeError:
+        return ""
+    name, _, version = text.partition(" ")
+    return version if name == "OpenABL" and VERSION_RE.fullmatch(version) else ""
+
+
+def firmware():
+    """Returns ("OpenABL", version) for the running OpenABL, with version ""
+    when only its settings show it is there, or None."""
+    version = esrt_version(os.environ.get("ARMADA_ESRT", "/sys/firmware/efi/esrt"))
+    if version and VERSION_RE.fullmatch(version):
+        return "OpenABL", version
+    directory = os.environ.get("ARMADA_EFIVARS", "/sys/firmware/efi/efivars")
+    version = loader_info_version(directory)
+    if version:
+        return "OpenABL", version
+    if efivar(directory, "SettingsSchema", OPENABL_SETTINGS_GUID) is not None:
+        return "OpenABL", ""
+    return None
+
+
+def main(args):
+    if args == ["--firmware"]:
+        running = firmware()
+        if not running:
+            return 1
+        print(" ".join(part for part in running if part))
+        return 0
+    catalog = os.environ.get(
+        "ARMADA_ABL_RELEASES", "/usr/lib/openabl-updater/legacy-releases.tsv"
+    )
+    try:
+        entries = load_catalog(catalog)
+        if len(args) == 4 and args[0] == "--lookup":
+            key = tuple(args[1:])
+            matches = [entry for entry in entries if entry[:3] == key]
+            if len(matches) != 1:
+                return 1
+            _, _, _, size, digest = matches[0]
+            print(f"{size} {digest}")
+            return 0
+        with_soc = len(args) == 2 and args[0] == "--with-soc"
+        if len(args) != (2 if with_soc else 1):
+            return 2
+        abl, version, soc = identify(entries, args[1] if with_soc else args[0])
+        print(f"{abl} {version} {soc}" if with_soc else f"{abl} {version}")
+        return 0
+    except (csv.Error, OSError, UnicodeError, ValueError):
+        return 1
+
+
+raise SystemExit(main(sys.argv[1:]))

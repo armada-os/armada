@@ -1,0 +1,142 @@
+From 2a486ae00a468339b8fa2b32d2768d2c3b45c4dc Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Mon, 21 Sep 2026 20:30:15 +0200
+Subject: [PATCH] Allow CpuScaling1 to be served by a remote interface
+
+It registers unconditionally, so a remote can never fill the hole; let a device
+config ask for no local driver instead. The default is unchanged.
+---
+ README.md                           |  1 +
+ steamos-manager/src/hardware.rs     | 15 +++++++++++++++
+ steamos-manager/src/manager/user.rs | 28 ++++++++++++++++++++++------
+ 3 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/README.md b/README.md
+index 6b3a986..fcf94bb 100644
+--- a/README.md
++++ b/README.md
+@@ -146,6 +146,7 @@ the future.
+ 
+ - BatteryChargeLimit1
+ - CpuBoost1
++- CpuScaling1
+ - FactoryReset1
+ - FanControl1
+ - GpuPerformanceLevel1
+diff --git a/steamos-manager/src/hardware.rs b/steamos-manager/src/hardware.rs
+index 4bc7301..c43e07e 100644
+--- a/steamos-manager/src/hardware.rs
++++ b/steamos-manager/src/hardware.rs
+@@ -109,6 +109,7 @@ pub struct DeviceConfig {
+     pub(crate) device: Vec<DeviceMatch>,
+     pub(crate) tdp_limit: Option<TdpLimitConfig>,
+     pub(crate) fan_speed: Option<FanSpeedConfig>,
++    pub(crate) cpu_scaling: Option<CpuScalingConfig>,
+     pub(crate) gpu_performance: Option<GpuPerformanceConfig>,
+     pub(crate) gpu_power_profile: Option<GpuPowerProfileConfig>,
+     pub(crate) battery_charge_limit: Option<BatteryChargeLimitConfig>,
+@@ -203,6 +204,20 @@ pub(crate) struct OptionalRangeConfig<T: Clone> {
+     pub max: Option<T>,
+ }
+ 
++#[derive(Clone, Copy, Default, Deserialize, Debug, PartialEq)]
++#[serde(rename_all = "snake_case")]
++pub(crate) enum CpuScalingDriverType {
++    #[default]
++    Cpufreq,
++    None,
++}
++
++#[derive(Clone, Default, Deserialize, Debug)]
++#[serde(default)]
++pub(crate) struct CpuScalingConfig {
++    pub driver: CpuScalingDriverType,
++}
++
+ #[derive(Clone, Deserialize, Debug)]
+ pub(crate) struct PerformanceProfileConfig {
+     pub suggested_default: String,
+diff --git a/steamos-manager/src/manager/user.rs b/steamos-manager/src/manager/user.rs
+index ec6ed90..6515963 100644
+--- a/steamos-manager/src/manager/user.rs
++++ b/steamos-manager/src/manager/user.rs
+@@ -40,7 +40,8 @@ use crate::gpu::{
+     gpu_performance_level_driver, gpu_power_profile_driver,
+ };
+ use crate::hardware::{
+-    SteamDeckVariant, device_config, device_type, device_variant, steam_deck_variant,
++    CpuScalingDriverType, SteamDeckVariant, device_config, device_type, device_variant,
++    steam_deck_variant,
+ };
+ use crate::job::JobManagerCommand;
+ use crate::manager::root::{RootManagerProxy, SteamOSManagerSignals};
+@@ -53,9 +54,9 @@ use crate::power::{
+     unregister_tdp_limit1,
+ };
+ use crate::proxy::{
+-    BatteryChargeLimit1Proxy, CpuBoost1Proxy, FactoryReset1Proxy, FanControl1Proxy,
+-    GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy, Storage1Proxy,
+-    TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
++    BatteryChargeLimit1Proxy, CpuBoost1Proxy, CpuScaling1Proxy, FactoryReset1Proxy,
++    FanControl1Proxy, GpuPerformanceLevel1Proxy, GpuPowerProfile1Proxy, PerformanceProfile1Proxy,
++    Storage1Proxy, TdpLimit1Proxy, UpdateBios1Proxy, UpdateDock1Proxy,
+ };
+ use crate::screenreader::{OrcaManager, ScreenReaderAction, ScreenReaderMode};
+ use crate::session::{
+@@ -217,6 +218,8 @@ struct RemoteInterface1 {
+     #[remote]
+     remote_cpu_boost1: Option<CpuBoost1RemoteOwner>,
+     #[remote]
++    remote_cpu_scaling1: Option<CpuScaling1RemoteOwner>,
++    #[remote]
+     remote_factory_reset1: Option<FactoryReset1RemoteOwner>,
+     #[remote]
+     remote_fan_control1: Option<FanControl1RemoteOwner>,
+@@ -388,7 +391,7 @@ impl CpuBoost1 {
+     }
+ }
+ 
+-#[interface(name = "com.steampowered.SteamOSManager1.CpuScaling1")]
++#[remote(name = "com.steampowered.SteamOSManager1.CpuScaling1")]
+ impl CpuScaling1 {
+     #[zbus(property(emits_changed_signal = "const"))]
+     async fn available_cpu_scaling_governors(&self) -> fdo::Result<Vec<String>> {
+@@ -943,6 +946,7 @@ impl RemoteInterface1 {
+             job_manager,
+             remote_battery_charge_limit1: None,
+             remote_cpu_boost1: None,
++            remote_cpu_scaling1: None,
+             remote_factory_reset1: None,
+             remote_fan_control1: None,
+             remote_gpu_performance_level1: None,
+@@ -1981,7 +1985,18 @@ pub(crate) async fn create_interfaces(
+         object_server.at(MANAGER_PATH, cpu_boost).await?;
+     }
+ 
+-    object_server.at(MANAGER_PATH, cpu_scaling).await?;
++    // A device config can hand CPU scaling to a remote implementation by asking
++    // for no local driver; without that the local one always wins the interface.
++    if device_config()
++        .await?
++        .as_ref()
++        .and_then(|config| config.cpu_scaling.as_ref())
++        .map(|config| config.driver)
++        .unwrap_or_default()
++        != CpuScalingDriverType::None
++    {
++        object_server.at(MANAGER_PATH, cpu_scaling).await?;
++    }
+     if CpuSchedulerManager::is_supported().await? {
+         object_server.at(MANAGER_PATH, cpu_scheduler).await?;
+     }
+@@ -2229,6 +2244,7 @@ mod test {
+                 friendly_name: Some(String::from("Steam Deck")),
+                 oui: Some(VendorId::from_str("E0-31-9E").unwrap()),
+             }],
++            cpu_scaling: None,
+             tdp_limit: Some(TdpLimitConfig {
+                 method: TdpLimitingMethod::AmdgpuHwmon,
+                 range: Some(RangeConfig::new(3, 15)),
+-- 
+2.56.0
+

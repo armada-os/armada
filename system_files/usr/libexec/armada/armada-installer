@@ -31,6 +31,7 @@ LINUX_TYPE = "0fc63daf-8483-4772-8e79-3d69d8477de4"
 BTRFS_OPTS = "noatime,compress=zstd:1,discard=async"
 SELF = "/usr/libexec/armada/armada-installer"
 BOOTIMG = "/usr/libexec/armada/armada-bootimg-update"
+ICON = "armada-installer"
 RECOVERY = ("To retry from SD, select SD as the boot source in ABL and re-run the installer. "
             "To abandon the internal installation, select UNINSTALL CFW in ABL.")
 
@@ -686,6 +687,7 @@ def choose_android_size(minimum, maximum, total):
     def activate(application):
         window = Adw.MessageDialog(application=application, title="Armada Installer", heading="Armada Installer")
         window.set_default_size(480, -1)
+        window.set_icon_name(ICON)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.append(Gtk.Label(label="Choose how to split internal storage", wrap=True))
         sizes = Gtk.Label()

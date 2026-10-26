@@ -1,4 +1,4 @@
-From f62c9cc73ef3345bc3957a67ab92cd929fbdeb02 Mon Sep 17 00:00:00 2001
+From e3fbc21db013f9db910a383a62fc96088c847cbc Mon Sep 17 00:00:00 2001
 From: virtudude <virtudude@protonmail.com>
 Date: Sun, 20 Sep 2026 20:13:11 -0400
 Subject: [PATCH] input: share raw gamepad input
@@ -16,11 +16,11 @@ and root-hidden sources.
 Eligible gamepads remain hidden even with passthrough: true. Other
 gamepad-driver sources retain upstream's exclusive grab.
 ---
- src/input/composite_device/mod.rs | 40 +++++++++-----
- src/input/source/evdev.rs         | 34 ++++++++++++
- src/input/source/evdev/gamepad.rs | 91 ++++++++++++++++++++++++++++++-
+ src/input/composite_device/mod.rs | 40 ++++++++-----
+ src/input/source/evdev.rs         | 34 +++++++++++
+ src/input/source/evdev/gamepad.rs | 93 +++++++++++++++++++++++++++++--
  src/udev/mod.rs                   | 56 +++++++++++++++----
- 4 files changed, 194 insertions(+), 27 deletions(-)
+ 4 files changed, 195 insertions(+), 28 deletions(-)
 
 diff --git a/src/input/composite_device/mod.rs b/src/input/composite_device/mod.rs
 index 3cca2ba..5e508a5 100644
@@ -136,7 +136,7 @@ index 2db1cad..8abbba4 100644
      fn get_driver_type(device: &UdevDevice, is_blocked: bool) -> DriverType {
          // TODO: add implmentations for other classes of evdev devices (e.g.
 diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
-index 5f5b0e6..9491542 100644
+index b0a3cf2..c3018ba 100644
 --- a/src/input/source/evdev/gamepad.rs
 +++ b/src/input/source/evdev/gamepad.rs
 @@ -3,8 +3,8 @@ use std::os::fd::AsFd;
@@ -150,12 +150,15 @@ index 5f5b0e6..9491542 100644
  };
  use nix::fcntl::{FcntlArg, OFlag};
  use packed_struct::types::SizedInteger;
-@@ -22,11 +22,90 @@ use crate::{
-         capability::{Capability, Gamepad, GamepadAxis, GamepadButton},
+@@ -24,13 +24,92 @@ use crate::{
          event::{evdev::EvdevEvent, native::NativeEvent},
          output_event::OutputEvent,
--        source::{InputError, OutputError, SourceInputDevice, SourceOutputDevice},
-+        source::{InputError, OutputError, SourceDriver, SourceInputDevice, SourceOutputDevice},
+         source::{
+-            haptic_duration, haptic_gain_level, InputError, OutputError, SourceInputDevice,
+-            SourceOutputDevice, HAPTIC_NOMINAL_PERCENT,
++            haptic_duration, haptic_gain_level, InputError, OutputError, SourceDriver,
++            SourceInputDevice, SourceOutputDevice, HAPTIC_NOMINAL_PERCENT,
+         },
      },
      udev::device::UdevDevice,
  };
@@ -242,7 +245,7 @@ index 5f5b0e6..9491542 100644
  /// Source device implementation for evdev gamepads
  pub struct GamepadEventDevice {
      device: Device,
-@@ -39,6 +118,12 @@ pub struct GamepadEventDevice {
+@@ -43,6 +122,12 @@ pub struct GamepadEventDevice {
      hat_state: HashMap<AbsoluteAxisCode, i32>,
  }
  
@@ -256,7 +259,7 @@ index 5f5b0e6..9491542 100644
      /// Create a new [Gamepad] source device from the given udev info
      pub fn new(
 diff --git a/src/udev/mod.rs b/src/udev/mod.rs
-index 871779f..0c7dfc0 100644
+index d6d779c..1f2ef0c 100644
 --- a/src/udev/mod.rs
 +++ b/src/udev/mod.rs
 @@ -20,7 +20,8 @@ use udev::Enumerator;

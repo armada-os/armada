@@ -7,7 +7,7 @@ format the driver will reject. Covers both surface-format entry points and
 preserves application-owned VkSurfaceFormat2KHR output headers.
 
 diff --git a/layer/VkLayer_FROG_gamescope_wsi.cpp b/layer/VkLayer_FROG_gamescope_wsi.cpp
-index 50bdb236..b470dc67 100644
+index 5c208b7b..80df9cfa 100644
 --- a/layer/VkLayer_FROG_gamescope_wsi.cpp
 +++ b/layer/VkLayer_FROG_gamescope_wsi.cpp
 @@ -3,6 +3,7 @@
@@ -16,9 +16,9 @@ index 50bdb236..b470dc67 100644
  #include "xcb_helpers.hpp"
 +#include "surface_format_utils.hpp"
  #include "vulkan_operators.hpp"
+ #include "present_timing.hpp"
  #include "gamescope-swapchain-client-protocol.h"
- #include "gamescope-limiter-client-protocol.h"
-@@ -865,9 +866,9 @@ namespace GamescopeWSILayer {
+@@ -1114,9 +1115,9 @@ namespace GamescopeWSILayer {
      }
  
      static constexpr std::array<VkSurfaceFormat2KHR, 3> s_ExtraHDRSurfaceFormat2s = {{
@@ -31,14 +31,14 @@ index 50bdb236..b470dc67 100644
      }};
  
      static constexpr auto s_ExtraHDRSurfaceFormats = []() {
-@@ -896,9 +897,22 @@ namespace GamescopeWSILayer {
+@@ -1145,9 +1146,22 @@ namespace GamescopeWSILayer {
            !(canBypass || gamescopeSurface->canBypassXWayland(true)))
-         return pDispatch->GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, selectedSurface, pSurfaceFormatCount, pSurfaceFormats);
+         return pDispatch.GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, selectedSurface, pSurfaceFormatCount, pSurfaceFormats);
  
--      return vkroots::helpers::append(
+-      return vkroots::append(
 +      std::vector<VkSurfaceFormatKHR> underlyingSurfaceFormats;
 +      VkResult result = SurfaceFormatUtils::enumerate(
-         pDispatch->GetPhysicalDeviceSurfaceFormatsKHR,
+         std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormatsKHR, &pDispatch),
 +        underlyingSurfaceFormats,
 +        physicalDevice,
 +        selectedSurface);
@@ -50,19 +50,19 @@ index 50bdb236..b470dc67 100644
 +        underlyingSurfaceFormats);
 +
 +      return SurfaceFormatUtils::append(
-+        pDispatch->GetPhysicalDeviceSurfaceFormatsKHR,
++        std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormatsKHR, &pDispatch),
 +        extraHDRSurfaceFormats,
          pSurfaceFormatCount,
          pSurfaceFormats,
          physicalDevice,
-@@ -925,9 +939,22 @@ namespace GamescopeWSILayer {
+@@ -1174,9 +1188,22 @@ namespace GamescopeWSILayer {
            !(canBypass || gamescopeSurface->canBypassXWayland(true)))
-         return pDispatch->GetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
+         return pDispatch.GetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo, pSurfaceFormatCount, pSurfaceFormats);
  
--      return vkroots::helpers::append(
+-      return vkroots::append(
 +      std::vector<VkSurfaceFormat2KHR> underlyingSurfaceFormats;
 +      VkResult result = SurfaceFormatUtils::enumerate(
-         pDispatch->GetPhysicalDeviceSurfaceFormats2KHR,
+         std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormats2KHR, &pDispatch),
 +        underlyingSurfaceFormats,
 +        physicalDevice,
 +        &surfaceInfo);
@@ -74,7 +74,7 @@ index 50bdb236..b470dc67 100644
 +        underlyingSurfaceFormats);
 +
 +      return SurfaceFormatUtils::append(
-+        pDispatch->GetPhysicalDeviceSurfaceFormats2KHR,
++        std::bind_front(&vkroots::VkPhysicalDeviceDispatch::GetPhysicalDeviceSurfaceFormats2KHR, &pDispatch),
 +        extraHDRSurfaceFormats,
          pSurfaceFormatCount,
          pSurfaceFormats,
@@ -218,13 +218,13 @@ index 00000000..f0cfa765
 +
 +}
 diff --git a/tests/meson.build b/tests/meson.build
-index 2ca5fe6d..38aba520 100644
+index 3daa113e..07547ed2 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
-@@ -25,3 +25,11 @@ test('utils/parsers', gamescope_tests, args: ['[parsers]'])
- test('utils/process', gamescope_tests, args: ['[process]'], depends: [reaper_test_helper])
- test('utils/string', gamescope_tests, args: ['[string]'])
- test('vrclient_detect', gamescope_tests, args: ['[vrclient_detect]'])
+@@ -41,3 +41,11 @@ if get_option('enable_gamescope_wsi_layer')
+ 	test('present_timing', present_timing_layer_tests, args: ['[present_timing]'])
+ 	test('present_timing_layer', present_timing_layer_tests, args: ['[present_timing_layer]'])
+ endif
 +
 +test_wsi_hdr_surface_formats = executable(
 +	'test_wsi_hdr_surface_formats',

@@ -1,0 +1,137 @@
+From: Radical <radical@radical.fun>
+Subject: [PATCH] drm: lock the lease companion with the broker
+
+Steam's lock screen lives only in its UI, so a lease companion stays
+usable while the broker is locked. GAMESCOPE_COMPANION_LOCKED on the
+root window now sleeps the companion's panel and stops forwarding touch
+to it until cleared.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index b4f4cd9..a857f05 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1661,6 +1661,8 @@ static bool g_bLeaseClientYields = false;
+ static bool g_bLeaseClientSuspendPending = false;
+ static bool g_bLeaseClientSuspended = false;
+ static uint64_t g_uLeaseClientGeneration = 0;
++static bool g_bLeaseCompanionLocked = false;
++static bool g_bLeaseCompanionAsleep = false;
+ 
+ extern gamescope::ConVar<bool> cv_drm_sleep_screens[];
+ 
+@@ -1699,6 +1701,7 @@ static void lease_disconnect_client( int &nClientFd )
+ 		g_bLeaseClientYields = false;
+ 		g_bLeaseClientSuspendPending = false;
+ 		g_bLeaseClientSuspended = false;
++		g_bLeaseCompanionAsleep = false;
+ 		g_uLeaseClientGeneration++;
+ 	}
+ 	g_leaseClientCv.notify_all();
+@@ -1716,7 +1719,7 @@ void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touch
+ {
+ 	static_assert( sizeof( DrmLeaseEvent ) == 20 );
+ 	std::lock_guard lock( g_leaseClientMutex );
+-	if ( !g_bLeaseClientWantsTouch || g_bLeaseClientSuspended )
++	if ( !g_bLeaseClientWantsTouch || g_bLeaseClientSuspended || g_bLeaseCompanionLocked )
+ 		return;
+ 
+ 	DrmLeaseEvent event = {
+@@ -1780,12 +1783,28 @@ bool drm_lease_companion_suspend( int nTimeoutMs )
+ 	return true;
+ }
+ 
+-// Steam only sleeps the broker's screen, so the companion's panel would stay lit.
+-static void drm_lease_send_sleep( bool bSleep )
++// Steam only sleeps and locks the broker's screen, so the companion's panel
++// would stay lit and touchable. Caller holds g_leaseClientMutex.
++static void lease_update_companion_sleep()
++{
++	const bool bSleep = cv_drm_sleep_screens[ gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL ] || g_bLeaseCompanionLocked;
++	if ( g_nLeaseClientFd < 0 || bSleep == g_bLeaseCompanionAsleep )
++		return;
++	if ( lease_send_control( bSleep ? DrmLeaseEventType::Sleep : DrmLeaseEventType::Wake ) )
++		g_bLeaseCompanionAsleep = bSleep;
++}
++
++static void drm_lease_update_sleep()
++{
++	std::lock_guard lock( g_leaseClientMutex );
++	lease_update_companion_sleep();
++}
++
++void drm_lease_set_companion_locked( bool bLocked )
+ {
+ 	std::lock_guard lock( g_leaseClientMutex );
+-	if ( g_nLeaseClientFd >= 0 )
+-		lease_send_control( bSleep ? DrmLeaseEventType::Sleep : DrmLeaseEventType::Wake );
++	g_bLeaseCompanionLocked = bLocked;
++	lease_update_companion_sleep();
+ }
+ 
+ void drm_lease_companion_resume()
+@@ -1894,8 +1913,7 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 		g_nActiveLeaseClients.fetch_add( 1 );
+ 		grantLock.unlock();
+ 		drm_log.infof( "lease-connector: sent lease fd to companion app" );
+-		if ( cv_drm_sleep_screens[ gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL ] )
+-			drm_lease_send_sleep( true );
++		drm_lease_update_sleep();
+ 	}
+ 
+ 	lease_disconnect_client( nClientFd );
+@@ -2360,7 +2378,7 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ void OnSleepScreenChanged( gamescope::ConVar<bool> &cv )
+ {
+ 	if ( &cv == &cv_drm_sleep_screens[ gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL ] )
+-		drm_lease_send_sleep( cv );
++		drm_lease_update_sleep();
+ 	force_repaint();
+ }
+ 
+diff --git a/src/main.hpp b/src/main.hpp
+index afec230..f067da4 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -95,6 +95,7 @@ void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touch
+ // acknowledged that nothing of its can commit; false leaves it the holder.
+ bool drm_lease_companion_suspend( int nTimeoutMs );
+ void drm_lease_companion_resume();
++void drm_lease_set_companion_locked( bool bLocked );
+ // True while a connected companion may still commit to the lease.
+ bool drm_lease_companion_active();
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 373d697..b611791 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -7447,6 +7447,10 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 		g_bForceInternal = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayForceInternal, 0 );
+ 		GetBackend()->DirtyState();
+ 	}
++	if ( ev->atom == ctx->atoms.gamescopeCompanionLocked )
++	{
++		drm_lease_set_companion_locked( !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeCompanionLocked, 0 ) );
++	}
+ 	if ( ev->atom == ctx->atoms.gamescopeDisplayModeNudge )
+ 	{
+ 		GetBackend()->DirtyState( true );
+@@ -9107,6 +9111,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
+ 
+ 	ctx->atoms.gamescopeDisplayForceInternal = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_FORCE_INTERNAL", false );
+ 	ctx->atoms.gamescopeDisplayModeNudge = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_MODE_NUDGE", false );
++	ctx->atoms.gamescopeCompanionLocked = XInternAtom( ctx->dpy, "GAMESCOPE_COMPANION_LOCKED", false );
+ 
+ 	ctx->atoms.gamescopeDisplayIsExternal = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_IS_EXTERNAL", false );
+ 	ctx->atoms.gamescopeDisplayModeListExternal = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_MODE_LIST_EXTERNAL", false );
+diff --git a/src/xwayland_ctx.hpp b/src/xwayland_ctx.hpp
+index 7b39ecb..083765b 100644
+--- a/src/xwayland_ctx.hpp
++++ b/src/xwayland_ctx.hpp
+@@ -187,6 +187,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
+ 
+ 		Atom gamescopeAllowTearing;
+ 		Atom gamescopeDisplayForceInternal;
++		Atom gamescopeCompanionLocked;
+ 		Atom gamescopeDisplayModeNudge;
+ 
+ 		Atom gamescopeDisplayIsExternal;

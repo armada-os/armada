@@ -1,0 +1,11 @@
+[Unit]
+Description=Snapdragon Sensor Core (gyro) FastRPC listener
+After=local-fs.target
+
+[Service]
+ExecStart=/usr/libexec/armada/armada-ssc
+# The sensors PD cannot safely attach twice in one boot.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

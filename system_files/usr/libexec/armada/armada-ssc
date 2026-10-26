@@ -1,0 +1,36 @@
+#!/bin/bash
+# Gyro (Qualcomm SSC) on boards that ship /usr/share/armada/ssc/<device id>.
+# "env" writes InputPlumber's FastRPC opt-in; no argument runs the listener.
+set -euo pipefail
+
+eval "$(/usr/libexec/armada/device-env)"
+# ARMADA_GYRO=0 in /etc/armada/gyro.conf turns gyro off.
+ARMADA_GYRO=$(sed -n 's/^ARMADA_GYRO=//p' /etc/armada/gyro.conf 2>/dev/null | head -1 || true)
+ARMADA_GYRO=${ARMADA_GYRO:-1}
+
+root="/usr/share/armada/ssc/${ARMADA_DEVICE_ID:-}"
+supported=0
+if [ -n "${ARMADA_DEVICE_ID:-}" ] && [ -d "$root" ]; then
+    supported=1
+fi
+
+if [ "${1:-}" = env ]; then
+    enabled=0
+    [ "$supported" = 1 ] && [ "$ARMADA_GYRO" = 1 ] && enabled=1
+    mkdir -p /run/armada
+    echo "INPUTPLUMBER_FASTRPC=$enabled" > /run/armada/gyro.env
+    exit 0
+fi
+
+# Even with gyro off: the sensors PD only comes up if this attaches soon after the ADSP boots.
+[ "$supported" = 1 ] || exit 0
+
+# The ADSP has one FastRPC node; the device tree decides whether it is secure.
+for _ in $(seq 60); do
+    for node in /dev/fastrpc-adsp /dev/fastrpc-adsp-secure; do
+        [ -e "$node" ] && exec hexagonrpcd -f "$node" -d adsp -s -R "$root"
+    done
+    sleep 1
+done
+echo "armada-ssc: no ADSP FastRPC node" >&2
+exit 1

@@ -8,19 +8,19 @@ the divisor gate.
 
 ---
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index 4f91e5f..cabd639 100644
+index ae7b4ad8..e7f1c35d 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -6902,6 +6902,8 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
- 
- static std::optional<uint64_t> s_oLowestFPSLimitScheduleVRR;
+@@ -6943,6 +6943,8 @@ static std::optional<uint64_t> s_oLowestFPSLimitScheduleVRR;
+ // Display vblank index of the previous vblank pass. The limiter opens when a pass crosses a divisor boundary.
+ static uint64_t s_ulPrevVBlankIdx = 0;
  
 +gamescope::ConVar<bool> cv_limiter_use_elapsed_time( "limiter_use_elapsed_time", true, "Release limited frames by elapsed time instead of a vblank-count divisor on fixed-refresh displays." );
 +
  static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vblank_idx, steamcompmgr_win_t *w = nullptr, uint64_t now = 0 )
  {
  	bool bSendCallback = true;
-@@ -6933,10 +6935,21 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
+@@ -6973,10 +6975,21 @@ static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vb
  	{
  		if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nRefreshHz > nTargetFPS )
  		{
@@ -30,7 +30,7 @@ index 4f91e5f..cabd639 100644
 +				uint64_t schedule = w->last_commit_first_latch_time + g_SteamCompMgrLimitedAppRefreshCycle;
 +				uint64_t fudge = g_SteamCompMgrAppRefreshCycle / 2;
  
--			if ( vblank_idx % nVblankDivisor != 0 )
+-			if ( vblank_idx / nVblankDivisor == s_ulPrevVBlankIdx / nVblankDivisor )
 -				bSendCallback = false;
 +				if ( now + fudge < schedule )
 +					bSendCallback = false;
@@ -39,7 +39,7 @@ index 4f91e5f..cabd639 100644
 +			{
 +				int nVblankDivisor = nRefreshHz / nTargetFPS;
 +
-+				if ( vblank_idx % nVblankDivisor != 0 )
++				if ( vblank_idx / nVblankDivisor == s_ulPrevVBlankIdx / nVblankDivisor )
 +					bSendCallback = false;
 +			}
  		}

@@ -35,6 +35,7 @@
 0106-drm-panel-il97680a-luminance-linear-backlight-scale.patch
 0107-drm-msm-dpu-AVR-variable-refresh-on-DSI-video-mode.patch
 0108-drm-msm-dpu-send-the-flip-event-after-the-vblank-irq.patch
+0109-drm-panel-il97680a-defer-display-enable.patch
 0064_Mangmi-Air-Y-Pro-panel.patch
 
 # ============== Panel power + backlight ==============
@@ -103,6 +104,7 @@
 0620-drm-msm-a6xx-hfi-irq-clears-only-the-cm3-fault.patch
 0621-drm-msm-a6xx-bound-the-gmu-wait-for-a-fault-devcoredump.patch
 0622-drm-msm-a6xx-mask-the-hfi-interrupt-before-booting-the-gmu.patch
+0623-arm64-dts-qcom-sm8550-sm8650-add-the-ADSP-FastRPC-remote-heap.patch
 
 # ============== LED / RGB ==============
 0030-leds-Add-driver-for-HEROIC-HTR3212.patch
@@ -115,6 +117,7 @@
 # ============== SoC / Platform ==============
 20260424_neil_armstrong_arm64_dts_qcom_sm8_456_50_add_missing_cx_power_domain_to_gcc.patch
 v9_20260729_qualcomm_crypto_qce_runtime_pm_interconnect.patch
+v3_20261002_anandu_e_misc_fastrpc_fix_context_leak_and_hang_on_signal_interrupted_invoke.patch
 0504-mailbox-qcom-ipcc-mask-summary-irq-for-suspend-to-ram.patch
 0505-msm_gem-lock-before-put_iova_spaces.patch
 0204-thermal-qcom-tsens-mask-lower-threshold-irqs-across-suspend.patch
@@ -261,3 +264,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0080-ASoC-codecs-lpass-tx-macro-track-every-active-decimator.patch
 0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch
 0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch
+
+# ============== Firmware ==============
+# OpenABL: UEFI variables through QSEECOM on its chipsets
+0910-firmware-qcom-scm-allow-QSEECOM-on-OpenABL-s-platforms.patch

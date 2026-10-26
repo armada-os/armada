@@ -11,7 +11,7 @@ that transition needs a modeset; being post-blend, a translucent overlay
 is corrected as the blended pixel. Per-plane offload is the follow-up.
 ---
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index a432b861..e32eafd2 100644
+index 4ca2d71d..a5082fff 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -76,6 +76,7 @@ gamescope::ConVar<bool> cv_drm_debug_disable_regamma_tf( "drm_debug_disable_rega
@@ -41,7 +41,7 @@ index a432b861..e32eafd2 100644
  			std::optional<CDRMAtomicProperty> VRR_ENABLED;
  			std::optional<CDRMAtomicProperty> OUT_FENCE_PTR;
  			std::optional<CDRMAtomicProperty> AMD_CRTC_REGAMMA_TF;
-@@ -2174,6 +2180,9 @@ void finish_drm(struct drm_t *drm)
+@@ -2422,6 +2428,9 @@ void finish_drm(struct drm_t *drm)
  		if ( pCRTC->GetProperties().DEGAMMA_LUT )
  			pCRTC->GetProperties().DEGAMMA_LUT->SetPendingValue( req, 0, true );
  
@@ -51,7 +51,7 @@ index a432b861..e32eafd2 100644
  		if ( pCRTC->GetProperties().CTM )
  			pCRTC->GetProperties().CTM->SetPendingValue( req, 0, true );
  
-@@ -2802,6 +2811,7 @@ namespace gamescope
+@@ -3050,6 +3059,7 @@ namespace gamescope
  			m_Props.GAMMA_LUT           = CDRMAtomicProperty::Instantiate( "GAMMA_LUT",           this, *rawProperties );
  			m_Props.DEGAMMA_LUT         = CDRMAtomicProperty::Instantiate( "DEGAMMA_LUT",         this, *rawProperties );
  			m_Props.CTM                 = CDRMAtomicProperty::Instantiate( "CTM",                 this, *rawProperties );
@@ -59,7 +59,7 @@ index a432b861..e32eafd2 100644
  			m_Props.VRR_ENABLED         = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",         this, *rawProperties );
  			m_Props.OUT_FENCE_PTR       = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",       this, *rawProperties );
  			m_Props.AMD_CRTC_REGAMMA_TF = CDRMAtomicProperty::Instantiate( "AMD_CRTC_REGAMMA_TF", this, *rawProperties );
-@@ -3737,6 +3747,29 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -3958,6 +3968,29 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  			drm->needs_modeset = true;
  	}
  
@@ -89,7 +89,7 @@ index a432b861..e32eafd2 100644
  	drm->m_FbIdsInRequest.clear();
  
  	bool needs_modeset = drm->needs_modeset.exchange(false);
-@@ -3768,15 +3801,14 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -3989,15 +4022,14 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  
  	// We do internal refcounting with these events
  
@@ -107,7 +107,7 @@ index a432b861..e32eafd2 100644
  	}
  
  	if ( !bSleep )
-@@ -3784,7 +3816,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -4005,7 +4037,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  		if ( drm->pCRTC != nullptr )
  			flags |= DRM_MODE_PAGE_FLIP_EVENT;
  
@@ -116,7 +116,7 @@ index a432b861..e32eafd2 100644
  			flags |= DRM_MODE_PAGE_FLIP_ASYNC;
  	}
  
-@@ -3839,6 +3871,9 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -4060,6 +4092,9 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  			if ( pCRTC->GetProperties().DEGAMMA_LUT )
  				pCRTC->GetProperties().DEGAMMA_LUT->SetPendingValue( drm->req, 0, bForceInRequest );
  
@@ -126,7 +126,7 @@ index a432b861..e32eafd2 100644
  			if ( pCRTC->GetProperties().CTM )
  				pCRTC->GetProperties().CTM->SetPendingValue( drm->req, 0, bForceInRequest );
  
-@@ -3872,7 +3907,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -4093,7 +4128,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  			if ( drm->pCRTC->GetProperties().GAMMA_LUT )
  				drm->pCRTC->GetProperties().GAMMA_LUT->SetPendingValue( drm->req, 0, true );
  
@@ -135,7 +135,7 @@ index a432b861..e32eafd2 100644
  				drm->pCRTC->GetProperties().DEGAMMA_LUT->SetPendingValue( drm->req, 0, true );
  
  			if ( drm->pCRTC->GetProperties().CTM )
-@@ -3901,6 +3936,14 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
+@@ -4122,6 +4157,14 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
  
  	if ( drm->pCRTC && !bSleep )
  	{
@@ -150,7 +150,7 @@ index a432b861..e32eafd2 100644
  		if ( drm->pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
  		{
  			if ( !cv_drm_debug_disable_regamma_tf )
-@@ -4038,14 +4081,61 @@ gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm)
+@@ -4259,14 +4302,61 @@ gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm)
  	return drm->pConnector->GetScreenType();
  }
  
@@ -214,7 +214,7 @@ index a432b861..e32eafd2 100644
  	drm->pending.color_mgmt_serial = g_ColorMgmt.serial;
  
  	for ( uint32_t i = 0; i < EOTF_Count; i++ )
-@@ -4538,7 +4628,8 @@ namespace gamescope
+@@ -4782,7 +4872,8 @@ namespace gamescope
  					bSupportsHardwareColorManagement,
  					pFrameInfo->outputEncodingEOTF,
  					pFrameInfo->layers.count(),
@@ -224,7 +224,7 @@ index a432b861..e32eafd2 100644
  				if ( !bSupportsHardwareColorManagement )
  				{
  					// Scanout can't apply the LUT-baked backlight dim here.
-@@ -4553,6 +4644,13 @@ namespace gamescope
+@@ -4797,6 +4888,13 @@ namespace gamescope
  
  			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
  			bNeedsFullComposite |= g_uOutputRotation != 0; // can't rotate planes at scanout
@@ -238,7 +238,7 @@ index a432b861..e32eafd2 100644
  
  			bool bDoComposite = true;
  			if ( !bNeedsFullComposite && !bWantsPartialComposite )
-@@ -4666,6 +4764,8 @@ namespace gamescope
+@@ -4917,6 +5015,8 @@ namespace gamescope
  			FrameInfo_t presentCompFrameInfo = {};
  			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
  			presentCompFrameInfo.outputEncodingEOTF = pFrameInfo->outputEncodingEOTF;
@@ -247,7 +247,7 @@ index a432b861..e32eafd2 100644
  
  			if ( bNeedsFullComposite )
  			{
-@@ -4955,6 +5055,21 @@ namespace gamescope
+@@ -5210,6 +5310,21 @@ namespace gamescope
  			return drm_supports_color_mgmt( &g_DRM );
  		}
  
@@ -297,10 +297,10 @@ index 1210f78c..84d7cd9c 100644
  
          return eOutputEncodingEOTF != EOTF_PQ ||
 diff --git a/src/backend.h b/src/backend.h
-index 834e9fd4..814b4586 100644
+index f35dfb09..fde91d53 100644
 --- a/src/backend.h
 +++ b/src/backend.h
-@@ -347,6 +347,11 @@ namespace gamescope
+@@ -343,6 +343,11 @@ namespace gamescope
          virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_dmabuf_attributes *pDmaBuf ) = 0;
  
          virtual bool UsesModifiers() const = 0;
@@ -313,11 +313,11 @@ index 834e9fd4..814b4586 100644
  		inline bool SupportsFormat( uint32_t uDrmFormat ) const
  		{
 diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
-index 0545a7a6..e0fe28d2 100644
+index b103dd94..9ab5054c 100644
 --- a/src/rendervulkan.hpp
 +++ b/src/rendervulkan.hpp
-@@ -300,6 +300,9 @@ struct FrameInfo_t
- 	bool allowVRR;
+@@ -305,6 +305,9 @@ struct FrameInfo_t
+ 	bool bRepeatFrame;
  	bool applyOutputColorMgmt; // drm only
  	EOTF outputEncodingEOTF;
 +	// The SDR shaper + 3D LUT are left to the output (msm DPU): set only when every
@@ -327,10 +327,10 @@ index 0545a7a6..e0fe28d2 100644
  	// Maps output space onto the focused window's own space for absolute input.
  	// Not the base layer's transform, whose texture may already be upscaled.
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index 1ea8073d..3b6f78b1 100644
+index 8b7aa243..2e5345a6 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -3518,8 +3518,24 @@ paint_all( global_focus_t *pFocus, bool async )
+@@ -3536,8 +3536,24 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
  		frameInfo.applyOutputColorMgmt = false;
  	}
  
@@ -355,7 +355,7 @@ index 1ea8073d..3b6f78b1 100644
  		if ( g_ColorMgmtLuts[i].HasLuts() )
  		{
  			frameInfo.shaperLut[i] = g_ColorMgmtLuts[i].vk_lut1d;
-@@ -3623,6 +3639,17 @@ paint_all( global_focus_t *pFocus, bool async )
+@@ -3654,6 +3670,17 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
  
  			frameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
  

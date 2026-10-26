@@ -11,82 +11,10 @@ forces a modeset. A holder that did not opt in keeps the exclusive
 semantics. The flip handler also ignores events whose user data is not
 one of its own, since every holder reads from a dup of the same lease.
 ---
---- a/src/main.hpp	2026-09-06 14:03:08.580867677 +0000
-+++ b/src/main.hpp	2026-09-06 16:42:04.531163078 +0000
-@@ -35,6 +35,7 @@
- extern const char *g_sOutputName;
- extern const char *g_sLeaseConnectorName;
- extern const char *g_sDrmLeaseClientSocket;
-+extern bool g_bDrmLeaseYield;
- extern const char *g_sIgnoreTouchDevice;
- extern bool g_bExternalForced;
- extern std::vector<uint32_t> g_customRefreshRates;
-@@ -66,6 +67,9 @@
- 	Down = 1,
- 	Motion,
- 	Up,
-+	// Broker to a yielding companion: stop using the lease / take it back.
-+	Suspend,
-+	Resume,
- };
- 
- struct DrmLeaseEvent
-@@ -79,6 +83,18 @@
- 
- void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touchId, uint32_t time );
- 
-+// Suspends a yielding companion for a protocol client; true only once it
-+// acknowledged that nothing of its can commit; false leaves it the holder.
-+bool drm_lease_companion_suspend( int nTimeoutMs );
-+void drm_lease_companion_resume();
-+// True while a connected companion may still commit to the lease.
-+bool drm_lease_companion_active();
-+
-+// Companion side (--drm-lease-client). quiesce returns false when a
-+// present or the flip reader could not be stopped in time.
-+bool drm_lease_client_suspended();
-+bool drm_lease_client_quiesce();
-+
- enum class GamescopeUpscaleFilter : uint32_t
- {
-     LINEAR = 0,
---- a/src/main.cpp	2026-09-06 14:03:08.576652141 +0000
-+++ b/src/main.cpp	2026-09-06 16:42:04.461031557 +0000
-@@ -98,6 +98,7 @@
- 	{ "framerate-limit", required_argument, nullptr, 0 },
- 	{ "lease-connector", required_argument, nullptr, 0 },
- 	{ "drm-lease-client", required_argument, nullptr, 0 },
-+	{ "drm-lease-yield", no_argument, nullptr, 0 },
- 	{ "ignore-touch-device", required_argument, nullptr, 0 },
- 
- 	// openvr options
-@@ -223,6 +224,7 @@
- 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
- 	"  --lease-connector              if specified, marks a display connector for DRM leasing.\n"
- 	"  --drm-lease-client             use a DRM lease from the given socket.\n"
-+	"  --drm-lease-yield              give the lease up to drm-lease-v1 clients while they run.\n"
- 	"  --ignore-touch-device          if specified, disables touch input for a given display.\n"
- 	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
- 	"  --hdr-enabled                  enable HDR output (needs Gamescope WSI layer enabled for support from clients)\n"
-@@ -795,6 +797,7 @@
- const char *g_sOutputName = nullptr;
- const char *g_sLeaseConnectorName = nullptr;
- const char *g_sDrmLeaseClientSocket = nullptr;
-+bool g_bDrmLeaseYield = false;
- const char *g_sIgnoreTouchDevice = nullptr;
- std::atomic<int> g_nActiveLeaseClients = { 0 };
- std::atomic<int> g_nProtocolLeaseHolders = { 0 };
-@@ -959,6 +962,8 @@
- 					g_sLeaseConnectorName = optarg;
- 				} else if (strcmp(opt_name, "drm-lease-client") == 0) {
- 					g_sDrmLeaseClientSocket = optarg;
-+				} else if (strcmp(opt_name, "drm-lease-yield") == 0) {
-+					g_bDrmLeaseYield = true;
- 				} else if (strcmp(opt_name, "ignore-touch-device") == 0) {
- 					g_sIgnoreTouchDevice = optarg;
- 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
---- a/src/Backends/DRMBackend.cpp	2026-09-06 14:03:08.580552196 +0000
-+++ b/src/Backends/DRMBackend.cpp	2026-09-06 16:42:04.534336051 +0000
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 813f17ae..4ca2d71d 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
 @@ -26,6 +26,8 @@
  #include <span>
  #include <string>
@@ -96,7 +24,7 @@ one of its own, since every holder reads from a dup of the same lease.
  #include <unordered_map>
  #include <unordered_set>
  #include <utility>
-@@ -192,6 +194,10 @@
+@@ -194,6 +196,10 @@ struct drm_t g_DRM = {};
  // thread still using the DRM fd while we clean up.
  static std::thread g_page_flip_handler_thread;
  static std::atomic<bool> g_page_flip_handler_thread_should_exit{false};
@@ -107,8 +35,8 @@ one of its own, since every holder reads from a dup of the same lease.
  
  static int g_page_flip_pipe_fds[2] = { -1, -1 };
  
-@@ -863,6 +869,10 @@
- extern void mangoapp_output_update( uint64_t vblanktime );
+@@ -878,6 +884,10 @@ extern void mangoapp_output_update( uint64_t vblanktime );
+ extern std::atomic<uint32_t> g_uScanoutRefreshmHz;
  static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
  {
 +	// A lease fd is shared with the other holders, whose events carry
@@ -118,7 +46,7 @@ one of its own, since every holder reads from a dup of the same lease.
  	DRMPresentCtx *pCtx = reinterpret_cast<DRMPresentCtx *>( data );
  
  	// Make this const when we move into CDRMBackend.
-@@ -922,7 +932,11 @@
+@@ -954,7 +964,11 @@ void flip_handler_thread_run(void)
  
  	while ( !g_page_flip_handler_thread_should_exit.load( std::memory_order_acquire ) )
  	{
@@ -131,7 +59,7 @@ one of its own, since every holder reads from a dup of the same lease.
  		if ( ret < 0 ) {
  			if ( errno == EINTR )
  				continue;
-@@ -935,7 +949,7 @@
+@@ -967,7 +981,7 @@ void flip_handler_thread_run(void)
  			break;
  		}
  
@@ -140,7 +68,7 @@ one of its own, since every holder reads from a dup of the same lease.
  			drmEventContext evctx = {
  				.version = 3,
  				.page_flip_handler2 = page_flip_handler,
-@@ -1379,8 +1393,13 @@
+@@ -1622,8 +1636,13 @@ gamescope_liftoff_log_handler(enum liftoff_log_priority liftoff_priority, const
  }
  
  static std::mutex g_leaseClientMutex;
@@ -154,7 +82,7 @@ one of its own, since every holder reads from a dup of the same lease.
  
  static bool lease_send_fd( int nClientFd, int nLeaseFd )
  {
-@@ -1414,7 +1433,12 @@
+@@ -1657,7 +1676,12 @@ static void lease_disconnect_client( int &nClientFd )
  		std::lock_guard lock( g_leaseClientMutex );
  		g_nLeaseClientFd = -1;
  		g_bLeaseClientWantsTouch = false;
@@ -167,7 +95,7 @@ one of its own, since every holder reads from a dup of the same lease.
  	close( nClientFd );
  	nClientFd = -1;
  	{
-@@ -1429,7 +1453,7 @@
+@@ -1672,7 +1696,7 @@ void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touch
  {
  	static_assert( sizeof( DrmLeaseEvent ) == 20 );
  	std::lock_guard lock( g_leaseClientMutex );
@@ -176,7 +104,7 @@ one of its own, since every holder reads from a dup of the same lease.
  		return;
  
  	DrmLeaseEvent event = {
-@@ -1440,7 +1464,67 @@
+@@ -1683,7 +1707,67 @@ void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touch
  		.y = static_cast<float>( y ),
  	};
  	if ( send( g_nLeaseClientFd, &event, sizeof( event ), MSG_DONTWAIT | MSG_NOSIGNAL ) != sizeof( event ) )
@@ -245,7 +173,7 @@ one of its own, since every holder reads from a dup of the same lease.
  }
  
  static void lease_socket_thread_run( struct drm_t *drm )
-@@ -1475,6 +1559,25 @@
+@@ -1718,6 +1802,25 @@ static void lease_socket_thread_run( struct drm_t *drm )
  				g_bLeaseClientWantsTouch = true;
  				drm_log.infof( "lease-connector: companion requested touch input" );
  			}
@@ -271,7 +199,7 @@ one of its own, since every holder reads from a dup of the same lease.
  		}
  
  		if ( !( pfds[0].revents & POLLIN ) )
-@@ -1512,6 +1615,10 @@
+@@ -1755,6 +1858,10 @@ static void lease_socket_thread_run( struct drm_t *drm )
  			std::lock_guard lock( g_leaseClientMutex );
  			g_nLeaseClientFd = nClientFd;
  			g_bLeaseClientWantsTouch = false;
@@ -282,7 +210,7 @@ one of its own, since every holder reads from a dup of the same lease.
  		}
  		g_nActiveLeaseClients.fetch_add( 1 );
  		grantLock.unlock();
-@@ -4270,6 +4377,26 @@
+@@ -4502,6 +4609,26 @@ uint32_t drm_lease_connector_id()
  	return g_DRM.uLeasedConnectorId;
  }
  
@@ -309,7 +237,7 @@ one of its own, since every holder reads from a dup of the same lease.
  std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm)
  {
  	if ( !drm->pConnector )
-@@ -4306,6 +4433,8 @@
+@@ -4538,6 +4665,8 @@ namespace gamescope
  	public:
  		CDRMBackend()
  		{
@@ -318,7 +246,7 @@ one of its own, since every holder reads from a dup of the same lease.
  		}
  
  		virtual ~CDRMBackend()
-@@ -4365,6 +4494,10 @@
+@@ -4600,6 +4729,10 @@ namespace gamescope
  
  		virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync )
  		{
@@ -329,9 +257,89 @@ one of its own, since every holder reads from a dup of the same lease.
  			static uint64_t s_ulLastTime = get_time_in_nanos();
  			uint64_t ulNow = get_time_in_nanos();
  			drm_log.debugf( "CDRMBackend::Present Begin: %lu -> delta: %lu", ulNow, ulNow - s_ulLastTime );
---- a/src/wlserver.cpp	2026-09-06 14:03:08.581118758 +0000
-+++ b/src/wlserver.cpp	2026-09-06 16:42:04.533083406 +0000
-@@ -1596,8 +1596,11 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index ddf3a0ea..eee5a02e 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -99,6 +99,7 @@ const struct option *gamescope_options = (struct option[]){
+ 	{ "framerate-limit", required_argument, nullptr, 0 },
+ 	{ "lease-connector", required_argument, nullptr, 0 },
+ 	{ "drm-lease-client", required_argument, nullptr, 0 },
++	{ "drm-lease-yield", no_argument, nullptr, 0 },
+ 	{ "ignore-touch-device", required_argument, nullptr, 0 },
+ 
+ 	// openvr options
+@@ -225,6 +226,7 @@ const char usage[] =
+ 	"  --cursor-scale-height          if specified, sets a base output height to linearly scale the cursor against.\n"
+ 	"  --lease-connector              if specified, marks a display connector for DRM leasing.\n"
+ 	"  --drm-lease-client             use a DRM lease from the given socket.\n"
++	"  --drm-lease-yield              give the lease up to drm-lease-v1 clients while they run.\n"
+ 	"  --ignore-touch-device          if specified, disables touch input for a given display.\n"
+ 	"  --virtual-connector-strategy   Specifies how we should make virtual connectors.\n"
+ 	"  --hdr-enabled                  enable HDR output (needs Gamescope WSI layer enabled for support from clients)\n"
+@@ -787,6 +789,7 @@ bool g_bExposeWayland = false;
+ const char *g_sOutputName = nullptr;
+ const char *g_sLeaseConnectorName = nullptr;
+ const char *g_sDrmLeaseClientSocket = nullptr;
++bool g_bDrmLeaseYield = false;
+ const char *g_sIgnoreTouchDevice = nullptr;
+ std::atomic<int> g_nActiveLeaseClients = { 0 };
+ std::atomic<int> g_nProtocolLeaseHolders = { 0 };
+@@ -960,6 +963,8 @@ int main(int argc, char **argv)
+ 					g_sLeaseConnectorName = optarg;
+ 				} else if (strcmp(opt_name, "drm-lease-client") == 0) {
+ 					g_sDrmLeaseClientSocket = optarg;
++				} else if (strcmp(opt_name, "drm-lease-yield") == 0) {
++					g_bDrmLeaseYield = true;
+ 				} else if (strcmp(opt_name, "ignore-touch-device") == 0) {
+ 					g_sIgnoreTouchDevice = optarg;
+ 				} else if (strcmp(opt_name, "virtual-connector-strategy") == 0) {
+diff --git a/src/main.hpp b/src/main.hpp
+index 41992593..3aa89b9c 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -40,6 +40,7 @@ extern float g_mouseSensitivity;
+ extern const char *g_sOutputName;
+ extern const char *g_sLeaseConnectorName;
+ extern const char *g_sDrmLeaseClientSocket;
++extern bool g_bDrmLeaseYield;
+ extern const char *g_sIgnoreTouchDevice;
+ extern bool g_bExternalForced;
+ extern std::vector<uint32_t> g_customRefreshRates;
+@@ -71,6 +72,9 @@ enum class DrmLeaseEventType : uint32_t
+ 	Down = 1,
+ 	Motion,
+ 	Up,
++	// Broker to a yielding companion: stop using the lease / take it back.
++	Suspend,
++	Resume,
+ };
+ 
+ struct DrmLeaseEvent
+@@ -84,6 +88,18 @@ struct DrmLeaseEvent
+ 
+ void drm_lease_send_touch( DrmLeaseEventType type, double x, double y, int touchId, uint32_t time );
+ 
++// Suspends a yielding companion for a protocol client; true only once it
++// acknowledged that nothing of its can commit; false leaves it the holder.
++bool drm_lease_companion_suspend( int nTimeoutMs );
++void drm_lease_companion_resume();
++// True while a connected companion may still commit to the lease.
++bool drm_lease_companion_active();
++
++// Companion side (--drm-lease-client). quiesce returns false when a
++// present or the flip reader could not be stopped in time.
++bool drm_lease_client_suspended();
++bool drm_lease_client_quiesce();
++
+ enum class GamescopeUpscaleFilter : uint32_t
+ {
+     LINEAR = 0,
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 84a3f334..13fc54d9 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -1747,8 +1747,11 @@ static void drm_lease_resource_destroyed( struct wl_resource *resource )
  		int nRemaining = g_nActiveLeaseClients.fetch_sub( 1 ) - 1;
  		if ( nRemaining == 0 )
  			drm_lease_blank();
@@ -343,7 +351,7 @@ one of its own, since every holder reads from a dup of the same lease.
  	}
  }
  
-@@ -1644,11 +1647,21 @@
+@@ -1795,11 +1798,21 @@ static void drm_lease_request_handle_submit( struct wl_client *client, struct wl
  	}
  	wl_resource_set_implementation( lease, &drm_lease_impl, NULL, drm_lease_resource_destroyed );
  
@@ -367,7 +375,7 @@ one of its own, since every holder reads from a dup of the same lease.
  		{
  			int nFd = drm_lease_dup_fd();
  			if ( nFd >= 0 )
-@@ -1967,6 +1980,12 @@
+@@ -2128,6 +2141,12 @@ static int g_nDrmLeaseSocketFd = -1;
  static struct wl_event_source *g_pDrmLeaseEventSource = nullptr;
  static DrmLeaseEvent g_drmLeaseEvent = {};
  static size_t g_nDrmLeaseEventBytes = 0;
@@ -380,7 +388,7 @@ one of its own, since every holder reads from a dup of the same lease.
  
  static void drm_lease_client_dispatch_event()
  {
-@@ -1984,6 +2003,27 @@
+@@ -2145,6 +2164,27 @@ static void drm_lease_client_dispatch_event()
  		case DrmLeaseEventType::Up:
  			wlserver_touchup( g_drmLeaseEvent.touchId, g_drmLeaseEvent.time );
  			break;
@@ -408,7 +416,7 @@ one of its own, since every holder reads from a dup of the same lease.
  	}
  }
  
-@@ -2069,6 +2109,8 @@
+@@ -2230,6 +2270,8 @@ static int drm_lease_client_open()
  	memcpy( &nLeaseFd, CMSG_DATA( cmsg ), sizeof( nLeaseFd ) );
  	if ( send( nSocketFd, "I", 1, MSG_NOSIGNAL ) != 1 )
  		return Fail( "Could not request DRM lease touch input" );
@@ -417,7 +425,7 @@ one of its own, since every holder reads from a dup of the same lease.
  
  	int nFlags = fcntl( nSocketFd, F_GETFL );
  	if ( nFlags < 0 || fcntl( nSocketFd, F_SETFL, nFlags | O_NONBLOCK ) < 0 )
-@@ -2086,6 +2128,8 @@
+@@ -2247,6 +2289,8 @@ static int drm_lease_client_open()
  
  bool wlsession_active()
  {

@@ -2,7 +2,7 @@
 # Runs inside the builder container. See ../build-local.sh for the contract.
 set -euxo pipefail
 
-source /src/TERRA.env
+source /src/gamescope/TERRA.env
 source /src/toolchain.env
 
 rm -rf out

@@ -4,41 +4,21 @@ Patches applied on top of BASE.env. Each entry's `source` is an upstream URL pin
 to a commit, or `armada` if it's original; a URL source with no `notes` is verbatim.
 `notes` mean the file was modified.
 
-The 0001-0008 is `arunr/steam-frame` rebased onto BASE.env's commit. Three of its
-eleven commits are left out: `47f8cea` rustfmt.toml and `cc4b8c6` sh bash-ism are
-already upstream, and `468ae09` only adds a README troubleshooting section.
-
-- `patches/0001-Initial-support-for-Steam-Frame.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/90d24abea305704876ac4884cda3bb4942527945
-  notes: Rebase drops the `#[cfg(target_arch)]` gating and the aarch64 `device_match()` stub that hardcoded Steam Frame. main's matcher already does DMI and devicetree, and its `steam_deck_variant()` already returns `Unknown` without DMI. Keeps the `sysfs_path` field the devfreq driver reads. `DevfreqPerformanceLevel` gains `Eq`/`Hash` because main's `GpuPerformanceLevel` now derives them. `steam-frame.toml` keeps main's devicetree match rather than reverting it to DMI.
-- `patches/0002-Factor-out-platform-profiles-into-its-own-manager.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/e6a4bbc732967093029eb3819bb3125f29279546
-- `patches/0003-Add-a-custom-platform-profile-mechanism.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/127edcd396364829b5af6bb1e56dceb340d37672
-- `patches/0004-Explicitly-track-state-in-devfreq-gpu-driver.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/dda5c635733f68a8d573803044bc7dd26c662b46
-  notes: Only the devfreq state tracking is left. main took the `&mut self` signature change as `08c45b5`, and removed the `#[allow(irrefutable_let_patterns)]` it re-adds in `8e2883d` once a second `GpuPerformanceLevel` variant made the pattern refutable.
-- `patches/0005-Add-gpufreq_limit-to-custom-profiles.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/bc0737936daa1f641849e2aea71c15c379fed4ea
-  notes: Drops the `should_trace` initializer from the reordered `SteamOSManager::new` fields, since main stopped caching it in `b72a97a`.
-- `patches/0006-Fix-a-bug-where-UI-could-latch-a-bad-manual-clock-va.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/c8d0bcd1ed9911d531a3f2adbb0a3d5e2b7f2538
-- `patches/0007-Add-GPU-manual-clock-minimum-value.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/2f7c1c3028425e63bc1191fbfa1ef801e9300334
-- `patches/0008-Rename-minfreq-field-to-min_freq-for-consistency.patch`
-  source: https://gitlab.steamos.cloud/holo/steamos-manager/-/commit/9d43f89f1f252da8f1e1b6ad2b8bccff30edbb3b
-- `patches/0009-Allow-CpuScaling1-to-be-served-by-a-remote-interface.patch`
+- `patches/0001-Allow-CpuScaling1-to-be-served-by-a-remote-interface.patch`
   source: armada
   notes: `armada-powerd` owns the governor as part of a power profile and `steamos-priv-write` refuses Steam's writes, so remoting it lands Steam's control in our profile model. Needs both halves: a remote only fills a hole where no local implementation exists, and `CpuScaling1` is the one that registers unconditionally.
-- `patches/0010-inputplumber-Only-manage-target-devices-when-configu.patch`
+- `patches/0002-inputplumber-Only-manage-target-devices-when-configu.patch`
   source: armada
   notes: `DeckService` races `armada-controller-type.service` at boot and re-asserts on every composite-device recreation. With no `[inputplumber]` section it forces `[deck-uhid]`, and `is_deck()` wants exactly one target, so our keyboard/mouse extras are dropped with no user involvement. We cannot express our targets in the config either - an unknown `InputPlumberTargetDevice` fails deserialization and drops the whole SoC file.
-- `patches/0011-wifi-Always-write-wpa_supplicant-as-the-backend.patch`
+- `patches/0003-wifi-Always-write-wpa_supplicant-as-the-backend.patch`
   source: armada
-  notes: Steam derives the backend it wants from its own `steamos_wifi_force_wpa_supplicant` setting and only skips the write when the current value already matches, so no NetworkManager config can refuse it. With the setting off it writes `iwd` on every launch. Pinning it in the daemon is the only place the request can be declined.
-- `patches/0012-session-Track-gamescope-session-plus-steam.service-a.patch`
+  notes: Steam derives the backend it wants from its own `steamos_wifi_force_wpa_supplicant` setting and only skips the write when the current value already matches, so no NetworkManager config can refuse it. With the setting off it writes `iwd` on every launch. Pinning it in the daemon is the only place the request can be declined. `set_wifi_backend` lost its `Connection` argument upstream in `6962ead`, so the patch and its test go through the global connection.
+- `patches/0004-session-Track-gamescope-session-plus-steam.service-a.patch`
   source: armada
   notes: Upstream hardcodes `gamescope-session.service` as game mode, which we never run, so the session manager reports Desktop forever. The screen reader setup only exports `ScreenReader0`/`ScreenReader1` on a switch to Game, so Steam's screen reader toggle hit a missing interface and orca never started.
-- `patches/0013-power-Add-a-power_supply-battery-charge-limit-method.patch`
+- `patches/0005-power-Add-a-power_supply-battery-charge-limit-method.patch`
   source: armada
   notes: `acpi_sb` only searches the ACPI battery driver's paths, so `qcom_battmgr`'s `charge_control_end_threshold` was never found and `BatteryChargeLimit1` could not register on ARM. Adds `method = "power_supply"`, which searches `/sys/class/power_supply` (symlinked entries) with the same logic. Also writes 100 for Steam's reset (`-1`, sent as 0): an end threshold has no off value, and `qcom_battmgr` clamps 0 to 55.
+- `patches/0006-Allow-LowPowerMode1-to-be-served-by-a-remote-interfa.patch`
+  source: armada
+  notes: Steam's `CSleepController` only offers low-power downloads (screen off, finish the download, then sleep) when `LowPowerMode1` is on the bus. Upstream only registers it with a `tdp_limit.download_mode_limit`, which Qualcomm has no knob for, so `armada-powerd` serves it instead. The local `Fd<'_>` return becomes `OwnedFd` so the relay can pass the remote's handle straight through. It is imported from the `zbus` root, where zbus 6 re-exports it.

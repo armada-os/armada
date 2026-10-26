@@ -3,6 +3,24 @@ set -euxo pipefail
 
 cp -a /ctx/system_files/. /
 
+# The SSC registry is only valid for the ADSP firmware it was captured with;
+# see packages/armada-ssc/README.md.
+for source in /usr/share/armada/ssc/*/SOURCE; do
+    hashes=$(sed -n 's/^adsp_sha256=//p' "${source}")
+    [[ -n ${hashes} ]] || {
+        echo "ERROR: ${source} records no ADSP firmware hashes; recapture" >&2
+        exit 1
+    }
+    for entry in ${hashes}; do
+        firmware="/usr/lib/firmware/${entry%%:*}"
+        shipped=$(sha256sum "${firmware}" 2>/dev/null | cut -d' ' -f1)
+        [[ ${shipped} == "${entry#*:}" ]] || {
+            echo "ERROR: ${source} was captured with a different ${firmware}; recapture on an image that runs it" >&2
+            exit 1
+        }
+    done
+done
+
 # feedbackd's role-routing sinks can wedge Steam audio during session startup.
 rm -f /usr/share/wireplumber/wireplumber.conf.d/media-role-nodes.conf
 
@@ -31,44 +49,6 @@ sha256sum -c <<'EOF'
 1bb1feec68a13da18d581aa2c631798f86f6bc10b55d587b2dd31446a0f8a203  /usr/libexec/armada/gki/generate_gki_certificate.py
 EOF
 
-source /ctx/abl/release.env
-abl_releases=/ctx/abl/releases.tsv
-abl_src=/ctx/abl
-manifest=/usr/lib/armada/abl/manifest
-install -Dpm 0644 /dev/null "${manifest}"
-install -Dpm 0644 "${abl_releases}" /usr/lib/armada/abl/releases.tsv
-printf 'ARMADA_ABL_VERSION=%s\nARMADA_ABL_AUTO=%s\n' \
-    "${ARMADA_ABL_VERSION}" "${ARMADA_ABL_AUTO}" >> "${manifest}"
-for soc in SM8250 SM8550 SM8650 SM8750; do
-    approved=$(ARMADA_ABL_RELEASES="${abl_releases}" \
-        python3 /usr/lib/armada/abl-version --lookup "${ARMADA_ABL_VERSION}" "${soc}") || {
-        echo "ERROR: missing approved ${ARMADA_ABL_VERSION} ${soc} payload" >&2
-        exit 1
-    }
-    read -r approved_size approved_hash <<<"${approved}"
-    payload="/usr/lib/armada/abl/abl_signed-${soc}.elf"
-    install -Dpm 0644 "${abl_src}/abl_signed-${soc}.elf" \
-        "${payload}"
-    [[ $(stat -c %s "${payload}") == "${approved_size}" ]] || {
-        echo "ERROR: ${soc} payload size does not match the approved release" >&2
-        exit 1
-    }
-    actual_hash=$(sha256sum "${payload}" | cut -d ' ' -f 1)
-    [[ ${actual_hash} == "${approved_hash}" ]] || {
-        echo "ERROR: ${soc} payload hash does not match the approved release" >&2
-        exit 1
-    }
-    identity=$(ARMADA_ABL_RELEASES=/usr/lib/armada/abl/releases.tsv \
-        python3 /usr/lib/armada/abl-version --with-soc "${payload}")
-    [[ ${identity} == "${ARMADA_ABL_VERSION} ${soc}" ]] || {
-        echo "ERROR: ${soc} payload catalog identity is ${identity:-unknown}" >&2
-        exit 1
-    }
-    printf 'ARMADA_ABL_SHA256_%s=%s\n' "${soc}" \
-        "${actual_hash}" \
-        >> "${manifest}"
-done
-
 chmod 0755 /usr/libexec/armada/*
 chmod 0755 /usr/libexec/os-session-select
 
@@ -86,6 +66,7 @@ systemctl enable seatd.service
 systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
+systemctl enable armada-ssc.service
 systemctl enable armada-guestos.service
 systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service

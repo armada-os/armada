@@ -1,0 +1,87 @@
+From: Radical <radical@radical.fun>
+Subject: [PATCH] drm: mirror internal screen sleep to the lease companion
+
+Steam sleeps the screen through gamescope_control, which only reaches the
+broker, so a lease companion's panel stays lit during low-power downloads
+and suspend. Forward the broker's internal sleep state over the lease
+socket, including to a companion that connects while it is asleep.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 21dbfc3..b4f4cd9 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -1662,6 +1662,8 @@ static bool g_bLeaseClientSuspendPending = false;
+ static bool g_bLeaseClientSuspended = false;
+ static uint64_t g_uLeaseClientGeneration = 0;
+ 
++extern gamescope::ConVar<bool> cv_drm_sleep_screens[];
++
+ static bool lease_send_fd( int nClientFd, int nLeaseFd )
+ {
+ 	union {
+@@ -1778,6 +1780,14 @@ bool drm_lease_companion_suspend( int nTimeoutMs )
+ 	return true;
+ }
+ 
++// Steam only sleeps the broker's screen, so the companion's panel would stay lit.
++static void drm_lease_send_sleep( bool bSleep )
++{
++	std::lock_guard lock( g_leaseClientMutex );
++	if ( g_nLeaseClientFd >= 0 )
++		lease_send_control( bSleep ? DrmLeaseEventType::Sleep : DrmLeaseEventType::Wake );
++}
++
+ void drm_lease_companion_resume()
+ {
+ 	std::lock_guard lock( g_leaseClientMutex );
+@@ -1884,6 +1894,8 @@ static void lease_socket_thread_run( struct drm_t *drm )
+ 		g_nActiveLeaseClients.fetch_add( 1 );
+ 		grantLock.unlock();
+ 		drm_log.infof( "lease-connector: sent lease fd to companion app" );
++		if ( cv_drm_sleep_screens[ gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL ] )
++			drm_lease_send_sleep( true );
+ 	}
+ 
+ 	lease_disconnect_client( nClientFd );
+@@ -2345,8 +2357,10 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
+ 	return true;
+ }
+ 
+-void OnSleepScreenChanged( gamescope::ConVar<bool> & )
++void OnSleepScreenChanged( gamescope::ConVar<bool> &cv )
+ {
++	if ( &cv == &cv_drm_sleep_screens[ gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL ] )
++		drm_lease_send_sleep( cv );
+ 	force_repaint();
+ }
+ 
+diff --git a/src/main.hpp b/src/main.hpp
+index 9b750d2..afec230 100644
+--- a/src/main.hpp
++++ b/src/main.hpp
+@@ -75,6 +75,9 @@ enum class DrmLeaseEventType : uint32_t
+ 	// Broker to a yielding companion: stop using the lease / take it back.
+ 	Suspend,
+ 	Resume,
++	// Broker to companion: mirror the broker's internal screen sleep.
++	Sleep,
++	Wake,
+ };
+ 
+ struct DrmLeaseEvent
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 484c5c0..81de422 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -2092,6 +2092,11 @@ static void drm_lease_client_dispatch_event()
+ 			GetBackend()->DirtyState( true, true );
+ 			wl_log.infof( "DRM lease resumed by the broker" );
+ 			break;
++		case DrmLeaseEventType::Sleep:
++		case DrmLeaseEventType::Wake:
++			drm_sleep_screen( gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL,
++				g_drmLeaseEvent.type == DrmLeaseEventType::Sleep );
++			break;
+ 	}
+ }
+ 

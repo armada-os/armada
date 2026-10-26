@@ -50,13 +50,17 @@ fi
 for package in \
     armada-jupiter-hw-support \
     armada-splash \
+    armada-logos \
+    armada-ssc \
     fex-emu-utils \
     fex-emu-rootfs-archlinux \
     terra-gamescope \
     terra-gamescope-libs \
     gamescope-session \
     gamescope-session-steam \
+    hexagonrpc \
     inputplumber \
+    libssc \
     mangohud \
     mesa-vulkan-drivers \
     NetworkManager \

@@ -20,10 +20,8 @@ import armada_perf
 
 SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
-ABL_VERSION_TOOL = "/usr/lib/armada/abl-version"
+ABL_VERSION_TOOL = "/usr/libexec/openabl-updater/abl-version"
 RGB_TOOL = "/usr/bin/armada-rgb"
-ABL_CONFIG = Path("/etc/armada/abl.conf")
-ABL_MANIFEST = Path("/usr/lib/armada/abl/manifest")
 ABL_PARTITIONS = (
     ("A", "/dev/disk/by-partlabel/abl_a"),
     ("B", "/dev/disk/by-partlabel/abl_b"),
@@ -33,6 +31,8 @@ CLIENT_TIMEOUT = 5
 CONTROLLER_TYPES = {"deck-uhid", "xbox-series", "xb360", "ds5"}
 INTERCEPT_MODES = {"overlay", "reset"}
 SWIPE_GESTURES_CONFIG = Path("/etc/armada/swipe-gestures.conf")
+GYRO_CONFIG = Path("/etc/armada/gyro.conf")
+SSC_DATA = Path("/usr/share/armada/ssc")
 SLEEP_CONFIG = Path("/etc/armada/sleep.conf")
 SUSPEND_MODE_KEY = "suspend_mode"
 NM_IGNORE_SLEEP = Path("/etc/NetworkManager/ignore-sleep")
@@ -186,23 +186,6 @@ def set_desktop_mode(mode: str):
 def select_mem_sleep(mode):
     if mode == "s2idle":
         MEM_SLEEP_PATH.write_text(f"{mode}\n", encoding="utf-8")
-
-
-def abl_auto_enabled():
-    for path, key in ((ABL_CONFIG, "auto_update_enabled"), (ABL_MANIFEST, "ARMADA_ABL_AUTO")):
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-        value = ""
-        for line in lines:
-            name, sep, raw = line.partition("=")
-            if sep and name.strip() == key:
-                value = raw.strip()
-                break
-        if value in {"0", "1"}:
-            return value == "1"
-    return False
 
 
 def device_env():
@@ -371,12 +354,22 @@ def abl_version():
         )
         version = result.stdout.strip() if result.returncode == 0 else ""
         versions.append((name, version))
+    if not versions[0][1] and not versions[1][1]:
+        # Not in the catalog: an OpenABL build still says so through its variables.
+        result = subprocess.run(
+            ["/usr/bin/python3", ABL_VERSION_TOOL, "--firmware"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        running = result.stdout.strip() if result.returncode == 0 else ""
+        if running:
+            return running if " " in running else f"{running} (custom build)"
     if versions[0][1] == versions[1][1]:
-        return f"ROCKNIX {versions[0][1]}" if versions[0][1] else "Unknown"
-    return ", ".join(
-        f"{name}: ROCKNIX {version}" if version else f"{name}: Unknown"
-        for name, version in versions
-    )
+        return versions[0][1] or "Unknown"
+    return ", ".join(f"{name}: {version or 'Unknown'}" for name, version in versions)
 
 
 def action_set_controller_type(request):
@@ -499,17 +492,49 @@ def action_set_swipe_gestures_enabled(request):
     return {"enabled": enabled}
 
 
-def action_set_abl_auto_enabled(request):
-    atomic_write(ABL_CONFIG, f"auto_update_enabled={int(bool(request.get('enabled')))}\n")
-    return {"enabled": abl_auto_enabled()}
-
-
-def action_get_abl_auto_enabled(request):
-    return {"enabled": abl_auto_enabled()}
-
-
 def action_get_device_env(request):
     return {"env": device_env()}
+
+
+def gyro_setting():
+    # Must agree with armada-ssc's parsing.
+    try:
+        lines = GYRO_CONFIG.read_bytes().decode("utf-8", "replace").split("\n")
+    except (OSError, UnicodeDecodeError):
+        return True
+    for line in lines:
+        if line.startswith("ARMADA_GYRO="):
+            return line[len("ARMADA_GYRO="):] in ("", "1")
+    return True
+
+
+def action_get_gyro(request):
+    device_id = device_env().get("ARMADA_DEVICE_ID", "")
+    supported = bool(device_id) and (SSC_DATA / device_id).is_dir()
+    return {"supported": supported, "enabled": supported and gyro_setting()}
+
+
+def action_set_gyro_enabled(request):
+    enabled = request.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("invalid gyro enabled state")
+    if not action_get_gyro({})["supported"]:
+        raise RuntimeError("this device has no gyro support")
+    try:
+        previous = GYRO_CONFIG.read_bytes().decode("utf-8", "replace")
+    except FileNotFoundError:
+        previous = None
+    atomic_write(GYRO_CONFIG, f"ARMADA_GYRO={int(enabled)}\n")
+    # InputPlumber reads the opt-in when it starts.
+    try:
+        run(["/usr/bin/systemctl", "restart", "inputplumber"])
+    except Exception:
+        if previous is None:
+            GYRO_CONFIG.unlink(missing_ok=True)
+        else:
+            atomic_write(GYRO_CONFIG, previous)
+        raise
+    return action_get_gyro({})
 
 
 def action_get_bottom_screen_enabled(request):
@@ -546,6 +571,22 @@ def action_set_bottom_screen_enabled(request):
         session_systemctl("disable", "--now", BOTTOM_SCREEN_SERVICE)
 
     return {"enabled": bottom_screen_enabled()}
+
+
+def action_set_companion_locked(request):
+    locked = request.get("locked")
+    if not isinstance(locked, bool):
+        raise ValueError("invalid companion locked state")
+    # gamescope sleeps the bottom screen and drops its touch while this is set.
+    subprocess.run(
+        session_user_command(
+            "DISPLAY=:0", "/usr/bin/xprop", "-root",
+            "-f", "GAMESCOPE_COMPANION_LOCKED", "32c",
+            "-set", "GAMESCOPE_COMPANION_LOCKED", str(int(locked)),
+        ),
+        check=True, capture_output=True, timeout=5,
+    )
+    return {"locked": locked}
 
 
 def action_get_abl_version(request):
@@ -870,6 +911,8 @@ def action_restart_game_mode(request):
 ACTIONS = {
     "get_swipe_gestures_enabled": action_get_swipe_gestures_enabled,
     "set_swipe_gestures_enabled": action_set_swipe_gestures_enabled,
+    "get_gyro": action_get_gyro,
+    "set_gyro_enabled": action_set_gyro_enabled,
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,
@@ -878,7 +921,6 @@ ACTIONS = {
     "get_abl_version": action_get_abl_version,
     "get_rgb": action_get_rgb,
     "set_rgb": action_set_rgb,
-    "get_abl_auto_enabled": action_get_abl_auto_enabled,
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
@@ -886,7 +928,7 @@ ACTIONS = {
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_bottom_screen_enabled": action_set_bottom_screen_enabled,
     "set_bottom_screen_brightness": action_set_bottom_screen_brightness,
-    "set_abl_auto_enabled": action_set_abl_auto_enabled,
+    "set_companion_locked": action_set_companion_locked,
     "get_desktop_mode": action_get_desktop_mode,
     "set_desktop_mode": action_set_desktop_mode,
     "set_sleep_mode": action_set_sleep_mode,

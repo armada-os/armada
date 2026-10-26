@@ -11,7 +11,7 @@ component: a pinned upstream (`BASE.env`) + `patches/` + a `build.sh`.
 | path    | contents                                                    |
 | ------- | ----------------------------------------------------------- |
 | `/work` | the package directory, cwd, artifacts go to `./out`          |
-| `/src`  | this directory: `toolchain.env`, `TERRA.env`, sibling packages |
+| `/src`  | this directory: `toolchain.env`, sibling packages           |
 
 `Containerfile` turns each one into a pair of stages: `pkg-<name>`, which runs
 `build.sh` as a `RUN` step, and `out-<name>`, a scratch stage holding just the

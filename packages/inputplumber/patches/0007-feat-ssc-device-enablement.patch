@@ -1,0 +1,85 @@
+From 9691f51a6287d33eb6dd3d694905f86e2c5b721f Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Sun, 13 Sep 2026 21:36:48 +0200
+Subject: [PATCH] feat(Hardware Support): enable SSC gyro and accel
+
+Add the FastRPC IMU source with each board's mount matrix and turn on
+gyro auto calibration for: AYN Odin 2 family, AYN Odin 3, AYN Thor.
+
+Co-authored-by: virtudude <virtudude@protonmail.com>
+Assisted-by: LLM
+---
+ .../usr/share/inputplumber/devices/50-ayn_odin2.yaml | 12 ++++++++++++
+ .../usr/share/inputplumber/devices/50-ayn_odin3.yaml | 12 ++++++++++++
+ .../usr/share/inputplumber/devices/50-ayn_thor.yaml  | 12 ++++++++++++
+ 3 files changed, 36 insertions(+)
+
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
+index a9beeb5..57ac009 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_odin2.yaml
+@@ -34,5 +34,17 @@ source_devices:
+       name: gpio-keys-paddles
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        # ICM-426xx orientation; an SH5001 unit may need another matrix
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [0, 0, 1]
++          z: [-1, 0, 0]
++        gyro_auto_calibration: true
++
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
+index 885ad4f..4858de0 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_odin3.yaml
+@@ -35,5 +35,17 @@ source_devices:
+       phys_path: gpio-keys/input0
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp-secure
++    config:
++      imu:
++        # QMI8658 orientation; an LSM6DSO unit may need another matrix
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [0, 0, 1]
++          z: [-1, 0, 0]
++        gyro_auto_calibration: true
++
+ target_devices:
+   - xbox-elite
+diff --git a/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml b/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml
+index 1844aee..9382c75 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-ayn_thor.yaml
+@@ -30,5 +30,17 @@ source_devices:
+       phys_path: gpio-keys/input0
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-adsp
++    config:
++      imu:
++        # SH5001 orientation
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [0, 0, 1]
++          z: [-1, 0, 0]
++        gyro_auto_calibration: true
++
+ target_devices:
+   - xbox-elite
+-- 
+2.56.0
+

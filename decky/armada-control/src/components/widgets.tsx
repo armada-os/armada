@@ -47,8 +47,9 @@ export function ToggleRow({ label, value, onChange, disabled, description }: {
   </ControlRow>;
 }
 
-export function SliderEdit({ label, value, min, max, step, onChange, format, disabled, showValue = true, wrapperClassName }: {
+export function SliderEdit({ label, description, value, min, max, step, onChange, format, disabled, showValue = true, wrapperClassName }: {
   label: ReactNode;
+  description?: ReactNode;
   value: any;
   min: number;
   max: number;
@@ -64,6 +65,7 @@ export function SliderEdit({ label, value, min, max, step, onChange, format, dis
     <SliderField
       className={wrapperClassName}
       label={label}
+      description={description}
       childrenContainerWidth="max"
       value={Number.isFinite(numeric) ? numeric : min}
       min={min}

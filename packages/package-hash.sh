@@ -14,8 +14,8 @@ case "${pkg}" in
     lepton) paths+=(mesa mesa-android) ;;
 esac
 
-if grep -q '/src/TERRA.env' "${pkg}/build.sh" 2>/dev/null; then
-    paths+=(TERRA.env)
+if grep -q '/src/gamescope/TERRA.env' "${pkg}/build.sh" 2>/dev/null; then
+    paths+=(gamescope/TERRA.env)
 fi
 
 # Exclusions for local builds

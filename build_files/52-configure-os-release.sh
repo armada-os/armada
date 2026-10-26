@@ -31,6 +31,8 @@ VERSION_ID="${base_version_id}"
 BUILD_ID="${armada_version}"
 PRETTY_NAME="Armada ${armada_version}"
 DEFAULT_HOSTNAME=armada
+LOGO=armada-logo
+ANSI_COLOR="1"
 IMAGE_ID=armada
 IMAGE_VERSION="${armada_version}"
 HOME_URL="https://armadaos.dev/"
@@ -39,6 +41,9 @@ SUPPORT_URL="https://armadaos.dev/troubleshooting/frequently-asked-questions/"
 BUG_REPORT_URL="https://github.com/armada-os/armada/issues"
 EOF
 chmod 0644 "${os_release}"
+
+# grub2-mkconfig and some tools read the distributor name from here.
+printf 'Armada release %s (%s)\n' "${base_version_id}" "${armada_version}" >"$(readlink -f /etc/system-release)"
 
 # Keep the vendor-owned release metadata in /usr. The relative link also works
 # when /etc is inspected through a mounted sysroot or from an initramfs.

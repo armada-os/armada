@@ -56,5 +56,9 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0027-steamcompmgr-elapsed-time-fps-limiter.patch`
   source: armada
-- `patches/0028-improve-frame-pacing.patch`
-  source: https://github.com/ValveSoftware/gamescope/pull/2417
+- `patches/0029-drm-mirror-internal-screen-sleep-to-the-lease-companion.patch`
+  source: armada
+- `patches/0030-drm-lock-the-lease-companion-with-the-broker.patch`
+  source: armada
+- `patches/0031-drm-wait-for-the-lock-state-before-lighting-the-companion.patch`
+  source: armada

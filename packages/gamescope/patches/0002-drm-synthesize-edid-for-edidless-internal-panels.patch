@@ -8,10 +8,10 @@ no HDR) and feed it through the existing parser. Physical EDIDs stay
 preferred and unchanged; the synthetic EDID is never committed to KMS.
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 12b7bb07..7f40db0f 100644
+index a7bdbb89..e01e8218 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
-@@ -418,6 +418,7 @@ namespace gamescope
+@@ -417,6 +417,7 @@ namespace gamescope
  		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
  
  		std::span<const uint8_t> GetRawEDID() const override { return std::span<const uint8_t>{ m_Mutable.EdidData.begin(), m_Mutable.EdidData.end() }; }
@@ -19,7 +19,7 @@ index 12b7bb07..7f40db0f 100644
  		bool HandleEdidChange()
  		{
  			bool bChanged = m_Mutable.bEdidChanged;
-@@ -550,7 +551,8 @@ namespace gamescope
+@@ -549,7 +550,8 @@ namespace gamescope
  			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
  			DRMModeGenerator fnDynamicModeGenerator;
  			std::vector<uint32_t> ValidDynamicRefreshRates{};
@@ -29,7 +29,7 @@ index 12b7bb07..7f40db0f 100644
  			std::vector<BackendMode> BackendModes;
  			
  			displaycolorimetry_t DisplayColorimetry = displaycolorimetry_709;
-@@ -3032,20 +3034,54 @@ namespace gamescope
+@@ -3048,20 +3050,54 @@ namespace gamescope
  
  	void CDRMConnector::ParseEDID()
  	{
@@ -253,7 +253,7 @@ index 137350ca..397a089d 100644
  
      std::optional<std::vector<uint8_t>> PatchEdid( std::span<const uint8_t> pEdid, const BackendConnectorHDRInfo &hdrInfo, bool bRotate );
 diff --git a/tests/meson.build b/tests/meson.build
-index 89fca19a..4808a5c4 100644
+index 83f388b4..4940fcb9 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -2,15 +2,15 @@ catch2_dep = dependency('catch2-with-main', required: true)
@@ -267,11 +267,11 @@ index 89fca19a..4808a5c4 100644
  
  gamescope_tests = executable(
  	'gamescope_tests',
--	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp'],
-+	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp'],
+-	unittest_src + ['../src/color_helpers.cpp', 'test_color_helpers.cpp', 'test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_present_timing_schedule.cpp', 'test_process.cpp', 'test_swapchain_wire.cpp', 'test_upscale.cpp', 'test_utils_commit_queue.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_utils_vblank_schedule.cpp', 'test_vrclient_detect.cpp'] + swapchain_client_src + limiter_client_src + [swapchain_server_header],
++	unittest_src + ['../src/color_helpers.cpp', 'test_color_helpers.cpp', 'test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_present_timing_schedule.cpp', 'test_process.cpp', 'test_swapchain_wire.cpp', 'test_upscale.cpp', 'test_utils_commit_queue.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_utils_vblank_schedule.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp'] + swapchain_client_src + limiter_client_src + [swapchain_server_header],
  	include_directories: [srcdir, sol2_include],
--	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, wlroots_dep],
-+	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
+-	dependencies: [catch2_dep, luajit_dep, cap_dep, drm_dep, glm_dep, vulkan_dep, wlroots_dep, dep_wayland, wayland_server],
++	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, vulkan_dep, wlroots_dep, dep_wayland, wayland_server],
  	cpp_args: gamescope_cpp_args,
  )
  

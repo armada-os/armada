@@ -4,8 +4,31 @@ export interface PowerProfile {
   cpu_max: string;
   cpu_underclock: string;
   gpu_max: string;
+  gpu_max_mhz: number | null;
   gpu_min: string;
+  gpu_min_mhz: number | null;
   fan_curve: string;
+  [key: `cpu_max_policy${number}`]: number | null;
+}
+
+export interface CpuPolicy {
+  id: number;
+  cpus: string;
+  khz: number[];
+  mhz: number[];
+}
+
+export interface FreqLimits {
+  gpuMhz: number[];
+  gpuStockMaxMhz: number;
+  cpuPolicies: CpuPolicy[];
+  cpuTopology?: CpuTopology;
+}
+
+export interface CpuTopology {
+  big: string;
+  prime: string;
+  little: string;
 }
 
 export interface FanCurve {
@@ -135,6 +158,7 @@ export interface PerfInfo {
 export interface Config {
   power: PowerConfig;
   powerDefaults: PowerConfig;
+  freqLimits: FreqLimits;
   tweaks: Tweaks;
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
@@ -146,7 +170,6 @@ export interface Config {
   protonDefaults: string[];
   osVersion: string;
   ablVersion: string;
-  ablAutoEnabled: boolean;
   bottomScreenSupported: boolean;
   bottomScreenEnabled: boolean;
   bottomScreenBrightnessSupported: boolean;
@@ -155,6 +178,7 @@ export interface Config {
   chargingFanPwm: number;
   sshEnabled: boolean;
   swipeGesturesEnabled: boolean;
+  gyro: { supported: boolean; enabled: boolean };
   mtpEnabled: boolean;
   desktopMode: string;
   desktopModes: DropdownChoice[];

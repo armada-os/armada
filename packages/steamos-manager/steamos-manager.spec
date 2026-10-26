@@ -1,6 +1,5 @@
 # armada SteamOS Manager RPM, built from holo/steamos-manager at a pinned commit
-# with the steam-frame series rebased on top. Ships our device configs, not
-# upstream's x86 ones.
+# with Armada's patches on top. Ships our device configs, not upstream's x86 ones.
 %global forgeurl https://gitlab.steamos.cloud/holo/steamos-manager
 %global shortcommit %(c=%{commit}; echo ${c:0:7})
 %global userunits steamos-manager.service steamos-manager-session-cleanup.service steamos-manager-configure-cecd.service
@@ -21,19 +20,12 @@ Source2:        sm8250.toml
 Source3:        sm8550.toml
 Source4:        sm8650.toml
 Source5:        sm8750.toml
-Patch1:         0001-Initial-support-for-Steam-Frame.patch
-Patch2:         0002-Factor-out-platform-profiles-into-its-own-manager.patch
-Patch3:         0003-Add-a-custom-platform-profile-mechanism.patch
-Patch4:         0004-Explicitly-track-state-in-devfreq-gpu-driver.patch
-Patch5:         0005-Add-gpufreq_limit-to-custom-profiles.patch
-Patch6:         0006-Fix-a-bug-where-UI-could-latch-a-bad-manual-clock-va.patch
-Patch7:         0007-Add-GPU-manual-clock-minimum-value.patch
-Patch8:         0008-Rename-minfreq-field-to-min_freq-for-consistency.patch
-Patch9:         0009-Allow-CpuScaling1-to-be-served-by-a-remote-interface.patch
-Patch10:        0010-inputplumber-Only-manage-target-devices-when-configu.patch
-Patch11:        0011-wifi-Always-write-wpa_supplicant-as-the-backend.patch
-Patch12:        0012-session-Track-gamescope-session-plus-steam.service-a.patch
-Patch13:        0013-power-Add-a-power_supply-battery-charge-limit-method.patch
+Patch1:         0001-Allow-CpuScaling1-to-be-served-by-a-remote-interface.patch
+Patch2:         0002-inputplumber-Only-manage-target-devices-when-configu.patch
+Patch3:         0003-wifi-Always-write-wpa_supplicant-as-the-backend.patch
+Patch4:         0004-session-Track-gamescope-session-plus-steam.service-a.patch
+Patch5:         0005-power-Add-a-power_supply-battery-charge-limit-method.patch
+Patch6:         0006-Allow-LowPowerMode1-to-be-served-by-a-remote-interfa.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust
@@ -53,9 +45,9 @@ Requires:       speech-dispatcher-libs
 
 %description
 SteamOS Manager is the system daemon Steam talks to for OS-level features such
-as performance profiles, GPU clocks and TDP. This build carries the Steam Frame
-series for devicetree matching, devfreq GPU control and custom platform
-profiles, and ships Armada's Snapdragon device configs in place of upstream's.
+as performance profiles, GPU clocks and TDP. This build lets Armada's daemons
+serve CPU scaling and low-power downloads, and ships Armada's Snapdragon device
+configs in place of upstream's.
 
 %prep
 %autosetup -n %{name}-%{commit} -p1

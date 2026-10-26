@@ -1,0 +1,709 @@
+From af2a41368d1aa6cf3cbb155d4c54e44f9cddd104 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Sat, 24 Oct 2026 21:32:39 -0400
+Subject: [PATCH] feat(ssc): remove the gyro bias learned while the device
+ holds still
+
+Steam never applies its drift correction to the Steam Deck targets, so the
+SSC's per-unit residual reaches games uncorrected (0.6 deg/s on an Odin 2
+Portal, up to 3.6 deg/s on an Odin 3). Port GamepadMotionHelpers'
+stillness calibration, whose thresholds adapt to each sensor's noise
+floor, so the noisier QMI8658 in the Odin 3 calibrates too. It needs a
+fresh accelerometer sample, restarts after a pause in the stream or a bad
+sample, and skips all-zero reports.
+
+New config.imu.gyro_auto_calibration option, off by default.
+
+Assisted-by: LLM
+---
+ LICENSE-GamepadMotionHelpers                  |  21 +
+ .../schema/composite_device_v1.json           |   4 +
+ src/config/mod.rs                             |   4 +
+ src/drivers/gyro_bias.rs                      | 442 ++++++++++++++++++
+ src/drivers/mod.rs                            |   1 +
+ src/drivers/ssc/driver.rs                     |  74 ++-
+ src/input/source/fastrpc/ssc_imu.rs           |  11 +-
+ 7 files changed, 546 insertions(+), 11 deletions(-)
+ create mode 100644 LICENSE-GamepadMotionHelpers
+ create mode 100644 src/drivers/gyro_bias.rs
+
+diff --git a/LICENSE-GamepadMotionHelpers b/LICENSE-GamepadMotionHelpers
+new file mode 100644
+index 0000000..a46396a
+--- /dev/null
++++ b/LICENSE-GamepadMotionHelpers
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2020-2023 Julian "Jibb" Smart
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/rootfs/usr/share/inputplumber/schema/composite_device_v1.json b/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+index 0659cb2..231e1c8 100644
+--- a/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
++++ b/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+@@ -292,6 +292,10 @@
+         "gyro_correction": {
+           "description": "Multiplier applied to the kernel-reported gyroscope scale. Defaults to 1.0.",
+           "type": "number"
++        },
++        "gyro_auto_calibration": {
++          "description": "Learn and remove the gyro's zero-rate offset whenever the device holds still. Defaults to false.",
++          "type": "boolean"
+         }
+       }
+     },
+diff --git a/src/config/mod.rs b/src/config/mod.rs
+index 0734cf8..b3608fb 100644
+--- a/src/config/mod.rs
++++ b/src/config/mod.rs
+@@ -328,6 +328,10 @@ pub struct ImuConfig {
+     /// Defaults to 1.0.
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub gyro_correction: Option<f64>,
++    /// Learn and remove the gyro's zero-rate offset whenever the device holds
++    /// still. Defaults to false.
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub gyro_auto_calibration: Option<bool>,
+ }
+ 
+ #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+diff --git a/src/drivers/gyro_bias.rs b/src/drivers/gyro_bias.rs
+new file mode 100644
+index 0000000..a2a34c6
+--- /dev/null
++++ b/src/drivers/gyro_bias.rs
+@@ -0,0 +1,442 @@
++// Ported from the stillness calibration in GamepadMotionHelpers
++// (https://github.com/JibbSmart/GamepadMotionHelpers, f1a7600), used under
++// its MIT license:
++//
++// MIT License
++//
++// Copyright (c) 2020-2023 Julian "Jibb" Smart
++//
++// Permission is hereby granted, free of charge, to any person obtaining a copy
++// of this software and associated documentation files (the "Software"), to deal
++// in the Software without restriction, including without limitation the rights
++// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++// copies of the Software, and to permit persons to whom the Software is
++// furnished to do so, subject to the following conditions:
++//
++// The above copyright notice and this permission notice shall be included in all
++// copies or substantial portions of the Software.
++//
++// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++// SOFTWARE.
++
++//! Gyro zero-rate offset learned whenever the device holds still.
++//!
++//! Stillness thresholds adapt to each sensor's own noise floor, so noisy
++//! IMUs still calibrate. A steady turn about gravity looks like stillness to
++//! any IMU-only estimator and can be learned until the next still moment.
++
++use std::f64::consts::PI;
++
++const MIN_SAMPLES: u32 = 10;
++const MIN_COLLECTION_SECS: f64 = 0.5;
++const MIN_CORRECTION_SECS: f64 = 2.0;
++const MAX_ERROR: f64 = 2.0;
++const DETERIORATION_RATE: f64 = 0.2;
++const ERROR_CLIMB_RATE: f64 = 0.1;
++const ERROR_DROP_ON_RECALIBRATE: f64 = 0.1;
++const EASE_IN_SECS: f64 = 3.0;
++const HALF_TIME_SECS: f64 = 0.1;
++const CONFIDENCE_RATE: f64 = 1.0;
++/// Initial noise floors in deg/s and g, before any still window is seen.
++const INITIAL_GYRO_DELTA: f64 = 1.0;
++const INITIAL_ACCEL_DELTA: f64 = 0.25;
++
++/// Without a fresh accelerometer sample stillness can't be judged.
++const MAX_ACCEL_AGE_SECS: f64 = 0.1;
++const STANDARD_GRAVITY: f64 = 9.80665;
++
++type Vec3 = [f64; 3];
++
++#[derive(Debug, Default)]
++struct Window {
++    samples: u32,
++    secs: f64,
++    min_gyro: Vec3,
++    max_gyro: Vec3,
++    mean_gyro: Vec3,
++    min_accel: Vec3,
++    max_accel: Vec3,
++}
++
++impl Window {
++    fn reset(&mut self) {
++        self.samples = 0;
++        self.secs = 0.0;
++    }
++
++    fn add(&mut self, gyro: Vec3, accel: Vec3, dt: f64) {
++        self.secs += dt;
++        if self.samples == 0 {
++            self.samples = 1;
++            (self.min_gyro, self.max_gyro, self.mean_gyro) = (gyro, gyro, gyro);
++            (self.min_accel, self.max_accel) = (accel, accel);
++            return;
++        }
++        self.samples += 1;
++        let n = f64::from(self.samples);
++        for axis in 0..3 {
++            self.min_gyro[axis] = self.min_gyro[axis].min(gyro[axis]);
++            self.max_gyro[axis] = self.max_gyro[axis].max(gyro[axis]);
++            self.mean_gyro[axis] += (gyro[axis] - self.mean_gyro[axis]) / n;
++            self.min_accel[axis] = self.min_accel[axis].min(accel[axis]);
++            self.max_accel[axis] = self.max_accel[axis].max(accel[axis]);
++        }
++    }
++
++    fn gyro_delta(&self) -> Vec3 {
++        std::array::from_fn(|axis| self.max_gyro[axis] - self.min_gyro[axis])
++    }
++
++    fn accel_delta(&self) -> Vec3 {
++        std::array::from_fn(|axis| self.max_accel[axis] - self.min_accel[axis])
++    }
++
++    fn collected(&self) -> bool {
++        self.samples >= MIN_SAMPLES && self.secs >= MIN_COLLECTION_SECS
++    }
++}
++
++#[derive(Debug)]
++pub struct GyroBias {
++    window: Window,
++    min_gyro_delta: Vec3,
++    min_accel_delta: Vec3,
++    threshold: f64,
++    confidence: f64,
++    steady_secs: f64,
++    /// Learned bias in deg/s.
++    bias: Vec3,
++    accel: Option<Vec3>,
++    accel_age: f64,
++}
++
++impl Default for GyroBias {
++    fn default() -> Self {
++        Self {
++            window: Window::default(),
++            min_gyro_delta: [INITIAL_GYRO_DELTA; 3],
++            min_accel_delta: [INITIAL_ACCEL_DELTA; 3],
++            threshold: 1.0,
++            confidence: 0.0,
++            steady_secs: 0.0,
++            bias: [0.0; 3],
++            accel: None,
++            accel_age: 0.0,
++        }
++    }
++}
++
++impl GyroBias {
++    /// Latest accelerometer sample in m/s^2, in the gyro's frame.
++    pub fn accel(&mut self, sample: Vec3) {
++        if sample.iter().all(|value| value.is_finite()) {
++            self.accel = Some(sample.map(|value| value / STANDARD_GRAVITY));
++            self.accel_age = 0.0;
++        }
++    }
++
++    pub fn restart(&mut self) {
++        self.window.reset();
++    }
++
++    /// Returns the gyro sample in rad/s with the learned bias removed. `dt` is
++    /// the time since the previous gyro sample in seconds.
++    pub fn apply(&mut self, sample: Vec3, dt: f64) -> Vec3 {
++        // All-zero reports come from a sensor that isn't running.
++        if sample == [0.0; 3] && self.accel == Some([0.0; 3]) {
++            return sample;
++        }
++        if sample.iter().all(|value| value.is_finite()) {
++            self.observe(sample.map(f64::to_degrees), dt);
++        } else {
++            self.accel_age += dt.max(0.0);
++            self.window.reset();
++        }
++        std::array::from_fn(|axis| sample[axis] - self.bias[axis] * PI / 180.0)
++    }
++
++    fn observe(&mut self, gyro: Vec3, dt: f64) {
++        if dt.is_nan() || dt < 0.0 {
++            return self.window.reset();
++        }
++        self.accel_age += dt;
++        let accel = match self.accel {
++            Some(accel) if self.accel_age <= MAX_ACCEL_AGE_SECS => accel,
++            _ => return self.window.reset(),
++        };
++        self.window.add(gyro, accel, dt);
++        let gyro_delta = self.window.gyro_delta();
++        let accel_delta = self.window.accel_delta();
++
++        if self.confidence < 1.0 {
++            let climb = DETERIORATION_RATE * dt;
++            self.min_gyro_delta = self.min_gyro_delta.map(|delta| delta + climb);
++            self.min_accel_delta = self.min_accel_delta.map(|delta| delta + climb);
++        }
++
++        if !self.window.collected() {
++            self.climb_threshold(dt);
++            return;
++        }
++        for axis in 0..3 {
++            self.min_gyro_delta[axis] = self.min_gyro_delta[axis].min(gyro_delta[axis]);
++            self.min_accel_delta[axis] = self.min_accel_delta[axis].min(accel_delta[axis]);
++        }
++
++        let still = (0..3).all(|axis| {
++            gyro_delta[axis] <= self.min_gyro_delta[axis] * self.threshold
++                && accel_delta[axis] <= self.min_accel_delta[axis] * self.threshold
++        });
++
++        if still {
++            if self.window.secs >= MIN_CORRECTION_SECS {
++                self.correct(dt);
++            } else {
++                self.climb_threshold(dt);
++            }
++        } else if self.steady_secs > 0.0 {
++            self.threshold = (self.threshold - ERROR_DROP_ON_RECALIBRATE).max(1.0);
++            self.steady_secs = 0.0;
++            self.window.reset();
++        } else {
++            self.climb_threshold(dt);
++            self.window.reset();
++        }
++    }
++
++    fn climb_threshold(&mut self, dt: f64) {
++        self.threshold = (self.threshold + ERROR_CLIMB_RATE * dt).min(MAX_ERROR);
++    }
++
++    fn correct(&mut self, dt: f64) {
++        let mean = self.window.mean_gyro;
++        self.steady_secs = (self.steady_secs + dt).min(EASE_IN_SECS);
++        let ease_in = self.steady_secs / EASE_IN_SECS;
++        let half_time = HALF_TIME_SECS * self.confidence;
++        let keep = if half_time <= 0.0 {
++            0.0
++        } else {
++            (-ease_in * dt / half_time).exp2()
++        };
++        let previous = self.bias;
++        self.bias = std::array::from_fn(|axis| mean[axis] + (previous[axis] - mean[axis]) * keep);
++        if self.confidence == 0.0 {
++            log::info!(
++                "Gyro bias learned: {:.3} {:.3} {:.3} deg/s",
++                self.bias[0],
++                self.bias[1],
++                self.bias[2]
++            );
++        }
++        self.confidence = (self.confidence + dt * CONFIDENCE_RATE).min(1.0);
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const DT: f64 = 0.005;
++    const OFFSET: Vec3 = [0.0002, 0.0105, 0.0026];
++    const GRAVITY: Vec3 = [0.0, 0.0, STANDARD_GRAVITY];
++
++    /// `secs` of 200 Hz gyro at `rate(t)` rad/s plus alternating `noise`,
++    /// with an accelerometer sample before every gyro sample.
++    fn feed(
++        bias: &mut GyroBias,
++        secs: f64,
++        noise: f64,
++        rate: impl Fn(f64) -> Vec3,
++        gravity: impl Fn(f64) -> Vec3,
++    ) -> Vec3 {
++        let mut out = [0.0; 3];
++        for i in 0..(secs / DT) as u32 {
++            let t = f64::from(i) * DT;
++            let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
++            bias.accel(gravity(t));
++            out = bias.apply(rate(t).map(|value| value + sign * noise), DT);
++        }
++        out
++    }
++
++    fn bias_rad(bias: &GyroBias) -> Vec3 {
++        bias.bias.map(f64::to_radians)
++    }
++
++    /// The first moving samples still land in the last still window.
++    fn assert_unchanged(bias: &GyroBias, learned: Vec3) {
++        for axis in 0..3 {
++            assert!(
++                (bias.bias[axis] - learned[axis]).abs() < 1e-4,
++                "{learned:?} -> {:?}",
++                bias.bias
++            );
++        }
++    }
++
++    #[test]
++    fn learns_offset_when_still() {
++        let mut bias = GyroBias::default();
++        feed(&mut bias, 10.0, 0.0005, |_| OFFSET, |_| GRAVITY);
++        for axis in 0..3 {
++            assert!(
++                (bias_rad(&bias)[axis] - OFFSET[axis]).abs() < 1e-5,
++                "{:?}",
++                bias.bias
++            );
++        }
++    }
++
++    #[test]
++    fn learns_on_a_sensor_noisier_than_the_initial_floor() {
++        let mut bias = GyroBias::default();
++        // 2.3 deg/s peak to peak, over twice the initial 1 deg/s floor.
++        feed(&mut bias, 30.0, 0.02, |_| OFFSET, |_| GRAVITY);
++        assert!(
++            (bias_rad(&bias)[1] - OFFSET[1]).abs() < 1e-4,
++            "{:?}",
++            bias.bias
++        );
++    }
++
++    #[test]
++    fn passes_samples_through_before_learning() {
++        let mut bias = GyroBias::default();
++        let out = feed(&mut bias, 1.0, 0.0, |_| OFFSET, |_| GRAVITY);
++        assert_eq!(out, OFFSET);
++    }
++
++    #[test]
++    fn needs_an_accelerometer() {
++        let mut bias = GyroBias::default();
++        for _ in 0..2000 {
++            bias.apply(OFFSET, DT);
++        }
++        assert_eq!(bias.bias, [0.0; 3]);
++    }
++
++    #[test]
++    fn ignores_motion_after_calibrating() {
++        let mut bias = GyroBias::default();
++        feed(&mut bias, 10.0, 0.0005, |_| OFFSET, |_| GRAVITY);
++        let learned = bias.bias;
++        // 1 Hz swings of 20 deg/s about X, tilting gravity with them.
++        let swing = |t: f64| 20f64.to_radians() * (2.0 * PI * t).sin();
++        feed(
++            &mut bias,
++            10.0,
++            0.0005,
++            |t| [OFFSET[0] + swing(t), OFFSET[1], OFFSET[2]],
++            |t| {
++                let angle = 20f64.to_radians() / (2.0 * PI) * (1.0 - (2.0 * PI * t).cos());
++                [
++                    0.0,
++                    STANDARD_GRAVITY * angle.sin(),
++                    STANDARD_GRAVITY * angle.cos(),
++                ]
++            },
++        );
++        assert_unchanged(&bias, learned);
++    }
++
++    #[test]
++    fn ignores_a_steady_pitch_after_calibrating() {
++        let mut bias = GyroBias::default();
++        feed(&mut bias, 10.0, 0.0005, |_| OFFSET, |_| GRAVITY);
++        let learned = bias.bias;
++        let rate = 2f64.to_radians();
++        feed(
++            &mut bias,
++            8.0,
++            0.0005,
++            |_| [OFFSET[0] + rate, OFFSET[1], OFFSET[2]],
++            |t| {
++                [
++                    0.0,
++                    STANDARD_GRAVITY * (rate * t).sin(),
++                    STANDARD_GRAVITY * (rate * t).cos(),
++                ]
++            },
++        );
++        assert_unchanged(&bias, learned);
++    }
++
++    #[test]
++    fn learns_an_offset_above_0_2_rad_s() {
++        let offset = [0.25, 0.22, 0.02];
++        let mut bias = GyroBias::default();
++        feed(&mut bias, 10.0, 0.00002, |_| offset, |_| GRAVITY);
++        for axis in 0..3 {
++            assert!(
++                (bias_rad(&bias)[axis] - offset[axis]).abs() < 1e-4,
++                "{:?}",
++                bias.bias
++            );
++        }
++    }
++
++    #[test]
++    fn restart_clears_the_window() {
++        let mut bias = GyroBias::default();
++        for i in 0..800 {
++            // Restarting every 1.5 s keeps any window short of 2 s.
++            if i % 300 == 299 {
++                bias.restart();
++            }
++            bias.accel(GRAVITY);
++            bias.apply(OFFSET, DT);
++        }
++        assert_eq!(bias.bias, [0.0; 3]);
++    }
++
++    #[test]
++    fn stale_accelerometer_stops_learning() {
++        let mut bias = GyroBias::default();
++        bias.accel(GRAVITY);
++        for _ in 0..2000 {
++            bias.apply(OFFSET, DT);
++        }
++        assert_eq!(bias.bias, [0.0; 3]);
++    }
++
++    #[test]
++    fn ignores_all_zero_reports() {
++        let mut bias = GyroBias::default();
++        feed(&mut bias, 10.0, 0.0005, |_| OFFSET, |_| GRAVITY);
++        let learned = bias.bias;
++        let out = feed(&mut bias, 10.0, 0.0, |_| [0.0; 3], |_| [0.0; 3]);
++        assert_eq!(bias.bias, learned);
++        assert_eq!(out, [0.0; 3]);
++    }
++
++    #[test]
++    fn a_run_of_bad_samples_breaks_the_window() {
++        let mut bias = GyroBias::default();
++        feed(&mut bias, 1.99, 0.0005, |_| OFFSET, |_| GRAVITY);
++        bias.accel(GRAVITY);
++        for _ in 0..2000 {
++            bias.apply([f64::NAN; 3], DT);
++        }
++        // Without a fresh accelerometer sample nothing may complete the old window.
++        for _ in 0..5 {
++            bias.apply(OFFSET, DT);
++        }
++        assert_eq!(bias.bias, [0.0; 3]);
++    }
++
++    #[test]
++    fn nan_is_ignored() {
++        let mut bias = GyroBias::default();
++        feed(&mut bias, 3.0, 0.0005, |_| OFFSET, |_| GRAVITY);
++        bias.accel(GRAVITY);
++        bias.apply([f64::NAN; 3], DT);
++        feed(&mut bias, 10.0, 0.0005, |_| OFFSET, |_| GRAVITY);
++        assert!(bias.bias.iter().all(|value| value.is_finite()));
++        assert!((bias_rad(&bias)[1] - OFFSET[1]).abs() < 1e-5);
++    }
++}
+diff --git a/src/drivers/mod.rs b/src/drivers/mod.rs
+index 7e6533e..f219814 100644
+--- a/src/drivers/mod.rs
++++ b/src/drivers/mod.rs
+@@ -2,6 +2,7 @@ pub mod dualsense;
+ pub mod flydigi_vader_4_pro;
+ pub mod fts3528;
+ pub mod gpd_device;
++pub mod gyro_bias;
+ pub mod horipad_steam;
+ pub mod iio_imu;
+ pub mod legion_go;
+diff --git a/src/drivers/ssc/driver.rs b/src/drivers/ssc/driver.rs
+index 9480b27..5b77d31 100644
+--- a/src/drivers/ssc/driver.rs
++++ b/src/drivers/ssc/driver.rs
+@@ -3,6 +3,8 @@ use std::sync::Arc;
+ use std::time::{Duration, Instant};
+ use tokio::{sync::mpsc, sync::mpsc::error::TryRecvError};
+ 
++use crate::drivers::gyro_bias::GyroBias;
++
+ use super::event::{AxisData, Event, MountMatrix};
+ use super::runtime::{SscObject, SscRuntime};
+ 
+@@ -13,6 +15,8 @@ const SSC_SERVICE: u32 = 400;
+ /// libssc otherwise opens sensors at their first advertised rate, 12.5 Hz on
+ /// some IMUs.
+ const DEFAULT_SAMPLE_RATE_HZ: f64 = 200.0;
++/// A longer pause in the gyro stream restarts the stillness window.
++const MAX_STREAM_GAP: Duration = Duration::from_millis(100);
+ 
+ pub struct Driver {
+     runtime: Arc<SscRuntime>,
+@@ -32,6 +36,8 @@ pub struct Driver {
+     sample_rate: f64,
+     accel_correction: f64,
+     gyro_correction: f64,
++    gyro_bias: Option<GyroBias>,
++    last_gyro: Option<Instant>,
+ }
+ 
+ impl Driver {
+@@ -40,6 +46,7 @@ impl Driver {
+         sample_rate: Option<f64>,
+         accel_correction: f64,
+         gyro_correction: f64,
++        gyro_auto_calibration: bool,
+     ) -> Result<Self, Box<dyn Error + Send + Sync>> {
+         let runtime = SscRuntime::load()?;
+         let (tx, rx) = mpsc::channel::<Event>(1024);
+@@ -57,6 +64,8 @@ impl Driver {
+             sample_rate: sample_rate.unwrap_or(DEFAULT_SAMPLE_RATE_HZ),
+             accel_correction,
+             gyro_correction,
++            gyro_bias: gyro_auto_calibration.then(GyroBias::default),
++            last_gyro: None,
+         })
+     }
+ 
+@@ -144,33 +153,80 @@ impl Driver {
+         // we can just perform an iteration of the GLib context every poll
+         self.runtime.iterate_glib_main_loop();
+ 
+-        let mut events: Vec<Event> = vec![];
+-
++        let mut raw = vec![];
+         loop {
+             match self.rx.try_recv() {
+-                Ok(event) if self.is_filtered(&event) => continue,
++                Ok(event) => raw.push(event),
++                Err(TryRecvError::Empty) => break,
++                Err(error) => return Err(format!("Error when handling SSC events: {error}").into()),
++            }
++        }
+ 
+-                Ok(Event::Gyro(mut event)) => {
++        let dt = self.gyro_sample_interval(&raw);
++
++        let mut events: Vec<Event> = vec![];
++        for event in raw {
++            // Calibration keeps observing filtered events.
++            let filtered = self.is_filtered(&event);
++            match event {
++                Event::Gyro(mut event) => {
++                    if let Some(gyro_bias) = &mut self.gyro_bias {
++                        [event.roll, event.pitch, event.yaw] =
++                            gyro_bias.apply([event.roll, event.pitch, event.yaw], dt);
++                    }
++                    if filtered {
++                        continue;
++                    }
+                     Self::apply_correction(&mut event, self.gyro_correction);
+                     self.rotate_value(&mut event);
+                     events.push(Event::Gyro(event));
+                 }
+ 
+-                Ok(Event::Accelerometer(mut event)) => {
++                Event::Accelerometer(mut event) => {
++                    if let Some(gyro_bias) = &mut self.gyro_bias {
++                        gyro_bias.accel([event.roll, event.pitch, event.yaw]);
++                    }
++                    if filtered {
++                        continue;
++                    }
+                     Self::apply_correction(&mut event, self.accel_correction);
+                     self.rotate_value(&mut event);
+                     events.push(Event::Accelerometer(event));
+                 }
+-
+-                Err(TryRecvError::Empty) => break,
+-                Err(error) => return Err(format!("Error when handling SSC events: {error}").into()),
+             }
+         }
+ 
+         Ok(events)
+     }
+ 
+-    /// Apply the configured correction factor to the given axis data
++    /// libssc delivers samples in bursts without timestamps, so spread the time
++    /// since the last burst across this one, unless the stream paused.
++    fn gyro_sample_interval(&mut self, events: &[Event]) -> f64 {
++        let nominal = 1.0 / self.sample_rate;
++        let count = events
++            .iter()
++            .filter(|e| matches!(e, Event::Gyro(_)))
++            .count();
++        if count == 0 {
++            return nominal;
++        }
++        let now = Instant::now();
++        let elapsed = self
++            .last_gyro
++            .replace(now)
++            .map(|last| now.duration_since(last));
++        match elapsed {
++            Some(elapsed) if elapsed <= MAX_STREAM_GAP => elapsed.as_secs_f64() / count as f64,
++            Some(_) => {
++                if let Some(gyro_bias) = &mut self.gyro_bias {
++                    gyro_bias.restart();
++                }
++                nominal
++            }
++            None => nominal,
++        }
++    }
++
+     fn apply_correction(value: &mut AxisData, correction: f64) {
+         value.roll *= correction;
+         value.pitch *= correction;
+diff --git a/src/input/source/fastrpc/ssc_imu.rs b/src/input/source/fastrpc/ssc_imu.rs
+index 7ec8a57..f4aa456 100644
+--- a/src/input/source/fastrpc/ssc_imu.rs
++++ b/src/input/source/fastrpc/ssc_imu.rs
+@@ -34,8 +34,15 @@ impl SscImu {
+         let sample_rate = imu.and_then(|c| c.sample_rate);
+         let accel_correction = imu.and_then(|c| c.accel_correction).unwrap_or(1.0);
+         let gyro_correction = imu.and_then(|c| c.gyro_correction).unwrap_or(1.0);
+-
+-        let driver = Driver::new(mount_matrix, sample_rate, accel_correction, gyro_correction)?;
++        let gyro_auto_calibration = imu.and_then(|c| c.gyro_auto_calibration).unwrap_or(false);
++
++        let driver = Driver::new(
++            mount_matrix,
++            sample_rate,
++            accel_correction,
++            gyro_correction,
++            gyro_auto_calibration,
++        )?;
+ 
+         Ok(Self { driver })
+     }
+-- 
+2.56.0
+

@@ -6,7 +6,7 @@ PQ layer targeting a PQ output. A Gamma 2.2 HDR panel needs the Vulkan
 color pipeline to map even a single PQ layer into its native encoding.
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 975da2ef..b9881477 100644
+index dd7be587..4e0c7f97 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -32,6 +32,7 @@
@@ -17,7 +17,7 @@ index 975da2ef..b9881477 100644
  #include "Utils/Defer.h"
  #include "Utils/Parsers.h"
  #include "Utils/String.h"
-@@ -4521,9 +4522,15 @@ namespace gamescope
+@@ -4510,9 +4511,15 @@ namespace gamescope
  			if ( g_bOutputHDREnabled )
  			{
  				bNeedsFullComposite |= g_bHDRItmEnable;
@@ -69,17 +69,17 @@ index 00000000..1210f78c
 +    }
 +}
 diff --git a/tests/meson.build b/tests/meson.build
-index 728e399a..e66d7b93 100644
+index 5cf12e92..3daa113e 100644
 --- a/tests/meson.build
 +++ b/tests/meson.build
 @@ -8,7 +8,7 @@ endforeach
  
  gamescope_tests = executable(
  	'gamescope_tests',
--	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_display_lookup.cpp', 'test_edid.cpp'],
-+	unittest_src + ['test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_process.cpp', 'test_upscale.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_vrclient_detect.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp', 'test_edid.cpp'],
+-	unittest_src + ['../src/color_helpers.cpp', 'test_color_helpers.cpp', 'test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_present_timing_schedule.cpp', 'test_process.cpp', 'test_swapchain_wire.cpp', 'test_upscale.cpp', 'test_utils_commit_queue.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_utils_vblank_schedule.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp', 'test_display_lookup.cpp'] + swapchain_client_src + limiter_client_src + [swapchain_server_header],
++	unittest_src + ['../src/color_helpers.cpp', 'test_color_helpers.cpp', 'test_convar.cpp', 'test_focus_placement.cpp', 'test_mangoapp_config.cpp', 'test_mangoapp_control.cpp', 'test_mode_list.cpp', 'test_present_timing_schedule.cpp', 'test_process.cpp', 'test_swapchain_wire.cpp', 'test_upscale.cpp', 'test_utils_commit_queue.cpp', 'test_utils_parsers.cpp', 'test_utils_string.cpp', 'test_utils_vblank_schedule.cpp', 'test_vrclient_detect.cpp', 'test_edid.cpp', 'test_display_lookup.cpp', 'test_drm_composition.cpp'] + swapchain_client_src + limiter_client_src + [swapchain_server_header],
  	include_directories: [srcdir, sol2_include],
- 	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, wlroots_dep],
+ 	dependencies: [catch2_dep, luajit_dep, cap_dep, displayinfo_dep, drm_dep, glm_dep, vulkan_dep, wlroots_dep, dep_wayland, wayland_server],
  	cpp_args: gamescope_cpp_args,
 diff --git a/tests/test_drm_composition.cpp b/tests/test_drm_composition.cpp
 new file mode 100644

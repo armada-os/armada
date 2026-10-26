@@ -1,0 +1,97 @@
+From: Armada <noreply@armada.local>
+Date: Thu, 22 Oct 2026 12:00:00 +0200
+Subject: [PATCH] arm64: dts: qcom: sm8550, sm8650: add the ADSP FastRPC remote
+ heap
+
+The ADSP's sensors process (static PD) asks the host for a remote heap
+when it starts, and cannot start without one. The FastRPC driver only
+allocates the heap and assigns it to the DSP when a static PD attaches,
+so on a board that never starts one it stays an idle, reusable pool.
+
+qcs8550.dtsi replaces the SM8550 reserved-memory block, so it carries the
+heap node too.
+
+Heap node and FastRPC properties from justjoseorg's Odin 2 gyro work in
+SteamOS-ARM-Port (qcs8550-ayn-odin2-gyro.dtsi).
+---
+diff --git a/arch/arm64/boot/dts/qcom/qcs8550.dtsi b/arch/arm64/boot/dts/qcom/qcs8550.dtsi
+index f0acdd0..be2096e 100644
+--- a/arch/arm64/boot/dts/qcom/qcs8550.dtsi
++++ b/arch/arm64/boot/dts/qcom/qcs8550.dtsi
+@@ -13,6 +13,15 @@
+ 		#size-cells = <2>;
+ 		ranges;
+ 
++		/* Remote heap for the ADSP static (sensors) PD; reusable while idle */
++		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
++			compatible = "shared-dma-pool";
++			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++			alignment = <0x0 0x400000>;
++			size = <0x0 0xc00000>;
++			reusable;
++		};
++
+ 
+ 		/* These are 3 types of reserved memory regions here:
+ 		 * 1. Firmware related regions which aren't shared with kernel.
+diff --git a/arch/arm64/boot/dts/qcom/sm8550.dtsi b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+index 0974e00..56bcdb4 100644
+--- a/arch/arm64/boot/dts/qcom/sm8550.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8550.dtsi
+@@ -837,6 +837,15 @@
+ 		#size-cells = <2>;
+ 		ranges;
+ 
++		/* Remote heap for the ADSP static (sensors) PD; reusable while idle */
++		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
++			compatible = "shared-dma-pool";
++			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++			alignment = <0x0 0x400000>;
++			size = <0x0 0xc00000>;
++			reusable;
++		};
++
+ 		hyp_mem: hyp-region@80000000 {
+ 			reg = <0 0x80000000 0 0xa00000>;
+ 			no-map;
+@@ -3177,6 +3186,9 @@
+ 					qcom,glink-channels = "fastrpcglink-apps-dsp";
+ 					label = "adsp";
+ 					qcom,non-secure-domain;
++					memory-region = <&adsp_rpc_remote_heap_mem>;
++					/* LPASS, ADSP_HEAP */
++					qcom,vmids = <0x16 0x25>;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
+ 
+diff --git a/arch/arm64/boot/dts/qcom/sm8650.dtsi b/arch/arm64/boot/dts/qcom/sm8650.dtsi
+index 3a12455..7a35e6f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8650.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8650.dtsi
+@@ -1717,6 +1717,15 @@
+ 		#size-cells = <2>;
+ 		ranges;
+ 
++		/* Remote heap for the ADSP static (sensors) PD; reusable while idle */
++		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
++			compatible = "shared-dma-pool";
++			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++			alignment = <0x0 0x400000>;
++			size = <0x0 0xc00000>;
++			reusable;
++		};
++
+ 		hyp_mem: hyp@80000000 {
+ 			reg = <0 0x80000000 0 0xe00000>;
+ 			no-map;
+@@ -4567,6 +4576,10 @@
+ 
+ 					qcom,non-secure-domain;
+ 
++					memory-region = <&adsp_rpc_remote_heap_mem>;
++					/* LPASS, ADSP_HEAP */
++					qcom,vmids = <0x16 0x25>;
++
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
+ 

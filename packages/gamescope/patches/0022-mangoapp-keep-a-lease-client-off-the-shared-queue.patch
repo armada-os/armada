@@ -13,19 +13,19 @@ The id starts at -1 instead of 0, a valid queue id, so every send and
 receive in that instance fails harmlessly.
 ---
 diff --git a/src/mangoapp.cpp b/src/mangoapp.cpp
-index e7c7ede5..32a67ee1 100644
+index 32f1e2aa..95a502a7 100644
 --- a/src/mangoapp.cpp
 +++ b/src/mangoapp.cpp
-@@ -15,7 +15,7 @@
+@@ -16,7 +16,7 @@
  #include "main.hpp"
  
  static bool inited = false;
 -static int msgid = 0;
 +static int msgid = -1;
+ std::atomic<uint32_t> g_uScanoutRefreshmHz = 0;
  static std::mutex s_SnapshotMutex;
  static std::unordered_map<uint32_t, MangoappSnapshot_t> s_ConnectorSnapshots;
- extern bool g_bAppWantsHDRCached;
-@@ -48,8 +48,11 @@ struct mangoapp_msg_v1 {
+@@ -51,8 +51,11 @@ struct mangoapp_msg_v1 {
  } __attribute__((packed));
  
  void init_mangoapp(){

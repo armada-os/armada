@@ -1,0 +1,27 @@
+From 3ddcc0111cc6cd2cbb8d6887d4866da6e9a4abf5 Mon Sep 17 00:00:00 2001
+From: Radical <radical@radical.fun>
+Date: Sun, 25 Oct 2026 00:13:59 +0200
+Subject: [PATCH] Keep the lease companion locked until Steam reports its lock
+ state
+
+armada-control mirrors Steam's lock screen to gamescope, which can't happen before Steam is up.
+---
+ usr/share/gamescope-session-plus/gamescope-session-plus | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/usr/share/gamescope-session-plus/gamescope-session-plus b/usr/share/gamescope-session-plus/gamescope-session-plus
+index ae8ce5c..42094cb 100755
+--- a/usr/share/gamescope-session-plus/gamescope-session-plus
++++ b/usr/share/gamescope-session-plus/gamescope-session-plus
+@@ -245,6 +245,8 @@ if [ -z "$GAMESCOPECMD" ]; then
+ 	LEASE_CONNECTOR_OPTION=""
+ 	if [ -n "$ARMADA_SECONDARY_CONNECTOR" ] && gamescope_has_option "--lease-connector"; then
+ 		LEASE_CONNECTOR_OPTION="--lease-connector $ARMADA_SECONDARY_CONNECTOR"
++		# armada-control unlocks the bottom screen once Steam reports its lock state.
++		export GAMESCOPE_COMPANION_WAIT_FOR_LOCK=1
+ 	fi
+ 
+ 	IGNORE_TOUCH_DEVICE_OPTION=""
+-- 
+2.56.0
+
