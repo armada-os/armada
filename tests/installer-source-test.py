@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -13,9 +14,11 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-import gi
-gi.require_version("OSTree", "1.0")
-from gi.repository import Gio, GLib, OSTree
+IN_IMAGE = shutil.which("bootc") is not None and os.geteuid() == 0
+if IN_IMAGE:
+    import gi
+    gi.require_version("OSTree", "1.0")
+    from gi.repository import Gio, GLib, OSTree
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "system_files/usr/libexec/armada/armada-installer"
@@ -74,7 +77,7 @@ def oci(dest, marker):
     (dest / 'oci-layout').write_text('{"imageLayoutVersion":"1.0.0"}')
     return f'ostree-unverified-image:oci:{dest}:latest'
 
-
+@unittest.skipUnless(IN_IMAGE, "needs root and bootc: run inside the Armada image")
 class SourceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="installer-source-test.")
