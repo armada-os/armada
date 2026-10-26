@@ -17,6 +17,8 @@ from pathlib import Path
 sys.path.insert(0, "/usr/lib/armada")
 import armada_game_tweaks
 import armada_perf
+import rsinput_calibration
+import input_calibration_policy as calibration_policy
 
 SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
@@ -91,16 +93,26 @@ CALIBRATION_BACKENDS = {
     "rsinput": Path("/sys/module/rsinput/parameters"),
     "retroid": Path("/sys/module/retroid/parameters"),
 }
+RSINPUT_CALIBRATION = rsinput_calibration.CalibrationManager()
 
 
-def atomic_write(path, text):
+def atomic_write(path, text, durable=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(text)
+            if durable:
+                f.flush()
+                os.fsync(f.fileno())
         os.chmod(tmp, 0o644)
         os.replace(tmp, path)
+        if durable:
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         try:
             os.unlink(tmp)
@@ -704,11 +716,21 @@ def action_inputplumber_intercept(request):
     return {"ok": True}
 
 
+def action_rsinput_calibration(request):
+    return RSINPUT_CALIBRATION.dispatch(
+        request.get("operation"), request.get("token"), request.get("step"))
+
+
 def unit_active(unit):
     return subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", unit], check=False, timeout=2).returncode == 0
 
 
 def action_reload_input_ranges(_request):
+    if calibration_policy.uses_mcu():
+        with RSINPUT_CALIBRATION.lock:
+            RSINPUT_CALIBRATION.close_capture()
+            calibration_policy.prepare_sticks(CALIBRATION_BACKENDS['rsinput'])
+            calibration_policy.wait_parameters(CALIBRATION_BACKENDS['rsinput'])
     # InputPlumber reads evdev ranges only when it opens the controller.
     if unit_active("inputplumber.service"):
         run(["/usr/bin/systemctl", "restart", "inputplumber.service"], timeout=10)
@@ -734,6 +756,10 @@ def action_write_config(request):
             raise ValueError("invalid calibration backend")
         if not parameters.exists():
             raise RuntimeError("controller calibration is not supported on this device")
+        if calibration_policy.uses_mcu(backend):
+            with RSINPUT_CALIBRATION.lock:
+                RSINPUT_CALIBRATION.require_normal_output()
+                return write_mcu_config(params)
         for param in CALIBRATION_PARAMS:
             if param in params:
                 (parameters / param).write_text(str(int(params[param])), encoding="utf-8")
@@ -744,6 +770,24 @@ def action_write_config(request):
     if name == "tweaks":
         PERF.refresh(keep_override=True)
     return {"ok": True}
+
+
+def write_mcu_config(params):
+    """Caller holds the manager lock. Persist triggers without overriding MCU sticks."""
+    path = CONFIG_PATHS['calibration']
+    params = calibration_policy.clean_config(params)
+    axes = calibration_policy.stick_defaults()
+    text = json.dumps(params, indent=2, sort_keys=True) + '\n'
+    atomic_write(path, text, durable=True)
+    for name, value in {**params, **axes}.items():
+        if name in CALIBRATION_PARAMS:
+            (CALIBRATION_BACKENDS['rsinput'] / name).write_text(str(int(value)), encoding='utf-8')
+    (CALIBRATION_BACKENDS['rsinput'] / 'update_params').write_text('1', encoding='utf-8')
+    try:
+        calibration_policy.wait_parameters(CALIBRATION_BACKENDS['rsinput'])
+    except RuntimeError:
+        pass  # Already saved; Close refreshes the ranges and reports a timeout there.
+    return {'ok': True}
 
 
 class PerfManager:
@@ -924,6 +968,7 @@ ACTIONS = {
     "get_ssh_enabled": action_get_ssh_enabled,
     "get_mtp_enabled": action_get_mtp_enabled,
     "inputplumber_intercept": action_inputplumber_intercept,
+    "rsinput_calibration": action_rsinput_calibration,
     "set_ssh_enabled": action_set_ssh_enabled,
     "set_mtp_enabled": action_set_mtp_enabled,
     "set_bottom_screen_enabled": action_set_bottom_screen_enabled,
