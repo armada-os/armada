@@ -28,6 +28,7 @@ Patch5:         0005-RAM-name.patch
 Patch6:         0006-SM8750-Battery.patch
 Patch7:         0007-gpu_fdinfo-skip-unreadable-fdinfo.patch
 Patch8:         0008-mangoapp-show-active-upscaler.patch
+Patch9:         0009-mangoapp-skip-the-focus-query-while-hidden.patch
 
 BuildRequires:  vulkan-headers
 BuildRequires:  appstream
