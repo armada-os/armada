@@ -2,6 +2,11 @@ import { setCompanionLocked } from "../backend";
 
 const RESUME_LOCK_GRACE_MS = 5000;
 
+// Steam exposes wake-lock settings that Decky's store type omits.
+type SecurityStore = Window["securitystore"] & {
+  m_Settings?: { bLockOnWake?: boolean; strPIN?: string };
+};
+
 // Steam's lock screen never reaches gamescope; mirror it so the bottom screen locks too.
 export function registerLockWatcher(): () => void {
   let sent: boolean | undefined;
@@ -11,7 +16,7 @@ export function registerLockWatcher(): () => void {
   let timer: number | undefined;
   let stopped = false;
   const tick = () => {
-    const store = window.securitystore;
+    const store = window.securitystore as SecurityStore | undefined;
     if (busy || !store?.IsLockScreenActive) return;
     const active = !!store.IsLockScreenActive();
     const suspending = !!window.SuspendResumeStore?.suspending;

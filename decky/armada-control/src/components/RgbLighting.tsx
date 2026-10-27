@@ -1,10 +1,9 @@
-import { toaster } from "@decky/api";
 import { PanelSection } from "@decky/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
 import { getRgb, setRgb } from "../backend";
 import { t } from "../i18n";
 import type { RgbConfig } from "../types";
 import { SliderEdit, ToggleRow } from "./widgets";
+import { useDebouncedApply } from "../hooks/useDebouncedApply";
 
 const UPDATE_INTERVAL_MS: number = 100;
 
@@ -46,112 +45,74 @@ function hueColor(hue: number): string {
   }
 }
 
-export function RgbLighting() {
-  const [config, setConfig] = useState<RgbConfig | null>(null);
-  const savedConfig = useRef<string>("");
-  const lastUpdate = useRef<number>(0);
-
-  const load = useCallback(async () => {
-    try {
-      const next: RgbConfig | null = await getRgb();
-      savedConfig.current = JSON.stringify(next);
-      setConfig(next);
-    } catch (error) {
-      toaster.toast({ title: t("rgb.loadError"), body: String(error) });
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    if (!config) return;
-    const current: string = JSON.stringify(config);
-    if (current === savedConfig.current) return;
-
-    const elapsed: number = Date.now() - lastUpdate.current;
-    const delay: number = Math.max(0, UPDATE_INTERVAL_MS - elapsed);
-    const timer: number = window.setTimeout(async () => {
-      lastUpdate.current = Date.now();
-      try {
-        await setRgb(
-          config.enabled,
-          config.linkBrightness,
-          config.color,
-          config.saturation,
-          config.maxBrightness,
-          config.brightness,
-        );
-        savedConfig.current = current;
-      } catch (error) {
-        toaster.toast({ title: t("rgb.changeError"), body: String(error) });
-        load();
-      }
-    }, delay);
-
-    return () => window.clearTimeout(timer);
-  }, [config, load]);
-
-  if (!config) return null;
+export function RgbLighting({ config, setConfig }: {
+  config: RgbConfig;
+  setConfig: (next: RgbConfig | null) => void;
+}) {
+  const update = useDebouncedApply<RgbConfig | null>(
+    getRgb,
+    setConfig,
+    async (next) => next ? setRgb(next.enabled, next.linkBrightness, next.color, next.saturation, next.maxBrightness, next.brightness) : null,
+    t("rgb.changeError"),
+    UPDATE_INTERVAL_MS,
+  );
 
   return (
     <PanelSection title={t("rgb.title")}>
       <ToggleRow
         label={t("common.enabled")}
+        bottomSeparator="standard"
         value={config.enabled}
-        onChange={(enabled: boolean) => setConfig({
+        onChange={(enabled: boolean) => update({
           ...config,
           enabled,
           linkBrightness: enabled ? config.linkBrightness : false,
         })}
       />
-      <ToggleRow
-        label={t("rgb.smartBrightness")}
-        value={config.linkBrightness}
-        disabled={!config.enabled}
-        onChange={(linkBrightness: boolean) => setConfig({
-          ...config,
-          linkBrightness,
-          maxBrightness: linkBrightness
-            ? Math.max(1, config.maxBrightness)
-            : config.maxBrightness,
-        })}
-      />
-      <SliderEdit
-        label={config.linkBrightness ? t("rgb.maxBrightness") : t("common.brightness")}
-        value={config.linkBrightness ? config.maxBrightness : config.brightness}
-        min={config.linkBrightness ? 1 : 0}
-        max={100}
-        step={1}
-        disabled={!config.enabled}
-        onChange={(brightness: number) => setConfig(
-          config.linkBrightness ?
-            { ...config, maxBrightness: brightness } :
-            { ...config, brightness })}
-      />
-      <SliderEdit
-        label={t("common.color")}
-        value={colorHue(config.color)}
-        min={0}
-        max={359}
-        step={1}
-        disabled={!config.enabled}
-        showValue={false}
-        wrapperClassName="armada-slider-field armada-rgb-hue"
-        onChange={(hue: number) => setConfig({ ...config, color: hueColor(hue) })}
-      />
-      <SliderEdit
-        label={t("rgb.saturation")}
-        value={config.saturation}
-        min={0}
-        max={100}
-        step={1}
-        disabled={!config.enabled}
-        showValue={false}
-        wrapperClassName="armada-slider-field armada-rgb-saturation"
-        onChange={(saturation: number) => setConfig({ ...config, saturation })}
-      />
+      {config.enabled ? <>
+        <ToggleRow
+          label={t("rgb.smartBrightness")}
+          value={config.linkBrightness}
+          onChange={(linkBrightness: boolean) => update({
+            ...config,
+            linkBrightness,
+            maxBrightness: linkBrightness
+              ? Math.max(1, config.maxBrightness)
+              : config.maxBrightness,
+          })}
+        />
+        <SliderEdit
+          label={config.linkBrightness ? t("rgb.maxBrightness") : t("common.brightness")}
+          value={config.linkBrightness ? config.maxBrightness : config.brightness}
+          min={config.linkBrightness ? 1 : 0}
+          max={100}
+          step={1}
+          onChange={(brightness: number) => update(
+            config.linkBrightness ?
+              { ...config, maxBrightness: brightness } :
+              { ...config, brightness })}
+        />
+        <SliderEdit
+          label={t("common.color")}
+          value={colorHue(config.color)}
+          min={0}
+          max={359}
+          step={1}
+          showValue={false}
+          wrapperClassName="armada-slider-field armada-rgb-hue"
+          onChange={(hue: number) => update({ ...config, color: hueColor(hue) })}
+        />
+        <SliderEdit
+          label={t("rgb.saturation")}
+          value={config.saturation}
+          min={0}
+          max={100}
+          step={1}
+          showValue={false}
+          wrapperClassName="armada-slider-field armada-rgb-saturation"
+          onChange={(saturation: number) => update({ ...config, saturation })}
+        />
+      </> : null}
     </PanelSection>
   );
 }

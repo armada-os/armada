@@ -1,9 +1,9 @@
+import { showArmadaModal } from "./modalFocusView";
 import {
   DialogBody,
   DialogButton,
-  DialogFooter,
+  DialogButtonPrimary,
   ProgressBar,
-  showModal,
 } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -16,53 +16,46 @@ import {
 } from "../backend";
 import { normalizedValue, triggerPercent } from "../lib/calibration";
 import { t } from "../i18n";
-import { ArmadaModalRoot } from "./ArmadaModalRoot";
+import { ArmadaDialogFooter, ArmadaDialogHeader, ArmadaModalRoot } from "./ArmadaModalRoot";
+import { SupportingText } from "./widgets";
 import type { CalibrationState, StickProgress, StickSide } from "../types";
 
 type Phase = "idle" | "recording";
 
-const DONE_COLOR = "#59bf40";
 const MARKER_SIZE = 18;
-const MARKER_GUTTER = 24;
-const SIDE_POSITION: Record<StickSide, { left: string; top: string }> = {
-  left: { left: `${MARKER_GUTTER / 2}px`, top: "50%" },
-  right: { left: `calc(100% - ${MARKER_GUTTER / 2}px)`, top: "50%" },
-  up: { left: "50%", top: `${MARKER_GUTTER / 2}px` },
-  down: { left: "50%", top: `calc(100% - ${MARKER_GUTTER / 2}px)` },
-};
-
+const STICK_SIDES: StickSide[] = ["left", "right", "up", "down"];
 const MARKER_RADIUS = MARKER_SIZE / 2 - 2;
 const MARKER_CIRCUMFERENCE = 2 * Math.PI * MARKER_RADIUS;
+const PLOT_SIZE = 100;
+const PLOT_CENTER = PLOT_SIZE / 2;
+const STICK_TRAVEL = 44;
 
-function Marker({ progress, style }: { progress: number; style?: React.CSSProperties }) {
+function Marker({ progress, side }: { progress: number; side?: StickSide }) {
   const done = progress >= 1;
   const center = MARKER_SIZE / 2;
   return (
-    <svg width={MARKER_SIZE} height={MARKER_SIZE} viewBox={`0 0 ${MARKER_SIZE} ${MARKER_SIZE}`} style={{ display: "block", flex: "none", ...style }}>
+    <svg className="armada-calibration-marker" data-side={side} data-complete={done} viewBox={`0 0 ${MARKER_SIZE} ${MARKER_SIZE}`}>
       <circle
+        className="armada-calibration-marker-base"
         cx={center}
         cy={center}
         r={MARKER_RADIUS}
-        fill={done ? DONE_COLOR : "rgba(255,255,255,0.08)"}
-        stroke={done ? DONE_COLOR : "rgba(255,255,255,0.34)"}
         strokeWidth={2}
       />
       {!done && (
         <circle
+          className="armada-calibration-marker-progress"
+          data-progressing={progress > 0}
           cx={center}
           cy={center}
           r={MARKER_RADIUS}
-          fill="none"
-          stroke={DONE_COLOR}
           strokeWidth={2}
           strokeDasharray={MARKER_CIRCUMFERENCE}
           strokeDashoffset={MARKER_CIRCUMFERENCE * (1 - progress)}
           transform={`rotate(-90 ${center} ${center})`}
-          // Progress arrives in polled steps; a restarted hold must snap back, not glide.
-          style={{ transition: progress > 0 ? "stroke-dashoffset 90ms linear" : "none" }}
         />
       )}
-      {done && <path d="M5 9.4 L7.8 12.2 L13 6.6" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />}
+      {done && <path className="armada-calibration-marker-check" d="M5 9.4 L7.8 12.2 L13 6.6" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />}
     </svg>
   );
 }
@@ -71,43 +64,22 @@ function StickPlot({ title, xName, yName, state, progress }: { title: string; xN
   const x = normalizedValue(state, xName);
   const y = normalizedValue(state, yName);
   return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ marginBottom: "4px", fontSize: "15px", fontWeight: 600, opacity: 0.9, textAlign: "center" }}>{title}</div>
-      <div style={{ position: "relative", padding: `${MARKER_GUTTER}px` }}>
+    <div className="armada-calibration-control">
+      <div className="armada-calibration-label">{title}</div>
+      <div className="armada-calibration-surround">
         {progress &&
-          (Object.keys(SIDE_POSITION) as StickSide[]).map((side) => (
+          STICK_SIDES.map((side) => (
             <Marker
               key={side}
               progress={progress[side]}
-              style={{ position: "absolute", margin: `-${MARKER_SIZE / 2}px 0 0 -${MARKER_SIZE / 2}px`, ...SIDE_POSITION[side] }}
+              side={side}
             />
           ))}
-      <div
-        style={{
-          position: "relative",
-          width: "132px",
-          height: "132px",
-          border: "2px solid rgba(255,255,255,0.34)",
-          background: "rgba(255,255,255,0.055)",
-          boxSizing: "border-box",
-        }}
-      >
-        <div style={{ position: "absolute", left: "8%", right: "8%", top: "50%", height: "1px", background: "rgba(255,255,255,0.22)" }} />
-        <div style={{ position: "absolute", top: "8%", bottom: "8%", left: "50%", width: "1px", background: "rgba(255,255,255,0.22)" }} />
-        <div
-          style={{
-            position: "absolute",
-            width: "18px",
-            height: "18px",
-            margin: "-9px 0 0 -9px",
-            border: "2px solid #fff",
-            borderRadius: "50%",
-            background: "#2677d8",
-            left: `${50 + x * 44}%`,
-            top: `${50 + y * 44}%`,
-          }}
-        />
-      </div>
+        <svg className="armada-calibration-plot" viewBox={`0 0 ${PLOT_SIZE} ${PLOT_SIZE}`}>
+          <rect className="armada-calibration-frame" x={1} y={1} width={PLOT_SIZE - 2} height={PLOT_SIZE - 2} />
+          <path className="armada-calibration-axis" d="M8 50H92 M50 8V92" />
+          <circle className="armada-calibration-dot" cx={PLOT_CENTER + x * STICK_TRAVEL} cy={PLOT_CENTER + y * STICK_TRAVEL} r={6} />
+        </svg>
       </div>
     </div>
   );
@@ -115,19 +87,20 @@ function StickPlot({ title, xName, yName, state, progress }: { title: string; xN
 
 function TriggerBar({ title, name, state, progress }: { title: string; name: string; state: CalibrationState | null; progress?: number }) {
   return (
-    <div style={{ padding: `0 ${MARKER_GUTTER}px` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px", fontSize: "15px", fontWeight: 600, opacity: 0.9 }}>
+    <div className="armada-calibration-control">
+      <div className="armada-calibration-label">
         {title}
         {progress !== undefined && <Marker progress={progress} />}
       </div>
-      <ProgressBar nProgress={triggerPercent(state, name)} nTransitionSec={0} />
+      <div className="armada-calibration-trigger"><ProgressBar nProgress={triggerPercent(state, name)} nTransitionSec={0} /></div>
     </div>
   );
 }
 
-const gridTwoCol = { display: "grid", gridTemplateColumns: `repeat(2, ${132 + 2 * MARKER_GUTTER}px)`, justifyContent: "center", width: "100%" } as const;
-
-function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
+function CalibrationModal({ closeModal, onChanged }: {
+  closeModal?: () => void;
+  onChanged?: (state: CalibrationState) => void;
+}) {
   const [state, setState] = useState<CalibrationState | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const sessionToken = useRef(`${Date.now()}-${Math.random()}`);
@@ -203,6 +176,7 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
       try {
         const next = await saveCalibration();
         setState(next);
+        onChanged?.(next);
         setPhase("idle");
       } catch (error) {
         setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
@@ -214,6 +188,7 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
       try {
         const next = await resetCalibration();
         setState(next);
+        onChanged?.(next);
       } catch (error) {
         setState((current) => ({ ...(current || {}), supported: false, reason: String(error) } as CalibrationState));
       }
@@ -229,41 +204,42 @@ function CalibrationModal({ closeModal }: { closeModal?: () => void }) {
 
   return (
     <ArmadaModalRoot bAllowFullSize onCancel={close}>
+      <ArmadaDialogHeader>{t("controller.calibrationTitle")}</ArmadaDialogHeader>
       <DialogBody>
-        <div style={{ ...gridTwoCol, alignItems: "start", marginBottom: "10px" }}>
+        <div className="armada-calibration-grid">
           <StickPlot title={t("calibration.leftStick")} xName="left_x" yName="left_y" state={state} progress={progress?.left_stick} />
           <StickPlot title={t("calibration.rightStick")} xName="right_x" yName="right_y" state={state} progress={progress?.right_stick} />
         </div>
-        <div style={{ ...gridTwoCol, marginBottom: "16px" }}>
-          <TriggerBar title="LT" name="left_trigger" state={state} progress={progress?.left_trigger} />
-          <TriggerBar title="RT" name="right_trigger" state={state} progress={progress?.right_trigger} />
+        <div className="armada-calibration-grid">
+          <TriggerBar title={t("calibration.leftTrigger")} name="left_trigger" state={state} progress={progress?.left_trigger} />
+          <TriggerBar title={t("calibration.rightTrigger")} name="right_trigger" state={state} progress={progress?.right_trigger} />
         </div>
-        <div style={{ fontSize: "13px", lineHeight: "18px", opacity: 0.72, textAlign: "center" }}>{instructions}</div>
+        <SupportingText className="armada-calibration-instructions">{instructions}</SupportingText>
       </DialogBody>
-      <DialogFooter className="armada-control-dialog-footer">
+      <ArmadaDialogFooter>
         {!canApply ? (
           <DialogButton onClick={close}>{t("common.close")}</DialogButton>
         ) : phase === "recording" ? (
           <>
-            <DialogButton onClick={save} disabled={!progress?.ready || busy}>{t("calibration.save")}</DialogButton>
+            <DialogButtonPrimary onClick={save} disabled={!progress?.ready || busy}>{t("calibration.save")}</DialogButtonPrimary>
             <DialogButton onClick={close} disabled={busy}>
               {closing ? t("calibration.applying") : t("common.close")}
             </DialogButton>
           </>
         ) : (
           <>
-            <DialogButton onClick={start} disabled={busy}>{t("calibration.start")}</DialogButton>
+            <DialogButtonPrimary onClick={start} disabled={busy}>{t("calibration.start")}</DialogButtonPrimary>
             <DialogButton onClick={reset} disabled={busy}>{t("calibration.resetDefaults")}</DialogButton>
             <DialogButton onClick={close} disabled={busy}>
               {closing ? t("calibration.applying") : t("common.close")}
             </DialogButton>
           </>
         )}
-      </DialogFooter>
+      </ArmadaDialogFooter>
     </ArmadaModalRoot>
   );
 }
 
-export function openCalibration() {
-  showModal(<CalibrationModal />);
+export function openCalibration(onChanged?: (state: CalibrationState) => void) {
+  showArmadaModal(<CalibrationModal onChanged={onChanged} />);
 }
