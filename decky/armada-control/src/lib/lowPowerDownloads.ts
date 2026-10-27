@@ -2,6 +2,19 @@ const ENABLED_KEY = "system_enable_low_power_downloads";
 const BATTERY_KEY = "system_allow_battery_low_power_downloads";
 const AC_DISCONNECTED = 1;
 const MIN_BATTERY_LEVEL = 0.2;
+const writes = new Map<string, { value: boolean; pending: boolean }>();
+const observers = new Set<() => void>();
+let writeTail: Promise<void> = Promise.resolve();
+
+function settingValue(key: string): boolean {
+  const native = !!clientSetting(key)[0];
+  const written = writes.get(key);
+  if (!written) return native;
+  if (!written.pending && native === written.value) writes.delete(key);
+  return written.value;
+}
+
+const notify = () => { for (const observer of observers) observer(); };
 
 function clientSetting(key: string): [any, ((value: any) => unknown) | undefined] {
   const setting = window.settingsStore?.GetClientSetting?.(key);
@@ -9,13 +22,44 @@ function clientSetting(key: string): [any, ((value: any) => unknown) | undefined
 }
 
 export function getLowPowerDownloadSettings() {
-  return { enabled: !!clientSetting(ENABLED_KEY)[0], onBattery: !!clientSetting(BATTERY_KEY)[0] };
+  return { enabled: settingValue(ENABLED_KEY), onBattery: settingValue(BATTERY_KEY) };
 }
 
-async function setClientSetting(key: string, value: boolean): Promise<void> {
-  const setter = clientSetting(key)[1];
-  if (!setter) throw new Error("Steam settings are unavailable");
-  await Promise.resolve(setter(value));
+export function subscribeLowPowerDownloadSettings(onChange: () => void): () => void {
+  const settings = window.SteamClient?.Settings;
+  observers.add(onChange);
+  let active = true;
+  const subscription = settings?.RegisterForSettingsArrayChanges?.(() => {
+    // Steam updates its settings store in another native listener.
+    queueMicrotask(() => { if (active) onChange(); });
+  });
+  return () => {
+    if (!active) return;
+    active = false;
+    observers.delete(onChange);
+    subscription?.unregister?.();
+  };
+}
+
+function setClientSetting(key: string, value: boolean): Promise<void> {
+  const intent = { value, pending: true };
+  writes.set(key, intent);
+  notify();
+  const request = writeTail.then(async () => {
+    try {
+      const setter = clientSetting(key)[1];
+      if (!setter) throw new Error("Steam settings are unavailable");
+      await Promise.resolve(setter(value));
+      intent.pending = false;
+    } catch (error) {
+      if (writes.get(key) === intent) writes.delete(key);
+      throw error;
+    } finally {
+      notify();
+    }
+  });
+  writeTail = request.catch(() => {});
+  return request;
 }
 
 export const setLowPowerDownloadsEnabled = (value: boolean) => setClientSetting(ENABLED_KEY, value);

@@ -1,21 +1,31 @@
 import { call } from "@decky/api";
-import type { CalibrationState, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, PanelAttr, PanelCalibration, PanelRate, PanelStep, PowerConfig, RgbConfig, Tweaks } from "./types";
+import { configChanges } from "./lib/configPatch";
+import { waitForPendingSaves } from "./lib/configSaveQueue";
+import type { ConfigPatch } from "./lib/configPatch";
+import type { AboutConfig, CalibrationState, CompatAppliedState, ControllerConfig, CurvesState, DeviceConfig, ExperimentalConfig, FanCurve, FullConfig, InitialConfig, InstalledGame, PanelAttr, PanelCalibration, PanelRate, PanelStep, PowerProfile, ProfilesConfig, RgbConfig, SleepLogsStatus, Tweaks } from "./types";
 
-export const getConfig = () => call<[], Config>("get_config");
+function shareStartupRead<T>(read: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | undefined;
+  return () => pending ??= read().finally(() => { pending = undefined; });
+}
+
+export const getConfig = () => call<[], FullConfig>("get_config");
+export const getInitialConfig = () => call<[], InitialConfig>("get_initial_config");
+export const getProfilesConfig = () => call<[], ProfilesConfig>("get_profiles_config");
+export const getControllerConfig = () => call<[], ControllerConfig>("get_controller_config");
+export const getDeviceConfig = () => call<[], DeviceConfig>("get_device_config");
+export const getExperimentalConfig = () => call<[], ExperimentalConfig>("get_experimental_config");
+export const getAboutConfig = () => call<[], AboutConfig>("get_about_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
+export const getStartupConfig = shareStartupRead(async () => { await waitForPendingSaves(); return getInitialConfig(); });
+export const getStartupInstalledGames = shareStartupRead(getInstalledGames);
 export const getCompatMappedAppids = (tool: string) => call<[string], string[]>("get_compat_mapped_appids", tool);
-export const savePowerConfig = (data: PowerConfig) => call<[PowerConfig], Config>("save_power_config", data);
-export const saveTweaks = (data: Tweaks) => call<[Tweaks], Config>("save_tweaks", data);
+export const savePowerProfile = (id: string, profile: PowerProfile) => call<[string, PowerProfile], FullConfig>("save_power_profile", id, profile);
+export const saveTweaks = (data: Tweaks, baseline: Tweaks) =>
+  call<[ConfigPatch[]], { tweaks: Tweaks }>("patch_tweaks", configChanges(baseline, data));
 export const getCompatApplied = () => call<[], CompatAppliedState>("get_compat_applied");
-let compatAppliedSaveChain = Promise.resolve<unknown>(undefined);
-export const saveCompatApplied = (appids: string[], protonDefault: string | null = null) => {
-  const snapshot = [...appids];
-  const request = compatAppliedSaveChain
-    .catch(() => {})
-    .then(() => call<[string[], string | null], CompatAppliedState>("save_compat_applied", snapshot, protonDefault));
-  compatAppliedSaveChain = request;
-  return request;
-};
+export const saveCompatApplied = (appids: string[], protonDefault: string | null = null) =>
+  call<[string[], string | null], CompatAppliedState>("save_compat_applied", [...appids], protonDefault);
 export const setSwipeGesturesEnabled = (enabled: boolean) => call<[boolean], boolean>("set_swipe_gestures_enabled", enabled);
 export const setSshEnabled = (enabled: boolean) => call<[boolean], boolean>("set_ssh_enabled", enabled);
 export const setGyroEnabled = (enabled: boolean) => call<[boolean], boolean>("set_gyro_enabled", enabled);
@@ -33,7 +43,7 @@ export const getBottomScreenActive = () => call<[], boolean>("get_bottom_screen_
 export const setCompanionLocked = (locked: boolean) => call<[boolean], boolean>("set_companion_locked", locked);
 export const setDesktopMode = (value: string) => call<[string], string>("set_desktop_mode", value);
 export const setSleepMode = (value: string) => call<[string], string>("set_sleep_mode", value);
-export const getSleepLogsEnabled = () => call<[], boolean>("get_sleep_logs_enabled");
+export const getSleepLogsStatus = () => call<[], SleepLogsStatus>("get_sleep_logs_status");
 export const setSleepLogsEnabled = (enabled: boolean) => call<[boolean], boolean>("set_sleep_logs_enabled", enabled);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
 export const restartGameMode = () => call<[], boolean>("restart_game_mode");
@@ -64,6 +74,6 @@ export const beginCalibrationSession = (token: string) => call<[string], boolean
 export const endCalibrationSession = (token: string) => call<[string], boolean>("end_calibration_session", token);
 export const setChargingFanPwm = (pwm: number) => call<[number], number>("set_charging_fan_pwm", pwm);
 export const getFansState = () => call<[], CurvesState>("get_fans_state");
-export const saveFanCurves = (fanCurves: Record<string, FanCurve>, fanSettings: FanSettings) =>
-  call<[Record<string, FanCurve>, FanSettings], CurvesState>("save_fan_curves", fanCurves, fanSettings);
+export const saveFanCurves = (changes: Record<string, FanCurve>, deleted: string[] = []) =>
+  call<[Record<string, FanCurve>, string[]], CurvesState>("save_fan_curves", changes, deleted);
 export const getCurrentTemp = () => call<[], number | null>("get_current_temp");
