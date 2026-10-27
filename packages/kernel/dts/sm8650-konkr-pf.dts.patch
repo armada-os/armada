@@ -14,7 +14,7 @@ Subject: [PATCH] arm64: dts: qcom: pocket-fit: dedicated sound card and controll
  &mdss_dsi0 {
  	status = "okay";
  	vdda-supply = <&vreg_l3i_1p2>;
-@@ -86,3 +90,14 @@
+@@ -86,3 +90,19 @@
  		status = "okay";
  	};
  };
@@ -28,4 +28,9 @@ Subject: [PATCH] arm64: dts: qcom: pocket-fit: dedicated sound card and controll
 +	mcu {
 +		compatible = "konkr,pocket-fit-mcu";
 +	};
++};
++
++&wcd939x {
++	qcom,hphl-jack-type-normally-closed;
++	qcom,ground-jack-type-normally-closed;
 +};
