@@ -531,7 +531,7 @@ check("device-env MANGMI profile",
       mangmi.get("ARMADA_DEVICE_ID") == "mangmi-air-y-pro" and
       mangmi.get("ARMADA_SOC_CLASS") == "SM8250" and
       mangmi.get("ARMADA_GAMESCOPE_FAKE_OUTPUT_MM") == "120x90" and
-      mangmi.get("ARMADA_IP_TARGETS") == "ds5")
+      mangmi.get("ARMADA_IP_TARGETS") == "deck-uhid\\,ds5")
 pocket_max = run_device_env("MANGMI Pocket Max")
 check("device-env MANGMI Pocket Max profile",
       pocket_max.get("ARMADA_DEVICE_ID") == "mangmi-pocket-max" and
@@ -825,7 +825,6 @@ powerd.STATE_FILE = powerd.Path(os.path.join(WORK, "powerd-state"))
 emitted = []
 power.emit_properties = lambda changed: emitted.append({k: v.unpack() for k, v in changed.items()})
 power.gpu_manual_shown = {}
-power.gpu_clamp_logged = set()
 
 
 def gpu_prop(prop):
@@ -855,43 +854,34 @@ load_limits()
 power.gpu_level = "auto"
 power.manual_gpu_clock = 0
 power.connection = None
-check("manual GPU max is balanced stock", manual_max("balanced") == 587)
-check("manual GPU max follows eco", manual_max("eco") == 441)
+check("manual GPU max is ladder top on balanced", manual_max("balanced") == 925)
+check("manual GPU max ignores eco cap", manual_max("eco") == 925)
 check("manual GPU min is ladder floor", gpu_prop("ManualGpuClockMin") == 305)
-load_limits("[profile.eco]\ngpu_max_mhz=700\n")
-check("manual GPU max follows gpu_max_mhz", manual_max("eco") == 700)
 
-clamp_log = io.StringIO()
-with contextlib.redirect_stderr(clamp_log):
-    load_limits()
-    power.set_property("GpuPerformanceLevel", FakeVariant("s", "manual"))
-    power.set_property("ManualGpuClock", FakeVariant("u", 900))
-    check("manual 900 pinned to balanced cap", gpu_pinned() == ("userspace", 587000000, 587000000))
-    check("manual 900 reads back as cap", gpu_prop("ManualGpuClock") == 587)
-    check("manual request kept raw", power.manual_gpu_clock == 900)
+load_limits()
+power.set_property("GpuPerformanceLevel", FakeVariant("s", "manual"))
+power.set_property("ManualGpuClock", FakeVariant("u", 900))
+check("manual 900 overrides balanced cap", gpu_pinned() == ("userspace", 905000000, 905000000))
+check("manual 900 reads back as OPP", gpu_prop("ManualGpuClock") == 905)
 
-    power.connection = object()
-    emitted.clear()
-    switch_profile("eco")
-    check("manual clamped on eco switch", gpu_pinned() == ("userspace", 441600000, 441600000))
-    check("eco switch emits clamped manual props",
-          emitted and emitted[-1].get("ManualGpuClockMax") == 441 and emitted[-1].get("ManualGpuClock") == 441)
-    emitted.clear()
-    switch_profile("eco")
-    check("unchanged profile emits nothing", not emitted)
-    load_limits("[profile.eco]\ngpu_max_mhz=700\n")
-    switch_profile("eco")
-    check("manual request survives clamps", gpu_pinned() == ("userspace", 700000000, 700000000))
+power.connection = object()
+emitted.clear()
+switch_profile("eco")
+check("manual 900 kept on eco switch", gpu_pinned() == ("userspace", 905000000, 905000000))
+check("eco switch keeps explicit manual clock",
+      all(e.get("ManualGpuClock", 905) == 905 and e.get("ManualGpuClockMax", 925) == 925 for e in emitted))
+load_limits("[profile.eco]\ngpu_max_mhz=490\n")
+switch_profile("eco")
+check("manual 900 kept under gpu_max_mhz", gpu_pinned() == ("userspace", 905000000, 905000000))
 
-    load_limits()
-    switch_profile("eco")
-    power.set_property("ManualGpuClock", FakeVariant("u", 442))
-    check("manual 442 pinned to eco OPP", gpu_pinned() == ("userspace", 441600000, 441600000))
-clamp_lines = clamp_log.getvalue().splitlines()
-for request, effective, profile in ((900, 587, "balanced"), (900, 441, "eco"), (900, 700, "eco")):
-    line = f"armada-powerd: manual GPU clock {request} MHz clamped to {effective} MHz by {profile} GPU max"
-    check(f"clamp {request} to {effective} logged once", clamp_lines.count(line) == 1)
-check("clamp log has no other lines", len(clamp_lines) == 3)
+load_limits()
+power.manual_gpu_clock = 0
+emitted.clear()
+switch_profile("eco")
+check("unset manual follows eco cap", gpu_pinned() == ("userspace", 441600000, 441600000))
+check("eco switch emits unset manual clock", emitted and emitted[-1].get("ManualGpuClock") == 441)
+power.set_property("ManualGpuClock", FakeVariant("u", 442))
+check("manual 442 pinned to eco OPP", gpu_pinned() == ("userspace", 441600000, 441600000))
 
 load_limits()
 power.connection = None
@@ -909,13 +899,14 @@ power.set_property("ManualGpuClock", FakeVariant("u", 900))
 check("manual 900 without stock picks closest", gpu_pinned() == ("userspace", 905000000, 905000000))
 
 load_limits()
+switch_profile("balanced")
 power.manual_gpu_clock = 0
 power.set_property("GpuPerformanceLevel", FakeVariant("s", "auto"))
 power.set_property("GpuPerformanceLevel", FakeVariant("s", "manual"))
 check("manual without request applies cap", gpu_pinned() == ("userspace", 587000000, 587000000))
 check("manual without request reads back cap", gpu_prop("ManualGpuClock") == 587)
 power.set_property("ManualGpuClock", FakeVariant("u", 640))
-check("manual 640 never rounds above cap", gpu_pinned() == ("userspace", 587000000, 587000000))
+check("manual 640 goes above cap", gpu_pinned() == ("userspace", 650000000, 650000000))
 power.set_property("GpuPerformanceLevel", FakeVariant("s", "auto"))
 check("auto restores ondemand", gpu_pinned() == ("simple_ondemand", 305000000, 587000000))
 

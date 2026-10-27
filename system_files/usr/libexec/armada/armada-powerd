@@ -273,7 +273,6 @@ class ArmadaPower:
         self.gpu_level = "auto"
         self.manual_gpu_clock = 0
         self.gpu_manual_shown = {}
-        self.gpu_clamp_logged = set()
         self.smoothed_temp = 0.0
         self.last_pwm = 0
         self.suspended = False
@@ -715,7 +714,7 @@ class ArmadaPower:
 
     def publish_gpu_manual(self):
         shown = {
-            "ManualGpuClockMax": self.gpu_manual_cap() // 1000000,
+            "ManualGpuClockMax": self.gpu_manual_max() // 1000000,
             "ManualGpuClock": self.gpu_manual_effective(self.gpu_freqs()) // 1000000,
         }
         changed = {prop: value for prop, value in shown.items() if self.gpu_manual_shown.get(prop) != value}
@@ -812,27 +811,20 @@ class ArmadaPower:
         write_text(self.gpu / "max_freq", max_freq)
         write_text(self.gpu / "min_freq", min_freq)
 
-    def gpu_manual_cap(self):
-        return self.resolved_gpu_auto_limits()[1]
+    def gpu_manual_max(self):
+        freqs = self.gpu_freqs()
+        return freqs[-1] if freqs else 0
 
     def gpu_manual_effective(self, freqs):
-        cap = self.gpu_manual_cap()
         if not self.manual_gpu_clock:
-            return cap
-        return self.closest([freq for freq in freqs if freq <= cap], self.manual_gpu_clock * 1000000)
+            return self.resolved_gpu_auto_limits()[1]
+        return self.closest(freqs, self.manual_gpu_clock * 1000000)
 
     def set_gpu_manual_clock(self):
         freqs = self.gpu_freqs()
         if not freqs:
             return
         hz = self.gpu_manual_effective(freqs)
-        cap = self.gpu_manual_cap()
-        clamp = (self.manual_gpu_clock, cap)
-        if (self.manual_gpu_clock and hz != self.closest(freqs, self.manual_gpu_clock * 1000000)
-                and clamp not in self.gpu_clamp_logged):
-            self.gpu_clamp_logged.add(clamp)
-            print(f"armada-powerd: manual GPU clock {self.manual_gpu_clock} MHz clamped to "
-                  f"{hz // 1000000} MHz by {self.profile} GPU max", file=sys.stderr)
         write_text(self.gpu / "min_freq", freqs[0])
         write_text(self.gpu / "governor", "userspace")
         write_text(self.gpu / "max_freq", hz)
@@ -986,7 +978,7 @@ class ArmadaPower:
         if prop == "ManualGpuClockMin":
             return GLib.Variant("u", freqs[0] // 1000000 if freqs else 0)
         if prop == "ManualGpuClockMax":
-            return GLib.Variant("u", self.gpu_manual_cap() // 1000000)
+            return GLib.Variant("u", self.gpu_manual_max() // 1000000)
         if prop == "AvailableCpuScalingGovernors":
             return GLib.Variant("as", self.available_governors())
         if prop == "CpuScalingGovernor":
