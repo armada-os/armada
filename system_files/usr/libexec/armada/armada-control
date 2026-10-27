@@ -262,8 +262,9 @@ def bottom_screen_enabled():
     ).returncode == 0
 
 
-def secondary_backlight():
-    name = device_env().get("ARMADA_SECONDARY_BACKLIGHT", "")
+def secondary_backlight(env=None):
+    env = device_env() if env is None else env
+    name = env.get("ARMADA_SECONDARY_BACKLIGHT", "")
     if not name or name in {".", ".."} or "/" in name:
         return None
     path = BACKLIGHT_ROOT / name
@@ -285,12 +286,13 @@ def read_backlight_brightness(path):
     return max(0, min(100, round(brightness * 100 / maximum)))
 
 
-def bottom_screen_brightness():
-    return read_backlight_brightness(secondary_backlight())
+def bottom_screen_brightness(env=None):
+    return read_backlight_brightness(secondary_backlight(env))
 
 
-def bottom_screen_active():
-    connector = device_env().get("ARMADA_SECONDARY_CONNECTOR", "")
+def bottom_screen_active(env=None):
+    env = device_env() if env is None else env
+    connector = env.get("ARMADA_SECONDARY_CONNECTOR", "")
     if not connector or any(char in connector for char in "/.*?[]"):
         return False
     for path in DRM_ROOT.glob(f"card[0-9]*-{connector}"):
@@ -331,8 +333,10 @@ def apply_bottom_screen_brightness(brightness, path=None):
 
 def restore_bottom_screen_brightness(path=None):
     brightness = saved_bottom_screen_brightness()
+    if brightness is None:
+        return
     path = path or secondary_backlight()
-    if brightness is None or read_backlight_brightness(path) == brightness:
+    if read_backlight_brightness(path) == brightness:
         return
     try:
         apply_bottom_screen_brightness(brightness, path)
@@ -542,9 +546,10 @@ def action_get_bottom_screen_enabled(request):
 
 
 def action_get_bottom_screen_brightness(request):
-    brightness = bottom_screen_brightness()
+    env = device_env()
+    brightness = bottom_screen_brightness(env)
     return {"supported": brightness is not None, "brightness": brightness or 0,
-            "active": bottom_screen_active()}
+            "active": bottom_screen_active(env)}
 
 
 def action_set_bottom_screen_brightness(request):
