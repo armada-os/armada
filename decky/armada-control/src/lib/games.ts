@@ -1,7 +1,7 @@
 import { Router } from "@decky/ui";
 import { isGameApp, isNonSteamApp } from "./steamCompat";
 import { t } from "../i18n";
-import type { Config, DropdownChoice, GameRef } from "../types";
+import type { Config, GameRef } from "../types";
 
 export function gameDisplayName(game: GameRef | null | undefined): string {
   if (!game?.appid) return "";
@@ -20,13 +20,6 @@ export function availableGames(config: Config): GameRef[] {
     }
   }
   return Array.from(games.values()).sort((a, b) => gameDisplayName(a).localeCompare(gameDisplayName(b)));
-}
-
-export function editTargetOptions(config: Config): DropdownChoice[] {
-  return [
-    { data: "", label: t("common.default") },
-    ...availableGames(config).map((game) => ({ data: game.appid, label: gameDisplayName(game) })),
-  ];
 }
 
 export function currentGame(): GameRef | null {

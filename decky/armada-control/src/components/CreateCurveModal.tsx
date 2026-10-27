@@ -1,23 +1,21 @@
-import { DialogBody, DialogButton, DialogControlsSection, DialogFooter, DialogHeader, Dropdown, Field, TextField } from "@decky/ui";
+import { DialogBody, DialogButton, DialogButtonPrimary, DialogControlsSection, Dropdown, Field } from "@decky/ui";
 import { useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
 import { t, translateLabel } from "../i18n";
 import { slugifyCurveName } from "../lib/fanCurve";
-import { clone, titleCase } from "../lib/util";
-import { ArmadaModalRoot } from "./ArmadaModalRoot";
-import type { CurvesState } from "../types";
+import { titleCase } from "../lib/util";
+import { ArmadaDialogFooter, ArmadaDialogHeader, ArmadaModalRoot } from "./ArmadaModalRoot";
+import { SupportingText, TextEdit } from "./widgets";
+import type { CurvesState, FanCurve } from "../types";
 
 export function CreateCurveModal({
   initial,
-  setDraft,
   initialBaseCurve,
   onCreated,
   closeModal,
 }: {
   initial: CurvesState;
-  setDraft: Dispatch<SetStateAction<CurvesState | null>>;
   initialBaseCurve: string;
-  onCreated: (name: string) => void;
+  onCreated: (name: string, curve: FanCurve) => void;
   closeModal?: () => void;
 }) {
   const names = Object.keys(initial.fanCurves || {}).sort();
@@ -31,32 +29,24 @@ export function CreateCurveModal({
     if (!canCreate) return;
     const source = initial.fanCurves[baseCurve];
     if (!source) return;
-    setDraft((current) => {
-      if (!current || current.fanCurves[name]) return current;
-      const next = clone(current);
-      next.fanCurves[name] = {
-        label: titleCase(name.replace(/_/g, " ")),
-        curve: source.curve,
-      };
-      return next;
-    });
-    onCreated(name);
     closeModal?.();
+    onCreated(name, { ...source, label: newName.trim() });
   };
 
   return (
     <ArmadaModalRoot onCancel={() => closeModal?.()}>
+      <ArmadaDialogHeader>{t("fanCurve.create")}</ArmadaDialogHeader>
       <DialogBody className="afc-scope">
-        <DialogHeader>{t("fanCurve.create")}</DialogHeader>
         <DialogControlsSection>
-          <TextField
+          <TextEdit
             label={t("fanCurve.name")}
             description={t("fanCurve.nameRequirements")}
             value={newName}
-            onChange={(event) => setNewName(event.target.value)}
+            onChange={(value) => setNewName(value.slice(0, 80))}
           />
           <Field
             label={t("fanCurve.base")}
+            bottomSeparator="standard"
             childrenLayout="below"
           >
             <Dropdown
@@ -72,16 +62,16 @@ export function CreateCurveModal({
         {duplicateName ? (
           <div className="afc-modal-error">{t("fanCurve.nameExists", { name })}</div>
         ) : null}
-        <div className="afc-note">
+        <SupportingText>
           {t("fanCurve.createDescription")}
-        </div>
+        </SupportingText>
       </DialogBody>
-      <DialogFooter className="armada-control-dialog-footer">
-        <DialogButton onClick={createCurve} disabled={!canCreate}>
+      <ArmadaDialogFooter>
+        <DialogButtonPrimary onClick={createCurve} disabled={!canCreate}>
           {t("fanCurve.create")}
-        </DialogButton>
+        </DialogButtonPrimary>
         <DialogButton onClick={() => closeModal?.()}>{t("common.cancel")}</DialogButton>
-      </DialogFooter>
+      </ArmadaDialogFooter>
     </ArmadaModalRoot>
   );
 }

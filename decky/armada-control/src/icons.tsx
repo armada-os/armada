@@ -3,7 +3,9 @@ import type { ReactNode } from "react";
 function Icon({ path, size = 20 }: { path: ReactNode; size?: number }) {
   return (
     <svg
-      style={{ display: "block" }}
+      className="armada-icon"
+      aria-hidden="true"
+      focusable="false"
       width={size}
       height={size}
       viewBox="0 0 24 24"
@@ -21,16 +23,30 @@ function Icon({ path, size = 20 }: { path: ReactNode; size?: number }) {
 const TAB_ICON_SIZE = 18;
 
 export const tabIcons = {
+  Controller: (
+    <Icon size={TAB_ICON_SIZE} path={<>
+      <path d="M6 6h12c2 0 4 8 4 11a3 3 0 0 1-5 2l-3-3h-4l-3 3a3 3 0 0 1-5-2c0-3 2-11 4-11Z" />
+      <path d="M6 10v4m-2-2h4m8-1h.01m3 3h.01" />
+    </>} />
+  ),
+  Experimental: (
+    <Icon size={TAB_ICON_SIZE} path={<>
+      <path d="M9 3h6m-5 0v7L4 20a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1l-6-10V3M7 15h10" />
+    </>} />
+  ),
+  About: (
+    <Icon size={TAB_ICON_SIZE} path={<>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6m0-10h.01" />
+    </>} />
+  ),
   Compatibility: (
     <Icon
       size={TAB_ICON_SIZE}
       path={
         <>
-          <line x1="6" x2="10" y1="11" y2="11" />
-          <line x1="8" x2="8" y1="9" y2="13" />
-          <line x1="15" x2="15.01" y1="12" y2="12" />
-          <line x1="18" x2="18.01" y1="10" y2="10" />
-          <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z" />
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M3 9h18M7 6.5h.01M10 6.5h.01M8 13v4m-2-2h4m5-1h.01m3 3h.01" />
         </>
       }
     />
@@ -71,7 +87,7 @@ export const tabIcons = {
       }
     />
   ),
-  Advanced: (
+  DeviceSettings: (
     <Icon
       size={TAB_ICON_SIZE}
       path={
