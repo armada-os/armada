@@ -1,0 +1,43 @@
+From: Armada <noreply@armada>
+Subject: [PATCH] steamcompmgr: don't count repeated buffers as app frames
+
+Gamescope already drops a commit that repeats a queued buffer, unless the
+commit asks for presentation feedback. Waydroid's hwcomposer asks for it on
+every commit, and can commit a display's current buffer again when Android
+presents another display. Each of those repeats reached mangoapp as a new
+app frame: in Lepton a 60 fps Android game showed up to 270 fps with a
+second screen.
+
+Keep those commits for their feedback, but only report a new buffer as an
+app frame.
+---
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -8525,11 +8525,16 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
+ 
+ 	static bool bMangoappSocketDisable = env_to_bool( getenv( "GAMESCOPE_MANGOAPP_SOCKET_DISABLE" ));
+ 
++	// A buffer that is still queued is the same frame sent again, kept only
++	// for its presentation feedback, as Waydroid's hwcomposer can send it.
++	// Don't count it as a new app frame.
++	const bool bNewAppFrame = !already_exists;
++
+ 	// Only send the legacy stream while an untagged mangoapp is there to drain it.
+ 	const bool bHasLegacyReader = !GetBackend()->UsesVirtualConnectors() || has_legacy_mangoapp_reader();
+ 	const bool mango_nudge = pCurrentFocus && ( ( w == pCurrentFocus->focusWindow && !w->isSteamStreamingClient ) ||
+ 								( pCurrentFocus->focusWindow && pCurrentFocus->focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo ) )
+-								&& !bMangoappSocketDisable && bHasLegacyReader;
++								&& !bMangoappSocketDisable && bHasLegacyReader && bNewAppFrame;
+ 
+ 	// The window's own connector, not whichever one is current.
+ 	global_focus_t *pUpscaleFocus = GetFocusForWindow( w );
+@@ -8537,7 +8542,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
+ 	// Typed stream of the window's own connector, only while a tagged
+ 	// mangoapp is there to drain it.
+ 	uint32_t uMangoMsgType = 0;
+-	if ( !bMangoappSocketDisable )
++	if ( !bMangoappSocketDisable && bNewAppFrame )
+ 	{
+ 		global_focus_t *pMangoFocus = nullptr;
+ 		if ( pUpscaleFocus && !w->isSteamStreamingClient )

@@ -21,6 +21,7 @@ Source5:        compatibilitytool.vdf
 Source6:        toolmanifest.vdf
 Source7:        liblepton-armada.sh
 Source8:        overlay.tar
+Source9:        armada-lepton-sw-sync.service
 
 BuildRequires:  systemd-rpm-macros
 
@@ -57,6 +58,7 @@ secondary screen as an external display, redone whenever Steam updates Lepton.
 install -Dpm 0644 %{SOURCE0} %{buildroot}%{_datadir}/armada/lepton/guestos-android.erofs
 install -dm 0755 %{buildroot}%{_datadir}/guestos/android
 install -Dpm 0644 %{SOURCE1} %{buildroot}%{_unitdir}/usr-share-guestos-android.mount
+install -Dpm 0644 %{SOURCE9} %{buildroot}%{_unitdir}/armada-lepton-sw-sync.service
 install -Dpm 0755 %{SOURCE2} %{buildroot}%{_bindir}/steamvr
 # Lepton reads layer IDs from any JSON under /usr/share/vulkan; the host loader only scans *_layer.d.
 install -Dpm 0644 %{SOURCE3} %{buildroot}%{_datadir}/vulkan/guestos-android/VkLayer_fossilize.json
@@ -75,6 +77,7 @@ tar -C %{buildroot}%{_datadir}/steam/compatibilitytools.d/lepton-armada/overlay 
 %dir %{_datadir}/guestos
 %dir %{_datadir}/guestos/android
 %{_unitdir}/usr-share-guestos-android.mount
+%{_unitdir}/armada-lepton-sw-sync.service
 %{_bindir}/steamvr
 %{_datadir}/vulkan/guestos-android/
 %{_prefix}/lib/android-sdk/

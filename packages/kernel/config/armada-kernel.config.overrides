@@ -216,6 +216,7 @@ CONFIG_PM_DEBUG=y
 CONFIG_PM_SLEEP_DEBUG=y
 CONFIG_DYNAMIC_DEBUG=y                  # armada-sleep-debug enables TSENS messages on demand
 CONFIG_NTSYNC=y                              # Proton NT sync; off in arm64 defconfig
+CONFIG_SW_SYNC=y                             # Lepton composer HAL release fences
 CONFIG_LRU_GEN=y
 CONFIG_LRU_GEN_ENABLED=y                     # bare LRU_GEN only builds MGLRU, this enables it
 CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y        # not defconfig's ALWAYS, which bloats FEX RAM

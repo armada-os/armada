@@ -1,0 +1,110 @@
+From: Armada <noreply@armada>
+Subject: [PATCH] hwcomposer: keep vsync on the compositor's grid
+
+The vsync thread places Android's vsync on the grid of the last
+presentation feedback. gamescope reports the vblank a frame will show
+at, which is often still ahead of now, and the unsigned arithmetic then
+wrapped: the next vsync landed anywhere, 1 to 10 ms apart instead of one
+refresh. SurfaceFlinger paces apps and its own presents from these
+events, so a steady 60 fps game reached a 120 Hz screen at uneven
+intervals and stuttered.
+
+Find the next vsync on the grid on either side of the last feedback,
+sleep to it on an absolute clock, and report that vsync's time rather
+than when the thread woke up. A phase update never signals twice within
+one refresh.
+---
+diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
+index dce4252..eab9ca3 100644
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -236,58 +236,56 @@ static int hwc_prepare(hwc_composer_device_1_t* dev,
+     return 0;
+ }
+ 
+-static long time_to_sleep_to_next_vsync(struct timespec *rt, uint64_t last_vsync_ns, unsigned vsync_period_ns)
++// The first vsync after now on the grid through last_vsync_ns. The compositor
++// reports the vblank a frame will show at, which can still be ahead of now.
++static int64_t next_vsync_after(int64_t now, int64_t last_vsync_ns, int64_t period)
+ {
+-    uint64_t now = (uint64_t)rt->tv_sec * 1e9 + rt->tv_nsec;
+-    uint64_t frames_since_last_vsync = (now - last_vsync_ns) / vsync_period_ns + 1;
+-    uint64_t next_vsync = last_vsync_ns + frames_since_last_vsync * vsync_period_ns;
++    int64_t d = now - last_vsync_ns;
++    int64_t periods = d >= 0 ? d / period : -((-d + period - 1) / period);
++    return last_vsync_ns + (periods + 1) * period;
++}
+ 
+-    return next_vsync - now;
++static int64_t monotonic_ns()
++{
++    struct timespec rt;
++    clock_gettime(CLOCK_MONOTONIC, &rt);
++    return int64_t(rt.tv_sec) * 1000000000 + rt.tv_nsec;
+ }
+ 
+ static void* hwc_vsync_thread(void* data) {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
+     setpriority(PRIO_PROCESS, 0, HAL_PRIORITY_URGENT_DISPLAY);
+ 
+-    struct timespec rt;
+-    if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
+-        ALOGE("%s:%d error in vsync thread clock_gettime: %s",
+-              __FILE__, __LINE__, strerror(errno));
+-    }
+-    bool vsync_enabled = false;
+-
+-    struct timespec wait_time;
+-    wait_time.tv_sec = 0;
+-    wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, pdev->vsync_period_ns);
++    int64_t last_signalled = 0;
+ 
+     while (true) {
+         ATRACE_BEGIN("hwc_vsync_thread");
+-        int err = nanosleep(&wait_time, NULL);
+-        if (err == -1) {
+-            if (errno == EINTR) {
+-                break;
+-            }
++        const int64_t period = pdev->vsync_period_ns;
++        int64_t next = next_vsync_after(monotonic_ns(), pdev->last_vsync_ns, period);
++        // A phase update can move the grid; never signal twice in one period.
++        if (next - last_signalled < period / 2)
++            next += period;
++
++        struct timespec wake;
++        wake.tv_sec = next / 1000000000;
++        wake.tv_nsec = next % 1000000000;
++        int err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &wake, NULL);
++        if (err == EINTR) {
++            break;
++        } else if (err) {
+             ATRACE_END();
+-            ALOGE("error in vsync thread: %s", strerror(errno));
++            ALOGE("error in vsync thread: %s", strerror(err));
+             continue;
+         }
++        last_signalled = next;
+ 
+-        vsync_enabled = pdev->vsync_callback_enabled;
+-
+-        if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
+-            ALOGE("%s:%d error in vsync thread clock_gettime: %s",
+-                  __FILE__, __LINE__, strerror(errno));
+-        }
+-
+-        wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, pdev->vsync_period_ns);
+-
+-        if (!vsync_enabled || !pdev->procs || !pdev->procs->vsync) {
++        if (!pdev->vsync_callback_enabled || !pdev->procs || !pdev->procs->vsync) {
+             ATRACE_END();
+             continue;
+         }
+ 
+-        int64_t timestamp = (uint64_t)rt.tv_sec * 1e9 + rt.tv_nsec;
+-        pdev->procs->vsync(pdev->procs, 0, timestamp);
++        // The vsync itself, not when this thread woke up
++        pdev->procs->vsync(pdev->procs, 0, next);
+         ATRACE_END();
+     }
+ 

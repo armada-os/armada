@@ -63,7 +63,7 @@ function armada_ext_display()
     [[ -n "${ARMADA_EXT_WAYLAND_DISPLAY:-}" && -e "${XDG_RUNTIME_DIR}/${ARMADA_EXT_WAYLAND_DISPLAY}" ]]
 }
 
-if armada_wrap setup_podman_mounts "gamepads and the second display"; then
+if armada_wrap setup_podman_mounts "gamepads, the second display and sw_sync"; then
     function setup_podman_mounts()
     {
         valve_setup_podman_mounts "$@"
@@ -80,6 +80,12 @@ if armada_wrap setup_podman_mounts "gamepads and the second display"; then
 
         if armada_ext_display; then
             podman_mount_entry "${XDG_RUNTIME_DIR}/${ARMADA_EXT_WAYLAND_DISPLAY}" "/waydroid/xdg/wayland-1" rw,U
+        fi
+
+        # The composer HAL's release fences; libsync falls back to this path
+        # when debugfs is out of reach (armada-lepton-sw-sync.service).
+        if [[ -r /run/armada/sw_sync && -w /run/armada/sw_sync ]]; then
+            podman_mount_entry /run/armada/sw_sync /dev/sw_sync rw
         fi
     }
 fi

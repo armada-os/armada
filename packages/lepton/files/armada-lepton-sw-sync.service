@@ -1,0 +1,20 @@
+[Unit]
+Description=sw_sync for Steam's Lepton Android container
+# Android's composer HAL gets buffer release fences from sw_sync, which the
+# kernel only offers in debugfs. Lepton's container runs rootless and cannot
+# reach debugfs, so this one file is bound where the launcher can pass it in.
+ConditionPathExists=/sys/kernel/debug/sync/sw_sync
+After=sys-kernel-debug.mount
+Requires=sys-kernel-debug.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/install -d -m 0755 /run/armada
+ExecStart=/usr/bin/touch /run/armada/sw_sync
+ExecStart=/usr/bin/chmod 0666 /sys/kernel/debug/sync/sw_sync
+ExecStart=/usr/bin/mount --bind /sys/kernel/debug/sync/sw_sync /run/armada/sw_sync
+ExecStop=/usr/bin/umount /run/armada/sw_sync
+
+[Install]
+WantedBy=multi-user.target

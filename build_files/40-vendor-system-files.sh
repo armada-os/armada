@@ -70,6 +70,7 @@ systemctl enable inputplumber-suspend.service
 systemctl enable armada-ssc.service
 systemctl enable armada-guestos.service
 systemctl enable usr-share-guestos-android.mount
+systemctl enable armada-lepton-sw-sync.service
 systemctl enable armada-device-quirks.service
 systemctl enable armada-panel-calibration.service
 systemctl enable armada-rgb.service

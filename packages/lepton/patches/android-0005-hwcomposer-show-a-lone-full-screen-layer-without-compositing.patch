@@ -1,0 +1,199 @@
+From: Armada <noreply@armada>
+Subject: [PATCH] hwcomposer: show a lone full-screen layer without compositing
+
+Without subsurfaces the HAL asks SurfaceFlinger to composite every layer,
+so even a game that fills the screen is copied into a framebuffer target
+on the GPU, and the HAL then waits for that copy before handing it to the
+compositor. With two screens, these copies and waits took SurfaceFlinger
+past a 120 Hz refresh in about one frame in five, and a steady 60 fps
+game reached the screen 5 to 33 ms apart.
+
+When a display has one full-screen, untransformed layer whose buffer
+matches the display, mark it HWC_OVERLAY and attach its buffer to the
+window directly, on both displays. Opaque or premultiplied, that buffer
+is what SurfaceFlinger would have drawn into its cleared target; coverage
+blending, plane alpha or, on the external display, a cursor layer (only
+the primary draws the cursor itself) keep the framebuffer target.
+
+The app gets the buffer back on its release fence, so this needs sw_sync.
+Without CONFIG_SW_SYNC there is no fence, the app draws into the buffer
+still on screen, and blank frames flicker. A kernel without sw_sync, or
+persist.waydroid.passthrough=false, keeps the framebuffer target.
+---
+diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
+index eab9ca3..2de749c 100644
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -194,6 +194,50 @@ namespace {
+     }
+ }
+ 
++// SurfaceFlinger composites every frame on the GPU, and the HAL waits for
++// that copy before handing it on. A display showing one full-screen,
++// untransformed layer hands that layer's buffer over as is: opaque or
++// premultiplied, it is what SurfaceFlinger would have drawn into its cleared
++// target, alpha included.
++int passthrough_layer(waydroid_hwc_composer_device_1 *pdev, struct display *d, hwc_display_contents_1_t *contents) {
++    auto gtype = pdev->display->gtype;
++    // The app gets its buffer back on the release fence. Without sw_sync
++    // there is none, and it would draw into the buffer still on screen.
++    if (!pdev->passthrough || pdev->timeline_fd < 0 || !d->dmabuf
++        || (gtype != GrallocType::GRALLOC_CROS && gtype != GrallocType::GRALLOC_GBM))
++        return -1;
++
++    const uint32_t width = floor(d->width * d->scale);
++    const uint32_t height = floor(d->height * d->scale);
++    int found = -1;
++    for (size_t i = 0; i < contents->numHwLayers; i++) {
++        hwc_layer_1_t &layer = contents->hwLayers[i];
++        if (layer.compositionType == HWC_FRAMEBUFFER_TARGET)
++            continue;
++        // Only the primary draws the cursor itself; elsewhere SurfaceFlinger must composite it.
++        if (layer.flags & HWC_IS_CURSOR_LAYER) {
++            if (d != pdev->display)
++                return -1;
++            continue;
++        }
++        if (found >= 0)
++            return -1;
++        if (layer.compositionType != HWC_FRAMEBUFFER || (layer.flags & HWC_SKIP_LAYER) || !layer.handle
++            || layer.transform || layer.blending == HWC_BLENDING_COVERAGE || layer.planeAlpha != 0xff)
++            return -1;
++        const hwc_rect_t &frame = layer.displayFrame;
++        const hwc_frect_t &crop = layer.sourceCropf;
++        if (frame.left || frame.top || uint32_t(frame.right) != width || uint32_t(frame.bottom) != height
++            || crop.left || crop.top || crop.right != width || crop.bottom != height)
++            return -1;
++        auto metadata = pdev->gralloc_handler.get_buffer_metadata(d, &layer, i);
++        if (metadata.width != width || metadata.height != height)
++            return -1;
++        found = i;
++    }
++    return found;
++}
++
+ static int hwc_prepare(hwc_composer_device_1_t* dev,
+                        size_t numDisplays, hwc_display_contents_1_t** displays) {
+     if (HWC_DISPLAY_PRIMARY >= numDisplays || !displays)
+@@ -207,9 +251,10 @@ static int hwc_prepare(hwc_composer_device_1_t* dev,
+     // SurfaceFlinger composites the external display; only its target is presented
+     if (pdev->ext_display && numDisplays > HWC_DISPLAY_EXTERNAL && displays[HWC_DISPLAY_EXTERNAL]) {
+         hwc_display_contents_1_t *ext = displays[HWC_DISPLAY_EXTERNAL];
++        int passthrough = passthrough_layer(pdev, pdev->ext_display, ext);
+         for (size_t i = 0; i < ext->numHwLayers; i++) {
+             if (ext->hwLayers[i].compositionType != HWC_FRAMEBUFFER_TARGET)
+-                ext->hwLayers[i].compositionType = HWC_FRAMEBUFFER;
++                ext->hwLayers[i].compositionType = int(i) == passthrough ? HWC_OVERLAY : HWC_FRAMEBUFFER;
+         }
+     }
+ 
+@@ -514,11 +559,22 @@ static void set_external(waydroid_hwc_composer_device_1 *pdev, hwc_display_conte
+     bool remapped = pdev->ext_hidden && content;
+     bool shown = show_external(pdev, content);
+ 
++    // A layer passed through, else SurfaceFlinger's framebuffer target
++    ssize_t source = -1;
++    for (size_t i = 0; i < contents->numHwLayers; i++) {
++        if (contents->hwLayers[i].compositionType == HWC_OVERLAY && contents->hwLayers[i].handle)
++            source = i;
++    }
++    for (size_t i = 0; source < 0 && i < contents->numHwLayers; i++) {
++        if (contents->hwLayers[i].compositionType == HWC_FRAMEBUFFER_TARGET && contents->hwLayers[i].handle)
++            source = i;
++    }
++
+     for (size_t i = 0; i < contents->numHwLayers; i++) {
+         hwc_layer_1_t *layer = &contents->hwLayers[i];
+         layer->releaseFenceFd = -1;
+ 
+-        if (shown && layer->compositionType == HWC_FRAMEBUFFER_TARGET && layer->handle) {
++        if (shown && ssize_t(i) == source) {
+             win->reset_per_set_state();
+             // closes the acquire fence
+             auto &target = win->get_next_layer();
+@@ -919,6 +975,9 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
+         pdev->multi_windows = false;
+     }
+     pdev->should_compose = property_get_bool("persist.waydroid.use_subsurface", false) || pdev->multi_windows;
++    pdev->passthrough = property_get_bool("persist.waydroid.passthrough", true);
++    if (pdev->passthrough && pdev->timeline_fd < 0)
++        ALOGW("no sw_sync (CONFIG_SW_SYNC): SurfaceFlinger composites every layer");
+     if (pdev->should_compose && !pdev->display->subcompositor) {
+         ALOGW("usage of subsurfaces requested but wl_subcompositor is not supported. Disabling it.");
+         pdev->should_compose = false;
+diff --git a/hwcomposer/hwcomposer.h b/hwcomposer/hwcomposer.h
+index 2e2c53e..8b4c8ff 100644
+--- a/hwcomposer/hwcomposer.h
++++ b/hwcomposer/hwcomposer.h
+@@ -77,6 +77,8 @@ struct waydroid_hwc_composer_device_1 : hwc_composer_device_1_t {
+     int next_sync_point;
+     bool should_compose;
+     bool multi_windows;
++    // A display with one full-screen layer shows it without SurfaceFlinger
++    bool passthrough;
+ 
+     std::unique_ptr<waydroid_mode> selected_mode;
+ 
+@@ -86,5 +88,7 @@ struct waydroid_hwc_composer_device_1 : hwc_composer_device_1_t {
+     pthread_t ext_hotplug_thread;
+ };
+ 
++// The layer of contents to show without compositing, or -1
++int passthrough_layer(waydroid_hwc_composer_device_1 *pdev, struct display *d, hwc_display_contents_1_t *contents);
+ int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window);
+ bool is_blacklisted(struct waydroid_hwc_composer_device_1* pdev, const std::string &app_id, const std::string &component);
+diff --git a/hwcomposer/modes/waydroid_mode_impl.h b/hwcomposer/modes/waydroid_mode_impl.h
+index 000b388..4bae4c3 100644
+--- a/hwcomposer/modes/waydroid_mode_impl.h
++++ b/hwcomposer/modes/waydroid_mode_impl.h
+@@ -125,17 +125,30 @@ class non_compositing_window_mode : public virtual waydroid_mode {
+     hwc_layer_1 *m_framebuffer_target {};
+     size_t m_framebuffer_target_index {UNSET_VALUE};
+ 
++    // The layer shown without SurfaceFlinger compositing it
++    int m_passthrough {-1};
++    size_t m_overlay_index {UNSET_VALUE};
++
+     T *derived() {
+         return static_cast<T *>(this);
+     }
+ 
+   public:
+-    int prepare(hwc_layer_1 *hwc_layer, size_t) override {
+-        hwc_layer->compositionType = HWC_FRAMEBUFFER;
++    int setup_prepare(waydroid_hwc_composer_device_1 *pdev, hwc_display_contents_1_t *contents) override {
++        m_passthrough = passthrough_layer(pdev, pdev->display, contents);
++        return 0;
++    }
++    int prepare(hwc_layer_1 *hwc_layer, size_t i) override {
++        hwc_layer->compositionType = int(i) == m_passthrough ? HWC_OVERLAY : HWC_FRAMEBUFFER;
+         return 0;
+     }
+ 
+     int setup_set(waydroid_hwc_composer_device_1 *, hwc_display_contents_1_t *contents) override {
++        for (size_t i = 0; i < contents->numHwLayers; ++i) {
++            auto& layer = contents->hwLayers[i];
++            if (layer.compositionType == HWC_OVERLAY && !(layer.flags & HWC_IS_CURSOR_LAYER) && layer.handle)
++                m_overlay_index = i;
++        }
+         for (size_t i = 0; i < contents->numHwLayers; ++i) {
+             auto& layer = contents->hwLayers[i];
+             if (m_draw_framebuffer_at == UNSET_VALUE
+@@ -156,6 +169,17 @@ class non_compositing_window_mode : public virtual waydroid_mode {
+          * To get the right Z-order we have to draw SurfaceFlinger's target framebuffer
+          * at the first occurrence of a HWC_FRAMEBUFFER or HWC_FRAMEBUFFER_TARGET layer
+          */
++        if (m_overlay_index != UNSET_VALUE) {
++            if (i == m_overlay_index)
++                return apply_hwc_layer_to_window(pdev, hwc_layer, i, derived()->get_window(pdev));
++            // SurfaceFlinger composited nothing, so the framebuffer target is unused
++            if (hwc_layer->acquireFenceFd != -1) {
++                close(hwc_layer->acquireFenceFd);
++                hwc_layer->acquireFenceFd = -1;
++            }
++            return 0;
++        }
++
+         int res = 0;
+         if (i == m_draw_framebuffer_at) {
+             assert(m_framebuffer_target->handle);

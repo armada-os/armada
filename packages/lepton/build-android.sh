@@ -35,7 +35,11 @@ run "cd output && ../.buildscripts/copy_vendored_projects.sh >/dev/null &&
 git -C "${image}/android_hardware_waydroid" apply /work/patches/android-0001-*.patch
 git -C "${image}/output/hardware/interfaces" apply /work/patches/android-0002-*.patch
 git -C "${image}/output/packages/apps/DocumentsUI" apply /work/patches/android-0003-*.patch
+git -C "${image}/android_hardware_waydroid" apply /work/patches/android-0004-*.patch
+git -C "${image}/android_hardware_waydroid" apply /work/patches/android-0005-*.patch
 cp -r /work/rro "${image}/output/vendor/armada-lepton-overlay"
+# The synced vendor/apn wants a pyyaml module this tree lacks; nothing built here needs it.
+sed -i '/libs: \["pyyaml"\],/d' "${image}/output/vendor/apn/Android.bp"
 
 run "cd output && ../.buildscripts/copy_vendored_projects.sh >/dev/null &&
      source build/envsetup.sh &&
