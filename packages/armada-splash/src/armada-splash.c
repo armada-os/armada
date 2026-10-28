@@ -54,9 +54,9 @@ static int text_scale = 2;
 static char g_cur[512];
 static char g_shown[512];
 
-// Display locale for status lines, resolved once in main() before the first
-// compose(); the draw path only reads it and never re-reads the environment.
 static SplashLocale g_locale = SPLASH_LOCALE_EN;
+static const char *g_locale_file;
+static int g_locale_file_auto;
 
 static void put_shadow(int x, int y, uint32_t c) {
     if (x >= 0 && x < SW && y >= 0 && y < SH) shadow[y * SW + x] = c;
@@ -770,16 +770,43 @@ static int nonblank(const char *s) {
     return 0;
 }
 
-// Resolve the display locale before the first compose(). Priority: --language
-// (else ARMADA_SPLASH_LANGUAGE; "auto"/blank means detect), then the Steam
-// registry language, then the process environment. Read-only: no cache, no
-// daemon, no external commands.
-static void resolve_locale(int argc, char **argv) {
+static const char *system_language(void) {
+    static const char *const vars[] = { "LC_ALL", "LC_MESSAGES", "LANG" };
+    for (size_t i = 0; i < sizeof vars / sizeof vars[0]; i++) {
+        const char *v = getenv(vars[i]);
+        if (nonblank(v)) return v;
+    }
+    return NULL;
+}
+
+static int refresh_locale_file(void) {
+    if (!g_locale_file_auto || !g_locale_file) return 0;
+    SplashLocale nl;
+    if (!splash_read_locale_file(g_locale_file, &nl)) return 0;
+    if (nl == g_locale) return 0;
+    g_locale = nl;
+    return 1;
+}
+
+static void resolve_locale(int argc, char **argv, int allow_cache) {
     const char *override = arg(argc, argv, "--language", NULL);
     if (!override) override = getenv("ARMADA_SPLASH_LANGUAGE");
-
-    // The Steam registry lives under the account home that owns the session;
-    // as root (or without HOME) that is the Armada default account.
+    g_locale_file = NULL;
+    g_locale_file_auto = 0;
+    if (!splash_language_is_auto(override)) {
+        g_locale = splash_locale_from_language(override);
+        return;
+    }
+    g_locale = splash_locale_from_language(system_language());
+    if (allow_cache) {
+        g_locale_file = arg(argc, argv, "--language-file", NULL);
+        if (g_locale_file) {
+            SplashLocale c;
+            if (splash_read_locale_file(g_locale_file, &c)) g_locale = c;
+            g_locale_file_auto = 1;
+            return;
+        }
+    }
     char regpath[512];
     const char *regenv = getenv("ARMADA_SPLASH_STEAM_REGISTRY");
     if (nonblank(regenv)) {
@@ -789,18 +816,26 @@ static void resolve_locale(int argc, char **argv) {
         if (getuid() == 0 || !nonblank(home)) home = "/home/armada";
         snprintf(regpath, sizeof regpath, "%s/.steam/registry.vdf", home);
     }
-
-    const char *syslang = NULL;
-    static const char *const vars[] = { "LC_ALL", "LC_MESSAGES", "LANG" };
-    for (size_t i = 0; i < sizeof vars / sizeof vars[0] && !syslang; i++) {
-        const char *v = getenv(vars[i]);
-        if (nonblank(v)) syslang = v;
-    }
-
-    g_locale = splash_resolve_locale(override, regpath, syslang);
+    g_locale = splash_resolve_locale(override, regpath, system_language());
 }
 
 int main(int argc, char **argv) {
+    int opt_print_lang = 0, opt_write_lang = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--print-language")) opt_print_lang = 1;
+        else if (!strcmp(argv[i], "--write-language-file")) opt_write_lang = 1;
+    }
+    if (opt_print_lang) {
+        resolve_locale(argc, argv, 0);
+        puts(g_locale == SPLASH_LOCALE_ZH_CN ? "zh-CN" : "en");
+        return 0;
+    }
+    if (opt_write_lang) {
+        const char *wf = arg(argc, argv, "--write-language-file", NULL);
+        if (!wf || !*wf) return 2;
+        resolve_locale(argc, argv, 0);
+        return splash_write_locale_file(wf, g_locale) ? 0 : 3;
+    }
     const char *image = arg(argc, argv, "--image", NULL);
     const char *status = arg(argc, argv, "--status", NULL);
     const char *backend = arg(argc, argv, "--backend", "auto");
@@ -872,7 +907,7 @@ int main(int argc, char **argv) {
     g_logo_px_req = atoi(arg(argc, argv, "--logo-height", "0"));
     scale_logo(g_logo_px_req > 0 ? g_logo_px_req : auto_logo_px(text_ref));
 
-    resolve_locale(argc, argv);
+    resolve_locale(argc, argv, 1);
     read_status(status, g_cur, sizeof g_cur);
     compose(g_cur);
     strcpy(g_shown, g_cur);
@@ -900,8 +935,9 @@ int main(int argc, char **argv) {
                 }
             if (fds[1].revents & POLLIN) {
                 uint64_t x; ssize_t rr = read(tfd, &x, sizeof x); (void)rr;
+                int lch = refresh_locale_file();
                 read_status(status, g_cur, sizeof g_cur);
-                if (strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); x11_present(); }
+                if (lch || strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); x11_present(); }
             }
         }
         return 0;
@@ -936,8 +972,9 @@ int main(int argc, char **argv) {
                 break;
             }
         }
+        int lch = refresh_locale_file();
         read_status(status, g_cur, sizeof g_cur);
-        if (strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); present(); }
+        if (lch || strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); present(); }
     }
     // TERM can land between takeover polls; the successor's announce precedes
     // the stop, so a final read decides. No announce (shutdown) = no linger.

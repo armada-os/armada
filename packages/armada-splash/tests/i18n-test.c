@@ -1,19 +1,3 @@
-/*
- * i18n-test.c - behavior tests for the armada-splash i18n production module.
- *
- * This test includes the real production header (splash-i18n.h) and is linked
- * against the real production implementation (splash-i18n.c). There is no mock
- * implementation in this file.
- *
- * Usage:
- *     i18n-test <writable-output-dir>
- *
- * argv[1] must be a writable directory. Every fixture this test creates is
- * written inside that directory.
- *
- * Exit status: 0 when every check passes, non-zero on the first failed check.
- */
-
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,17 +5,14 @@
 
 #include "splash-i18n.h"
 
-/* ------------------------------------------------------------------ */
-/* Labeled assertions                                                  */
-/* ------------------------------------------------------------------ */
-
 #define LABEL(cond, label)                                                    \
     do {                                                                      \
-        if (!(cond)) {                                                        \
+        int _label_result = !!(cond);                                         \
+        if (!_label_result) {                                                 \
             fprintf(stderr, "ASSERT FAILED: %s (%s:%d)\n", (label), __FILE__, \
                     __LINE__);                                                \
         }                                                                     \
-        assert(cond);                                                         \
+        assert(_label_result);                                                \
     } while (0)
 
 #define CHECK_LOCALE(label, got, want)                                        \
@@ -59,10 +40,6 @@
         }                                                                     \
         assert(strcmp(got_, want_) == 0);                                     \
     } while (0)
-
-/* ------------------------------------------------------------------ */
-/* Small filesystem helpers (all fixtures live under argv[1])          */
-/* ------------------------------------------------------------------ */
 
 static char *path_join(const char *dir, const char *name)
 {
@@ -104,10 +81,6 @@ static int file_exists(const char *path)
     return 1;
 }
 
-/* ------------------------------------------------------------------ */
-/* Steam registry.vdf-style fixtures (CRLF + tab indentation, no PII)  */
-/* ------------------------------------------------------------------ */
-
 static const char REG_ZH_CRLF[] =
     "\"Registry\"\r\n"
     "{\r\n"
@@ -131,7 +104,16 @@ static const char REG_EN[] =
     "{\r\n"
     "\t\"HKCU\"\r\n"
     "\t{\r\n"
-    "\t\t\"language\"\t\t\"english\"\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"english\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
     "\t}\r\n"
     "}\r\n";
 
@@ -140,7 +122,16 @@ static const char REG_FR[] =
     "{\r\n"
     "\t\"HKCU\"\r\n"
     "\t{\r\n"
-    "\t\t\"language\"\t\t\"french\"\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"french\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
     "\t}\r\n"
     "}\r\n";
 
@@ -150,8 +141,17 @@ static const char REG_LANG_EN_GAMELANG_ZH[] =
     "{\r\n"
     "\t\"HKCU\"\r\n"
     "\t{\r\n"
-    "\t\t\"language\"\t\t\"english\"\r\n"
-    "\t\t\"gamelanguage\"\t\t\"schinese\"\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"english\"\r\n"
+    "\t\t\t\t\t\"gamelanguage\"\t\t\"schinese\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
     "\t}\r\n"
     "}\r\n";
 
@@ -161,13 +161,18 @@ static const char REG_GAMELANG_ONLY[] =
     "{\r\n"
     "\t\"HKCU\"\r\n"
     "\t{\r\n"
-    "\t\t\"gamelanguage\"\t\t\"schinese\"\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"gamelanguage\"\t\t\"schinese\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
     "\t}\r\n"
     "}\r\n";
-
-/* ------------------------------------------------------------------ */
-/* Locale selection                                                    */
-/* ------------------------------------------------------------------ */
 
 static void test_locale_from_language(void)
 {
@@ -205,6 +210,128 @@ static void test_locale_from_language(void)
     }
 }
 
+static const char REG_STEAMGLOBAL_ZH_THEN_STEAM_EN[] =
+    "\"Registry\"\r\n"
+    "{\r\n"
+    "\t\"HKCU\"\r\n"
+    "\t{\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steamsteamglobal\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"schinese\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"english\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
+    "\t}\r\n"
+    "}\r\n";
+
+static const char REG_STEAM_EN_THEN_STEAMGLOBAL_ZH[] =
+    "\"Registry\"\r\n"
+    "{\r\n"
+    "\t\"HKCU\"\r\n"
+    "\t{\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"english\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t\t\"Steamsteamglobal\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"schinese\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
+    "\t}\r\n"
+    "}\r\n";
+
+/* Steam UI is english; a nested Apps/<id>/language must not override it. */
+static const char REG_STEAM_EN_NESTED_APP_ZH[] =
+    "\"Registry\"\r\n"
+    "{\r\n"
+    "\t\"HKCU\"\r\n"
+    "\t{\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"english\"\r\n"
+    "\t\t\t\t\t\"apps\"\r\n"
+    "\t\t\t\t\t{\r\n"
+    "\t\t\t\t\t\t\"730\"\r\n"
+    "\t\t\t\t\t\t{\r\n"
+    "\t\t\t\t\t\t\t\"language\"\t\t\"schinese\"\r\n"
+    "\t\t\t\t\t\t}\r\n"
+    "\t\t\t\t\t}\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
+    "\t}\r\n"
+    "}\r\n";
+
+/* Quoted language text inside a comment must be ignored. */
+static const char REG_STEAM_EN_WITH_COMMENT_ZH[] =
+    "\"Registry\"\r\n"
+    "{\r\n"
+    "\t\"HKCU\"\r\n"
+    "\t{\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t// \"language\" \"schinese\"\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"english\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
+    "\t}\r\n"
+    "}\r\n";
+
+/* UI node name recorded with different casing still selects the UI language. */
+static const char REG_STEAM_LOWERCASE_MISSING_ZH[] =
+    "\"Registry\"\r\n"
+    "{\r\n"
+    "\t\"HKCU\"\r\n"
+    "\t{\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"schinese\"\r\n"
+    "\t\t\t\t}\r\n"
+    "\t\t\t}\r\n"
+    "\t\t}\r\n"
+    "\t}\r\n"
+    "}\r\n";
+
+static const char REG_TRUNCATED_BRACES[] =
+    "\"Registry\"\r\n"
+    "{\r\n"
+    "\t\"HKCU\"\r\n"
+    "\t{\r\n"
+    "\t\t\"Software\"\r\n"
+    "\t\t{\r\n"
+    "\t\t\t\"Valve\"\r\n"
+    "\t\t\t{\r\n"
+    "\t\t\t\t\"Steam\"\r\n"
+    "\t\t\t\t{\r\n"
+    "\t\t\t\t\t\"language\"\t\t\"english\"\r\n";
+
 static void test_resolve_locale(const char *out_dir)
 {
     /* The registry argument is a PATH to registry.vdf, never its contents.
@@ -217,6 +344,18 @@ static void test_resolve_locale(const char *out_dir)
         path_join(out_dir, "steam-registry-lang-en-gamelang-zh.vdf");
     char *reg_gamelang_only_path =
         path_join(out_dir, "steam-registry-gamelang-only.vdf");
+    char *reg_steamglobal_zh_then_steam_en_path =
+        path_join(out_dir, "steam-registry-steamglobal-zh-then-steam-en.vdf");
+    char *reg_steam_en_then_steamglobal_zh_path =
+        path_join(out_dir, "steam-registry-steam-en-then-steamglobal-zh.vdf");
+    char *reg_steam_en_nested_app_zh_path =
+        path_join(out_dir, "steam-registry-steam-en-nested-app-zh.vdf");
+    char *reg_steam_en_with_comment_zh_path =
+        path_join(out_dir, "steam-registry-steam-en-with-comment-zh.vdf");
+    char *reg_steam_lowercase_missing_zh_path =
+        path_join(out_dir, "steam-registry-steam-lowercase-missing-zh.vdf");
+    char *reg_truncated_braces_path =
+        path_join(out_dir, "steam-registry-truncated-braces.vdf");
     char *missing_path = path_join(out_dir, "steam-registry-absent.vdf");
 
     LABEL(reg_zh_path != NULL, "allocate registry fixture path (zh)");
@@ -226,6 +365,18 @@ static void test_resolve_locale(const char *out_dir)
           "allocate registry fixture path (lang/gamelang)");
     LABEL(reg_gamelang_only_path != NULL,
           "allocate registry fixture path (gamelang only)");
+    LABEL(reg_steamglobal_zh_then_steam_en_path != NULL,
+          "allocate registry fixture path (steamglobal zh then steam en)");
+    LABEL(reg_steam_en_then_steamglobal_zh_path != NULL,
+          "allocate registry fixture path (steam en then steamglobal zh)");
+    LABEL(reg_steam_en_nested_app_zh_path != NULL,
+          "allocate registry fixture path (steam en nested app zh)");
+    LABEL(reg_steam_en_with_comment_zh_path != NULL,
+          "allocate registry fixture path (steam en with comment zh)");
+    LABEL(reg_steam_lowercase_missing_zh_path != NULL,
+          "allocate registry fixture path (steam lowercase missing zh)");
+    LABEL(reg_truncated_braces_path != NULL,
+          "allocate registry fixture path (truncated braces)");
     LABEL(missing_path != NULL, "allocate missing fixture path");
 
     LABEL(write_text_file(reg_zh_path, REG_ZH_CRLF) == 0,
@@ -239,6 +390,24 @@ static void test_resolve_locale(const char *out_dir)
           "write registry fixture (lang/gamelang)");
     LABEL(write_text_file(reg_gamelang_only_path, REG_GAMELANG_ONLY) == 0,
           "write registry fixture (gamelang only)");
+    LABEL(write_text_file(reg_steamglobal_zh_then_steam_en_path,
+                          REG_STEAMGLOBAL_ZH_THEN_STEAM_EN) == 0,
+          "write registry fixture (steamglobal zh then steam en)");
+    LABEL(write_text_file(reg_steam_en_then_steamglobal_zh_path,
+                          REG_STEAM_EN_THEN_STEAMGLOBAL_ZH) == 0,
+          "write registry fixture (steam en then steamglobal zh)");
+    LABEL(write_text_file(reg_steam_en_nested_app_zh_path,
+                          REG_STEAM_EN_NESTED_APP_ZH) == 0,
+          "write registry fixture (steam en nested app zh)");
+    LABEL(write_text_file(reg_steam_en_with_comment_zh_path,
+                          REG_STEAM_EN_WITH_COMMENT_ZH) == 0,
+          "write registry fixture (steam en with comment zh)");
+    LABEL(write_text_file(reg_steam_lowercase_missing_zh_path,
+                          REG_STEAM_LOWERCASE_MISSING_ZH) == 0,
+          "write registry fixture (steam lowercase missing zh)");
+    LABEL(write_text_file(reg_truncated_braces_path,
+                          REG_TRUNCATED_BRACES) == 0,
+          "write registry fixture (truncated braces)");
 
     /* An explicit override wins over Steam and over the system language. */
     CHECK_LOCALE("override en beats chinese steam",
@@ -274,12 +443,53 @@ static void test_resolve_locale(const char *out_dir)
                  splash_resolve_locale("auto", reg_gamelang_only_path, "en"),
                  SPLASH_LOCALE_EN);
 
+    /* SteamGlobal is the preferred UI node regardless of file order. */
+    CHECK_LOCALE("steamglobal zh beats steam en (global first)",
+                 splash_resolve_locale("auto",
+                                       reg_steamglobal_zh_then_steam_en_path,
+                                       "en"),
+                 SPLASH_LOCALE_ZH_CN);
+    CHECK_LOCALE("steamglobal zh beats steam en (steam first)",
+                 splash_resolve_locale("auto",
+                                       reg_steam_en_then_steamglobal_zh_path,
+                                       "en"),
+                 SPLASH_LOCALE_ZH_CN);
+
+    /* A nested Apps/<id>/language must not override the Steam UI language. */
+    CHECK_LOCALE("nested app language ignored",
+                 splash_resolve_locale("auto",
+                                       reg_steam_en_nested_app_zh_path, "zh"),
+                 SPLASH_LOCALE_EN);
+
+    /* Quoted language text inside a comment is not a language value. */
+    CHECK_LOCALE("quoted language in comment ignored",
+                 splash_resolve_locale("auto",
+                                       reg_steam_en_with_comment_zh_path, "zh"),
+                 SPLASH_LOCALE_EN);
+
+    /* The UI node name is matched case-insensitively. */
+    CHECK_LOCALE("lowercase steam node selects ui language",
+                 splash_resolve_locale("auto",
+                                       reg_steam_lowercase_missing_zh_path, "en"),
+                 SPLASH_LOCALE_ZH_CN);
+
+    /* Malformed or truncated braces must fall back to the system language. */
+    CHECK_LOCALE("truncated braces falls to system zh",
+                 splash_resolve_locale("auto", reg_truncated_braces_path, "zh"),
+                 SPLASH_LOCALE_ZH_CN);
+    CHECK_LOCALE("truncated braces falls to system en",
+                 splash_resolve_locale("auto", reg_truncated_braces_path, "en"),
+                 SPLASH_LOCALE_EN);
+
     /* Steam english / unsupported nonempty beats system zh. */
     CHECK_LOCALE("steam english beats system zh",
                  splash_resolve_locale("auto", reg_en_path, "zh"),
                  SPLASH_LOCALE_EN);
     CHECK_LOCALE("steam unsupported beats system zh",
                  splash_resolve_locale("auto", reg_fr_path, "zh"),
+                 SPLASH_LOCALE_EN);
+    CHECK_LOCALE("steam unsupported beats system chinese",
+                 splash_resolve_locale("auto", reg_fr_path, "schinese"),
                  SPLASH_LOCALE_EN);
 
     /* Empty or NULL registry path falls to the system language. */
@@ -304,17 +514,72 @@ static void test_resolve_locale(const char *out_dir)
     CHECK_LOCALE("all empty falls to en",
                  splash_resolve_locale("", "", ""), SPLASH_LOCALE_EN);
 
+    {
+        FILE *f = fopen(reg_zh_path, "wb");
+        LABEL(f != NULL, "open padded override fixture");
+        LABEL(fputs(REG_ZH_CRLF, f) >= 0, "write padded override fixture");
+        LABEL(fclose(f) == 0, "close padded override fixture");
+        CHECK_LOCALE("padded auto override resolves chinese",
+                     splash_resolve_locale("  AuTo \t", reg_zh_path, "en"),
+                     SPLASH_LOCALE_ZH_CN);
+    }
+
+    {
+        FILE *f = fopen(reg_zh_path, "wb");
+        LABEL(f != NULL, "open long unrelated token fixture");
+        LABEL(fputs(REG_ZH_CRLF, f) >= 0, "write long unrelated token fixture");
+        LABEL(fputs("\"unrelated_long_token\"\t\t\"", f) >= 0,
+              "write long unrelated token key");
+        for (int i = 0; i < 180; ++i) {
+            LABEL(fputc('x', f) != EOF, "write long unrelated token value");
+        }
+        LABEL(fputc('"', f) != EOF, "write long unrelated token closing quote");
+        LABEL(fputc('\r', f) != EOF, "write long unrelated token CR");
+        LABEL(fputc('\n', f) != EOF, "write long unrelated token LF");
+        LABEL(fclose(f) == 0, "close long unrelated token fixture");
+        CHECK_LOCALE("auto resolves chinese with long unrelated token",
+                     splash_resolve_locale("auto", reg_zh_path, "en"),
+                     SPLASH_LOCALE_ZH_CN);
+    }
+
+    {
+        FILE *f = fopen(reg_zh_path, "wb");
+        LABEL(f != NULL, "open trailing comment fixture");
+        LABEL(fputs(REG_ZH_CRLF, f) >= 0, "write trailing comment fixture");
+        LABEL(fputs("// final comment", f) >= 0,
+              "write trailing comment without newline");
+        LABEL(fclose(f) == 0, "close trailing comment fixture");
+        CHECK_LOCALE("auto resolves chinese with trailing comment",
+                     splash_resolve_locale("auto", reg_zh_path, "en"),
+                     SPLASH_LOCALE_ZH_CN);
+    }
+
+    {
+        FILE *f = fopen(reg_zh_path, "wb");
+        LABEL(f != NULL, "open embedded nul fixture");
+        LABEL(fputs(REG_ZH_CRLF, f) >= 0, "write embedded nul fixture");
+        LABEL(fputc('\0', f) != EOF, "write embedded nul byte");
+        LABEL(fputs(" malformed trailing garbage ~~~\r\n", f) >= 0,
+              "write malformed trailing garbage");
+        LABEL(fclose(f) == 0, "close embedded nul fixture");
+        CHECK_LOCALE("invalid document rejected falls to en",
+                     splash_resolve_locale("auto", reg_zh_path, "en"),
+                     SPLASH_LOCALE_EN);
+    }
+
     free(reg_zh_path);
     free(reg_en_path);
     free(reg_fr_path);
     free(reg_lang_en_gamelang_zh_path);
     free(reg_gamelang_only_path);
+    free(reg_steamglobal_zh_then_steam_en_path);
+    free(reg_steam_en_then_steamglobal_zh_path);
+    free(reg_steam_en_nested_app_zh_path);
+    free(reg_steam_en_with_comment_zh_path);
+    free(reg_steam_lowercase_missing_zh_path);
+    free(reg_truncated_braces_path);
     free(missing_path);
 }
-
-/* ------------------------------------------------------------------ */
-/* Translation                                                         */
-/* ------------------------------------------------------------------ */
 
 static void expect_translate(SplashLocale loc, const char *src,
                              const char *want, const char *label)

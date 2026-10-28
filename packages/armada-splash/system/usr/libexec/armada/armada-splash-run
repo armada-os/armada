@@ -42,13 +42,29 @@ splash_pid=""
 splash_args=()
 if [[ "$MODE" == "x11" && -n "${DISPLAY:-}" && -x "$SPLASH_BIN" ]]; then
     splash_args=(--backend x11 --image "$ASSET" --status "$STATUS" --font "$FONT" \
-        --language "${ARMADA_SPLASH_LANGUAGE:-auto}")
+        --language "${ARMADA_SPLASH_LANGUAGE:-auto}" \
+        --language-file "${ARMADA_SPLASH_LOCALE_FILE:-/run/armada/splash/language}")
     [[ -n "$W" && -n "$H" ]] && splash_args+=(--width "$W" --height "$H")
     read -r -a extra <<<"${ARMADA_SPLASH_ARGS:-}"
     splash_args+=("${extra[@]}")
     "$SPLASH_BIN" "${splash_args[@]}" &
     splash_pid=$!
 fi
+
+# Late language-cache writer; execs the binary so no orphan inner reader
+# survives kill. Backgrounded after the drawer so it never delays first frame.
+helper_pid=""
+helper="${ARMADA_SPLASH_LANGUAGE_HELPER:-/usr/libexec/armada/armada-splash-language}"
+if [[ -x "$helper" ]]; then
+    ARMADA_SPLASH_BIN="$SPLASH_BIN" "$helper" >/dev/null 2>&1 &
+    helper_pid=$!
+fi
+cleanup() {
+    [[ -n "$helper_pid" ]] && kill -0 "$helper_pid" 2>/dev/null \
+        && jobs -pr | grep -qx "$helper_pid" && kill "$helper_pid" 2>/dev/null
+    return 0
+}
+trap cleanup EXIT
 
 # A listener that predates this launch is not this Steam's CEF; trust the
 # port only after it has been observed closed.

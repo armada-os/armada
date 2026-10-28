@@ -1,9 +1,3 @@
-// Simplified Chinese status catalog for armada-splash.
-//
-// Keys are independent and stable; they match SPLASH_EN_CATALOG key for key so
-// a lookup by key never silently misses. Entries containing a "{...}"
-// placeholder preserve that placeholder verbatim and are filled from the
-// matched source. File is UTF-8 with LF line endings.
 #ifndef ARMADA_SPLASH_LOCALES_ZH_CN_H
 #define ARMADA_SPLASH_LOCALES_ZH_CN_H
 

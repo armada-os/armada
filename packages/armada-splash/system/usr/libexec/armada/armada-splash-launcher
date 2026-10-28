@@ -59,4 +59,5 @@ exec -a "$argv0" "$splash_bin" "${backend[@]}" --rotate "$rot" --keep-vt \
     --status /run/armada/splash/status \
     --font "$splash_font" \
     --language "${ARMADA_SPLASH_LANGUAGE:-auto}" \
+    --language-file "${ARMADA_SPLASH_LOCALE_FILE:-/run/armada/splash/language}" \
     "${extra[@]}"

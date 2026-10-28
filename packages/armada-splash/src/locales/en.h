@@ -1,10 +1,3 @@
-// English status catalog for armada-splash.
-//
-// The English table is a full catalog: every stable key used by any locale is
-// present here, so a source line is always resolved through a real key rather
-// than falling back to an untranslated string. Keys are shared with the other
-// locale tables. Entries containing a "{...}" placeholder are matched by their
-// literal prefix/suffix; all other entries match exactly.
 #ifndef ARMADA_SPLASH_LOCALES_EN_H
 #define ARMADA_SPLASH_LOCALES_EN_H
 

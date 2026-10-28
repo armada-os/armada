@@ -1,24 +1,4 @@
 #!/usr/bin/env bash
-#
-# splash-i18n-test.sh - manual runner for the armada-splash i18n behavior test.
-#
-# By default (no --run) this prints SKIP and exits 0, so the general test sweep
-# never compiles anything. Pass --run to build and execute the C behavior test.
-# This mirrors the manual font runner convention.
-#
-# Usage:
-#     splash-i18n-test.sh [--run]
-#
-# With --run it compiles the test (packages/armada-splash/tests/i18n-test.c)
-# together with the real production module
-# (packages/armada-splash/src/splash-i18n.c) using:
-#
-#     cc -std=c11 -Wall -Wextra -Werror
-#
-# The binary and every fixture live inside the output directory:
-#
-#     ${SPLASH_I18N_TEST_OUT:-<root>/packages/armada-splash/tests/build}
-
 set -u
 
 script_dir=$(cd -- "$(dirname -- "$0")" && pwd)

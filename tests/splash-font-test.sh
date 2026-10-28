@@ -1,22 +1,4 @@
 #!/usr/bin/env bash
-# CJK face-selection regression for armada-splash's load_font().
-#
-# Optional fixture-based test: it compiles a C harness against the shipping
-# armada-splash.c, so it needs a compiler and a fixture directory. With no
-# fixture directory argument it prints SKIP and exits 0, so nothing is built
-# or run.
-#
-# Usage:
-#   tests/splash-font-test.sh <fixture-dir>
-#
-# <fixture-dir> must hold the verified fonts:
-#   NotoSansCJK-Regular.ttc      10 faces; index 7 is Noto Sans Mono CJK SC
-#   NotoSansMono-SemiBold.ttf    ordinary single-face Latin mono
-#
-# Every object file, binary and log lands under a task-controlled output
-# directory: $SPLASH_FONT_TEST_OUT, defaulting to packages/armada-splash/tests/
-# build inside this checkout.
-
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

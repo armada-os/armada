@@ -1,20 +1,3 @@
-// Regression harness for armada-splash font selection in load_font().
-//
-// It #includes the shipping armada-splash.c with main() renamed, so the code
-// under test is the real load_font(), utf8_cps() and stb_truetype rasterization
-// path -- not a reimplementation. stb_impl.c is linked in separately.
-//
-// Build:
-//   cc -O2 -w -c src/stb_impl.c -o stb_impl.o
-//   cc -O2 -Wall -Wextra -I src font-test.c stb_impl.o -ldrm -lm -o font-test
-//
-// Run one mode per process so each font starts from the pristine static state:
-//   font-test cjk     <NotoSansCJK-Regular.ttc>
-//   font-test latin   <NotoSansMono-SemiBold.ttf>
-//   font-test missing <path-that-does-not-exist>
-//
-// Every mode prints per-check "ok"/"FAIL" lines and a final "<mode>: PASS|FAIL".
-
 #define main armada_splash_main
 #include "../src/armada-splash.c"
 #undef main

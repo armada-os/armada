@@ -107,6 +107,7 @@ systemctl enable armada-flatpak-setup.service
 systemctl enable armada-waydroid-input.service
 systemctl enable armada-splash-stall.service
 systemctl enable armada-splash-early.service
+systemctl enable armada-splash-language.service
 systemctl enable armada-splash-reboot-screen.service
 systemctl enable armada-splash-poweroff-screen.service
 
