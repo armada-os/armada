@@ -21,10 +21,10 @@ still on screen, and blank frames flicker. A kernel without sw_sync, or
 persist.waydroid.passthrough=false, keeps the framebuffer target.
 ---
 diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
-index eab9ca3..2de749c 100644
+index b8856a1..de2fe10 100644
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
-@@ -194,6 +194,50 @@ namespace {
+@@ -201,6 +201,50 @@ namespace {
      }
  }
  
@@ -75,7 +75,7 @@ index eab9ca3..2de749c 100644
  static int hwc_prepare(hwc_composer_device_1_t* dev,
                         size_t numDisplays, hwc_display_contents_1_t** displays) {
      if (HWC_DISPLAY_PRIMARY >= numDisplays || !displays)
-@@ -207,9 +251,10 @@ static int hwc_prepare(hwc_composer_device_1_t* dev,
+@@ -214,9 +258,10 @@ static int hwc_prepare(hwc_composer_device_1_t* dev,
      // SurfaceFlinger composites the external display; only its target is presented
      if (pdev->ext_display && numDisplays > HWC_DISPLAY_EXTERNAL && displays[HWC_DISPLAY_EXTERNAL]) {
          hwc_display_contents_1_t *ext = displays[HWC_DISPLAY_EXTERNAL];
@@ -87,7 +87,7 @@ index eab9ca3..2de749c 100644
          }
      }
  
-@@ -514,11 +559,22 @@ static void set_external(waydroid_hwc_composer_device_1 *pdev, hwc_display_conte
+@@ -530,11 +575,22 @@ static void set_external(waydroid_hwc_composer_device_1 *pdev, hwc_display_conte
      bool remapped = pdev->ext_hidden && content;
      bool shown = show_external(pdev, content);
  
@@ -111,7 +111,7 @@ index eab9ca3..2de749c 100644
              win->reset_per_set_state();
              // closes the acquire fence
              auto &target = win->get_next_layer();
-@@ -919,6 +975,9 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
+@@ -942,6 +998,9 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
          pdev->multi_windows = false;
      }
      pdev->should_compose = property_get_bool("persist.waydroid.use_subsurface", false) || pdev->multi_windows;
@@ -143,10 +143,10 @@ index 2e2c53e..8b4c8ff 100644
  int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window);
  bool is_blacklisted(struct waydroid_hwc_composer_device_1* pdev, const std::string &app_id, const std::string &component);
 diff --git a/hwcomposer/modes/waydroid_mode_impl.h b/hwcomposer/modes/waydroid_mode_impl.h
-index 000b388..4bae4c3 100644
+index 000b388..df8074f 100644
 --- a/hwcomposer/modes/waydroid_mode_impl.h
 +++ b/hwcomposer/modes/waydroid_mode_impl.h
-@@ -125,17 +125,30 @@ class non_compositing_window_mode : public virtual waydroid_mode {
+@@ -125,17 +125,32 @@ class non_compositing_window_mode : public virtual waydroid_mode {
      hwc_layer_1 *m_framebuffer_target {};
      size_t m_framebuffer_target_index {UNSET_VALUE};
  
@@ -171,6 +171,8 @@ index 000b388..4bae4c3 100644
      }
  
      int setup_set(waydroid_hwc_composer_device_1 *, hwc_display_contents_1_t *contents) override {
++        // Each set chooses again; one SurfaceFlinger composited shows its target
++        m_overlay_index = UNSET_VALUE;
 +        for (size_t i = 0; i < contents->numHwLayers; ++i) {
 +            auto& layer = contents->hwLayers[i];
 +            if (layer.compositionType == HWC_OVERLAY && !(layer.flags & HWC_IS_CURSOR_LAYER) && layer.handle)
@@ -179,7 +181,7 @@ index 000b388..4bae4c3 100644
          for (size_t i = 0; i < contents->numHwLayers; ++i) {
              auto& layer = contents->hwLayers[i];
              if (m_draw_framebuffer_at == UNSET_VALUE
-@@ -156,6 +169,17 @@ class non_compositing_window_mode : public virtual waydroid_mode {
+@@ -156,6 +171,17 @@ class non_compositing_window_mode : public virtual waydroid_mode {
           * To get the right Z-order we have to draw SurfaceFlinger's target framebuffer
           * at the first occurrence of a HWC_FRAMEBUFFER or HWC_FRAMEBUFFER_TARGET layer
           */

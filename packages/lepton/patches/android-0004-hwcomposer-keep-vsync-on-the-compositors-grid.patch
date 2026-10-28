@@ -15,10 +15,10 @@ than when the thread woke up. A phase update never signals twice within
 one refresh.
 ---
 diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
-index dce4252..eab9ca3 100644
+index 93d8060..b8856a1 100644
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
-@@ -236,58 +236,56 @@ static int hwc_prepare(hwc_composer_device_1_t* dev,
+@@ -243,58 +243,56 @@ static int hwc_prepare(hwc_composer_device_1_t* dev,
      return 0;
  }
  
