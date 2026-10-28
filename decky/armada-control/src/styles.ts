@@ -170,15 +170,18 @@ export const styles = `
         display: contents;
       }
       .armada-control-dialog-footer {
+        box-sizing: border-box;
         width: 100%;
         min-width: 0;
         display: flex;
         flex-direction: row;
+        flex-wrap: wrap;
         gap: ${theme.spaceMedium};
       }
       .armada-control-dialog-footer > * {
-        flex: 1 1 0;
-        min-width: 0;
+        box-sizing: border-box;
+        flex: 1 1 max-content;
+        max-width: 100%;
         width: auto;
         margin: 0;
       }
