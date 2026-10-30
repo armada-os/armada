@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Steam Keyboard Follows Text Fields
+Exec=/usr/libexec/armada/steam-keyboard-follow
+Terminal=false
+NoDisplay=true
+OnlyShowIn=KDE;
