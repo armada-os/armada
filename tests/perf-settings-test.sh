@@ -230,6 +230,38 @@ check("env additive: game overrides entry", merged_env.get("B") == "override")
 check("env tombstone removes global var", "A" not in merged_env)
 check("env global-only view intact", gt.merged_settings(env_tweaks, None)["env"] == {"A": "1", "B": "2"})
 
+# factory per-game entries layer under the user's, not replaced by them
+check("factory Hades II feature level",
+      gt.merged_settings(factory_tweaks, "1145350")["env"] == {"VKD3D_FEATURE_LEVEL": "12_0"})
+game_defaults = pathlib.Path(WORK) / "game-defaults.json"
+game_overrides = pathlib.Path(WORK) / "game-overrides.json"
+game_defaults.write_text(json.dumps({"games": {
+    "100": {"name": "F", "env": {"A": "1", "B": "2"}},
+    "200": {"env": {"C": "3"}},
+}}), encoding="utf-8")
+game_overrides.write_text(json.dumps({"games": {
+    "100": {"nice": -2, "env": {"B": None, "D": "4"}},
+    "300": {"nice": 1},
+}}), encoding="utf-8")
+layered = gt.load(game_defaults, game_overrides)["games"]
+check("user game layers over factory game",
+      layered["100"] == {"name": "F", "nice": -2, "env": {"A": "1", "B": None, "D": "4"}})
+check("untouched factory game survives user games", layered["200"] == {"env": {"C": "3"}})
+check("user-only game kept", layered["300"] == {"nice": 1})
+check("tombstone drops factory game var",
+      gt.merged_settings({"global": {}, "games": layered}, "100")["env"] == {"A": "1", "D": "4"})
+factory_games = gt.load_defaults(game_defaults)
+check("loaded view saves back to the same overrides",
+      gt.remove_factory_values({"games": layered}, factory_games)["games"] ==
+      {"100": {"nice": -2, "env": {"B": None, "D": "4"}}, "300": {"nice": 1}})
+check("deleted factory var saved as tombstone",
+      gt.remove_factory_values({"games": {"200": {"name": "G"}}}, factory_games)["games"] ==
+      {"200": {"name": "G", "env": {"C": None}}})
+check("reset game falls back to factory entry",
+      gt.remove_factory_values({"games": {}}, factory_games)["games"] == {} and
+      gt.load(game_defaults, pathlib.Path(WORK) / "missing.json")["games"]["200"] ==
+      {"env": {"C": "3"}})
+
 # --- armada-game-launch: FEX path unchanged by perf keys --------------------
 os.environ["XDG_CACHE_HOME"] = WORK
 launch = load_script("armada-game-launch")
