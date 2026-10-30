@@ -9,6 +9,7 @@ pkgs=(
     blas
     bzip2-libs
     glibc-langpack-en
+    glibc-langpack-zh
     lapack
     libxcrypt-compat
     newt
@@ -49,6 +50,7 @@ pkgs=(
     parted
     python-unversioned-command
     python3-gobject
+    python3-vdf
     python3-websocket-client
     rsync
     tailscale
@@ -165,6 +167,7 @@ desktop_pkgs=(
     libadwaita
     libdbusmenu-gtk3
     qt6-qttools
+    qt6-qttranslations
     qt6-qtvirtualkeyboard
     xorg-x11-server-Xwayland
     zenity
