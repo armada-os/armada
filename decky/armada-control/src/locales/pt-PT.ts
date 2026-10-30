@@ -169,6 +169,8 @@ export const ptPT = {
   "compatibility.missingTool": "{tool} já não está instalado. Selecione uma nova predefinição para os seus jogos.",
   "compatibility.applyToNewGames": "Aplicar a novos jogos",
   "compatibility.gameResolution": "Resolução do jogo",
+  "compatibility.autoHdr": "HDR automático",
+  "compatibility.autoHdrDescription": "Converte jogos SDR em HDR em ecrãs compatíveis.",
   "compatibility.tool": "Ferramenta de compatibilidade",
   "compatibility.fexPreset": "Predefinições do FEX",
   "compatibility.turnipStable": "Estável",

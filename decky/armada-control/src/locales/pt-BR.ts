@@ -169,6 +169,8 @@ export const ptBR = {
   "compatibility.missingTool": "{tool} não está mais instalado. Selecione um novo padrão para os seus jogos.",
   "compatibility.applyToNewGames": "Aplicar a novos jogos",
   "compatibility.gameResolution": "Resolução do jogo",
+  "compatibility.autoHdr": "HDR automático",
+  "compatibility.autoHdrDescription": "Converte jogos SDR para HDR em telas compatíveis.",
   "compatibility.tool": "Ferramenta de compatibilidade",
   "compatibility.fexPreset": "Predefinições do FEX",
   "compatibility.turnipStable": "Estável",

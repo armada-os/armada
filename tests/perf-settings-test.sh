@@ -124,6 +124,7 @@ def load_script(name):
 
 
 ENV = {"ARMADA_BIG_CORES": "3-7", "ARMADA_PRIME_CORES": "7", "ARMADA_LITTLE_CORES": "0-2"}
+HDR_CAPABLE_NITS = "1"
 ALL = ap.online_cpus()
 
 # --- armada_perf: cpulist grammar -------------------------------------------
@@ -167,9 +168,10 @@ check("global survives where override silent", eff["gamescopeNice"] == -5)
 factory_tweaks = gt.load()
 factory_global = factory_tweaks["global"]
 check("factory declares every displayed default", set(factory_global) == {
-    "cores", "fexProfile", "gamescopeCores", "gamescopeNice",
+    "autoHdr", "cores", "fexProfile", "gamescopeCores", "gamescopeNice",
     "gamescopeVulkanRealtime", "nice", "scheduler", "thunks", "wineTopology",
 })
+check("factory Auto HDR disabled", factory_global["autoHdr"] is False)
 check("factory FEX profile loaded", factory_global["fexProfile"] == "default")
 check("factory core masks are unset",
       factory_global["cores"] is None and factory_global["gamescopeCores"] is None)
@@ -213,13 +215,16 @@ check("absent user values inherit factory defaults",
       overlaid_global["wineTopology"] is True)
 gt.OVERRIDES_CONFIG.unlink()
 
-tweaks = {"global": {"fexProfile": "default", "nice": -3},
-          "games": {"620": {"nice": 0, "cores": "big"},
-                    "999": {"enabled": False, "nice": -9}}}
+tweaks = {"global": {"autoHdr": True, "fexProfile": "default", "nice": -3},
+          "games": {"620": {"autoHdr": False, "nice": 0, "cores": "big"},
+                    "999": {"autoHdr": False, "enabled": False, "nice": -9}}}
 merged = gt.merged_settings(tweaks, "620")
 check("per-game overrides global", merged["nice"] == 0 and merged["cores"] == "big")
 check("global key survives merge", merged["fexProfile"] == "default")
-check("enabled:false game skipped", gt.merged_settings(tweaks, "999")["nice"] == -3)
+check("per-game Auto HDR overrides global", merged["autoHdr"] is False)
+check("enabled:false game skipped",
+      gt.merged_settings(tweaks, "999")["nice"] == -3 and
+      gt.merged_settings(tweaks, "999")["autoHdr"] is True)
 
 # env is additive per-entry with null tombstones (lib AND wrapper copies)
 env_tweaks = {"global": {"env": {"A": "1", "B": "2"}},
@@ -915,6 +920,69 @@ control = load_script("armada-control")
 gt.OVERRIDES_CONFIG = pathlib.Path(os.path.join(WORK, "game-tweaks.json"))
 ap.STATE_FILE = ap.pathlib.Path(os.path.join(WORK, "perf-state.json"))
 ap.device_env = lambda: dict(ENV)
+AUTO_HDR_CONTROL = control.armada_auto_hdr.CONTROL
+AUTO_HDR_ENABLE = (AUTO_HDR_CONTROL, "1")
+AUTO_HDR_DISABLE = (AUTO_HDR_CONTROL, "0")
+
+def auto_hdr_command(commands, supported=True):
+    def command(*args, timeout=2):
+        commands.append(args)
+        output = f"{AUTO_HDR_CONTROL}: Armada Auto HDR\n" if supported and args == ("help",) else ""
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr=output)
+    return command
+
+
+auto_hdr_commands = []
+auto_hdr = control.armada_auto_hdr.AutoHdrController(
+    {"ARMADA_HDR_NITS": HDR_CAPABLE_NITS}, auto_hdr_command(auto_hdr_commands))
+auto_hdr.apply(True)
+auto_hdr.clear()
+check("auto hdr probes Gamescope before setting",
+      auto_hdr_commands == [("help",), AUTO_HDR_ENABLE, AUTO_HDR_DISABLE])
+
+off_commands = []
+off_auto_hdr = control.armada_auto_hdr.AutoHdrController(
+    {"ARMADA_HDR_NITS": HDR_CAPABLE_NITS}, auto_hdr_command(off_commands),
+)
+off_auto_hdr.clear()
+off_auto_hdr.apply(False)
+check("disabled auto hdr is inert", not off_commands)
+
+restored_commands = []
+restored_auto_hdr = control.armada_auto_hdr.AutoHdrController(
+    {"ARMADA_HDR_NITS": HDR_CAPABLE_NITS}, auto_hdr_command(restored_commands),
+)
+restored_auto_hdr.apply(True)
+restored_auto_hdr.clear()
+check("restored auto hdr is reapplied and cleared",
+      restored_commands == [("help",), AUTO_HDR_ENABLE, AUTO_HDR_DISABLE])
+
+for nits in ("0", "not-a-number", None):
+    commands = []
+    controller = control.armada_auto_hdr.AutoHdrController(
+        {"ARMADA_HDR_NITS": nits}, lambda *args: commands.append(args))
+    controller.apply(True)
+    check(f"auto hdr rejects unsupported nits {nits!r}", not commands)
+
+unknown_commands = []
+unknown_auto_hdr = control.armada_auto_hdr.AutoHdrController(
+    {"ARMADA_HDR_NITS": HDR_CAPABLE_NITS}, auto_hdr_command(unknown_commands, supported=False),
+)
+unknown_auto_hdr.apply(True)
+unknown_auto_hdr.apply(True)
+check("auto hdr caches an unavailable Gamescope control", unknown_commands == [("help",)])
+
+failed_commands = []
+
+
+def failing_auto_hdr_command(*args):
+    failed_commands.append(args)
+    raise subprocess.TimeoutExpired("gamescopectl", 2)
+
+
+control.armada_auto_hdr.AutoHdrController(
+    {"ARMADA_HDR_NITS": HDR_CAPABLE_NITS}, failing_auto_hdr_command).apply(True)
+check("auto hdr command failures stay best effort", failed_commands == [("help",)])
 
 restart_calls = []
 real_control_run = control.run
@@ -927,12 +995,45 @@ finally:
     control.run = real_control_run
 
 with gt.OVERRIDES_CONFIG.open("w") as f:
-    json.dump({"global": {"gamescopeNice": -5},
+    json.dump({"global": {"gamescopeNice": -5, "autoHdr": True},
                "games": {"620": {"scheduler": "cosmos",
-                                 "cores": "big", "nice": -4}}}, f)
+                                 "cores": "big", "nice": -4,
+                                 "autoHdr": False}}}, f)
 
 sel = selectors.DefaultSelector()
-manager = control.PerfManager(sel)
+startup_auto_hdr_commands = []
+real_gamescope_control = control.gamescope_control
+real_device_env = ap.device_env
+control.gamescope_control = auto_hdr_command(startup_auto_hdr_commands)
+ap.device_env = lambda: {**ENV, "ARMADA_HDR_NITS": HDR_CAPABLE_NITS}
+try:
+    manager = control.PerfManager(sel)
+finally:
+    control.gamescope_control = real_gamescope_control
+    ap.device_env = real_device_env
+
+check("startup leaves disabled auto hdr alone", not startup_auto_hdr_commands)
+
+
+class AutoHdrRecorder:
+    def __init__(self, supported=True):
+        self.supported = supported
+        self.active = False
+        self.applied = []
+        self.clears = 0
+
+    def apply(self, enabled):
+        self.applied.append(enabled)
+        self.active = bool(enabled)
+        return self.active
+
+    def clear(self):
+        self.clears += 1
+        self.active = False
+        return self.active
+
+
+manager.auto_hdr = AutoHdrRecorder()
 state = ap.read_state()
 check("refresh writes global layer", state["global"].get("gamescopeNice") == -5)
 check("no override at startup", "override" not in state)
@@ -945,11 +1046,12 @@ try:
     check("override tracks pid", override.get("pid") == child.pid)
     check("cosmos domain from cores", override.get("schedulerDomain") == [3, 4, 5, 6, 7])
     check("pidfd armed", manager.pidfd is not None)
+    check("per-game auto hdr overrides global", not manager.auto_hdr.applied)
 
     # live tweaks edit rebuilds the override instead of dropping it
     with gt.OVERRIDES_CONFIG.open("w") as f:
-        json.dump({"global": {"gamescopeNice": -5},
-                   "games": {"620": {"scheduler": "lavd"}}}, f)
+        json.dump({"global": {"gamescopeNice": -5, "autoHdr": True},
+                   "games": {"620": {"scheduler": "lavd", "autoHdr": False}}}, f)
     manager.refresh(keep_override=True)
     override = ap.read_state().get("override", {})
     check("keep_override survives edit", override.get("pid") == child.pid)
@@ -962,6 +1064,8 @@ try:
         manager.game_launched(None, child2.pid)
         override = ap.read_state().get("override", {})
         check("plain launch still tracked", override.get("pid") == child2.pid)
+        check("global auto hdr applies to games without an override",
+              manager.auto_hdr.applied == [True])
     finally:
         child2.terminate()
         child2.wait()
@@ -972,6 +1076,7 @@ finally:
 manager.game_exited()
 check("exit restores globals", "override" not in ap.read_state())
 check("pidfd released", manager.pidfd is None)
+check("game exit clears auto hdr", manager.auto_hdr.clears == 1)
 
 # session pid resolution: a fake Steam reaper ancestor is preferred over
 # the direct pid; a plain process falls back to itself
@@ -1026,6 +1131,142 @@ try:
 finally:
     childA.terminate(); childA.wait()
     childB.terminate(); childB.wait()
+
+untracked_auto_hdr = AutoHdrRecorder()
+untracked_child = subprocess.Popen(["sleep", "30"])
+real_arm_pidfd = manager.arm_pidfd
+real_auto_hdr = manager.auto_hdr
+try:
+    manager.arm_pidfd = lambda _pid: False
+    manager.auto_hdr = untracked_auto_hdr
+    check("untracked launch still returns applied",
+          manager.game_launched("620", untracked_child.pid) == {"applied": True})
+    check("untracked launch does not enable auto hdr", not untracked_auto_hdr.applied)
+    check("untracked launch leaves disabled auto hdr alone", not untracked_auto_hdr.clears)
+finally:
+    manager.arm_pidfd = real_arm_pidfd
+    manager.auto_hdr = real_auto_hdr
+    untracked_child.terminate()
+    untracked_child.wait()
+
+recovered_auto_hdr_commands = []
+recovered_child = subprocess.Popen(["sleep", "30"])
+recovered_selector = selectors.DefaultSelector()
+real_gamescope_control = control.gamescope_control
+real_device_env = ap.device_env
+try:
+    ap.write_state({"global": {}, "override": {"pid": recovered_child.pid, "autoHdr": True}})
+    control.gamescope_control = auto_hdr_command(recovered_auto_hdr_commands)
+    ap.device_env = lambda: {**ENV, "ARMADA_HDR_NITS": HDR_CAPABLE_NITS}
+    recovered_manager = control.PerfManager(recovered_selector)
+    check("restart preserves an active game's auto hdr state",
+           recovered_auto_hdr_commands == [("help",), AUTO_HDR_ENABLE])
+    recovered_manager.game_exited()
+    check("restart clears auto hdr when the active game exits",
+           recovered_auto_hdr_commands == [
+               ("help",), AUTO_HDR_ENABLE, AUTO_HDR_DISABLE])
+finally:
+    control.gamescope_control = real_gamescope_control
+    ap.device_env = real_device_env
+    recovered_child.terminate()
+    recovered_child.wait()
+    recovered_selector.close()
+
+untracked_recovered_auto_hdr_commands = []
+untracked_recovered_child = subprocess.Popen(["sleep", "30"])
+untracked_recovered_selector = selectors.DefaultSelector()
+real_gamescope_control = control.gamescope_control
+real_device_env = ap.device_env
+real_perf_manager_arm_pidfd = control.PerfManager.arm_pidfd
+try:
+    ap.write_state({"global": {}, "override": {"pid": untracked_recovered_child.pid, "autoHdr": True}})
+    control.gamescope_control = auto_hdr_command(untracked_recovered_auto_hdr_commands)
+    ap.device_env = lambda: {**ENV, "ARMADA_HDR_NITS": HDR_CAPABLE_NITS}
+    control.PerfManager.arm_pidfd = lambda self, _pid: False
+    control.PerfManager(untracked_recovered_selector)
+    check("untracked recovered game clears auto hdr",
+          untracked_recovered_auto_hdr_commands == [
+              ("help",), AUTO_HDR_DISABLE])
+finally:
+    control.gamescope_control = real_gamescope_control
+    ap.device_env = real_device_env
+    control.PerfManager.arm_pidfd = real_perf_manager_arm_pidfd
+    untracked_recovered_child.terminate()
+    untracked_recovered_child.wait()
+    untracked_recovered_selector.close()
+
+retry_commands = []
+fail_control = False
+
+
+def retry_auto_hdr_command(*args):
+    result = auto_hdr_command(retry_commands)(*args)
+    if fail_control and args != ("help",):
+        raise subprocess.TimeoutExpired("gamescopectl", 2)
+    return result
+
+
+retry_child = subprocess.Popen(["sleep", "30"])
+retry_managers, retry_selectors = [], []
+real_gamescope_control = control.gamescope_control
+real_device_env = ap.device_env
+
+
+def restart_auto_hdr_manager():
+    selector = selectors.DefaultSelector()
+    retry_selectors.append(selector)
+    manager = control.PerfManager(selector)
+    retry_managers.append(manager)
+    return manager
+
+
+try:
+    control.gamescope_control = retry_auto_hdr_command
+    ap.device_env = lambda: {**ENV, "ARMADA_HDR_NITS": HDR_CAPABLE_NITS}
+    active_game = {"global": {}, "override": {"pid": retry_child.pid, "autoHdr": True}}
+    ap.write_state(active_game)
+    retry_manager = restart_auto_hdr_manager()
+    fail_control = True
+    retry_manager.game_exited()
+    check("failed disable retains cleanup intent without a game override",
+          ap.read_state().get("autoHdr") is True and "override" not in ap.read_state())
+    for _ in range(2):
+        retry_manager = restart_auto_hdr_manager()
+        check("failed cleanup survives daemon restart",
+              retry_manager.auto_hdr.active is None and ap.read_state().get("autoHdr") is True)
+    fail_control = False
+    retry_manager.retry_auto_hdr()
+    check("retry confirms disable before removing cleanup intent",
+          retry_commands[-1] == AUTO_HDR_DISABLE and
+          retry_manager.auto_hdr.active is False and "autoHdr" not in ap.read_state())
+    command_count = len(retry_commands)
+    retry_manager.retry_auto_hdr()
+    check("completed cleanup stops retrying", len(retry_commands) == command_count)
+
+    ap.write_state(active_game)
+    fail_control = True
+    retry_manager = restart_auto_hdr_manager()
+    check("failed restore retains the running game's request",
+          retry_manager.auto_hdr.active is None and
+          ap.read_state().get("override", {}).get("autoHdr") is True)
+    retry_manager.disarm_pidfd()
+    retry_manager = restart_auto_hdr_manager()
+    fail_control = False
+    retry_manager.retry_auto_hdr()
+    check("restore retries after another daemon restart",
+          retry_manager.auto_hdr.active is True and retry_commands[-1] == AUTO_HDR_ENABLE)
+    retry_manager.game_exited()
+    check("restored game still clears auto hdr on exit",
+          retry_commands[-1] == AUTO_HDR_DISABLE and "autoHdr" not in ap.read_state())
+finally:
+    control.gamescope_control = real_gamescope_control
+    ap.device_env = real_device_env
+    for retry_instance in retry_managers:
+        retry_instance.disarm_pidfd()
+    for selector in retry_selectors:
+        selector.close()
+    retry_child.terminate()
+    retry_child.wait()
 
 # --- armada-control: socket protocol ----------------------------------------
 import socket as socketlib
@@ -1152,6 +1393,12 @@ from armada_control import tweaks as plugin_tweaks
 
 gt.OVERRIDES_CONFIG = pathlib.Path(WORK) / "missing-plugin-tweaks.json"
 plugin_defaults = plugin_tweaks.load_tweaks()
+check("Auto HDR support requires positive nits",
+      plugin_tweaks.auto_hdr_supported({"ARMADA_HDR_NITS": HDR_CAPABLE_NITS}) and
+      not plugin_tweaks.auto_hdr_supported({"ARMADA_HDR_NITS": "0"}) and
+      not plugin_tweaks.auto_hdr_supported({"ARMADA_HDR_NITS": "-1"}) and
+      not plugin_tweaks.auto_hdr_supported({"ARMADA_HDR_NITS": "invalid"}) and
+      not plugin_tweaks.auto_hdr_supported({"ARMADA_HDR_NITS": None}))
 check("plugin loads factory gamescope nice", plugin_defaults["global"]["gamescopeNice"] == -20)
 check("plugin loads factory Vulkan realtime",
       plugin_defaults["global"]["gamescopeVulkanRealtime"] is True)
@@ -1170,6 +1417,11 @@ overrides = plugin_tweaks.tweak_overrides({
     "games": {},
 })
 check("factory values stay out of user overrides", overrides["global"] == {})
+overrides = plugin_tweaks.tweak_overrides({
+    "global": {**factory_global, "autoHdr": True},
+    "games": {},
+})
+check("Auto HDR opt-in remains explicit", overrides["global"] == {"autoHdr": True})
 overrides = plugin_tweaks.tweak_overrides({
     "global": {**factory_global, "fexProfile": "fast", "gamescopeNice": 0,
                "gamescopeVulkanRealtime": False},

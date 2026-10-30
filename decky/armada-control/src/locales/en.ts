@@ -167,6 +167,8 @@ export const en = {
   "compatibility.missingTool": "{tool} is no longer installed. Choose a new default for your games.",
   "compatibility.applyToNewGames": "Apply to New Games",
   "compatibility.gameResolution": "Game Resolution",
+  "compatibility.autoHdr": "Auto HDR",
+  "compatibility.autoHdrDescription": "Convert SDR games to HDR on supported displays.",
   "compatibility.tool": "Compatibility Tool",
   "compatibility.fexPreset": "FEX Preset",
   "compatibility.turnipStable": "Stable",

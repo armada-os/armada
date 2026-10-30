@@ -1,0 +1,1227 @@
+From 9c446b3bf268c6f4612ba7f03b278d523e3bb080 Mon Sep 17 00:00:00 2001
+From: Raxcoms <mpaulo968@gmail.com>
+Date: Wed, 28 Oct 2026 10:00:43 -0300
+Subject: [PATCH] gamescope: add Auto HDR presentation
+
+Add opt-in AutoHDR for SDR games using a separate shaper/3D-LUT pair.
+Reuse Gamescope's SDR gamut mapping, LUT builder, gain, white balance,
+output encoding and Vulkan sampling, plus Armada's existing DRM plane
+color pipelines. The new BT.2446 A stage runs during LUT generation and
+scales RGB together toward the display peak.
+
+Tag only the held SDR game's base layer. Require HDR support and an
+unleased LUT plane on the primary CRTC; exclude lease clients, legacy
+ITM and override LUTs. Constrain liftoff to a compatible plane and leave
+SDR overlays on their normal tables. Composition samples the same game
+LUTs when already required. No forced-composition condition is added;
+failed plane allocation still uses Gamescope's normal fallback.
+
+Track LUT changes and clear stale bindings in reused frames, partial
+composites and captures. Report converted HDR to Steam only after a
+successful primary presentation. Keep the existing SDR/native HDR LUTs.
+
+Update-sensitive points are LUT-builder stage order, shared C++/GLSL LUT
+slots, base-layer identity in upscalers/partial composites, and DRM plane
+allocation/colorop APIs. Review those changes and retest scanout, overlays
+and leases even if the patch applies. The numerical tests cover the curve
+and LUT output, not presentation behavior.
+---
+ src/Backends/DRMBackend.cpp            | 138 ++++++++--
+ src/auto_hdr.h                         |  52 ++++
+ src/backend.h                          |   2 +
+ src/color_helpers.cpp                  |  12 +-
+ src/color_helpers.h                    |  14 +-
+ src/rendervulkan.cpp                   |  15 +-
+ src/rendervulkan.hpp                   |   7 +-
+ src/shaders/composite.h                |  14 +-
+ src/shaders/descriptor_set_constants.h |   3 +-
+ src/steamcompmgr.cpp                   | 111 +++++++-
+ tests/meson.build                      |   2 +
+ tests/test_auto_hdr.cpp                | 348 +++++++++++++++++++++++++
+ 12 files changed, 678 insertions(+), 40 deletions(-)
+ create mode 100644 src/auto_hdr.h
+ create mode 100644 tests/test_auto_hdr.cpp
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 8ead53d..47a969b 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -144,6 +144,7 @@ struct drm_t {
+ 	struct drm_state_t {
+ 		std::shared_ptr<gamescope::BackendBlob> mode_id;
+ 		uint32_t color_mgmt_serial;
++		uint32_t auto_hdr_lut_serial;
+ 		// msm output LUTs, rebuilt with color_mgmt_serial
+ 		std::shared_ptr<gamescope::BackendBlob> output_degamma;
+ 		std::shared_ptr<gamescope::BackendBlob> output_lut3d;
+@@ -151,8 +152,11 @@ struct drm_t {
+ 		// AMD plane property blobs, or colorop DATA blobs when bPlaneLuts
+ 		std::shared_ptr<gamescope::BackendBlob> lut3d_id[ EOTF_Count ];
+ 		std::shared_ptr<gamescope::BackendBlob> shaperlut_id[ EOTF_Count ];
++		std::shared_ptr<gamescope::BackendBlob> auto_hdr_lut3d_id;
++		std::shared_ptr<gamescope::BackendBlob> auto_hdr_shaperlut_id;
+ 		amdgpu_transfer_function output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
+ 	} current, pending;
++	uint64_t auto_hdr_lut_pipeline = 0;
+ 
+ 	// FBs in the atomic request, but not yet submitted to KMS
+ 	// Accessed only on req thread
+@@ -2787,6 +2791,8 @@ struct LiftoffStateCacheEntry
+ 		GamescopeAppTextureColorspace colorspace;
+ 		AlphaBlendingMode_t eAlphaBlendingMode;
+ 		bool applyColorMgmt;
++		// AutoHDR needs a LUT plane even when the layer geometry is unchanged.
++		bool autoHdr;
+ 	} layerState[ k_nMaxLayers ];
+ 
+ 	bool operator == (const LiftoffStateCacheEntry& entry) const
+@@ -2816,6 +2822,7 @@ struct LiftoffStateCacheEntryKasher
+ 			hash_combine(hash, k.layerState[i].colorRange);
+ 			hash_combine(hash, k.layerState[i].colorspace);
+ 			hash_combine(hash, k.layerState[i].eAlphaBlendingMode);
++			hash_combine(hash, k.layerState[i].autoHdr);
+ 		}
+ 
+ 		return hash;
+@@ -2914,6 +2921,13 @@ static inline uint32_t ColorSpaceToEOTFIndex( GamescopeAppTextureColorspace colo
+ 	}
+ }
+ 
++static bool drm_layer_uses_auto_hdr_luts( const drm_t *drm, const FrameInfo_t::Layer_t &layer )
++{
++	return layer.autoHdr && drm->bPlaneLuts && layer.applyColorMgmt &&
++		( layer.colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB ||
++		  layer.colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR );
++}
++
+ 
+ // liftoff cannot place per-plane colorop properties, so after it picks the planes each
+ // one gets the tables of its layer's EOTF and the finished request is tested once more.
+@@ -2936,15 +2950,21 @@ static int drm_set_plane_luts( struct drm_t *drm, const FrameInfo_t *frameInfo )
+ 			continue;
+ 
+ 		// Not a layout failure, so kept out of the liftoff state cache.
+-		uint32_t uEOTF = ColorSpaceToEOTFIndex( pLayer->colorspace );
+-		if ( !drm->pending.shaperlut_id[ uEOTF ] || !drm->pending.lut3d_id[ uEOTF ] )
++		const uint32_t uEOTF = ColorSpaceToEOTFIndex( pLayer->colorspace );
++		// Select per-layer tables so SDR overlays keep their own mapping.
++		const bool useAutoHdrLuts = drm_layer_uses_auto_hdr_luts( drm, *pLayer );
++		const std::shared_ptr<gamescope::BackendBlob> &shaperLut = useAutoHdrLuts
++			? drm->pending.auto_hdr_shaperlut_id : drm->pending.shaperlut_id[ uEOTF ];
++		const std::shared_ptr<gamescope::BackendBlob> &lut3D = useAutoHdrLuts
++			? drm->pending.auto_hdr_lut3d_id : drm->pending.lut3d_id[ uEOTF ];
++		if ( !shaperLut || !lut3D )
+ 			return -EAGAIN;
+ 
+ 		auto &props = pPlane->GetProperties();
+ 		props.COLOR_PIPELINE->SetPendingValue( drm->req, pPlane->GetLutPipeline(), false );
+-		props.IGC_DATA->SetPendingValue( drm->req, drm->pending.shaperlut_id[ uEOTF ]->GetBlobValue(), false );
++		props.IGC_DATA->SetPendingValue( drm->req, shaperLut->GetBlobValue(), false );
+ 		props.IGC_BYPASS->SetPendingValue( drm->req, 0, false );
+-		props.LUT3D_DATA->SetPendingValue( drm->req, drm->pending.lut3d_id[ uEOTF ]->GetBlobValue(), false );
++		props.LUT3D_DATA->SetPendingValue( drm->req, lut3D->GetBlobValue(), false );
+ 		props.LUT3D_BYPASS->SetPendingValue( drm->req, 0, false );
+ 	}
+ 
+@@ -3000,6 +3020,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
+ 		}
+ 		entry.layerState[i].eAlphaBlendingMode = frameInfo->layers.get( i ).eAlphaBlendingMode;
+ 		entry.layerState[i].applyColorMgmt = frameInfo->layers.get( i ).applyColorMgmt;
++		entry.layerState[i].autoHdr = frameInfo->layers.get( i ).autoHdr;
+ 	}
+ 
+ 	return entry;
+@@ -3930,6 +3951,12 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 				else
+ 					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", 0 );
+ 			}
++
++			// Do not carry the game's plane constraint into an SDR overlay.
++			if ( !drm_layer_uses_auto_hdr_luts( drm, *pLayer ) )
++			{
++				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_PIPELINE" );
++			}
+ 		}
+ 		else
+ 		{
+@@ -3939,6 +3966,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
+ 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+ 			liftoff_layer_unset_property( drm->lo_layers[ i ], "pixel blend mode" );
++			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_PIPELINE" );
+ 
+ 			if ( drm_supports_color_mgmt( drm ) )
+ 			{
+@@ -3952,6 +3980,26 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 		}
+ 	}
+ 
++	// Constrain the game to a LUT plane before allocation, leaving overlays free.
++	// Try the last working pipeline first, then other scanout layouts.
++	std::vector<uint64_t> autoHdrPipelines;
++	for ( int i = 0; i < frameInfo->layers.count(); i++ )
++	{
++		if ( !drm_layer_uses_auto_hdr_luts( drm, frameInfo->layers.get( i ) ) )
++			continue;
++
++		if ( drm->auto_hdr_lut_pipeline )
++			autoHdrPipelines.push_back( drm->auto_hdr_lut_pipeline );
++
++		for ( const std::unique_ptr<gamescope::CDRMPlane> &pPlane : drm->planes )
++		{
++			const uint64_t pipeline = pPlane->GetLutPipeline();
++			if ( pipeline && std::find( autoHdrPipelines.begin(), autoHdrPipelines.end(), pipeline ) == autoHdrPipelines.end() )
++				autoHdrPipelines.push_back( pipeline );
++		}
++		break;
++	}
++
+ 	// liftoff's allocation tests must not inherit last frame's pipelines; a pipeline
+ 	// set again below wins, as the last value of a property in a request does.
+ 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+@@ -3964,7 +4012,41 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 		.timeout_ns = std::numeric_limits<int64_t>::max()
+ 	};
+ 
+-	int ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags, &lo_options);
++	int ret = 0;
++	if ( autoHdrPipelines.empty() )
++	{
++		ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags, &lo_options );
++	}
++	else
++	{
++		ret = -EINVAL;
++		// Try other compatible pipelines before the normal composition fallback.
++		for ( uint64_t pipeline : autoHdrPipelines )
++		{
++			for ( int i = 0; i < frameInfo->layers.count(); i++ )
++			{
++				if ( drm_layer_uses_auto_hdr_luts( drm, frameInfo->layers.get( i ) ) )
++					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_PIPELINE", pipeline );
++			}
++
++			ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags, &lo_options );
++			if ( ret == 0 )
++			{
++				if ( !liftoff_output_needs_composition( drm->lo_output ) )
++				{
++					drm->auto_hdr_lut_pipeline = pipeline;
++					break;
++				}
++				ret = -EINVAL;
++			}
++
++			if ( pipeline == drm->auto_hdr_lut_pipeline )
++				drm->auto_hdr_lut_pipeline = 0;
++
++			if ( ret != -EINVAL )
++				break;
++		}
++	}
+ 
+ 	// The NVIDIA 555 series drivers started advertising DRM_CAP_SYNCOBJ, but do
+ 	// not support IN_FENCE_FD. However, there is no way to hide the IN_FENCE_FD
+@@ -4530,14 +4612,15 @@ static bool drm_update_plane_luts(struct drm_t *drm)
+ 	static constexpr uint32_t k_nIgcSize = 257;
+ 	static constexpr uint32_t k_nLut3DSize = s_nLutEdgeSize3d * s_nLutEdgeSize3d * s_nLutEdgeSize3d;
+ 	auto ToLut32 = []( uint16_t val ) { return uint32_t( val ) * 0x10001u; };
+-
+-	for ( uint32_t e = 0; e < EOTF_Count; e++ )
++	// Upload standard and AutoHDR tables through the same hardware LUT path.
++	auto CreateLutBlobs = [&]( const gamescope_color_mgmt_luts &luts,
++		std::shared_ptr<gamescope::BackendBlob> &shaperLut,
++		std::shared_ptr<gamescope::BackendBlob> &lut3D )
+ 	{
+-		const gamescope_color_mgmt_luts &luts = g_ColorMgmtLuts[e];
+-		drm->pending.shaperlut_id[e] = nullptr;
+-		drm->pending.lut3d_id[e] = nullptr;
++		shaperLut = nullptr;
++		lut3D = nullptr;
+ 		if ( !luts.HasLuts() )
+-			continue;
++			return true;
+ 
+ 		std::array<drm_color_lut32, k_nIgcSize> igc{};
+ 		for ( uint32_t i = 0; i < k_nIgcSize; i++ )
+@@ -4559,24 +4642,34 @@ static bool drm_update_plane_luts(struct drm_t *drm)
+ 		for ( uint32_t n = 0; n < k_nLut3DSize; n++ )
+ 			( *pLut3D )[n] = { ToLut32( luts.lut3d[n * 4] ), ToLut32( luts.lut3d[n * 4 + 1] ), ToLut32( luts.lut3d[n * 4 + 2] ), 0 };
+ 
+-		drm->pending.shaperlut_id[e] = GetBackend()->CreateBackendBlob( igc );
+-		drm->pending.lut3d_id[e] = GetBackend()->CreateBackendBlob( *pLut3D );
+-		if ( !drm->pending.shaperlut_id[e] || !drm->pending.lut3d_id[e] )
++		shaperLut = GetBackend()->CreateBackendBlob( igc );
++		lut3D = GetBackend()->CreateBackendBlob( *pLut3D );
++		return shaperLut && lut3D;
++	};
++
++	for ( uint32_t e = 0; e < EOTF_Count; e++ )
++	{
++		if ( !CreateLutBlobs( g_ColorMgmtLuts[e], drm->pending.shaperlut_id[e], drm->pending.lut3d_id[e] ) )
+ 			return false;
+ 	}
+-	return true;
++
++	return CreateLutBlobs( g_AutoHdrLuts, drm->pending.auto_hdr_shaperlut_id, drm->pending.auto_hdr_lut3d_id );
+ }
+ 
+ bool drm_update_color_mgmt(struct drm_t *drm)
+ {
+-	if ( g_ColorMgmt.serial == drm->current.color_mgmt_serial )
++	if ( g_ColorMgmt.serial == drm->current.color_mgmt_serial &&
++		( !drm->bPlaneLuts || g_AutoHdrLutSerial == drm->current.auto_hdr_lut_serial ) )
+ 		return true;
+ 
+ 	if ( drm->bPlaneLuts )
+ 	{
+ 		// A failed blob keeps the old serial so the next frame retries.
+ 		if ( drm_update_plane_luts( drm ) )
++		{
+ 			drm->pending.color_mgmt_serial = g_ColorMgmt.serial;
++			drm->pending.auto_hdr_lut_serial = g_AutoHdrLutSerial;
++		}
+ 		return true;
+ 	}
+ 
+@@ -5572,6 +5665,19 @@ namespace gamescope
+ 			return g_DRM.pending.output_degamma && g_DRM.pending.output_lut3d;
+ 		}
+ 
++		virtual bool SupportsAutoHdr() const override
++		{
++			// Only unleased LUT planes on the primary CRTC can convert a game alone.
++			if ( g_sDrmLeaseClientSocket || g_bForceDisableColorMgmt || !g_DRM.pCRTC )
++				return false;
++
++			return std::any_of( g_DRM.planes.begin(), g_DRM.planes.end(), []( const auto &plane )
++			{
++				return plane->GetLutPipeline() && !g_DRM.leasedPlaneIds.contains( plane->GetObjectId() ) &&
++					( plane->GetModePlane()->possible_crtcs & g_DRM.pCRTC->GetCRTCMask() );
++			} );
++		}
++
+ 		virtual bool SupportsOutputLUTs() const override
+ 		{
+ 			// The kernel exposes DPU_3D_LUT only where the DSPP LUT blocks are driven.
+diff --git a/src/auto_hdr.h b/src/auto_hdr.h
+new file mode 100644
+index 0000000..2313c9d
+--- /dev/null
++++ b/src/auto_hdr.h
+@@ -0,0 +1,52 @@
++#pragma once
++
++#include <algorithm>
++#include <cmath>
++
++#include "color_helpers.h"
++
++namespace gamescope
++{
++	inline float AutoHdrInverseToneMap( float value, float sdrNits, float targetNits )
++	{
++		if ( !( value > 0.0f && sdrNits > 0.0f && targetNits > 0.0f ) )
++			return 0.0f;
++
++		// Expand highlights with the neutral BT.2446 A curve.
++		constexpr float kInverseGamma = 2.4f;
++		constexpr float kGamma = 1.0f / kInverseGamma;
++		const float ySdr = std::pow( clamp01( value ), kGamma );
++		const float pSdr = 1.0f + 32.0f * std::pow( sdrNits / 10000.0f, kGamma );
++		const float yC = std::log( ySdr * ( pSdr - 1.0f ) + 1.0f ) / std::log( pSdr );
++		const float yP0 = yC / 1.0770f;
++		const float yP1 = ( -2.7811f + std::sqrt( 4.83307641f - 4.604f * yC ) ) / -2.302f;
++		const float yP2 = ( yC - 0.5000f ) / 0.5000f;
++		// Rounded segment endpoints must not make the curve decrease.
++		const float yP = yP0 <= 0.7399f ? yP0 : yP1 < 0.9909f ?
++			std::max( yP1, 0.7399f ) : std::max( yP2, 0.9909f );
++		const float pHdr = 1.0f + 32.0f * std::pow( targetNits / 10000.0f, kGamma );
++		const float y = ( std::pow( pHdr, yP ) - 1.0f ) / ( pHdr - 1.0f );
++		return std::pow( y, kInverseGamma );
++	}
++
++	struct AutoHdrTransform
++	{
++		glm::mat3 nativeFromOutput;
++		float sdrNits;
++		float targetNits;
++
++		static glm::vec3 Apply( glm::vec3 color, const void *data )
++		{
++			const auto &transform = *static_cast<const AutoHdrTransform *>( data );
++			// Measure the peak in the panel gamut, including for BT.2020 output.
++			const glm::vec3 native = transform.nativeFromOutput * color;
++			const float maxChannel = std::max( { native.r, native.g, native.b } );
++			if ( !( maxChannel > 0.0f && transform.targetNits > 0.0f ) )
++				return glm::vec3( 0.0f );
++			// One RGB gain preserves the SDR channel ratios.
++			const float mappedPeak = AutoHdrInverseToneMap( maxChannel / transform.targetNits,
++				transform.sdrNits, transform.targetNits ) * transform.targetNits;
++			return color * ( std::min( mappedPeak, transform.targetNits ) / maxChannel );
++		}
++	};
++}
+diff --git a/src/backend.h b/src/backend.h
+index fde91d5..0a653fa 100644
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -348,6 +348,8 @@ namespace gamescope
+         virtual bool SupportsOutputLUTs() const { return false; }
+         // An output LUT pair exists; it may be one frame behind the color management state.
+         virtual bool OutputLUTsReady() const { return false; }
++        // Without per-layer hardware LUTs, keep AutoHDR off instead of forcing composition.
++        virtual bool SupportsAutoHdr() const { return false; }
+         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
+ 		inline bool SupportsFormat( uint32_t uDrmFormat ) const
+ 		{
+diff --git a/src/color_helpers.cpp b/src/color_helpers.cpp
+index 04f48a9..7088b83 100644
+--- a/src/color_helpers.cpp
++++ b/src/color_helpers.cpp
+@@ -308,7 +308,7 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 &
+     return out;
+ }
+ 
+-inline glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 & input )
++glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 & input )
+ {
+     const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
+ 
+@@ -416,7 +416,7 @@ inline glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3
+ }
+ 
+ 
+-inline glm::vec3 ApplyLut1D_Linear( const lut1d_t & lut, const glm::vec3 & input )
++glm::vec3 ApplyLut1D_Linear( const lut1d_t & lut, const glm::vec3 & input )
+ {
+     const float dimMinusOne = float(lut.lutSize) - 1.f;
+     float idx[3];
+@@ -694,7 +694,8 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
+     const displaycolorimetry_t & native,
+     const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,
+     const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,
+-    const lut3d_t * pLook, float flGain )
++    const lut3d_t * pLook, float flGain, color_transform_stage_t pStage,
++    const void *pStageData )
+ {
+     // Generate shaper lut
+     // Note: while this is typically a 1D approximation of our end to end transform,
+@@ -805,6 +806,11 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
+                     glm::vec3 nativeColorLinear = dest_from_native * sourceColorLinear;
+                     destColorLinear = glm::mix( destColorLinear, nativeColorLinear, amount );
+ 
++                    // Run AutoHDR after SDR gamut mapping in linear output RGB.
++                    // Keep gain, white balance and output encoding in the shared path below.
++                    if ( pStage )
++                        destColorLinear = pStage( destColorLinear, pStageData );
++
+                     // Apply linear Mult
+                     destColorLinear = vMultLinear * destColorLinear;
+ 
+diff --git a/src/color_helpers.h b/src/color_helpers.h
+index e3c421f..6c7ad67 100644
+--- a/src/color_helpers.h
++++ b/src/color_helpers.h
+@@ -246,6 +246,12 @@ struct displaycolorimetry_t
+ 	glm::vec2 white;
+ };
+ 
++glm::mat3 normalised_primary_matrix( const primaries_t & rgbPrimaries,
++	const glm::vec2 & whitePrimary, float whiteLuminance );
++
++// Optional transform of linear RGB in nits while building the LUT, not a per-frame pass.
++using color_transform_stage_t = glm::vec3 (*)( glm::vec3 color, const void *data );
++
+ struct nightmode_t
+ {
+ 	bool operator == (const nightmode_t&) const = default;
+@@ -353,6 +359,9 @@ struct lut3d_t
+ 	}
+ };
+ 
++glm::vec3 ApplyLut1D_Linear( const lut1d_t &lut, const glm::vec3 &input );
++glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t &lut, const glm::vec3 &input );
++
+ std::shared_ptr<lut3d_t> LoadCubeLut( FILE *pFile, bool &bRaisesBlackLevelFloor );
+ std::shared_ptr<lut3d_t> LoadCubeLut( const char *pchFileName, bool &bRaisesBlackLevelFloor );
+ 
+@@ -375,7 +384,8 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
+ 	const displaycolorimetry_t & native,
+ 	const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,
+ 	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,
+-	const lut3d_t * pLook, float flGain );
++	const lut3d_t * pLook, float flGain, color_transform_stage_t pStage = nullptr,
++	const void *pStageData = nullptr );
+ 
+ #define REGISTER_LUT_EDGE_SIZE(size) template void calcColorTransform<(size)>( lut1d_t * pShaper, int nLutSize1d, \
+ 	lut3d_t * pLut3d,                                                                                                   \
+@@ -384,7 +394,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
+ 	const displaycolorimetry_t & native,                                                                               \
+ 	const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,                                             \
+ 	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,                   \
+-	const lut3d_t * pLook, float flGain )
++	const lut3d_t * pLook, float flGain, color_transform_stage_t pStage, const void *pStageData )
+ 
+ // Build colorimetry and a gamut mapping for the given SDR configuration
+ // Note: the output colorimetry will use the native display's white point
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 8d577e1..4766439 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -1689,6 +1689,10 @@ void CVulkanCmdBuffer::bindTarget(gamescope::Rc<CVulkanTexture> target)
+ 
+ void CVulkanCmdBuffer::clearState()
+ {
++	// Reused command buffers must not retain a previous frame's AutoHDR tables.
++	m_shaperLut.fill(nullptr);
++	m_lut3D.fill(nullptr);
++
+ 	for (auto& texture : m_boundTextures)
+ 		texture = nullptr;
+ 
+@@ -4251,7 +4255,7 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo,
+ 		constants.halfExtent[1] = pYUVOutTexture->height() / 2.0f;
+ 		cmdBuffer->uploadConstants<CaptureConvertBlitData_t>(constants);
+ 
+-		for (uint32_t i = 0; i < EOTF_Count; i++)
++		for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
+ 			cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
+ 
+ 		cmdBuffer->bindPipeline(g_device.pipeline( SHADER_TYPE_RGB_TO_NV12, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
+@@ -4513,6 +4517,12 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 	for (uint32_t i = 0; i < EOTF_Count; i++)
+ 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
+ 
++	// A partial composite can omit the game while still carrying its LUT pointers.
++	const bool autoHdrLutEnabled = frameInfo->layers.count() && frameInfo->layers.get( 0 ).autoHdr;
++	cmdBuffer->bindColorMgmtLuts(EOTF_Count,
++		autoHdrLutEnabled ? frameInfo->shaperLut[EOTF_Count] : nullptr,
++		autoHdrLutEnabled ? frameInfo->lut3D[EOTF_Count] : nullptr);
++
+ 	if ( frameInfo->useFSRLayer0 || frameInfo->useSGSRLayer0 )
+ 	{
+ 		uint32_t inputX = frameInfo->layers.get( 0 ).tex->width();
+@@ -4680,7 +4690,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 				cmdBuffer->uploadConstants<BlitPushData_t>(constants);
+ 			}
+ 
+-			for (uint32_t i = 0; i < EOTF_Count; i++)
++			// PipeWire converts the finished composite; do not apply its LUTs twice.
++			for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
+ 				cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
+ 
+ 			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 9ab5054..fffd4d5 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -297,8 +297,8 @@ struct FrameInfo_t
+ 	BlurMode blurLayer0;
+ 	int blurRadius;
+ 
+-	gamescope::Rc<CVulkanTexture> shaperLut[EOTF_Count];
+-	gamescope::Rc<CVulkanTexture> lut3D[EOTF_Count];
++	gamescope::Rc<CVulkanTexture> shaperLut[VKR_LUT3D_COUNT];
++	gamescope::Rc<CVulkanTexture> lut3D[VKR_LUT3D_COUNT];
+ 
+ 	bool allowVRR;
+ 	// Content identical to the previous present, eg. an adaptive sync idle hold.
+@@ -327,6 +327,7 @@ struct FrameInfo_t
+ 		GamescopeUpscaleFilter filter = GamescopeUpscaleFilter::LINEAR;
+ 
+ 		bool blackBorder;
++		bool autoHdr = false;
+ 		bool applyColorMgmt; // drm only
+ 
+ 		AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
+@@ -585,6 +586,8 @@ struct gamescope_color_mgmt_tracker_t
+ 
+ extern gamescope_color_mgmt_tracker_t g_ColorMgmt;
+ extern gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];
++extern gamescope_color_mgmt_luts g_AutoHdrLuts;
++extern uint32_t g_AutoHdrLutSerial;
+ 
+ struct VulkanOutput_t
+ {
+diff --git a/src/shaders/composite.h b/src/shaders/composite.h
+index 7f3645e..0824edf 100644
+--- a/src/shaders/composite.h
++++ b/src/shaders/composite.h
+@@ -99,7 +99,7 @@ vec3 apply_layer_luts(vec3 color, uint plane_eotf) {
+ //
+ // ie. call colorspace_plane_degamma_tf(color.rgb, colorspace) before
+ // input to this function.
+-vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
++vec3 apply_layer_color_mgmt(vec3 color, uint offsetLayerIdx, uint colorspaceLayerIdx, uint colorspace) {
+     if (colorspace == colorspace_passthru)
+         return color;
+ 
+@@ -111,8 +111,12 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
+ 
+     // Shaper + 3D LUT path to match DRM.
+     uint plane_eotf = colorspace_to_eotf(colorspace);
++    // RCAS remaps offset slots; the original layer index still identifies the game.
++    // Only that layer gets AutoHDR, before blending the SDR overlays.
++    if (colorspaceLayerIdx == 0 && textureQueryLevels(s_shaperLut[EOTF_Count]) != 0)
++        plane_eotf = EOTF_Count;
+ 
+-    if (layer == 0 && checkDebugFlag(compositedebug_Heatmap))
++    if (offsetLayerIdx == 0 && checkDebugFlag(compositedebug_Heatmap))
+     {
+         // Debug HDR heatmap.
+         color = hdr_heatmap(color, colorspace);
+@@ -138,6 +142,10 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
+     return color;
+ }
+ 
++vec3 apply_layer_color_mgmt(vec3 color, uint layerIdx, uint colorspace) {
++    return apply_layer_color_mgmt(color, layerIdx, layerIdx, colorspace);
++}
++
+ // Takes a PQ value that already went through the layer CTM, which is what the PQ shaper LUT expects.
+ vec3 apply_layer_color_mgmt_pq(vec3 pq, uint layer, uint colorspace) {
+     bool direct = textureQueryLevels(s_shaperLut[EOTF_PQ]) != 0 &&
+@@ -211,7 +219,7 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
+     }
+     // JoshA: AMDGPU applies 3x4 CTM like this, where A is 1.0, but it only affects .rgb.
+     color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
+-    color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
++    color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspaceLayerIdx, colorspace);
+ 
+     return color;
+ }
+diff --git a/src/shaders/descriptor_set_constants.h b/src/shaders/descriptor_set_constants.h
+index e81b006..5bac416 100644
+--- a/src/shaders/descriptor_set_constants.h
++++ b/src/shaders/descriptor_set_constants.h
+@@ -9,6 +9,7 @@
+ #define VKR_NIS_COEF_SCALER_SLOT (VKR_BLUR_EXTRA_SLOT + 1u)
+ #define VKR_NIS_COEF_USM_SLOT    (VKR_NIS_COEF_SCALER_SLOT + 1u)
+ 
+-#define VKR_LUT3D_COUNT 2 // Must match EOTF_Count
++// One extra game LUT pair keeps the standard SDR and PQ tables available.
++#define VKR_LUT3D_COUNT (EOTF_Count + 1)
+ 
+ #endif
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 3fb8a0f..915de13 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -30,6 +30,7 @@
+  */
+ 
+ #include "backend.h"
++#include "auto_hdr.h"
+ #include "HDRGamma22.h"
+ #include "HDRTonemap.h"
+ #include "gamescope_shared.h"
+@@ -156,6 +157,8 @@ std::atomic<std::shared_ptr<lut3d_t>> g_ColorMgmtLooks[EOTF_Count];
+ 
+ 
+ gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];
++gamescope_color_mgmt_luts g_AutoHdrLuts;
++uint32_t g_AutoHdrLutSerial = 0;
+ 
+ gamescope_color_mgmt_luts g_ScreenshotColorMgmtLuts[ EOTF_Count ];
+ gamescope_color_mgmt_luts g_ScreenshotColorMgmtLutsHDR[ EOTF_Count ];
+@@ -337,13 +340,22 @@ static const gamescope_color_mgmt_t k_ScreenshotColorMgmtHDR =
+ static void
+ create_color_mgmt_luts(
+ 	const gamescope_color_mgmt_t& newColorMgmt,
+-	gamescope_color_mgmt_luts outColorMgmtLuts[ EOTF_Count ],
+-	bool bScaleSDRWhite )
++	gamescope_color_mgmt_luts *outColorMgmtLuts,
++	bool bScaleSDRWhite, bool bAutoHdr = false )
+ {
+ 	const displaycolorimetry_t& displayColorimetry = newColorMgmt.displayColorimetry;
+ 	const displaycolorimetry_t& outputEncodingColorimetry = newColorMgmt.outputEncodingColorimetry;
++	// Measure the inverse map against the panel gamut and current brightness state.
++	gamescope::AutoHdrTransform autoHdrTransform{
++		.nativeFromOutput = displayColorimetry == outputEncodingColorimetry ? glm::mat3( 1.0f ) :
++			glm::inverse( normalised_primary_matrix( displayColorimetry.primaries, displayColorimetry.white, 1.0f ) ) *
++			normalised_primary_matrix( outputEncodingColorimetry.primaries, outputEncodingColorimetry.white, 1.0f ),
++		.sdrNits = g_flHDRItmSdrNits,
++		.targetNits = newColorMgmt.flInternalDisplayBrightness,
++	};
+ 
+-	for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
++	// The extra pair takes SDR input; leave the ordinary SDR/PQ tables unchanged.
++	for ( uint32_t nInputEOTF = 0; nInputEOTF < ( bAutoHdr ? 1u : uint32_t( EOTF_Count ) ); nInputEOTF++ )
+ 	{
+ 		if (!outColorMgmtLuts[nInputEOTF].vk_lut1d)
+ 			outColorMgmtLuts[nInputEOTF].vk_lut1d = vulkan_create_1d_lut(s_nLutSize1d);
+@@ -395,6 +407,12 @@ create_color_mgmt_luts(
+ 				// for sdrGamutWideness indepdendent of the output encoding (for SDR data), and when mapping SDR -> PQ output
+ 				// we only want to utilize a portion of the gamut the actual display can reproduce
+ 				buildSDRColorimetry( &inputColorimetry, &colorMapping, newColorMgmt.sdrGamutWideness, displayColorimetry );
++				if ( bAutoHdr )
++				{
++					// Use HDR gain for the game; SDR UI dimming stays on the standard LUT.
++					flGain = newColorMgmt.flHDRInputGain;
++					tonemapping.g22_luminance = autoHdrTransform.targetNits;
++				}
+ 			}
+ 			else if ( inputEOTF == EOTF_PQ )
+ 			{
+@@ -466,7 +484,8 @@ create_color_mgmt_luts(
+ 				outputEncodingColorimetry, newColorMgmt.outputEncodingEOTF,
+ 				displayColorimetry,
+ 				newColorMgmt.outputVirtualWhite, newColorMgmt.chromaticAdaptationMode,
+-				colorMapping, newColorMgmt.nightmode, tonemapping, pLook, flGain );
++				colorMapping, newColorMgmt.nightmode, tonemapping, pLook, flGain,
++				bAutoHdr ? gamescope::AutoHdrTransform::Apply : nullptr, &autoHdrTransform );
+ 
+ 			// Create quantized output luts
+ 			for ( size_t i=0, end = g_tmpLut1d.dataR.size(); i<end; ++i )
+@@ -500,10 +519,39 @@ bool g_bVRRInUse_CachedValue = false;
+ bool g_bSupportsHDR_CachedValue = false;
+ bool g_bForceHDR10OutputDebug = false;
+ gamescope::ConVar<bool> cv_hdr_enabled{ "hdr_enabled", false, "Whether or not HDR is enabled if it is available." };
++gamescope::ConVar<bool> cv_armada_auto_hdr{ "armada_auto_hdr", false, "Enable inverse tone mapping for SDR games." };
+ gamescope::ConVar<bool> cv_hdr_content_driven{ "hdr_content_driven", false, "Only drive a panel in HDR while an HDR app is running." };
+ bool g_bHDRItmEnable = false;
++static bool g_bAutoHdrFramePresented = false;
+ int g_nCurrentRefreshRate_CachedValue = 0;
+ 
++static bool s_bAutoHdrLutsEnabled = false;
++
++static bool steamcompmgr_auto_hdr_available()
++{
++	// Require primary-output hardware LUTs and avoid legacy ITM or override-LUT conflicts.
++	const auto *connector = GetBackend()->GetCurrentConnector();
++	return cv_armada_auto_hdr && !g_sDrmLeaseClientSocket && !g_bHDRItmEnable &&
++		g_ColorMgmt.pending.enabled && ( g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug ) &&
++		connector && connector->GetHDRInfo().uMaxContentLightLevel > 0 &&
++		!g_ColorMgmtLutsOverride[EOTF_Gamma22].HasLuts() &&
++		GetBackend()->SupportsAutoHdr();
++}
++
++static void update_auto_hdr_luts( bool force = false )
++{
++	// Rebuild on capability, toggle or shared color-state changes, not every frame.
++	const bool enabled = steamcompmgr_auto_hdr_available();
++	if ( !force && enabled == s_bAutoHdrLutsEnabled )
++		return;
++
++	s_bAutoHdrLutsEnabled = enabled;
++	g_AutoHdrLuts.reset();
++	if ( enabled && g_ColorMgmt.current.flInternalDisplayBrightness > 0.0f )
++		create_color_mgmt_luts( g_ColorMgmt.current, &g_AutoHdrLuts, false, true );
++	g_AutoHdrLutSerial++;
++}
++
+ // Follows the panel backlight over sysfs for panels that ignore it in PQ. steamcompmgr thread only.
+ class CBacklightWatcher final : public gamescope::IWaitable
+ {
+@@ -3156,6 +3204,17 @@ static bool PaintBlankOverlayPlaceholder()
+ 	return s_bPaint;
+ }
+ 
++// Keep the held game's mapping while Steam draws its separate SDR overlay.
++static bool steamcompmgr_auto_hdr_content( const global_focus_t *pFocus )
++{
++	if ( !pFocus || !steamcompmgr_auto_hdr_available() )
++		return false;
++
++	const auto &commit = pFocus->HeldCommits[HELD_COMMIT_BASE];
++	return commit && !commit->is_steam && !ColorspaceIsHDR( commit->colorspace() ) &&
++		( !pFocus->focusWindow || !window_is_steam( pFocus->focusWindow ) );
++}
++
+ static void
+ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ {
+@@ -3172,10 +3231,12 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ 	static long long int paintID = 0;
+ 
+ 	const uint32_t uColorMgmtSerial = g_ColorMgmt.serial;
++	const uint32_t uAutoHdrLutSerial = g_AutoHdrLutSerial;
+ 	update_color_mgmt();
++	update_auto_hdr_luts( g_ColorMgmt.serial != uColorMgmtSerial );
+ 
+ 	// New LUTs need a fresh composite even when nothing was damaged.
+-	if ( g_ColorMgmt.serial != uColorMgmtSerial )
++	if ( g_ColorMgmt.serial != uColorMgmtSerial || g_AutoHdrLutSerial != uAutoHdrLutSerial )
+ 		bRepeatFrame = false;
+ 
+ 	paintID++;
+@@ -3562,6 +3623,11 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ 		frameInfo.applyOutputColorMgmt = false;
+ 	}
+ 
++	// Tag the live SDR base only after its LUTs are ready, excluding fade snapshots.
++	const bool bAutoHdrFrame = steamcompmgr_auto_hdr_content( pFocus ) && !fadingOut &&
++		frameInfo.layers.count() && !ColorspaceIsHDR( frameInfo.layers.get( 0 ).colorspace ) &&
++		g_AutoHdrLuts.HasLuts();
++
+ 	// The output applies the gamma 2.2 shaper + 3D LUT post-blend, so the shader
+ 	// leaves them unbound and a composited frame is not corrected twice.
+ 	bool bOutputLUTs = GetBackend()->SupportsOutputLUTs() && GetBackend()->OutputLUTsReady() && !bDoMuraCompensation &&
+@@ -3587,11 +3653,25 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ 		}
+ 	}
+ 
++	if ( bAutoHdrFrame )
++	{
++		frameInfo.layers.get( 0 ).autoHdr = true;
++		// Composition uses the same tables as scanout, without converting the UI.
++		frameInfo.shaperLut[EOTF_Count] = g_AutoHdrLuts.vk_lut1d;
++		frameInfo.lut3D[EOTF_Count] = g_AutoHdrLuts.vk_lut3d;
++	}
++	const bool bPrimaryFocus = pFocus == GetCurrentFocus();
++
+ 	if ( pConnector && pConnector->Present( &frameInfo, async ) != 0 )
+ 	{
++		if ( bPrimaryFocus )
++			g_bAutoHdrFramePresented = false;
+ 		return;
+ 	}
+ 
++	if ( bPrimaryFocus )
++		g_bAutoHdrFramePresented = pConnector && bAutoHdrFrame;
++
+ 	// A torn frame can be replaced before the next vblank pass reports it.
+ 	commit_t *pTornCommit = async && pConnector ? pFocus->HeldCommits[ HELD_COMMIT_BASE ].get() : nullptr;
+ 	if ( pTornCommit && pTornCommit->present_timing.serial )
+@@ -3654,6 +3734,9 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ 
+ 			if ( drmCaptureFormat == DRM_FORMAT_NV12 || oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
+ 			{
++				// Source-space captures must not include the display's AutoHDR transform.
++				frameInfo.shaperLut[EOTF_Count] = nullptr;
++				frameInfo.lut3D[EOTF_Count] = nullptr;
+ 				// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
+ 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+ 				{
+@@ -7623,6 +7706,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 			g_flHDRItmSdrNits = 100.f;
+ 		else if ( g_flHDRItmSdrNits > 1000.f)
+ 			g_flHDRItmSdrNits = 1000.f;
++		update_auto_hdr_luts( true );
+ 		hasRepaint = true;
+ 	}
+ 	if ( ev->atom == ctx->atoms.gamescopeHDRItmTargetNits )
+@@ -7950,6 +8034,7 @@ steamcompmgr_exit(void)
+ 	g_steamcompmgr_xdg_wins.clear();
+ 
+ 	for ( auto &lut : g_ColorMgmtLuts ) lut.shutdown();
++	g_AutoHdrLuts.shutdown();
+ 	for ( auto &lut : g_ColorMgmtLutsOverride ) lut.shutdown();
+ 	for ( auto &lut : g_ScreenshotColorMgmtLuts ) lut.shutdown();
+ 	for ( auto &lut : g_ScreenshotColorMgmtLutsHDR ) lut.shutdown();
+@@ -10583,15 +10668,17 @@ steamcompmgr_main(int argc, char **argv)
+ 
+ 		// Capability is advertised to clients regardless of the live "active"
+ 		// state below, so games can request HDR while the panel is idling in SDR.
+-		const bool bOutputHDRCapable = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
++		// AutoHDR can keep the panel in HDR without enabling the legacy shader ITM.
++		const bool bNativeHDREnabled = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
++		const bool bAutoHdrActive = steamcompmgr_auto_hdr_content( GetCurrentFocus() );
++		const bool bOutputHDRCapable = bNativeHDREnabled || steamcompmgr_auto_hdr_available();
+ 
+ 		{
+ 			gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
+-			const bool bContentDriven = bOutputHDRCapable && !g_bForceHDR10OutputDebug &&
+-				( cv_hdr_content_driven ||
+-				  ( pConn && pConn->GetHDRInfo().bContentDrivenHDR ) );
++			const bool bContentDriven = bNativeHDREnabled && !g_bForceHDR10OutputDebug &&
++				( cv_hdr_content_driven || ( pConn && pConn->GetHDRInfo().bContentDrivenHDR ) );
+ 
+-			bool bOutputHDRActive = bOutputHDRCapable;
++			bool bOutputHDRActive = bNativeHDREnabled;
+ 			if ( bContentDriven )
+ 			{
+ 				// Track any live window, not just the focused one, so browsing the
+@@ -10608,6 +10695,7 @@ steamcompmgr_main(int argc, char **argv)
+ 					}
+ 				}
+ 			}
++			bOutputHDRActive |= bAutoHdrActive;
+ 			if ( bOutputHDRActive != g_bOutputHDREnabled )
+ 				xwm_log.infof( "HDR output %s%s", bOutputHDRActive ? "enabled" : "disabled", bContentDriven ? " (hdr_content_driven)" : "" );
+ 			g_bOutputHDREnabled = bOutputHDRActive;
+@@ -10839,7 +10927,8 @@ steamcompmgr_main(int argc, char **argv)
+ 					app_hdr_metadata = pCurrentFocus->HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
+ 			}
+ 
+-			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
++			// Advertise converted HDR only after a primary frame was presented.
++			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace ) || g_bAutoHdrFramePresented;
+ 
+ 			if ( app_wants_hdr != g_bAppWantsHDRCached )
+ 			{
+diff --git a/tests/meson.build b/tests/meson.build
+index de4e34d..290665d 100644
+--- a/tests/meson.build
++++ b/tests/meson.build
+@@ -5,6 +5,7 @@ unittest_src = []
+ foreach src : gamescope_core_src + ['Script/Script.cpp', 'convar_script.cpp', 'edid.cpp']
+ 	unittest_src += srcdir / src
+ endforeach
++unittest_src += 'test_auto_hdr.cpp'
+ 
+ gamescope_tests = executable(
+ 	'gamescope_tests',
+@@ -17,6 +18,7 @@ gamescope_tests = executable(
+ reaper_test_helper = executable('reaper_test_helper', 'reaper_test_helper.cpp')
+ 
+ test('convar', gamescope_tests, args: ['[convar]'])
++test('auto_hdr', gamescope_tests, args: ['[auto_hdr]'])
+ test('color_helpers', gamescope_tests, args: ['[color_helpers]'])
+ test('focus_placement', gamescope_tests, args: ['[focus_placement]'])
+ test('mangoapp_config', gamescope_tests, args: ['[mangoapp_config]'])
+diff --git a/tests/test_auto_hdr.cpp b/tests/test_auto_hdr.cpp
+new file mode 100644
+index 0000000..9a9b5c4
+--- /dev/null
++++ b/tests/test_auto_hdr.cpp
+@@ -0,0 +1,348 @@
++#include <array>
++#include <bit>
++#include <cstdint>
++
++#include <catch2/catch_approx.hpp>
++#include <catch2/catch_test_macros.hpp>
++
++#include "auto_hdr.h"
++#include "color_helpers_impl.h"
++
++using namespace gamescope;
++
++static constexpr displaycolorimetry_t kNativeP3{
++	.primaries = { { 0.68f, 0.32f }, { 0.265f, 0.69f }, { 0.15f, 0.06f } },
++	.white = displaycolorimetry_709.white,
++};
++
++static void require_finite( float value )
++{
++	// Check the bits because fast-math can remove std::isfinite checks.
++	REQUIRE( ( std::bit_cast<uint32_t>( value ) & 0x7f800000u ) != 0x7f800000u );
++}
++
++struct AutoHdrTestLuts
++{
++	lut1d_t shaper;
++	lut3d_t color;
++	displaycolorimetry_t output;
++	glm::mat3 nativeFromOutput;
++	EOTF eotf;
++	float peak;
++	float peakLimit;
++
++	glm::vec3 decode( glm::vec3 encoded ) const
++	{
++		return eotf == EOTF_PQ ? pq_to_nits( encoded )
++			: glm::pow( encoded, glm::vec3( 2.2f ) ) * peak;
++	}
++
++	glm::vec3 sample( glm::vec3 input ) const
++	{
++		return decode( ApplyLut3D_Tetrahedral( color, ApplyLut1D_Linear( shaper, input ) ) );
++	}
++};
++
++static float plane_lut_value( uint64_t value, uint32_t bits )
++{
++	const uint64_t maximum = ( 1ull << bits ) - 1;
++	value = ( value * maximum + 0x7fffffffull ) / 0xffffffffull;
++	return float( value ) / float( maximum );
++}
++
++static void use_plane_precision( AutoHdrTestLuts &luts )
++{
++	// Model the MSM LUT precision, not the physical panel's bit depth.
++	constexpr uint32_t entries = 257;
++	constexpr uint32_t last = entries - 1;
++	const auto encode = []( float value )
++	{
++		return uint64_t( quantize_lut_value_16bit( value ) ) * 0x10001u;
++	};
++	const auto source = luts.shaper;
++	luts.shaper.resize( entries );
++	const std::array inputs{ &source.dataR, &source.dataG, &source.dataB };
++	const std::array outputs{ &luts.shaper.dataR, &luts.shaper.dataG, &luts.shaper.dataB };
++	for ( size_t channel = 0; channel < inputs.size(); ++channel )
++		for ( uint32_t i = 0; i < entries; ++i )
++		{
++			const uint32_t pos = i * ( source.lutSize - 1 );
++			const uint32_t index = pos / last;
++			const uint32_t fraction = pos % last;
++			const uint32_t next = std::min( index + 1, uint32_t( source.lutSize - 1 ) );
++			const uint64_t a = encode( ( *inputs[channel] )[index] );
++			const uint64_t b = encode( ( *inputs[channel] )[next] );
++			const uint64_t interpolated = ( a * ( last - fraction ) + b * fraction + last / 2 ) / last;
++			( *outputs[channel] )[i] = plane_lut_value( interpolated, 12 );
++		}
++	luts.shaper.finalize();
++	for ( auto &color : luts.color.data )
++		for ( int channel = 0; channel < 3; ++channel )
++			color[channel] = plane_lut_value( encode( color[channel] ), 10 );
++}
++
++static AutoHdrTestLuts build_luts( const displaycolorimetry_t &display, EOTF eotf,
++	float peak, float gain = 1.0f, bool autoHdr = true, bool planePrecision = false )
++{
++	AutoHdrTestLuts luts{ .output = eotf == EOTF_PQ ? displaycolorimetry_2020 : display,
++		.eotf = eotf, .peak = peak, .peakLimit = peak };
++	displaycolorimetry_t input{};
++	colormapping_t mapping{};
++	buildSDRColorimetry( &input, &mapping, -1.0f, display );
++	luts.nativeFromOutput = display == luts.output ? glm::mat3( 1.0f ) :
++		glm::inverse( normalised_primary_matrix( display.primaries, display.white, 1.0f ) ) *
++		normalised_primary_matrix( luts.output.primaries, luts.output.white, 1.0f );
++	const AutoHdrTransform transform{
++		.nativeFromOutput = luts.nativeFromOutput,
++		.sdrNits = 100.0f,
++		.targetNits = peak,
++	};
++	tonemapping_t tonemapping{};
++	tonemapping.g22_luminance = peak;
++	calcColorTransform<rendervulkan::s_nLutEdgeSize3d>( &luts.shaper, rendervulkan::s_nLutSize1d,
++		&luts.color, input, EOTF_Gamma22, luts.output, eotf, display, {},
++		k_EChromaticAdapatationMethod_Bradford, mapping, {}, tonemapping, nullptr, gain,
++		autoHdr ? AutoHdrTransform::Apply : nullptr, &transform );
++	for ( auto *channel : { &luts.shaper.dataR, &luts.shaper.dataG, &luts.shaper.dataB } )
++		for ( float &value : *channel )
++		{
++			require_finite( value );
++			value = quantize_lut_value_16bit( value ) / 65535.0f;
++		}
++	for ( glm::vec3 &color : luts.color.data )
++		for ( int channel = 0; channel < 3; ++channel )
++		{
++			require_finite( color[channel] );
++			REQUIRE( color[channel] >= 0.0f );
++			REQUIRE( color[channel] <= 1.0f );
++			color[channel] = quantize_lut_value_16bit( color[channel] ) / 65535.0f;
++		}
++	if ( planePrecision )
++	{
++		use_plane_precision( luts );
++		if ( eotf == EOTF_PQ )
++		{
++			const glm::mat3 outputFromNative = glm::inverse( luts.nativeFromOutput );
++			const glm::vec3 positive = glm::max( outputFromNative[0], glm::vec3( 0.0f ) ) +
++				glm::max( outputFromNative[1], glm::vec3( 0.0f ) ) + glm::max( outputFromNative[2], glm::vec3( 0.0f ) );
++			const float maximum = peak * std::max( { positive.r, positive.g, positive.b } );
++			const float rounding = 0.5f / 65535.0f + 0.5f / 1023.0f;
++			const float error = pq_to_nits( clamp01( nits_to_pq( maximum ) + rounding ) ) - maximum;
++			const glm::vec3 nativeError = ( glm::abs( luts.nativeFromOutput[0] ) +
++				glm::abs( luts.nativeFromOutput[1] ) + glm::abs( luts.nativeFromOutput[2] ) ) * error;
++			luts.peakLimit = peak + std::max( { nativeError.r, nativeError.g, nativeError.b } );
++		}
++	}
++	return luts;
++}
++
++TEST_CASE( "Auto HDR LUTs stay finite and respect the output peak", "[auto_hdr]" )
++{
++	for ( const auto &display : { displaycolorimetry_709, kNativeP3 } )
++		for ( const EOTF eotf : { EOTF_Gamma22, EOTF_PQ } )
++			for ( const float peak : { 100.0f, 500.0f, 1000.0f } )
++				for ( const bool planePrecision : { false, true } )
++				{
++					CAPTURE( eotf, peak, planePrecision );
++					const auto luts = build_luts( display, eotf, peak, 1.0f, true, planePrecision );
++					for ( const glm::vec3 &encoded : luts.color.data )
++					{
++						const glm::vec3 native = luts.nativeFromOutput * luts.decode( encoded );
++						for ( const float value : { native.r, native.g, native.b } )
++						{
++							require_finite( value );
++							REQUIRE( value <= luts.peakLimit * 1.001f );
++						}
++					}
++					REQUIRE( luts.sample( glm::vec3( 0.0f ) ) == glm::vec3( 0.0f ) );
++				}
++}
++
++TEST_CASE( "Auto HDR preserves SDR chromaticity through the shared LUT path", "[auto_hdr]" )
++{
++	for ( const auto &display : { displaycolorimetry_709, kNativeP3 } )
++		for ( const EOTF eotf : { EOTF_Gamma22, EOTF_PQ } )
++			for ( const float gain : { 1.0f / 3.0f, 0.5f, 1.0f } )
++				for ( const bool planePrecision : { false, true } )
++				{
++					const auto luts = build_luts( display, eotf, 700.0f, gain, true, planePrecision );
++					const auto sdr = build_luts( display, eotf, 700.0f, gain, false, planePrecision );
++					const glm::mat3 xyzFromOutput = normalised_primary_matrix( luts.output.primaries, luts.output.white, 1.0f );
++					for ( const auto &input : { glm::vec3( 0.25f, 0.1f, 0.05f ), glm::vec3( 1.0f, 0.01f, 0.01f ),
++						glm::vec3( 0.9f, 0.45f, 0.1f ), glm::vec3( 0.05f, 0.1f, 0.8f ), glm::vec3( 0.5f ) } )
++					{
++						CAPTURE( display.primaries.r.x, eotf, gain, planePrecision, input.r, input.g, input.b );
++						const glm::vec3 source = xyzFromOutput * sdr.sample( input );
++						const glm::vec3 mapped = xyzFromOutput * luts.sample( input );
++						const glm::vec2 sourceXY = glm::vec2( source ) / ( source.x + source.y + source.z );
++						const glm::vec2 mappedXY = glm::vec2( mapped ) / ( mapped.x + mapped.y + mapped.z );
++						REQUIRE( glm::distance( sourceXY, mappedXY ) < 0.003f );
++					}
++				}
++}
++
++TEST_CASE( "Auto HDR applies HDR output gain after tone mapping", "[auto_hdr]" )
++{
++	for ( const EOTF eotf : { EOTF_Gamma22, EOTF_PQ } )
++		for ( const bool planePrecision : { false, true } )
++		{
++			const float peak = 700.0f;
++			float previousMidtone = -1.0f;
++			for ( const float gain : { 0.0f, 1.0f / 3.0f, 0.5f, 1.0f } )
++			{
++				CAPTURE( eotf, gain, planePrecision );
++				const auto luts = build_luts( kNativeP3, eotf, peak, gain, true, planePrecision );
++				const glm::vec3 white = luts.sample( glm::vec3( 1.0f ) );
++				if ( gain == 0.0f )
++					REQUIRE( white == glm::vec3( 0.0f ) );
++				else
++				{
++					REQUIRE( white.r > 0.0f );
++					REQUIRE( white.r <= luts.peakLimit * 1.001f );
++				}
++				if ( gain == 1.0f && eotf == EOTF_Gamma22 )
++					REQUIRE( white.r == Catch::Approx( peak ) );
++				const float midtone = luts.sample( glm::vec3( 0.5f ) ).r;
++				REQUIRE( midtone > previousMidtone );
++				previousMidtone = midtone;
++			}
++		}
++}
++
++TEST_CASE( "Auto HDR bounds highlights when SDR white exceeds the output peak", "[auto_hdr]" )
++{
++	for ( const float sdrNits : { 1.0f, 100.0f, 1000.0f } )
++		for ( const float targetNits : { 1.0f, 100.0f, 1000.0f } )
++		{
++			const AutoHdrTransform transform{
++				glm::mat3( 1.0f ), sdrNits, targetNits,
++			};
++			const glm::vec3 source = glm::vec3( 1.0f, 0.01f, 0.01f ) * targetNits;
++			const glm::vec3 mapped = AutoHdrTransform::Apply( source, &transform );
++			for ( const float value : { mapped.r, mapped.g, mapped.b } )
++			{
++				require_finite( value );
++				REQUIRE( value <= targetNits * 1.001f );
++			}
++			REQUIRE( mapped.r / mapped.g == Catch::Approx( source.r / source.g ) );
++		}
++}
++
++static double reference_neutral_itm( double input, double sdrNits, double targetNits )
++{
++	// Invert the forward curve numerically instead of copying the inverse formula.
++	const double pSdr = 1.0 + 32.0 * std::pow( sdrNits / 10000.0, 1.0 / 2.4 );
++	const double yc = std::log1p( std::pow( std::clamp( input, 0.0, 1.0 ), 1.0 / 2.4 ) * ( pSdr - 1.0 ) ) / std::log( pSdr );
++	double low = 0.0, high = 1.0;
++	for ( int iteration = 0; iteration < 60; ++iteration )
++	{
++		const double yp = ( low + high ) * 0.5;
++		const double mapped = yp <= 0.7399 ? 1.077 * yp : yp < 0.9909 ?
++			( -1.151 * yp + 2.7811 ) * yp - 0.6302 : 0.5 * yp + 0.5;
++		if ( mapped < yc )
++			low = yp;
++		else
++			high = yp;
++	}
++	const double pHdr = 1.0 + 32.0 * std::pow( targetNits / 10000.0, 1.0 / 2.4 );
++	return std::pow( std::expm1( ( low + high ) * 0.5 * std::log( pHdr ) ) / ( pHdr - 1.0 ), 2.4 );
++}
++
++TEST_CASE( "Auto HDR keeps the neutral BT2446 curve", "[auto_hdr]" )
++{
++	for ( const float sdrNits : { 80.0f, 203.0f, 500.0f } )
++		for ( const float targetNits : { 250.0f, 700.0f, 1200.0f } )
++			for ( int step = 0; step <= 256; ++step )
++			{
++				const float input = step / 256.0f;
++				CAPTURE( sdrNits, targetNits, input );
++				REQUIRE( AutoHdrInverseToneMap( input, sdrNits, targetNits ) ==
++					Catch::Approx( reference_neutral_itm( input, sdrNits, targetNits ) ).epsilon( 0.0005f ).margin( 0.0000001f ) );
++			}
++}
++
++TEST_CASE( "Auto HDR stays monotonic across the rounded curve joins", "[auto_hdr]" )
++{
++	const std::array gaps{
++		std::array{ 1.077 * 0.7399, ( -1.151 * 0.7399 + 2.7811 ) * 0.7399 - 0.6302 },
++		std::array{ ( -1.151 * 0.9909 + 2.7811 ) * 0.9909 - 0.6302, 0.5 * 0.9909 + 0.5 },
++	};
++	for ( const float sdrNits : { 1.0f, 100.0f, 1000.0f } )
++		for ( const float targetNits : { 1.0f, 100.0f, 1000.0f } )
++		{
++			float previous = 0.0f;
++			for ( int step = 1; step <= 65535; ++step )
++			{
++				const float input = step / 65535.0f;
++				const float mapped = AutoHdrInverseToneMap( input, sdrNits, targetNits );
++				CAPTURE( sdrNits, targetNits, input, previous, mapped );
++				require_finite( mapped );
++				REQUIRE( mapped >= previous );
++				previous = mapped;
++			}
++			const double pSdr = 1.0 + 32.0 * std::pow( double( sdrNits ) / 10000.0, 1.0 / 2.4 );
++			for ( const auto &gap : gaps )
++				for ( const double position : { -0.1, 0.0, 0.25, 0.5, 0.75, 1.0, 1.1 } )
++				{
++					const double yc = gap[0] + position * ( gap[1] - gap[0] );
++					const float input = std::pow( std::expm1( yc * std::log( pSdr ) ) / ( pSdr - 1.0 ), 2.4 );
++					CAPTURE( sdrNits, targetNits, yc, input );
++					REQUIRE( AutoHdrInverseToneMap( input, sdrNits, targetNits ) ==
++						Catch::Approx( reference_neutral_itm( input, sdrNits, targetNits ) ).epsilon( 0.000002f ).margin( 0.000001f ) );
++				}
++		}
++}
++
++TEST_CASE( "Auto HDR gives colors with the same native peak the same gain", "[auto_hdr]" )
++{
++	for ( const float peak : { 250.0f, 700.0f, 1200.0f } )
++		for ( const float maximum : { 0.0f, 0.01f, 0.1f, 0.5f, 1.0f, 2.0f } )
++		{
++			const AutoHdrTransform transform{ glm::mat3( 1.0f ), 100.0f, peak };
++			const glm::vec3 neutral = AutoHdrTransform::Apply( glm::vec3( maximum * peak ), &transform );
++			REQUIRE( neutral.r <= peak * 1.00001f );
++			if ( maximum >= 1.0f )
++				REQUIRE( neutral.r == Catch::Approx( peak ) );
++			for ( const auto &ratio : { glm::vec3( 1.0f, 0.0f, 0.0f ), glm::vec3( 0.0f, 1.0f, 0.0f ),
++				glm::vec3( 0.0f, 0.0f, 1.0f ), glm::vec3( 1.0f, 0.1f, 0.5f ), glm::vec3( 0.1f, 0.5f, 1.0f ) } )
++			{
++				CAPTURE( peak, maximum, ratio.r, ratio.g, ratio.b );
++				const glm::vec3 mapped = AutoHdrTransform::Apply( ratio * maximum * peak, &transform );
++				for ( int channel = 0; channel < 3; ++channel )
++					REQUIRE( mapped[channel] == Catch::Approx( neutral[channel] * ratio[channel] ).margin( peak * 0.000001f ) );
++			}
++		}
++}
++
++TEST_CASE( "Auto HDR uses the same native curve and peak in every output gamut", "[auto_hdr]" )
++{
++	for ( const auto &display : { displaycolorimetry_709, kNativeP3 } )
++		for ( const float peak : { 250.0f, 700.0f, 1200.0f } )
++			for ( const auto &output : { display, displaycolorimetry_2020 } )
++			{
++				const glm::mat3 xyzFromNative = normalised_primary_matrix( display.primaries, display.white, 1.0f );
++				const glm::mat3 xyzFromOutput = normalised_primary_matrix( output.primaries, output.white, 1.0f );
++				const glm::mat3 outputFromNative = glm::inverse( xyzFromOutput ) * xyzFromNative;
++				const glm::mat3 nativeFromOutput = glm::inverse( xyzFromNative ) * xyzFromOutput;
++				const AutoHdrTransform transform{ nativeFromOutput, 100.0f, peak };
++				if ( display == kNativeP3 && output == displaycolorimetry_2020 )
++					REQUIRE( ( outputFromNative * glm::vec3( 1.0f, 0.0f, 0.0f ) ).b < 0.0f );
++				for ( int r = 0; r <= 16; ++r )
++					for ( int g = 0; g <= 16; ++g )
++						for ( int b = 0; b <= 16; ++b )
++						{
++							const glm::vec3 native = glm::vec3( r, g, b ) * ( peak / 16.0f );
++							const glm::vec3 mapped = nativeFromOutput * AutoHdrTransform::Apply( outputFromNative * native, &transform );
++							const float maximum = std::max( { native.r, native.g, native.b } );
++							const double mappedMaximum = reference_neutral_itm( maximum / peak, 100.0f, peak ) * peak;
++							const glm::vec3 expected = maximum > 0.0f ? native * float( mappedMaximum / maximum ) : glm::vec3( 0.0f );
++							CAPTURE( display.primaries.r.x, output.primaries.r.x, peak, r, g, b );
++							for ( int channel = 0; channel < 3; ++channel )
++							{
++								require_finite( mapped[channel] );
++								REQUIRE( mapped[channel] <= peak * 1.00001f );
++								REQUIRE( mapped[channel] == Catch::Approx( expected[channel] ).epsilon( 0.0005f ).margin( peak * 0.000003f ) );
++							}
++						}
++			}
++}
