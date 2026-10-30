@@ -192,6 +192,7 @@ v9_20260801_sachin_garg_media_iris_cache_work_mode_in_iris_set_stage.patch
 v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0063-gpu-drm-panel-add-pocket-fit-panel.patch
 0064-input-touchscreen-add-rocknix-chipone-tddi.patch
+0064a-input-touchscreen-chipone-follow-panel-lifecycle.patch
 
 # ============== SM8250 handhelds ==============
 0067-arm64-dts-qcom-pm8150l-add-lcdb-node.patch
