@@ -143,6 +143,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0058_AYN-Odin2-Mini--backlight.patch
   upstream: unknown
   notes: Armada refreshed only the Makefile context for Linux 7.1's backlight object list; driver behavior is unchanged.
+- `patches/0058a-backlight-odin2mini-power-down-across-system-suspend.patch`
+  source: armada
+  upstream: local
+  notes: Odin 2 Mini sleep drain fix. The driver enabled vcc_1v2/vcc_3v3 at probe and held them, and the LED driver IC, powered through s2idle; vcc_3v3 is the PMIC bob2 rail that the rsinput suspend path deliberately releases. Suspend now cuts both supplies and resume reprograms the gain, update_status honours the backlight power state, and the enable-GPIO request treats a lost race with the blvdd fixed regulator (and a missing line) as "not ours" instead of dereferencing an error pointer.
 - `patches/0060-backlight-Add-SY7758-LED-driver.patch`
   source: https://patchwork.kernel.org/project/dri-devel/patch/20260529-topic-sm8650-ayaneo-pocket-s2-sy7758-v5-2-03aacd49747c@linaro.org/
   upstream: https://lore.kernel.org/r/178300990349.2239788.13080024963462152507.b4-ty@b4
@@ -206,6 +210,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0059_AYN-Odin2-Mini--hynitron--cstxxx.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0059_AYN-Odin2-Mini--hynitron--cstxxx.patch
   upstream: unknown
+- `patches/0059a-input-hynitron-cstxxx-power-down-across-system-suspend.patch`
+  source: armada
+  upstream: local
+  notes: Odin 2 Mini sleep drain fix. The cst340 has no way to stop scanning: it raises an edge interrupt roughly every 1500ms while idle, and vdd (vreg_l2b_3p0) stayed enabled from the probe-time regulator_enable() added by `0059`. Both kept the SoC out of its deepest s2idle state for the whole sleep. Suspend now masks the IRQ, asserts reset and drops vdd; resume restores the rails and pin state and runs the same power-on reset hyn_probe() uses.
 - `patches/0060-input-touchscreen-add-synaptics-dsx-kconfig.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0060-input-touchscreen-add-synaptics-dsx-kconfig.patch
   upstream: unknown
