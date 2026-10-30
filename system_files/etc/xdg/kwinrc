@@ -1,0 +1,3 @@
+# Steam's desktop layout moves the cursor through Xwayland's XTEST, which KWin gates behind a prompt.
+[Xwayland]
+XwaylandEisNoPromptApps=steam
