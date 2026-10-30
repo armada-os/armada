@@ -863,7 +863,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada keeps the AYA Space, Menu, LC, and RC auxiliary keys from waking the system.
 - `dts/qcs8550-ayn-common.dtsi.patch`
   source: armada
-  notes: Armada keeps volume-up from waking the system, removes the SDHCI capability mask, and marks the shared RSInput node as connected to the PM8550B haptics device declared in the same common tree; this covers the AYN and Retroid products that inherit both nodes, including Pocket 6 and Nova. Armada also marks PCIe WAKE# active-low, idles the codec rails in LPM during s2idle, and powers RSInput from `vdd_mcu_3v3` instead of the shared `vreg_bob2`, without always-on, so the driver can cut the MCU in suspend.
+  notes: Armada keeps volume-up from waking the system, removes the SDHCI capability mask, and marks the shared RSInput node as connected to the PM8550B haptics device declared in the same common tree; this covers the AYN and Retroid products that inherit both nodes, including Pocket 6 and Nova. Armada also marks PCIe WAKE# active-low, idles the codec rails in LPM during s2idle, and powers RSInput from `vdd_mcu_3v3` instead of the shared `vreg_bob2`, without always-on, so the driver can cut the MCU in suspend. The shared PM8550 RGB `power-led` gets the `battery-charging-orange-full-green` trigger, so it lights orange while charging and green when full.
 - `dts/qcs8550-ayn-odin2.dts.patch`
   source: armada
   upstream: local

@@ -1,5 +1,5 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and rumble, fix PCIe WAKE# polarity, codec rail sleep modes and gamepad MCU supply
+Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and rumble, fix PCIe WAKE# polarity, codec rail sleep modes, gamepad MCU supply and charge LED trigger
 
 --- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
 +++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-common.dtsi
@@ -28,7 +28,15 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  	reset-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
  
  	wifi@0 {
-@@ -1462,7 +1460,6 @@
+@@ -1157,6 +1155,7 @@
+ 	power_led {
+ 		color = <LED_COLOR_ID_RGB>;
+ 		label = "power-led";
++		linux,default-trigger = "battery-charging-orange-full-green";
+ 
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+@@ -1462,7 +1461,6 @@
  	no-mmc;
  
  	qcom,dll-config = <0x0007442c>;
@@ -36,7 +44,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  	status = "okay";
  };
-@@ -1700,6 +1697,7 @@
+@@ -1700,6 +1698,7 @@
  
  	gamepad: gamepad {
  		compatible = "gamepad,rsinput";
@@ -44,7 +52,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  
  		gamepad-name = "AYN Odin2 Gamepad";
  		gamepad-bus = <0x0003>;
-@@ -1707,7 +1705,7 @@
+@@ -1707,7 +1706,7 @@
  		gamepad-pid = <0x3001>;
  		gamepad-rev = <0x0001>;
  
@@ -53,7 +61,7 @@ Subject: [PATCH] arm64: dts: qcom: qcs8550-ayn: enable SDHCI capabilities and ru
  		enable-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
  		pinctrl-0 = <&mcu_en_active>;
  		pinctrl-names = "default";
-@@ -1765,3 +1763,18 @@
+@@ -1765,3 +1764,18 @@
  &xo_board {
  	clock-frequency = <76800000>;
  };
