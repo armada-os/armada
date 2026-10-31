@@ -1,0 +1,28 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: program Class-H transport fields
+
+The Class-H sink implements the full data-port transport registers. Its
+SIMPLE declaration skips OffsetCtrl2, BlockCtrl3, SampleCtrl2 and HCTRL,
+leaving the codec window and packing inconsistent with the master setup.
+
+Declare only the Class-H port FULL so the SoundWire core programs those
+fields from the existing transport parameters. Keep channel preparation,
+sample interval, channel mapping and the other ports unchanged.
+
+Link: https://github.com/armada-os/armada/pull/803#issuecomment-6481609416
+---
+ sound/soc/codecs/wcd939x-sdw.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/wcd939x-sdw.c b/sound/soc/codecs/wcd939x-sdw.c
+--- a/sound/soc/codecs/wcd939x-sdw.c
++++ b/sound/soc/codecs/wcd939x-sdw.c
+@@ -61,7 +61,7 @@
+ 	},
+ 	{
+ 		.num = WCD939X_CLSH_PORT,
+-		.type = SDW_DPN_SIMPLE,
++		.type = SDW_DPN_FULL,
+ 		.min_ch = 1,
+ 		.max_ch = 1,
+ 		.simple_ch_prep_sm = true,

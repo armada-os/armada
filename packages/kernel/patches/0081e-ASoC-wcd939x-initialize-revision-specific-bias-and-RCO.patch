@@ -1,0 +1,119 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: initialize revision-specific bias and RCO
+
+The Android WCD939x initialization sets BIAS_VBG_FINE_ADJ to 0xa5 and
+enables D_RCO_CLK_EN for revisions 1.1 and 2.0. Pocket S2 captures show
+revision 2.0 with the Linux bias default 0x55 and the RCO bit clear.
+
+Apply the known-revision initialization while the codec is powered.
+Check revision reads and write errors, and preserve the headphone gain
+when enabling RCO. Leave revision 1.0 and unknown IDs unchanged. Move the
+old unchecked revision reads out of component binding and balance the
+runtime-PM reference if initialization fails.
+
+The matching flyback defaults and IRQ-mask ownership remain unchanged.
+Audible improvement and other WCD939x devices still require validation.
+
+Reference: Qualcomm Android WCD939x revision initialization, preserved
+Pocket S2 vendor wcd939x_dlkm.ko and Android/Linux captures.
+---
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -43,6 +43,7 @@
+ 
+ /* Version major: 1.x */
+ #define CHIPID_WCD939X_VER_MAJOR_1	0x0
++#define CHIPID_WCD939X_VER_MAJOR_2	0x1
+ /* Version minor: x.1 */
+ #define CHIPID_WCD939X_VER_MINOR_1	0x3
+ 
+@@ -3258,6 +3259,48 @@
+ 					&wcd->irq_chip);
+ }
+ 
++static int wcd939x_revision_init(struct snd_soc_component *component)
++{
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++	struct device *dev = component->dev;
++	unsigned int id1, status1, version;
++	int ret;
++
++	ret = regmap_read(wcd939x->regmap, WCD939X_DIGITAL_CHIP_ID1, &id1);
++	if (ret)
++		return ret;
++
++	switch (id1) {
++	case CHIPID_WCD939X_VER_MAJOR_1:
++		ret = regmap_read(wcd939x->regmap, WCD939X_EAR_STATUS_REG_1,
++				  &status1);
++		if (ret)
++			return ret;
++		version = status1 & CHIPID_WCD939X_VER_MINOR_1 ?
++			WCD939X_VERSION_1_1 : WCD939X_VERSION_1_0;
++		break;
++	case CHIPID_WCD939X_VER_MAJOR_2:
++		version = WCD939X_VERSION_2_0;
++		break;
++	default:
++		dev_warn(dev, "Unknown codec revision %#x; initialization unchanged\n", id1);
++		return 0;
++	}
++
++	dev_dbg(dev, "wcd939x version: %s\n", version_to_str(version));
++	if (version == WCD939X_VERSION_1_0)
++		return 0;
++
++	ret = regmap_write(wcd939x->regmap, WCD939X_BIAS_VBG_FINE_ADJ, 0xa5);
++	if (ret)
++		return ret;
++
++	return regmap_update_bits(wcd939x->regmap,
++				  WCD939X_HPH_NEW_INT_PA_GAIN_CTL_R,
++				  WCD939X_PA_GAIN_CTL_R_D_RCO_CLK_EN,
++				  WCD939X_PA_GAIN_CTL_R_D_RCO_CLK_EN);
++}
++
+ static int wcd939x_soc_codec_probe(struct snd_soc_component *component)
+ {
+ 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
+@@ -3273,6 +3316,12 @@
+ 	ret = pm_runtime_resume_and_get(dev);
+ 	if (ret < 0)
+ 		return ret;
++
++	ret = wcd939x_revision_init(component);
++	if (ret) {
++		pm_runtime_put(dev);
++		return dev_err_probe(dev, ret, "Failed to initialize codec revision\n");
++	}
+ 
+ 	wcd939x->variant = snd_soc_component_read_field(component,
+ 							WCD939X_DIGITAL_EFUSE_REG_0,
+@@ -3624,7 +3673,6 @@
+ static int wcd939x_bind(struct device *dev)
+ {
+ 	struct wcd939x_priv *wcd939x = dev_get_drvdata(dev);
+-	unsigned int version, id1, status1;
+ 	int ret;
+ 
+ #if IS_ENABLED(CONFIG_TYPEC)
+@@ -3710,17 +3758,6 @@
+ 	wcd939x->sdw_priv[AIF1_CAP]->slave_irq = wcd939x->virq;
+ 
+ 	wcd939x_set_micbias_data(dev, wcd939x);
+-
+-	/* Check WCD9395 version */
+-	regmap_read(wcd939x->regmap, WCD939X_DIGITAL_CHIP_ID1, &id1);
+-	regmap_read(wcd939x->regmap, WCD939X_EAR_STATUS_REG_1, &status1);
+-
+-	if (id1 == CHIPID_WCD939X_VER_MAJOR_1)
+-		version = ((status1 & CHIPID_WCD939X_VER_MINOR_1) ? WCD939X_VERSION_1_1 : WCD939X_VERSION_1_0);
+-	else
+-		version = WCD939X_VERSION_2_0;
+-
+-	dev_dbg(dev, "wcd939x version: %s\n", version_to_str(version));
+ 
+ 	ret = snd_soc_register_component(dev, &soc_codec_dev_wcd939x,
+ 					 wcd939x_dais, ARRAY_SIZE(wcd939x_dais));

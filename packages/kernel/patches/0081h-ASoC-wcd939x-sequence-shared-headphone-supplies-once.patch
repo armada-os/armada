@@ -1,0 +1,78 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: sequence shared headphone supplies once
+
+Start the shared Class-H sequence for the first headphone channel and
+stop it after the last channel. The second channel must not repeat shared
+startup writes or reset shared modes while the other channel is active.
+
+This follows the headphone-state transitions in the Pocket S2 Android
+driver and adapts Diogo Trindade's first/last-channel implementation.
+Keep the existing PCM mode selection and transport configuration.
+
+Link: https://github.com/diogotr7/armada/commit/d7896cae0a0f1b957140ec779d609b6d6e0e889d
+Signed-off-by: mrdidit <26687854+mrdidit@users.noreply.github.com>
+---
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -135,6 +135,8 @@
+ 	WCD_ADC3,
+ 	WCD_ADC4,
+ 	HPH_PA_DELAY,
++	HPHL_ACTIVE,
++	HPHR_ACTIVE,
+ };
+ 
+ enum {
+@@ -811,8 +813,10 @@
+ 			snd_soc_component_write_field(component, WCD939X_LDOH_MODE,
+ 						      WCD939X_MODE_LDOH_EN, true);
+ 
+-		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
+-					WCD_CLSH_STATE_HPHR, hph_mode);
++		if (!test_bit(HPHL_ACTIVE, &wcd939x->status_mask))
++			wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
++						WCD_CLSH_STATE_HPHR, hph_mode);
++		set_bit(HPHR_ACTIVE, &wcd939x->status_mask);
+ 		if (!wcd939x->hph_pcm_enabled)
+ 			wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
+ 
+@@ -914,8 +918,10 @@
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL1,
+ 					      WCD939X_PDM_WD_CTL1_PDM_WD_EN, 0);
+ 
+-		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_POST_PA,
+-					WCD_CLSH_STATE_HPHR, hph_mode);
++		clear_bit(HPHR_ACTIVE, &wcd939x->status_mask);
++		if (!test_bit(HPHL_ACTIVE, &wcd939x->status_mask))
++			wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_POST_PA,
++						WCD_CLSH_STATE_HPHR, hph_mode);
+ 		if (wcd939x->ldoh)
+ 			snd_soc_component_write_field(component, WCD939X_LDOH_MODE,
+ 						      WCD939X_MODE_LDOH_EN, false);
+@@ -942,8 +948,10 @@
+ 			snd_soc_component_write_field(component, WCD939X_LDOH_MODE,
+ 						      WCD939X_MODE_LDOH_EN, true);
+ 
+-		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
+-					WCD_CLSH_STATE_HPHL, hph_mode);
++		if (!test_bit(HPHR_ACTIVE, &wcd939x->status_mask))
++			wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
++						WCD_CLSH_STATE_HPHL, hph_mode);
++		set_bit(HPHL_ACTIVE, &wcd939x->status_mask);
+ 		if (!wcd939x->hph_pcm_enabled)
+ 			wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
+ 
+@@ -1041,8 +1049,10 @@
+ 					      WCD939X_HPH_HPHL_REF_ENABLE, false);
+ 		snd_soc_component_write_field(component, WCD939X_DIGITAL_PDM_WD_CTL0,
+ 					      WCD939X_PDM_WD_CTL0_PDM_WD_EN, 0);
+-		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_POST_PA,
+-					WCD_CLSH_STATE_HPHL, hph_mode);
++		clear_bit(HPHL_ACTIVE, &wcd939x->status_mask);
++		if (!test_bit(HPHR_ACTIVE, &wcd939x->status_mask))
++			wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_POST_PA,
++						WCD_CLSH_STATE_HPHL, hph_mode);
+ 		if (wcd939x->ldoh)
+ 			snd_soc_component_write_field(component, WCD939X_LDOH_MODE,
+ 						      WCD939X_MODE_LDOH_EN, false);
