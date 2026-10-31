@@ -20,6 +20,7 @@ export const ptBR = {
   "options.eco": "Economia",
   "options.balanced": "Balanceado",
   "options.performance": "Desempenho",
+  "options.conservative": "Conservative",
   "options.ondemand": "Ondemand",
   "options.userspace": "Userspace",
   "options.schedutil": "Schedutil",
