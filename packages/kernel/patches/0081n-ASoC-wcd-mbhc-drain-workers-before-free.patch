@@ -1,0 +1,27 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd-mbhc: drain jack work before releasing state
+
+Cancel plug-detection work outside its mutex to avoid deadlocking a
+worker waiting for that lock. Drain correction work after its producer
+and delayed button work before freeing MBHC state. This is required
+for safe consumer teardown when the measurement supplier is removed.
+
+---
+
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.c b/sound/soc/codecs/wcd-mbhc-v2.c
+--- a/sound/soc/codecs/wcd-mbhc-v2.c
++++ b/sound/soc/codecs/wcd-mbhc-v2.c
+@@ -1650,10 +1650,12 @@
+ 	free_irq(mbhc->intr_ids->mbhc_btn_press_intr, mbhc);
+ 	free_irq(mbhc->intr_ids->mbhc_sw_intr, mbhc);
+ 
++	/* Plug detection can queue correction work. */
++	cancel_work_sync(&mbhc->mbhc_plug_detect_work);
+ 	mutex_lock(&mbhc->lock);
+ 	wcd_cancel_hs_detect_plug(mbhc,	&mbhc->correct_plug_swch);
+-	cancel_work_sync(&mbhc->mbhc_plug_detect_work);
+ 	mutex_unlock(&mbhc->lock);
++	wcd_cancel_btn_work(mbhc);
+ 
+ 	kfree(mbhc);
+ }

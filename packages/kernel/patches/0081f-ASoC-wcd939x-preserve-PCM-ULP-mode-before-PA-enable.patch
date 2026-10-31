@@ -1,0 +1,40 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: preserve PCM ULP mode before PA enable
+
+Both headphone PRE_PMU callbacks select the requested Class-H state and
+then unconditionally replace its power mode with HiFi. For PCM ULP this
+leaves the PA enabled in HiFi until POST_PMU restores power level 3 after
+the startup delay. The Android WCD939x PCM ULP sequence does not force
+this intervening HiFi mode.
+
+Skip the forced HiFi mode only for PCM ULP on both channels. Preserve the
+PDM and other-mode sequences, shared Class-H control calls, delays and
+the existing POST_PMU power-level write.
+
+Reference: Pocket S2 Android WCD939x PA callback audit and active route
+captures. Audible improvement remains unvalidated.
+---
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -839,7 +839,8 @@
+ 
+ 		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
+ 					WCD_CLSH_STATE_HPHR, hph_mode);
+-		wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
++		if (!wcd939x->hph_pcm_enabled || hph_mode != CLS_H_ULP)
++			wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
+ 
+ 		if (!wcd939x->hph_pcm_enabled &&
+ 		    (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI || hph_mode == CLS_H_ULP))
+@@ -981,7 +982,8 @@
+ 
+ 		wcd_clsh_ctrl_set_state(wcd939x->clsh_info, WCD_CLSH_EVENT_PRE_DAC,
+ 					WCD_CLSH_STATE_HPHL, hph_mode);
+-		wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
++		if (!wcd939x->hph_pcm_enabled || hph_mode != CLS_H_ULP)
++			wcd_clsh_set_hph_mode(wcd939x->clsh_info, CLS_H_HIFI);
+ 
+ 		if (!wcd939x->hph_pcm_enabled &&
+ 		    (hph_mode == CLS_H_LP || hph_mode == CLS_H_LOHIFI || hph_mode == CLS_H_ULP))
