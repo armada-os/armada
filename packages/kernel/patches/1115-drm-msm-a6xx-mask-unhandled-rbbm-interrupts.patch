@@ -1,0 +1,65 @@
+From: Armada <no-reply@armadaos.dev>
+Subject: [PATCH] drm/msm/a6xx: mask RBBM interrupts that nothing handles
+
+A7XX_INT_MASK enables GPC_ERROR, PM4CPINTERRUPT, CP_RB_DONE_TS,
+UCHE_TRAP_INTR and TSBWRITEERROR, but a6xx_irq() acts on none of them.
+A6XX_INT_MASK likewise enables CP_IB1, CP_IB2, CP_RB and
+UCHE_TRAP_INTR. On a hung A722 one of them re-asserts as fast as it is
+cleared: the GPU IRQ fires ~250k times a second with no message, pins
+its CPU in hardirq and starves every other interrupt routed there
+(battery, Wi-Fi, audio, input), freezing the device for minutes until
+hangcheck recovers.
+
+On the Retroid Pocket Duo it is GPC_ERROR (bit 7, 0x80), raised by
+some emulator workloads. Masked, the GPU carries on without a reset.
+KGSL logs GPC_ERROR as typically a software programming error, masks
+all GPU interrupts and forces a GPU fault and restart.
+
+Mask each unhandled bit the first time it fires, with a rate-limited
+warning naming it. hw_init restores the full mask on the next reset or
+resume. This covers every GPU served by a6xx_irq(), A6xx and A7xx.
+---
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -1899,9 +1899,21 @@
+ 	return 0;
+ }
+ 
++/* RBBM_INT_0 sources that a6xx_irq() acts on */
++#define A6XX_IRQ_HANDLED (A6XX_RBBM_INT_0_MASK_RBBM_HANG_DETECT | \
++			  A6XX_RBBM_INT_0_MASK_CP_AHB_ERROR | \
++			  A6XX_RBBM_INT_0_MASK_CP_HW_ERROR | \
++			  A6XX_RBBM_INT_0_MASK_RBBM_ATB_ASYNCFIFO_OVERFLOW | \
++			  A6XX_RBBM_INT_0_MASK_RBBM_ATB_BUS_OVERFLOW | \
++			  A6XX_RBBM_INT_0_MASK_UCHE_OOB_ACCESS | \
++			  A6XX_RBBM_INT_0_MASK_SWFUSEVIOLATION | \
++			  A6XX_RBBM_INT_0_MASK_CP_CACHE_FLUSH_TS | \
++			  A6XX_RBBM_INT_0_MASK_CP_SW)
++
+ static irqreturn_t a6xx_irq(struct msm_gpu *gpu)
+ {
+ 	struct msm_drm_private *priv = gpu->dev->dev_private;
++	u32 unhandled;
+ 
+ 	/* Set keepalive vote to avoid power collapse after RBBM_INT_0_STATUS is read */
+ 	a6xx_gpu_keepalive_vote(gpu, true);
+@@ -1913,6 +1925,19 @@
+ 
+ 	gpu_write(gpu, REG_A6XX_RBBM_INT_CLEAR_CMD, status);
+ 
++	/*
++	 * Nothing services these. On a hung GPU one can re-assert as fast as
++	 * it is cleared and pin a CPU in hardirq, so mask it until the next
++	 * hw_init (reset or resume) restores the full mask.
++	 */
++	unhandled = status & ~A6XX_IRQ_HANDLED;
++	if (unhandled) {
++		dev_warn_ratelimited(&gpu->pdev->dev,
++				     "RBBM | masking unhandled interrupt(s) 0x%08x\n",
++				     unhandled);
++		gpu_rmw(gpu, REG_A6XX_RBBM_INT_0_MASK, unhandled, 0);
++	}
++
+ 	if (priv->disable_err_irq) {
+ 		/* Turn off interrupts to avoid interrupt storm */
+ 		gpu_write(gpu, REG_A6XX_RBBM_INT_0_MASK, A6XX_RBBM_INT_0_MASK_CP_CACHE_FLUSH_TS);

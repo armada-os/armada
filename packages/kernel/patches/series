@@ -290,6 +290,8 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1110-arm64-dts-qcom-eliza-gpu-cooling.patch
 1111-drm-panel-vtdr6130-add-pocket-duo.patch
 1114-remoteproc-qcom-add-eliza-wpss.patch
+1115-drm-msm-a6xx-mask-unhandled-rbbm-interrupts.patch
+1116-drm-msm-a6xx-set-up-a722-without-a-bv-pipe.patch
 1140-wifi-ath12k-move-MSI-state-from-ath12k-pci-to-ath12k-base.patch
 1141-wifi-ath12k-share-the-register-window-geometry-with-the-core.patch
 1142-wifi-ath12k-let-the-MSI-CE-DP-IRQ-setup-serve-platform-devices.patch

@@ -1,16 +1,17 @@
 From: Armada <no-reply@armadaos.dev>
-Subject: [PATCH] tu: keep MUTABLE_FORMAT images tiled with UBWC
+Subject: [PATCH] tu: keep UBWC on MUTABLE_FORMAT images
 
 Adapted from:
 https://github.com/Vauzi-17/710/blob/6828465a8bc2ae08b705e4a67a6a2bb76197e231/patches/30-tu-z-mutable.py
 
 On GPUs without ubwc_all_formats_compatible (A722 included), upstream drops
-UBWC and tiling for MUTABLE_FORMAT images whose format list has component
-swaps. TU_Z_MUTABLE picks the behavior:
-  0  upstream (linear, no UBWC)
-  1  stay tiled, UBWC off
-  2  stay tiled, UBWC kept (Turnip-Z default, both for !mutable_ubwc_fc and mutable_ubwc_fc)
-R8G8<->R16 reinterpretation always falls back to linear, as upstream.
+UBWC for MUTABLE_FORMAT images. TU_Z_MUTABLE picks the behavior:
+  0, 1  upstream (UBWC off)
+  2     UBWC kept (default)
+Images whose format list has component swaps, or that have no format list,
+still fall back to linear as upstream: tiled views can't swap components, so
+a BGRA view of RGBA texels would swap red and blue. The Turnip-Z original
+kept those tiled too. R8G8<->R16 reinterpretation also stays linear.
 ---
 diff --git a/src/freedreno/vulkan/tu_image.cc b/src/freedreno/vulkan/tu_image.cc
 index 8d8c7ae..b3ba154 100644
@@ -19,7 +20,7 @@ index 8d8c7ae..b3ba154 100644
 @@ -33,6 +33,8 @@
  #include "tu_subsampled_image.h"
  #include "tu_wsi.h"
- 
+
 +DEBUG_GET_ONCE_NUM_OPTION(tu_z_mutable, "TU_Z_MUTABLE", 2)
 +
  uint32_t
@@ -35,12 +36,3 @@ index 8d8c7ae..b3ba154 100644
                 if (fmt_list && fmt_list->viewFormatCount == 2) {
                    perf_debug(
                       device,
-@@ -653,7 +656,7 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
-             bool r8g8_r16 = format_list_reinterprets_r8g8_r16(vk_format_to_pipe_format(image->vk.format), fmt_list);
-             bool fmt_list_has_swaps = format_list_has_swaps(fmt_list);
- 
--            if (r8g8_r16 || fmt_list_has_swaps) {
-+            if (r8g8_r16 || (fmt_list_has_swaps && z_mutable < 1)) {
-                ubwc_enabled = false;
-                force_linear_tile = true;
-             }

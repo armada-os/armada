@@ -1,0 +1,78 @@
+From: Armada <no-reply@armadaos.dev>
+Subject: [PATCH] freedreno: WFI in A722 binning when vertex buffers change
+
+When the vertex buffer bindings change between draws in a render pass,
+the A722's binning pass appears to bin a draw with the vertex buffers
+of an earlier one. Geometry goes missing from some tiles and flickers,
+and the GPU raises RBBM GPC errors (RBBM_INT_0 bit 7). It shows on
+transparent effects and moving sprites drawn from a streamed vertex
+buffer that is rebound between draws.
+
+Rendering is correct in sysmem mode and in GMEM mode without binning.
+Waiting for idle before every draw in the render pass fixes it.
+Narrowing that down, only draws that change the vertex buffers need
+the wait, and only in the binning pass: the same wait in the GMEM tile
+passes alone leaves the flicker. With the wait in the binning pass, the
+flicker and the GPC errors both stop.
+
+Emit a WFI under a binning-only CP_COND_REG_EXEC before draws that
+change the vertex buffers, on A722 only. TU_CMD_DIRTY_DRAW_STATE is
+included because draws after a 3D clear re-enable the vertex buffer
+draw state without TU_CMD_DIRTY_VERTEX_BUFFERS. The tile passes skip
+the wait, and draws that keep their vertex buffers are unaffected.
+---
+diff --git a/src/freedreno/common/freedreno_dev_info.h b/src/freedreno/common/freedreno_dev_info.h
+index 18717e2..098d190 100644
+--- a/src/freedreno/common/freedreno_dev_info.h
++++ b/src/freedreno/common/freedreno_dev_info.h
+@@ -442,6 +442,13 @@ struct fd_dev_info {
+        */
+       bool storage_ubwc_internal_quirk;
+ 
++      /* a722's binning pass appears to bin a draw with the vertex buffers
++       * of an earlier one when the bindings change between draws, which
++       * drops geometry from some bins and raises RBBM GPC errors. Wait for
++       * idle in the binning pass before draws that change them.
++       */
++      bool binning_vb_change_wfi_quirk;
++
+       /* Whether CP_ALWAYS_ON_COUNTER only resets on device loss rather than
+        * on every suspend/resume.
+        */
+diff --git a/src/freedreno/common/freedreno_devices.py b/src/freedreno/common/freedreno_devices.py
+index 3ee309f..366e52d 100644
+--- a/src/freedreno/common/freedreno_devices.py
++++ b/src/freedreno/common/freedreno_devices.py
+@@ -1123,7 +1123,8 @@ add_gpus([
+         CHIP.A7XX,
+         [a7xx_base, a7xx_gen1, GPUProps(no_bv = True,
+                                         has_lpac = False,
+-                                        storage_ubwc_internal_quirk = True)],
++                                        storage_ubwc_internal_quirk = True,
++                                        binning_vb_change_wfi_quirk = True)],
+         num_ccu = 2,
+         tile_align_w = 64,
+         tile_align_h = 32,
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 50b33de..c967218 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -8682,6 +8682,18 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
+ 
+    tu_emit_cache_flush_renderpass<CHIP>(cmd);
+ 
++   /* TU_CMD_DIRTY_DRAW_STATE re-enables the vertex buffer draw state
++    * after a 3D clear without setting TU_CMD_DIRTY_VERTEX_BUFFERS.
++    */
++   if ((cmd->state.dirty & (TU_CMD_DIRTY_VERTEX_BUFFERS |
++                            TU_CMD_DIRTY_DRAW_STATE)) &&
++       cmd->device->physical_device->info->props.binning_vb_change_wfi_quirk) {
++      tu_cond_exec_start(cs, CP_COND_REG_EXEC_0_MODE(RENDER_MODE) |
++                             CP_COND_REG_EXEC_0_BINNING);
++      tu_cs_emit_wfi(cs);
++      tu_cond_exec_end(cs);
++   }
++
+   if (BITSET_TEST(cmd->vk.dynamic_graphics_state.dirty,
+                   MESA_VK_DYNAMIC_IA_PRIMITIVE_RESTART_ENABLE) ||
+       BITSET_TEST(cmd->vk.dynamic_graphics_state.dirty,

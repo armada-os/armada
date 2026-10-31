@@ -40,7 +40,8 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0011-tu-z-mutable-ubwc.patch`
   source: https://github.com/Vauzi-17/710/blob/6828465a8bc2ae08b705e4a67a6a2bb76197e231/patches/30-tu-z-mutable.py
   affects: A6xx and A7xx up to A740 (not A750 or A8xx)
-  notes: script converted to a patch
+  notes: script converted to a patch, without its change that kept images with
+  component-swapped view formats tiled (swapped red and blue in shadPS4)
 - `patches/0012-tu-z-mutable-ubwc-copy-format.patch`
   source: armada
   affects: A740
