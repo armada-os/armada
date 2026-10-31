@@ -176,21 +176,26 @@ def set_bottom_screen_enabled(enabled):
     return bool(call("set_bottom_screen_enabled", enabled=bool(enabled)).get("enabled"))
 
 
-def bottom_screen_brightness():
+def bottom_screen_status():
     try:
         result = call("get_bottom_screen_brightness")
-        if result.get("supported"):
-            return int(result.get("brightness", 0))
+        supported = bool(result.get("supported"))
+        return {
+            "supported": supported,
+            "brightness": int(result.get("brightness", 0)) if supported else 0,
+            "active": bool(result.get("active")),
+        }
     except Exception:
-        pass
-    return None
+        return {"supported": False, "brightness": 0, "active": False}
+
+
+def bottom_screen_brightness():
+    result = bottom_screen_status()
+    return result["brightness"] if result["supported"] else None
 
 
 def bottom_screen_active():
-    try:
-        return bool(call("get_bottom_screen_brightness").get("active"))
-    except Exception:
-        return False
+    return bottom_screen_status()["active"]
 
 
 def set_bottom_screen_brightness(brightness):
@@ -250,6 +255,48 @@ def get_sleep_logs_enabled():
     return enabled
 
 
+def sleep_log_directory():
+    result = run_cmd([
+        "busctl", "--json=short", "get-property", "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1/unit/systemd_2dsuspend_2eservice",
+        "org.freedesktop.systemd1.Service", "Environment", "EnvironmentFiles",
+        "PassEnvironment", "UnsetEnvironment",
+    ])
+    if result is None or result.returncode:
+        return None
+    try:
+        environment, files, passed, unset = [json.loads(line)["data"] for line in result.stdout.splitlines()]
+        # Let systemd own environment-file parsing; don't show a guessed path.
+        if files:
+            return None
+        values = {}
+        if "ARMADA_SLEEP_DEBUG_REPORT_DIR" in passed:
+            manager = run_cmd(["busctl", "--json=short", "get-property", "org.freedesktop.systemd1",
+                               "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "Environment"])
+            if manager is None or manager.returncode:
+                return None
+            values.update(entry.split("=", 1) for entry in json.loads(manager.stdout)["data"])
+        values.update(entry.split("=", 1) for entry in environment)
+        name = "ARMADA_SLEEP_DEBUG_REPORT_DIR"
+        for entry in unset:
+            key, separator, value = entry.partition("=")
+            if not separator or values.get(key) == value:
+                values.pop(key, None)
+        env = clean_env()
+        env.pop(name, None)
+        if name in values:
+            env[name] = values[name]
+        directory = subprocess.run(["/usr/bin/bash", str(SLEEP_LOG_HOOK_SOURCE), "report-directory"],
+                                   capture_output=True, text=True, check=True, timeout=5, env=env).stdout.strip()
+        return directory if Path(directory).is_absolute() else None
+    except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+        return None
+
+
+def get_sleep_logs_status():
+    return {"enabled": get_sleep_logs_enabled(), "directory": sleep_log_directory()}
+
+
 def set_sleep_logs_enabled(enabled):
     if enabled:
         if not all(p.is_file() for p in (SLEEP_DEBUG_COMMAND, SLEEP_DEBUG_MODULE, SLEEP_LOG_HOOK_SOURCE)):
@@ -290,7 +337,7 @@ CORE_PRESET_VARS = (
 )
 
 
-def perf_info():
+def perf_info(env=None):
     governors = [
         g for g in read_text(
             Path("/sys/devices/system/cpu/cpufreq/policy0/scaling_available_governors")
@@ -302,7 +349,7 @@ def perf_info():
     schedulers = ["eevdf"] + [
         name for name in ("cosmos", "lavd") if Path(f"/usr/bin/scx_{name}").exists()
     ]
-    env = device_env()
+    env = device_env() if env is None else env
     presets = [{"data": "all", "label": "All Cores"}]
     for key, label, var in CORE_PRESET_VARS:
         cpulist = env.get(var, "")

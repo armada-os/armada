@@ -10,6 +10,7 @@ python3 -B - "$ROOT" "$WORK" <<'PYEOF'
 import importlib.machinery
 import importlib.util
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
 import struct
@@ -21,6 +22,22 @@ sys.path.insert(0, str(root / "decky/armada-control/py_modules"))
 sys.path.insert(0, str(root / "system_files/usr/lib/armada"))
 
 from armada_control import calibration
+
+calibration.INPUT_CALIBRATION_CONFIG = work / "calibration-metadata.json"
+assert calibration.calibration_metadata()["calibratedAt"] is None
+assert calibration.calibration_metadata()["hasCalibration"] is False
+for old_config in ({}, {"backend": "retroid"}, {"calibratedAt": None},
+                   {"calibratedAt": "2026-10-21"}, {"calibratedAt": "invalid"},
+                   {"calibratedAt": "0001-01-01T00:00:00+14:00"},
+                   {"calibratedAt": "9999-12-31T23:59:59-14:00"}, []):
+    calibration.INPUT_CALIBRATION_CONFIG.write_text(json.dumps(old_config), encoding="utf-8")
+    assert calibration.calibration_metadata()["calibratedAt"] is None
+    assert calibration.calibration_metadata()["hasCalibration"] is True
+calibration.INPUT_CALIBRATION_CONFIG.write_text('{"calibratedAt":"2026-10-21T10:30:00-03:00"}', encoding="utf-8")
+assert calibration.calibration_metadata()["calibratedAt"] == "2026-10-21T13:30:00Z"
+calibration.INPUT_CALIBRATION_CONFIG.write_text("invalid json", encoding="utf-8")
+assert calibration.calibration_metadata()["calibratedAt"] is None
+calibration.INPUT_CALIBRATION_CONFIG.unlink()
 
 
 def parameter_dir(name):
@@ -100,7 +117,16 @@ assert fallback_controls["left_trigger"]["value"] == 555
 assert fallback_controls["right_trigger"]["value"] == 666
 
 calls = []
-calibration.call = lambda action, **payload: calls.append((action, payload)) or {}
+
+
+def record_call(action, **payload):
+    calls.append((action, payload))
+    if action == "write_config" and payload.get("name") == "calibration":
+        calibration.INPUT_CALIBRATION_CONFIG.write_text(payload["text"], encoding="utf-8")
+    return {}
+
+
+calibration.call = record_call
 
 
 def last_write():
@@ -108,9 +134,12 @@ def last_write():
 
 
 calibration.calibration_event = lambda: retroid_event
+read_calibration_status = calibration.calibration_status
 calibration.calibration_status = lambda: {"ok": True}
 calibration.reset_calibration_params()
 reset_payload = last_write()
+assert "calibratedAt" not in reset_payload
+assert reset_payload["calibrated"] is False
 assert reset_payload["backend"] == "retroid"
 assert reset_payload["axis_leftx_min"] == -1408
 assert reset_payload["axis_leftx_max"] == 1408
@@ -165,8 +194,15 @@ def save(captured):
     return calibration.save_calibration()
 
 
+save_started = datetime.now(timezone.utc).replace(microsecond=0)
 save(capture)
 save_payload = last_write()
+saved_at = datetime.fromisoformat(save_payload["calibratedAt"].replace("Z", "+00:00"))
+assert saved_at.tzinfo == timezone.utc
+assert save_started <= saved_at <= datetime.now(timezone.utc)
+assert calibration.calibration_metadata()["calibratedAt"] == save_payload["calibratedAt"]
+assert read_calibration_status()["calibratedAt"] == save_payload["calibratedAt"]
+assert read_calibration_status()["hasCalibration"] is True
 assert save_payload["backend"] == "retroid"
 assert save_payload["axis_leftx_min"] == -1140
 assert save_payload["axis_leftx_deadzone"] == 57
@@ -175,6 +211,32 @@ assert save_payload["trigger_right_max"] == 1464
 assert save_payload["trigger_right_deadzone"] == 45
 assert save_payload["trigger_right_antideadzone"] == 45
 assert calibration._recording is None
+previous_metadata = {"calibratedAt": "2026-10-20T09:00:00Z"}
+calibration.INPUT_CALIBRATION_CONFIG.write_text(json.dumps(previous_metadata), encoding="utf-8")
+saved_call = calibration.call
+
+
+def failed_save(action, **payload):
+    raise RuntimeError("write failed")
+
+
+calibration.call = failed_save
+try:
+    save(capture)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("failed calibration save was reported as success")
+assert calibration.calibration_metadata()["calibratedAt"] == previous_metadata["calibratedAt"]
+try:
+    calibration.reset_calibration_params()
+except RuntimeError:
+    pass
+else:
+    raise AssertionError("failed calibration reset was reported as success")
+assert calibration.calibration_metadata()["calibratedAt"] == previous_metadata["calibratedAt"]
+calibration.call = saved_call
+calibration._recording = None
 try:
     calibration.save_calibration()
 except RuntimeError:
@@ -404,6 +466,11 @@ else:
 assert len(calls) == saves
 (retroid_params / "trigger_left_max").write_text("0", encoding="utf-8")
 
+calibration.reset_calibration_params()
+assert calibration.calibration_metadata()["calibratedAt"] is None
+assert read_calibration_status()["calibratedAt"] is None
+assert read_calibration_status()["hasCalibration"] is False
+
 calibration.calibration_event = lambda: tester_event
 try:
     calibration.reset_calibration_params()
@@ -453,7 +520,7 @@ assert (rsinput_params / "axis_leftx_center").read_text(encoding="utf-8") == "17
 assert (retroid_params / "axis_leftx_center").read_text(encoding="utf-8") == "0"
 
 apply_calibration.CONFIG.write_text(
-    '{"backend":"retroid","axis_leftx_center":23}\n', encoding="utf-8"
+    '{"backend":"retroid","axis_leftx_center":23,"calibratedAt":"2026-10-21T13:30:00Z"}\n', encoding="utf-8"
 )
 apply_calibration.main()
 assert (retroid_params / "axis_leftx_center").read_text(encoding="utf-8") == "23"
@@ -507,11 +574,12 @@ control.run = lambda command, timeout=20: commands.append(command)
 control.action_write_config(
     {
         "name": "calibration",
-        "text": '{"backend":"retroid","axis_righty_center":29}\n',
+        "text": '{"backend":"retroid","axis_righty_center":29,"calibratedAt":"2026-10-21T13:30:00Z"}\n',
     }
 )
 assert (retroid_params / "axis_righty_center").read_text(encoding="utf-8") == "29"
 assert json.loads(control.CONFIG_PATHS["calibration"].read_text())["backend"] == "retroid"
+assert json.loads(control.CONFIG_PATHS["calibration"].read_text())["calibratedAt"] == "2026-10-21T13:30:00Z"
 assert commands == []
 control.unit_active = lambda unit: False
 control.action_reload_input_ranges({})

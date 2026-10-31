@@ -1,15 +1,13 @@
 import configparser
 import math
 import shutil
-import tempfile
 import time
-from pathlib import Path
 
 from .privileged import call
 from .system import at_most, device_env, freq_limits
+from .fan_curves import _parse_fan_curves, normalize_curve_reference, validate_curve_string
+from .power_config import FACTORY_POWER_CONFIG, POWER_CONFIG, POWER_CONFIG_LOCK, render_config
 
-POWER_CONFIG = Path("/etc/armada/power-profiles.conf")
-FACTORY_POWER_CONFIG = Path("/usr/share/armada/power-profiles.conf")
 PROFILES = ("eco", "balanced", "performance")
 
 
@@ -30,18 +28,19 @@ def restore_factory_power_config(reason):
 
 
 def parse_power(path=None, repair=True):
-    parser = configparser.ConfigParser()
-    paths = [path] if path is not None else [FACTORY_POWER_CONFIG, POWER_CONFIG]
-    try:
-        if not parser.read([candidate for candidate in paths if candidate.exists()]):
-            raise FileNotFoundError(path or FACTORY_POWER_CONFIG)
-        return parsed_power(parser)
-    except (configparser.Error, FileNotFoundError, ValueError) as exc:
-        # Avoid factory-restore on IO errors or code bugs in the read path.
-        if path is None and repair:
-            restore_factory_power_config(exc)
-            return parse_power(FACTORY_POWER_CONFIG, repair=False)
-        raise
+    with POWER_CONFIG_LOCK:
+        parser = configparser.ConfigParser()
+        paths = [path] if path is not None else [FACTORY_POWER_CONFIG, POWER_CONFIG]
+        try:
+            if not parser.read([candidate for candidate in paths if candidate.exists()]):
+                raise FileNotFoundError(path or FACTORY_POWER_CONFIG)
+            return parsed_power(parser)
+        except (configparser.Error, FileNotFoundError, ValueError) as exc:
+            # Avoid factory-restore on IO errors or code bugs in the read path.
+            if path is None and repair:
+                restore_factory_power_config(exc)
+                return parse_power(FACTORY_POWER_CONFIG, repair=False)
+            raise
 
 
 def parse_mhz(value):
@@ -86,7 +85,7 @@ def parsed_power(parser):
     data = {
         "general": {"default_profile": parser.get("general", "default_profile")},
         "profiles": {},
-        "fan_curves": {},
+        "fan_curves": _parse_fan_curves(parser),
         "fan": {},
         "underclocks": {},
     }
@@ -103,17 +102,10 @@ def parsed_power(parser):
             "gpu_max_mhz": parse_mhz(parser.get(section, "gpu_max_mhz", fallback="")),
             "gpu_min": parse_ratio(parser.get(section, "gpu_min")),
             "gpu_min_mhz": parse_mhz(parser.get(section, "gpu_min_mhz", fallback="")),
-            "fan_curve": parser.get(section, "fan_curve"),
+            "fan_curve": normalize_curve_reference(parser.get(section, "fan_curve")),
             **parse_policy_caps(parser, section),
         }
     for section in parser.sections():
-        if section.startswith("fan_curve."):
-            name = section.split(".", 1)[1]
-            data["fan_curves"][name] = {
-                "label": parser.get(section, "label", fallback="") or default_label(name),
-                "curve": parser.get(section, "curve"),
-            }
-            continue
         if not section.startswith("underclock."):
             continue
         parts = section.split(".")
@@ -188,7 +180,10 @@ def resolve_limits(data, limits, device_class):
 def profile_overrides(profile, limits):
     out = {}
     for key in EDITABLE_KEYS:
-        out[key] = str(profile[key])
+        value = profile[key]
+        if key == "fan_curve":
+            value = normalize_curve_reference(value)
+        out[key] = str(value)
     out["cpu_max"] = ratio_text(profile["cpu_max"])
     for mhz_key, ratio_key in LIMIT_KEYS:
         out[mhz_key] = parse_mhz(profile.get(mhz_key))
@@ -278,10 +273,7 @@ def render_power(data, factory, limits, device_class):
         if parser.has_section(section) and not parser.options(section):
             parser.remove_section(section)
 
-    with tempfile.TemporaryFile("w+", encoding="utf-8") as f:
-        parser.write(f)
-        f.seek(0)
-        return f.read()
+    return render_config(parser)
 
 
 def factory_power_defaults():
@@ -300,9 +292,24 @@ def save_power_config(data):
     env = device_env()
     limits = freq_limits(env)
     soc = env.get("ARMADA_SOC_CLASS", "")
-    try:
-        factory = resolve_limits(factory_power_defaults(), limits, soc)
-        rendered = render_power(data, factory, limits, soc)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"malformed power config: {exc}")
-    call("write_config", name="power", text=rendered)
+    with POWER_CONFIG_LOCK:
+        try:
+            curves = parse_power()["fan_curves"]
+            for profile in data["profiles"].values():
+                reference = normalize_curve_reference(profile["fan_curve"])
+                if reference not in curves:
+                    validate_curve_string(reference)
+            factory = resolve_limits(factory_power_defaults(), limits, soc)
+            rendered = render_power(data, factory, limits, soc)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"malformed power config: {exc}")
+        call("write_config", name="power", text=rendered)
+
+
+def save_power_profile(profile_id, profile):
+    if not isinstance(profile_id, str) or profile_id not in PROFILES or not isinstance(profile, dict):
+        raise ValueError("invalid power profile")
+    with POWER_CONFIG_LOCK:
+        data = parse_power()
+        data["profiles"][profile_id].update(profile)
+        save_power_config(data)

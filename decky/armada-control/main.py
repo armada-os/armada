@@ -8,9 +8,17 @@ from armada_control.calibration import (
     save_calibration,
     start_recording,
 )
-from armada_control.config import build_config
+from armada_control.config import (
+    build_about_config,
+    build_config,
+    build_controller_config,
+    build_device_config,
+    build_experimental_config,
+    build_initial_config,
+    build_profiles_config,
+)
 from armada_control.controller import set_controller_type
-from armada_control.power import save_power_config
+from armada_control.power import save_power_config, save_power_profile
 from armada_control.rgb import get_rgb, set_rgb
 from armada_control.steam import compat_mapped_appids, installed_games
 from armada_control.system import (
@@ -27,6 +35,7 @@ from armada_control.system import (
     set_bottom_screen_enabled,
     set_companion_locked,
     get_sleep_logs_enabled,
+    get_sleep_logs_status,
     set_mtp_enabled,
     set_desktop_mode,
     set_gyro_enabled,
@@ -35,7 +44,7 @@ from armada_control.system import (
     set_ssh_enabled,
     set_swipe_gestures_enabled,
 )
-from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
+from armada_control.tweaks import load_compat_applied, patch_tweaks, save_compat_applied, save_tweaks
 from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves, save_charging_pwm
 from armada_control.fan_sensors import get_current_temp
 
@@ -44,6 +53,24 @@ class Plugin:
     # Offload blocking work to a thread so a slow call can't stall Decky's asyncio loop.
     async def get_config(self):
         return await asyncio.to_thread(build_config, False)
+
+    async def get_initial_config(self):
+        return await asyncio.to_thread(build_initial_config)
+
+    async def get_profiles_config(self):
+        return await asyncio.to_thread(build_profiles_config)
+
+    async def get_controller_config(self):
+        return await asyncio.to_thread(build_controller_config)
+
+    async def get_device_config(self):
+        return await asyncio.to_thread(build_device_config)
+
+    async def get_experimental_config(self):
+        return await asyncio.to_thread(build_experimental_config)
+
+    async def get_about_config(self):
+        return await asyncio.to_thread(build_about_config)
 
     async def get_installed_games(self):
         return await asyncio.to_thread(installed_games)
@@ -55,9 +82,16 @@ class Plugin:
         await asyncio.to_thread(save_power_config, data)
         return await self.get_config()
 
+    async def save_power_profile(self, profile_id, profile):
+        await asyncio.to_thread(save_power_profile, profile_id, profile)
+        return await self.get_config()
+
     async def save_tweaks(self, data):
         await asyncio.to_thread(save_tweaks, data)
         return await self.get_config()
+
+    async def patch_tweaks(self, changes):
+        return {"tweaks": await asyncio.to_thread(patch_tweaks, changes)}
 
     async def get_compat_applied(self):
         return await asyncio.to_thread(load_compat_applied)
@@ -116,6 +150,9 @@ class Plugin:
     async def get_sleep_logs_enabled(self):
         return await asyncio.to_thread(get_sleep_logs_enabled)
 
+    async def get_sleep_logs_status(self):
+        return await asyncio.to_thread(get_sleep_logs_status)
+
     async def set_sleep_logs_enabled(self, enabled):
         return await asyncio.to_thread(set_sleep_logs_enabled, enabled)
 
@@ -163,8 +200,8 @@ class Plugin:
     async def get_fans_state(self):
         return await asyncio.to_thread(get_fans_state)
 
-    async def save_fan_curves(self, fan_curves, fan_settings):
-        return await asyncio.to_thread(save_fan_curves, fan_curves, fan_settings)
+    async def save_fan_curves(self, fan_curves, deleted=None):
+        return await asyncio.to_thread(save_fan_curves, fan_curves, deleted)
 
     async def set_charging_fan_pwm(self, pwm):
         return await asyncio.to_thread(save_charging_pwm, pwm)

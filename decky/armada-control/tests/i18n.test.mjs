@@ -68,7 +68,7 @@ assert.equal(translate("pt-PT", "common.loading"), "A carregar");
 assert.equal(translateLabelForLocale("en", "Balanced"), "Balanced");
 assert.equal(translateLabelForLocale("zh-CN", "Balanced"), "均衡");
 assert.equal(translateLabelForLocale("zh-CN", "Big Cores (4-7)"), "大核心 (4-7)");
-assert.equal(translateLabelForLocale("pt-BR", "Balanced"), "Balanceado");
+assert.equal(translateLabelForLocale("pt-BR", "Balanced"), "Equilibrado");
 assert.equal(translateLabelForLocale("pt-PT", "Balanced"), "Equilibrado");
 assert.equal(translateLabelForLocale("zh-CN", "Untranslated runtime label"), "Untranslated runtime label");
 

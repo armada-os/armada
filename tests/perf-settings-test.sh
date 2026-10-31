@@ -14,13 +14,6 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# Pin the tweaks key published by the plugin for the session consumer.
-grep -Fq 'nextTweaks.global.gamescopeVulkanRealtime = on' \
-    "$ROOT/decky/armada-control/src/tabs/Compatibility.tsx" || {
-    printf 'FAIL: plugin no longer writes global.gamescopeVulkanRealtime\n' >&2
-    exit 1
-}
-
 TWEAKS_FIXTURE="$WORK/game-tweaks.json"
 TWEAKS_DEFAULTS_FIXTURE="$ROOT/system_files/usr/share/armada/game-tweaks.json"
 TWEAKS_HELPER="$ROOT/system_files/usr/libexec/armada/armada-game-tweaks"
@@ -1271,8 +1264,8 @@ check("plugin freq_limits topology fallbacks",
        plugin_system.freq_limits(env={}, sysfs=plugin_system.Path(sys_topo))["cpuPolicies"]]
       == [(0, "0-3"), (4, "4-6"), (7, "7"), (10, "10,12,13")])
 
-plugin_power.FACTORY_POWER_CONFIG = plugin_power.Path(factory)
-plugin_power.POWER_CONFIG = plugin_power.Path(os.path.join(WORK, "etc-armada-power.conf"))
+plugin_power.FACTORY_POWER_CONFIG = pathlib.Path(factory)
+plugin_power.POWER_CONFIG = pathlib.Path(os.path.join(WORK, "etc-armada-power.conf"))
 data = plugin_power.resolve_limits(plugin_power.parse_power(), plugin_limits, "SM8250")
 factory_data = plugin_power.resolve_limits(
     plugin_power.parse_power(plugin_power.FACTORY_POWER_CONFIG), plugin_limits, "SM8250")

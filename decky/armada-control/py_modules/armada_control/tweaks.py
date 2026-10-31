@@ -1,7 +1,9 @@
+import copy
 import json
 import os
 import sys
 from pathlib import Path
+from threading import RLock
 
 from .privileged import call
 
@@ -15,6 +17,8 @@ PLUGIN_FEX_PROFILES_CONFIG = Path(__file__).resolve().parent.parent / "fex-profi
 ENV_PRESETS_CONFIG = Path("/usr/share/armada/env-presets.json")
 ENV_PRESETS_OVERRIDE = Path("/etc/armada/env-presets.json")
 USER_HOME = Path("/var/home/armada")
+TWEAKS_CONFIG_LOCK = RLock()
+MAX_TWEAKS_BYTES = 256 * 1024
 
 
 def load_fex_contract():
@@ -61,10 +65,14 @@ def load_tweaks():
     return armada_game_tweaks.load()
 
 
+def load_tweak_defaults():
+    return armada_game_tweaks.load_defaults()
+
+
 def sanitize_tweaks(data):
     if not isinstance(data, dict):
         raise ValueError("tweaks must be an object")
-    if len(json.dumps(data)) > 256 * 1024:
+    if len(json.dumps(data)) > MAX_TWEAKS_BYTES:
         raise ValueError("tweaks payload too large")
     clean = {"global": {}, "games": {}}
     if isinstance(data.get("global"), dict):
@@ -80,11 +88,50 @@ def sanitize_tweaks(data):
 def tweak_overrides(data):
     clean = sanitize_tweaks(data)
     return armada_game_tweaks.remove_factory_values(
-        clean, armada_game_tweaks.load_defaults())
+        clean, load_tweak_defaults())
 
 
 def save_tweaks(data):
-    call("write_config", name="tweaks", text=json.dumps(tweak_overrides(data), indent=2, sort_keys=True) + "\n")
+    with TWEAKS_CONFIG_LOCK:
+        call("write_config", name="tweaks", text=json.dumps(tweak_overrides(data), indent=2, sort_keys=True) + "\n")
+
+
+def patch_tweaks(changes):
+    if not isinstance(changes, list) or len(json.dumps(changes)) > MAX_TWEAKS_BYTES:
+        raise ValueError("invalid tweaks changes")
+    # Validate the whole patch before changing or writing any settings.
+    for change in changes:
+        if not isinstance(change, dict):
+            raise ValueError("invalid tweaks change")
+        path = change.get("path")
+        if (not isinstance(path, list) or not path
+                or any(not isinstance(part, str) for part in path)
+                or path[0] not in ("global", "games")
+                or (path[0] == "games" and len(path) > 1 and not path[1].isdigit())):
+            raise ValueError("invalid tweaks path")
+        if set(change) == {"path", "remove"} and change["remove"] is True:
+            continue
+        if set(change) != {"path", "value"}:
+            raise ValueError("invalid tweaks change")
+        if (len(path) == 1 or (path[0] == "games" and len(path) == 2)) and not isinstance(change["value"], dict):
+            raise ValueError("invalid tweaks settings")
+    with TWEAKS_CONFIG_LOCK:
+        data = load_tweaks()
+        if not changes:
+            return data
+        for change in changes:
+            current = data
+            for part in change["path"][:-1]:
+                if not isinstance(current.get(part), dict):
+                    current[part] = {}
+                current = current[part]
+            key = change["path"][-1]
+            if change.get("remove"):
+                current.pop(key, None)
+            else:
+                current[key] = copy.deepcopy(change["value"])
+        save_tweaks(data)
+        return load_tweaks()
 
 
 def load_compat_applied():
