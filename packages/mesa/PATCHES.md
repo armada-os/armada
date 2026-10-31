@@ -47,6 +47,9 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0013-freedreno-a7xx-gen1-no-early-preamble.patch`
   source: armada
   affects: A710, A720, A722, A725, A730 (A710 and A720 only on devel)
+- `patches/0014-ir3-dp4acc-const-src.patch`
+  source: armada
+  affects: A740 (a7xx gen2; tested on A740 only)
 
 Disabled (kept in `patches/disabled/`, which isn't applied):
 

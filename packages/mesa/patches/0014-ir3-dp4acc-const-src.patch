@@ -1,0 +1,63 @@
+From: Armada <no-reply@armadaos.dev>
+Subject: [PATCH] ir3: allow const src1/src3 for dp2acc/dp4acc on a7xx gen2
+
+ir3_valid_flags() never let dp2acc/dp4acc take a const-file source,
+unlike every other cat3 ALU instruction, so a dot product with a
+uniform operand (int8 weights of a network in the const file, a
+bias accumulator) got one mov per use to copy the const into a GPR.
+
+The ISA encodes src1 and src3 of #instruction-cat3-dp with the same
+#cat3-src fields as other cat3, which take const registers. Allow const
+src1/src3 (not src2, and not relative const) behind a new dev_info
+property, enabled for a7xx gen2 where it has been tested on A740:
+dEQP-VK integer dot product tests unchanged, FSR 4 output bit-identical,
+and the FSR 4 upscale 17.1 -> 14.8 ms per frame at 680 MHz.
+---
+diff --git a/src/freedreno/common/freedreno_dev_info.h b/src/freedreno/common/freedreno_dev_info.h
+index 4ebefde..015b3ab 100644
+--- a/src/freedreno/common/freedreno_dev_info.h
++++ b/src/freedreno/common/freedreno_dev_info.h
+@@ -186,6 +186,12 @@ struct fd_dev_info {
+       bool has_dp2acc;
+       bool has_dp4acc;
+ 
++      /* Whether dp2acc/dp4acc may read src1 (the first packed 8-bit vector)
++       * and src3 (the 32-bit accumulator) from the const file, like other
++       * cat3 instructions. Only enabled where it has been tested.
++       */
++      bool has_dp4acc_const_src;
++
+       /* LRZ fast-clear works on all gens, however blob disables it on
+        * gen1 and gen2. We also elect to disable fast-clear on these gens
+        * because for close to none gains it adds complexity and seem to work
+diff --git a/src/freedreno/common/freedreno_devices.py b/src/freedreno/common/freedreno_devices.py
+index 228ba6a..92d0aeb 100644
+--- a/src/freedreno/common/freedreno_devices.py
++++ b/src/freedreno/common/freedreno_devices.py
+@@ -867,6 +867,9 @@ a7xx_gen2 = GPUProps(
+         has_image_processing = True,
+         has_64b_image_atomics = True,
+         has_implicit_fragface_fragcoord_ij_linear = True,
++        # Tested on A740: dEQP integer dot product tests and FSR 4 output
++        # bit-identical with const src1/src3.
++        has_dp4acc_const_src = True,
+     )
+ 
+ a7xx_gen3 = GPUProps(
+diff --git a/src/freedreno/ir3/ir3.c b/src/freedreno/ir3/ir3.c
+index 46d0ab2..1c37b34 100644
+--- a/src/freedreno/ir3/ir3.c
++++ b/src/freedreno/ir3/ir3.c
+@@ -1828,6 +1828,12 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n, unsigned flags)
+       }
+       case OPC_DP2ACC:
+       case OPC_DP4ACC:
++         /* src1 and src3 can be const (src2 never, see below) where that
++          * has been tested. Relative (a0.x) const access has not been.
++          */
++         if (compiler->info->props.has_dp4acc_const_src &&
++             !(flags & IR3_REG_RELATIV))
++            valid_flags |= IR3_REG_CONST;
+          break;
+       default:
+          valid_flags |= IR3_REG_CONST;
