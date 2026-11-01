@@ -1,0 +1,257 @@
+From: mrdidit <mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: recover SoundWire cache and failed runtime resume
+
+Keep the CSR cache offline after detachment or a failed replay. Serialize
+attachment and runtime-PM cache transitions and propagate replay errors.
+Wait for SoundWire initialization before resuming either peripheral.
+
+After a successful attachment, defer recovery until outstanding PM work
+has completed. Clear only the retained error from this driver's failed
+resume, then request the normal runtime-resume callback. Stop the work
+before component unbind or removal. No timer retry or codec reset is added.
+
+diff --git a/sound/soc/codecs/wcd939x-sdw.c b/sound/soc/codecs/wcd939x-sdw.c
+--- a/sound/soc/codecs/wcd939x-sdw.c
++++ b/sound/soc/codecs/wcd939x-sdw.c
+@@ -1329,12 +1329,144 @@
+ 	.volatile_reg = wcd939x_volatile_register,
+ };
+ 
++static int wcd939x_sdw_sync_cache(struct wcd939x_sdw_priv *wcd)
++{
++	int ret;
++
++	lockdep_assert_held(&wcd->cache_lock);
++
++	regcache_cache_only(wcd->regmap, false);
++	ret = regcache_sync(wcd->regmap);
++	if (ret) {
++		regcache_cache_only(wcd->regmap, true);
++		dev_err(&wcd->sdev->dev, "Failed to sync register cache: %d\n", ret);
++	}
++
++	return ret;
++}
++
++static void wcd939x_sdw_recover(struct work_struct *work)
++{
++#ifdef CONFIG_PM
++	struct wcd939x_sdw_priv *wcd = container_of(work, struct wcd939x_sdw_priv,
++						 recovery_work);
++	struct device *dev = &wcd->sdev->dev;
++	unsigned long flags;
++	bool failed;
++	int ret;
++
++	pm_runtime_get_noresume(dev);
++	/* A resume may still be returning its error to the PM core. */
++	pm_runtime_barrier(dev);
++
++	mutex_lock(&wcd->cache_lock);
++	if (!wcd->recovery_enabled || !wcd->resume_error ||
++	    (wcd->sdev->status != SDW_SLAVE_ATTACHED &&
++	     wcd->sdev->status != SDW_SLAVE_ALERT)) {
++		mutex_unlock(&wcd->cache_lock);
++		goto out;
++	}
++
++	spin_lock_irqsave(&dev->power.lock, flags);
++	failed = dev->power.runtime_status == RPM_SUSPENDED &&
++		 dev->power.runtime_error == wcd->resume_error;
++	spin_unlock_irqrestore(&dev->power.lock, flags);
++	if (failed && wcd->regmap)
++		regcache_cache_only(wcd->regmap, true);
++	mutex_unlock(&wcd->cache_lock);
++	if (!failed)
++		goto out;
++
++	/* Clear only a completed failed resume; the normal resume must run again. */
++	ret = pm_runtime_set_suspended(dev);
++	if (ret) {
++		if (ret != -EAGAIN)
++			dev_err(dev, "Failed to recover runtime PM state: %d\n", ret);
++		goto out;
++	}
++
++	mutex_lock(&wcd->cache_lock);
++	if (wcd->recovery_enabled &&
++	    (wcd->sdev->status == SDW_SLAVE_ATTACHED ||
++	     wcd->sdev->status == SDW_SLAVE_ALERT)) {
++		ret = pm_request_resume(dev);
++		if (ret < 0)
++			dev_err(dev, "Failed to request runtime resume: %d\n", ret);
++	}
++	mutex_unlock(&wcd->cache_lock);
++out:
++	pm_runtime_put_noidle(dev);
++#endif
++}
++
++static int wcd939x_sdw_update_status(struct sdw_slave *slave,
++				   enum sdw_slave_status status)
++{
++	struct wcd939x_sdw_priv *wcd = dev_get_drvdata(&slave->dev);
++	int ret = 0;
++
++	mutex_lock(&wcd->cache_lock);
++	if (status == SDW_SLAVE_UNATTACHED) {
++		if (wcd->regmap) {
++			regcache_cache_only(wcd->regmap, true);
++			regcache_mark_dirty(wcd->regmap);
++		}
++	} else if (status == SDW_SLAVE_ATTACHED) {
++		if (wcd->regmap)
++			ret = wcd939x_sdw_sync_cache(wcd);
++		if (IS_ENABLED(CONFIG_PM) && !ret && wcd->recovery_enabled)
++			queue_work(system_unbound_wq, &wcd->recovery_work);
++	}
++	mutex_unlock(&wcd->cache_lock);
++
++	return ret;
++}
++
+ static const struct sdw_slave_ops wcd9390_slave_ops = {
+-	.update_status = wcd_update_status,
++	.update_status = wcd939x_sdw_update_status,
+ 	.interrupt_callback = wcd9390_interrupt_callback,
+ 	.bus_config = wcd_bus_config,
+ };
+ 
++static int wcd939x_sdw_component_bind(struct device *dev, struct device *master,
++				     void *data)
++{
++	struct wcd939x_sdw_priv *wcd = dev_get_drvdata(dev);
++	int ret;
++
++	ret = wcd_sdw_component_ops.bind(dev, master, data);
++	if (ret)
++		return ret;
++
++	mutex_lock(&wcd->cache_lock);
++	wcd->recovery_enabled = true;
++	mutex_unlock(&wcd->cache_lock);
++
++	return 0;
++}
++
++static void wcd939x_sdw_stop_recovery(struct device *dev)
++{
++	struct wcd939x_sdw_priv *wcd = dev_get_drvdata(dev);
++
++	mutex_lock(&wcd->cache_lock);
++	wcd->recovery_enabled = false;
++	mutex_unlock(&wcd->cache_lock);
++	cancel_work_sync(&wcd->recovery_work);
++}
++
++static void wcd939x_sdw_component_unbind(struct device *dev, struct device *master,
++				       void *data)
++{
++	wcd939x_sdw_stop_recovery(dev);
++	wcd_sdw_component_ops.unbind(dev, master, data);
++}
++
++static const struct component_ops wcd939x_sdw_component_ops = {
++	.bind = wcd939x_sdw_component_bind,
++	.unbind = wcd939x_sdw_component_unbind,
++};
++
+ static int wcd9390_probe(struct sdw_slave *pdev, const struct sdw_device_id *id)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -1366,6 +1498,8 @@
+ 		dev_info(dev, "Static Port mapping not specified\n");
+ 
+ 	wcd->sdev = pdev;
++	mutex_init(&wcd->cache_lock);
++	INIT_WORK(&wcd->recovery_work, wcd939x_sdw_recover);
+ 	dev_set_drvdata(dev, wcd);
+ 
+ 	pdev->prop.scp_int1_mask = SDW_SCP_INT1_IMPL_DEF |
+@@ -1393,7 +1527,7 @@
+ 		regcache_cache_only(wcd->regmap, true);
+ 	}
+ 
+-	ret = component_add(dev, &wcd_sdw_component_ops);
++	ret = component_add(dev, &wcd939x_sdw_component_ops);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1407,7 +1541,8 @@
+ {
+ 	struct device *dev = &pdev->dev;
+ 
+-	component_del(dev, &wcd_sdw_component_ops);
++	wcd939x_sdw_stop_recovery(dev);
++	component_del(dev, &wcd939x_sdw_component_ops);
+ }
+ 
+ static const struct sdw_device_id wcd9390_slave_id[] = {
+@@ -1420,10 +1555,12 @@
+ {
+ 	struct wcd939x_sdw_priv *wcd = dev_get_drvdata(dev);
+ 
++	mutex_lock(&wcd->cache_lock);
+ 	if (wcd->regmap) {
+ 		regcache_cache_only(wcd->regmap, true);
+ 		regcache_mark_dirty(wcd->regmap);
+ 	}
++	mutex_unlock(&wcd->cache_lock);
+ 
+ 	return 0;
+ }
+@@ -1431,13 +1568,25 @@
+ static int wcd939x_sdw_runtime_resume(struct device *dev)
+ {
+ 	struct wcd939x_sdw_priv *wcd = dev_get_drvdata(dev);
++	int ret;
+ 
+-	if (wcd->regmap) {
+-		regcache_cache_only(wcd->regmap, false);
+-		regcache_sync(wcd->regmap);
++	/* The status callback must be able to replay the cache while waiting. */
++	ret = sdw_slave_wait_for_init(wcd->sdev, 2000);
++	mutex_lock(&wcd->cache_lock);
++	if (!ret && wcd->sdev->status != SDW_SLAVE_ATTACHED &&
++	    wcd->sdev->status != SDW_SLAVE_ALERT)
++		ret = -ENODEV;
++
++	if (ret) {
++		if (wcd->regmap)
++			regcache_cache_only(wcd->regmap, true);
++	} else if (wcd->regmap) {
++		ret = wcd939x_sdw_sync_cache(wcd);
+ 	}
++	wcd->resume_error = ret;
++	mutex_unlock(&wcd->cache_lock);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static const struct dev_pm_ops wcd939x_sdw_pm_ops = {
+diff --git a/sound/soc/codecs/wcd939x.h b/sound/soc/codecs/wcd939x.h
+--- a/sound/soc/codecs/wcd939x.h
++++ b/sound/soc/codecs/wcd939x.h
+@@ -6,8 +6,10 @@
+ 
+ #ifndef __WCD939X_H__
+ #define __WCD939X_H__
++#include <linux/mutex.h>
+ #include <linux/soundwire/sdw.h>
+ #include <linux/soundwire/sdw_type.h>
++#include <linux/workqueue.h>
+ 
+ #define WCD939X_BASE					   (0x3000)
+ #define WCD939X_ANA_PAGE				   (0x3000)
+@@ -895,6 +897,10 @@
+ struct wcd939x_priv;
+ struct wcd939x_sdw_priv {
+ 	struct sdw_slave *sdev;
++	struct mutex cache_lock;
++	struct work_struct recovery_work;
++	bool recovery_enabled;
++	int resume_error;
+ 	struct sdw_stream_config sconfig;
+ 	struct sdw_stream_runtime *sruntime;
+ 	struct sdw_port_config port_config[WCD939X_MAX_SWR_PORTS];

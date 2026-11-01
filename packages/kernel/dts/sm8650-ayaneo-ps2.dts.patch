@@ -1,14 +1,50 @@
 From: Armada <noreply@armada.local>
-Subject: [PATCH] arm64: dts: qcom: pocket-s2: use the dedicated sound card
+Subject: [PATCH] arm64: dts: qcom: pocket-s2: configure headphone transport
+
+Jack polarity adapted from rafalrojek's Armada PR #663:
+https://github.com/armada-os/armada/pull/663
+
+PCM setup adapted from ovid-io's Armada PR #803. Class-H master mapping,
+formatter, synchronization period and port packing follow the installed
+Pocket S2 Android driver tables and targeted active register captures:
+https://github.com/armada-os/armada/pull/803
+
+Master packing readback alone does not establish its configured value.
+Port 9 packing 1 follows the Android table and codec DP6 capture.
+
+The independent jack measurement association enables the USBSS RDAC
+selector and checked impedance transaction without Type-C audio routing.
 
 --- a/arch/arm64/boot/dts/qcom/sm8650-ayaneo-ps2.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8650-ayaneo-ps2.dts
-@@ -12,6 +12,10 @@
+@@ -13,6 +13,32 @@
  	compatible = "ayaneo,pocket-s2", "qcom,sm8650";
  };
  
 +&{/sound} {
 +	compatible = "ayaneo,pocket-s2-sndcard";
++};
++
++&wcd939x {
++	qcom,usbss-measurement = <&wcd_usbss>;
++	qcom,hphl-jack-type-normally-closed;
++	qcom,ground-jack-type-normally-closed;
++};
++
++/* Class-H and HPH PCM transport from the stock Pocket S2 configuration. */
++&swr1 {
++	qcom,pcm-ports-mask = <0x204>;
++	qcom,ssp-period = <6>;
++	qcom,ports-master-channel-mask = /bits/ 8 <0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00>;
++	qcom,ports-sinterval =		/bits/ 16 <0x03 0x3f 0x1f 0x07 0x03 0xff 0xff 0x31 0x31 0xff 0xff 0xff>;
++	qcom,ports-offset1 =		/bits/ 8 <0x00 0x00 0x0b 0x09 0x01 0xff 0xff 0x00 0x00 0xff 0xff 0xff>;
++	qcom,ports-offset2 =		/bits/ 8 <0x00 0x00 0x0b 0x00 0x00 0xff 0xff 0x00 0x00 0xff 0xff 0xff>;
++	qcom,ports-hstart =		/bits/ 8 <0xff 0x03 0xff 0xff 0xff 0xff 0xff 0x00 0x00 0xff 0xff 0xff>;
++	qcom,ports-hstop =		/bits/ 8 <0xff 0x06 0xff 0xff 0xff 0xff 0xff 0x0f 0x0f 0xff 0xff 0xff>;
++	qcom,ports-word-length =	/bits/ 8 <0x01 0x07 0x04 0xff 0xff 0xff 0xff 0x18 0x18 0xff 0xff 0xff>;
++	qcom,ports-block-pack-mode =	/bits/ 8 <0xff 0x00 0x01 0xff 0xff 0xff 0xff 0x01 0x01 0xff 0xff 0xff>;
++	qcom,ports-block-group-count =	/bits/ 8 <0xff 0xff 0xff 0x01 0x03 0xff 0xff 0x00 0x00 0xff 0xff 0xff>;
++	qcom,ports-lane-control =	/bits/ 8 <0x01 0x00 0x00 0x00 0x00 0xff 0xff 0x01 0x01 0xff 0xff 0xff>;
 +};
 +
  &i2c4 {

@@ -1,0 +1,106 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: preserve PCM headphone amplifier settling time
+
+The installed Android PCM path uses separate compander controls. Its
+legacy PDM compander flags remain disabled, selecting 20/21 ms waits.
+Linux reuses comp1/comp2_enable for PCM and incorrectly selects 7 ms.
+
+Use the longer waits for PCM while retaining PDM conditions and the
+shared delay flag. The Android/Linux startup traces corroborate this
+timing difference; its contribution to distortion is unproven.
+
+---
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -852,13 +852,9 @@
+ 						      WCD939X_PDM_WD_CTL1_PDM_WD_EN, 3);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMU:
+-		/*
+-		 * 7ms sleep is required if compander is enabled as per
+-		 * HW requirement. If compander is disabled, then
+-		 * 20ms delay is required.
+-		 */
++		/* Only the legacy PDM compander permits the shorter PA settling time. */
+ 		if (test_bit(HPH_PA_DELAY, &wcd939x->status_mask)) {
+-			if (!wcd939x->comp2_enable)
++			if (wcd939x->hph_pcm_enabled || !wcd939x->comp2_enable)
+ 				usleep_range(20000, 20100);
+ 			else
+ 				usleep_range(7000, 7100);
+@@ -887,12 +883,7 @@
+ 	case SND_SOC_DAPM_PRE_PMD:
+ 		if (!wcd939x->hph_pcm_enabled)
+ 			disable_irq_nosync(wcd939x->hphr_pdm_wd_int);
+-		/*
+-		 * 7ms sleep is required if compander is enabled as per
+-		 * HW requirement. If compander is disabled, then
+-		 * 20ms delay is required.
+-		 */
+-		if (!wcd939x->comp2_enable)
++		if (wcd939x->hph_pcm_enabled || !wcd939x->comp2_enable)
+ 			usleep_range(20000, 20100);
+ 		else
+ 			usleep_range(7000, 7100);
+@@ -905,13 +896,8 @@
+ 		set_bit(HPH_PA_DELAY, &wcd939x->status_mask);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+-		/*
+-		 * 7ms sleep is required if compander is enabled as per
+-		 * HW requirement. If compander is disabled, then
+-		 * 20ms delay is required.
+-		 */
+ 		if (test_bit(HPH_PA_DELAY, &wcd939x->status_mask)) {
+-			if (!wcd939x->comp2_enable)
++			if (wcd939x->hph_pcm_enabled || !wcd939x->comp2_enable)
+ 				usleep_range(20000, 20100);
+ 			else
+ 				usleep_range(7000, 7100);
+@@ -988,13 +974,9 @@
+ 						      WCD939X_PDM_WD_CTL0_PDM_WD_EN, 3);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMU:
+-		/*
+-		 * 7ms sleep is required if compander is enabled as per
+-		 * HW requirement. If compander is disabled, then
+-		 * 20ms delay is required.
+-		 */
++		/* Only the legacy PDM compander permits the shorter PA settling time. */
+ 		if (test_bit(HPH_PA_DELAY, &wcd939x->status_mask)) {
+-			if (!wcd939x->comp1_enable)
++			if (wcd939x->hph_pcm_enabled || !wcd939x->comp1_enable)
+ 				usleep_range(20000, 20100);
+ 			else
+ 				usleep_range(7000, 7100);
+@@ -1021,12 +1003,7 @@
+ 	case SND_SOC_DAPM_PRE_PMD:
+ 		if (!wcd939x->hph_pcm_enabled)
+ 			disable_irq_nosync(wcd939x->hphl_pdm_wd_int);
+-		/*
+-		 * 7ms sleep is required if compander is enabled as per
+-		 * HW requirement. If compander is disabled, then
+-		 * 20ms delay is required.
+-		 */
+-		if (!wcd939x->comp1_enable)
++		if (wcd939x->hph_pcm_enabled || !wcd939x->comp1_enable)
+ 			usleep_range(20000, 20100);
+ 		else
+ 			usleep_range(7000, 7100);
+@@ -1038,13 +1015,8 @@
+ 		set_bit(HPH_PA_DELAY, &wcd939x->status_mask);
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
+-		/*
+-		 * 7ms sleep is required if compander is enabled as per
+-		 * HW requirement. If compander is disabled, then
+-		 * 20ms delay is required.
+-		 */
+ 		if (test_bit(HPH_PA_DELAY, &wcd939x->status_mask)) {
+-			if (!wcd939x->comp1_enable)
++			if (wcd939x->hph_pcm_enabled || !wcd939x->comp1_enable)
+ 				usleep_range(21000, 21100);
+ 			else
+ 				usleep_range(7000, 7100);

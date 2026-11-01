@@ -1,0 +1,27 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] dt-bindings: sound: wcd939x: describe USBSS reset coordination
+
+Describe provider coordination for codec reset protection and jack
+impedance measurement. The association still excludes Type-C audio
+routing.
+
+---
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml b/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml
+--- a/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml
+@@ -60,9 +60,11 @@
+   qcom,usbss-measurement:
+     $ref: /schemas/types.yaml#/definitions/phandle
+     description: |
+-      USBSS provider for impedance measurement and linearizer calibration on
+-      an independent headphone jack. This does not enable USB-C analog audio
+-      routing and cannot be combined with the codec's Type-C audio graph.
++      USBSS provider for codec reset protection, impedance measurement and
++      linearizer calibration on an independent headphone jack. Protection
++      settings must be coordinated with this provider before driving codec
++      reset. This does not enable USB-C analog audio routing and cannot be
++      combined with the codec's Type-C audio graph.
+ 
+ required:
+   - compatible

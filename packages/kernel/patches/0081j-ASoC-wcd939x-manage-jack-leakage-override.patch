@@ -1,0 +1,114 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: restore jack leakage pull-up lifecycle
+
+For integrated jacks using the USBSS hook, disable the leakage pull-up
+at initialization, enable it before connecting the audio switch, and
+disable it after removal cleanup. Run the removal hook at the shared
+MBHC exit so invalid or unclassified plugs receive the same cleanup.
+Check initialization errors and log runtime control failures.
+
+The WCD939x register operation is verified in the installed Pocket S2
+Android codec. Callback ordering follows Qualcomm's published common
+MBHC source, blob 19eec1c2782406139ae7ff47fc46a2c92cbf2346. The installed
+common MBHC module was not retained, so exact binary equivalence of its
+call sites is not claimed. Audible and jack-lifecycle validation remains
+pending.
+---
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -368,6 +368,8 @@
+ 
+ static int wcd939x_io_init(struct snd_soc_component *component)
+ {
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++
+ 	snd_soc_component_write_field(component, WCD939X_ANA_BIAS,
+ 				      WCD939X_BIAS_ANALOG_BIAS_EN, true);
+ 	snd_soc_component_write_field(component, WCD939X_ANA_BIAS,
+@@ -418,6 +420,11 @@
+ 				WCD939X_CFG0_IDLE_STEREO |
+ 				WCD939X_CFG0_AUTO_DISABLE_DSD |
+ 				WCD939X_CFG0_AUTO_DISABLE_ANC);
++
++	/* Keep the jack leakage pull-up disabled until insertion. */
++	if (wcd939x->usbss_dev)
++		return regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
++					 BIT(7), BIT(7));
+ 
+ 	return 0;
+ }
+@@ -2740,9 +2747,33 @@
+ 					 bool enable)
+ {
+ 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
+-
+-	if (wcd939x->usbss_dev)
+-		wcd939x_usbss_audio_config(wcd939x->usbss_dev, enable);
++	int ret;
++
++	if (!wcd939x->usbss_dev)
++		return;
++
++	if (enable) {
++		ret = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
++					BIT(7), 0);
++		if (ret) {
++			dev_err(component->dev, "Failed to enable jack leakage pull-up: %d\n",
++				ret);
++			return;
++		}
++	}
++
++	ret = wcd939x_usbss_audio_config(wcd939x->usbss_dev, enable);
++	if (ret)
++		dev_err(component->dev, "Failed to %s jack audio switch: %d\n",
++			enable ? "enable" : "disable", ret);
++
++	if (!enable) {
++		ret = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
++					BIT(7), BIT(7));
++		if (ret)
++			dev_err(component->dev, "Failed to disable jack leakage pull-up: %d\n",
++				ret);
++	}
+ }
+ 
+ static const struct wcd_mbhc_cb mbhc_cb = {
+@@ -3393,7 +3424,12 @@
+ 		return PTR_ERR(wcd939x->clsh_info);
+ 	}
+ 
+-	wcd939x_io_init(component);
++	ret = wcd939x_io_init(component);
++	if (ret) {
++		dev_err(dev, "Failed to initialize jack leakage control: %d\n", ret);
++		pm_runtime_put(dev);
++		goto err_free_clsh_ctrl;
++	}
+ 
+ 	/* Set all interrupts as edge triggered */
+ 	for (i = 0; i < wcd939x_regmap_irq_chip.num_regs; i++)
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.c b/sound/soc/codecs/wcd-mbhc-v2.c
+--- a/sound/soc/codecs/wcd-mbhc-v2.c
++++ b/sound/soc/codecs/wcd-mbhc-v2.c
+@@ -547,9 +547,6 @@
+ 		mbhc->is_btn_press = false;
+ 		wcd_mbhc_adc_detect_plug_type(mbhc);
+ 	} else {
+-		/* Jack removed: take the external analog switch out of audio. */
+-		if (mbhc->mbhc_cb->mbhc_ext_switch_ctrl)
+-			mbhc->mbhc_cb->mbhc_ext_switch_ctrl(component, false);
+ 		/* Disable HW FSM */
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_FSM_EN, 0);
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_BTN_ISRC_CTL, 0);
+@@ -604,6 +601,8 @@
+ 	}
+ 
+ exit:
++	if (!detection_type && mbhc->mbhc_cb->mbhc_ext_switch_ctrl)
++		mbhc->mbhc_cb->mbhc_ext_switch_ctrl(component, false);
+ 	mbhc->in_swch_irq_handler = false;
+ 	mutex_unlock(&mbhc->lock);
+ }

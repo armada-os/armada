@@ -1,0 +1,935 @@
+From: mrdidit <mrdidit@users.noreply.github.com>
+Subject: [PATCH] usb: typec: wcd939x-usbss: add Pocket S2 state recovery
+
+Check the installed Android driver's three USBSS recovery conditions every
+15 seconds while awake. On failure, force provider-owned configuration
+back to hardware, restore CPLDO and toggle RCO. Keep the Linux regmap
+uncached and preserve stable targets across partial configuration failures.
+Serialize recovery with measurement and codec-reset transactions, and
+cancel work before suspend or removal. Restrict activation to Pocket S2.
+Audio-accessory recovery remains excluded without the codec notifier;
+explicit teardown remains available. No GPIO reset or fixed audio result
+is implied.
+
+The status checks and recovery sequence derive from Qualcomm's GPL-2.0
+implementation, cross-checked against the installed S2 module:
+https://api.github.com/repos/OnePlusOSS/android_kernel_oneplus_sm8650/git/blobs/8effe5ea6a8216bf5db182f673ca02b04a1fd14d
+
+diff --git a/drivers/usb/typec/mux/wcd939x-usbss.c b/drivers/usb/typec/mux/wcd939x-usbss.c
+--- a/drivers/usb/typec/mux/wcd939x-usbss.c
++++ b/drivers/usb/typec/mux/wcd939x-usbss.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
++ * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+  * Copyright (C) 2023 Linaro Ltd.
+  */
+ 
+@@ -10,6 +10,8 @@
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/pm.h>
++#include <linux/workqueue.h>
+ #include <linux/slab.h>
+ #include <linux/regmap.h>
+ #include <linux/bitfield.h>
+@@ -17,6 +19,12 @@
+ #include <linux/usb/typec_dp.h>
+ #include <linux/usb/typec_mux.h>
+ #include <linux/usb/wcd939x-usbss.h>
++
++#include "wcd939x-usbss-quirks.h"
++
++#define WCD_USBSS_PMP_MISC1			0x5
++#define WCD_USBSS_PMP_MISC2			0x6
++#define WCD_USBSS_RCO_MISC2			0x15
+ 
+ #define WCD_USBSS_PMP_OUT1			0x2
+ 
+@@ -199,6 +207,24 @@
+ 
+ #define WCD_USBSS_MAX_REGISTER			0x4c1
+ 
++struct wcd939x_usbss;
++
++struct wcd939x_usbss_shadow {
++	u8 value[WCD_USBSS_MAX_REGISTER + 1];
++	u8 mask[WCD_USBSS_MAX_REGISTER + 1];
++};
++
++struct wcd939x_usbss_recovery {
++	struct wcd939x_usbss *usbss;
++	struct delayed_work work;
++	struct wcd939x_usbss_shadow state;
++	struct wcd939x_usbss_shadow checkpoint;
++	bool checkpoint_active;
++	bool pending;
++	bool suspended;
++	bool stopping;
++};
++
+ struct wcd939x_usbss {
+ 	struct i2c_client *client;
+ 	struct gpio_desc *reset_gpio;
+@@ -211,6 +237,7 @@
+ 	struct typec_mux_dev *mux;
+ 
+ 	struct regmap *regmap;
++	struct wcd939x_usbss_recovery *recovery;
+ 
+ 	struct typec_mux *codec;
+ 	struct typec_switch *codec_switch;
+@@ -269,6 +296,261 @@
+ 	.ranges = wcd939x_usbss_ranges,
+ 	.num_ranges = ARRAY_SIZE(wcd939x_usbss_ranges),
+ };
++
++static void wcd939x_usbss_remember(struct wcd939x_usbss *usbss,
++				 unsigned int reg, unsigned int mask,
++				 unsigned int value)
++{
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++
++	if (!recovery || reg > WCD_USBSS_MAX_REGISTER ||
++	    reg == WCD_USBSS_AUDIO_FSM_START)
++		return;
++
++	recovery->state.value[reg] &= ~mask;
++	recovery->state.value[reg] |= value & mask;
++	recovery->state.mask[reg] |= mask;
++}
++
++static int wcd939x_usbss_save_new_bits(struct wcd939x_usbss *usbss,
++				     unsigned int reg, unsigned int mask)
++{
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++	unsigned int value, missing;
++	int ret;
++
++	if (!recovery || !recovery->checkpoint_active)
++		return 0;
++	missing = mask & ~recovery->checkpoint.mask[reg];
++	if (!missing)
++		return 0;
++	ret = regmap_read(usbss->regmap, reg, &value);
++	if (ret)
++		return ret;
++	recovery->checkpoint.value[reg] &= ~missing;
++	recovery->checkpoint.value[reg] |= value & missing;
++	recovery->checkpoint.mask[reg] |= missing;
++	return 0;
++}
++
++static int wcd939x_usbss_write(struct wcd939x_usbss *usbss,
++			      unsigned int reg, unsigned int value)
++{
++	int ret = wcd939x_usbss_save_new_bits(usbss, reg, 0xff);
++
++	if (ret)
++		return ret;
++	ret = regmap_write(usbss->regmap, reg, value);
++
++	if (!ret)
++		wcd939x_usbss_remember(usbss, reg, 0xff, value);
++	return ret;
++}
++
++static int wcd939x_usbss_update_bits(struct wcd939x_usbss *usbss,
++				    unsigned int reg, unsigned int mask,
++				    unsigned int value)
++{
++	int ret = wcd939x_usbss_save_new_bits(usbss, reg, mask);
++
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(usbss->regmap, reg, mask, value);
++
++	if (!ret)
++		wcd939x_usbss_remember(usbss, reg, mask, value);
++	return ret;
++}
++
++static int wcd939x_usbss_set_bits(struct wcd939x_usbss *usbss,
++				 unsigned int reg, unsigned int mask)
++{
++	return wcd939x_usbss_update_bits(usbss, reg, mask, mask);
++}
++
++static int wcd939x_usbss_clear_bits(struct wcd939x_usbss *usbss,
++				   unsigned int reg, unsigned int mask)
++{
++	return wcd939x_usbss_update_bits(usbss, reg, mask, 0);
++}
++
++/* A status failure requests replay; an I/O failure is not a status result. */
++static int wcd939x_usbss_check_state(struct wcd939x_usbss *usbss)
++{
++	unsigned int value;
++	int ret, cleanup, i;
++
++	ret = regmap_read(usbss->regmap, WCD_USBSS_CPLDO_CTL2, &value);
++	if (ret)
++		return ret;
++	if (value != 0xff)
++		return 1;
++
++	for (i = 0; i < 10; i++) {
++		ret = regmap_read(usbss->regmap, WCD_USBSS_RCO_MISC2, &value);
++		if (ret)
++			return ret;
++		if (!(value & BIT(1)))
++			break;
++	}
++	if (i == 10)
++		return 2;
++
++	ret = regmap_read(usbss->regmap, WCD_USBSS_USB_SS_CNTL, &value);
++	if (ret || (value & WCD_USBSS_USB_SS_CNTL_STANDBY_STATE))
++		return ret;
++
++	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_PMP_MISC1, BIT(0));
++	if (!ret)
++		ret = regmap_set_bits(usbss->regmap, WCD_USBSS_PMP_MISC1, BIT(0));
++	/* Clear even after an ambiguous failed transfer; never cache the pulse. */
++	cleanup = regmap_clear_bits(usbss->regmap, WCD_USBSS_PMP_MISC1, BIT(0));
++	if (cleanup)
++		dev_err_ratelimited(&usbss->client->dev,
++				    "USBSS status challenge cleanup failed: %d\n", cleanup);
++	if (ret || cleanup)
++		return ret ?: cleanup;
++
++	ret = regmap_read(usbss->regmap, WCD_USBSS_PMP_MISC2, &value);
++	if (ret)
++		return ret;
++	return value & BIT(0) ? 0 : 3;
++}
++
++static int wcd939x_usbss_replay_state(struct wcd939x_usbss *usbss)
++{
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++	unsigned int reg;
++	int ret, cleanup;
++
++	lockdep_assert_held(&usbss->lock);
++	for (reg = 0; reg <= WCD_USBSS_MAX_REGISTER; reg++) {
++		if (!recovery->state.mask[reg])
++			continue;
++		ret = regmap_write_bits(usbss->regmap, reg,
++					 recovery->state.mask[reg], recovery->state.value[reg]);
++		if (ret)
++			return ret;
++	}
++
++	ret = regmap_write(usbss->regmap, WCD_USBSS_CPLDO_CTL2, 0xff);
++	if (ret)
++		return ret;
++	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_USB_SS_CNTL,
++				WCD_USBSS_USB_SS_CNTL_RCO_EN);
++	/* A failed clear can still reach hardware; always attempt the final set. */
++	cleanup = regmap_set_bits(usbss->regmap, WCD_USBSS_USB_SS_CNTL,
++				 WCD_USBSS_USB_SS_CNTL_RCO_EN);
++	if (cleanup)
++		dev_err_ratelimited(&usbss->client->dev,
++				    "USBSS RCO restoration failed: %d\n", cleanup);
++	return ret ?: cleanup;
++}
++
++static int wcd939x_usbss_finish_recovery(struct wcd939x_usbss *usbss)
++{
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++	int ret;
++
++	lockdep_assert_held(&usbss->lock);
++	if (!recovery)
++		return 0;
++	if (recovery->suspended || recovery->stopping)
++		return -EBUSY;
++	if (!recovery->pending)
++		return 0;
++	if (usbss->mode == TYPEC_MODE_AUDIO)
++		return -EBUSY;
++	ret = wcd939x_usbss_replay_state(usbss);
++	if (!ret)
++		recovery->pending = false;
++	return ret;
++}
++
++static int wcd939x_usbss_prepare_route(struct wcd939x_usbss *usbss,
++				      unsigned long mode)
++{
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++
++	lockdep_assert_held(&usbss->lock);
++	if (recovery && (recovery->suspended || recovery->stopping))
++		return -EBUSY;
++	/* Teardown must remain possible without replaying an audio accessory. */
++	if (usbss->mode == TYPEC_MODE_AUDIO && mode != TYPEC_MODE_AUDIO)
++		return 0;
++	return wcd939x_usbss_finish_recovery(usbss);
++}
++
++static void wcd939x_usbss_recovery_work(struct work_struct *work)
++{
++	struct wcd939x_usbss_recovery *recovery =
++		container_of(to_delayed_work(work), struct wcd939x_usbss_recovery, work);
++	struct wcd939x_usbss *usbss = recovery->usbss;
++	int check, ret;
++
++	mutex_lock(&usbss->lock);
++	if (recovery->stopping || recovery->suspended)
++		goto unlock;
++
++	/* Audio-accessory recovery also requires the vendor codec notifier. */
++	if (usbss->mode == TYPEC_MODE_AUDIO)
++		goto requeue;
++
++	check = wcd939x_usbss_check_state(usbss);
++	if (check < 0) {
++		dev_err_ratelimited(&usbss->client->dev,
++				    "USBSS recovery check failed: %d\n", check);
++		goto requeue;
++	}
++	if (check || recovery->pending) {
++		recovery->pending = true;
++		ret = wcd939x_usbss_replay_state(usbss);
++		if (ret)
++			dev_err_ratelimited(&usbss->client->dev,
++					    "USBSS state replay failed: %d\n", ret);
++		else {
++			recovery->pending = false;
++			dev_dbg(&usbss->client->dev, "USBSS state restored (check %d)\n", check);
++		}
++	}
++requeue:
++	queue_delayed_work(system_freezable_wq, &recovery->work,
++			   msecs_to_jiffies(15000));
++unlock:
++	mutex_unlock(&usbss->lock);
++}
++
++static int wcd939x_usbss_suspend(struct device *dev)
++{
++	struct wcd939x_usbss *usbss = dev_get_drvdata(dev);
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++
++	if (!recovery)
++		return 0;
++	mutex_lock(&usbss->lock);
++	recovery->suspended = true;
++	mutex_unlock(&usbss->lock);
++	cancel_delayed_work_sync(&recovery->work);
++	return 0;
++}
++
++static int wcd939x_usbss_resume(struct device *dev)
++{
++	struct wcd939x_usbss *usbss = dev_get_drvdata(dev);
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++
++	if (!recovery)
++		return 0;
++	mutex_lock(&usbss->lock);
++	recovery->suspended = false;
++	if (!recovery->stopping)
++		queue_delayed_work(system_freezable_wq, &recovery->work, 0);
++	mutex_unlock(&usbss->lock);
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(wcd939x_usbss_pm_ops,
++			       wcd939x_usbss_suspend, wcd939x_usbss_resume);
+ 
+ /* Linearlizer coefficients for 32ohm load */
+ static const struct {
+@@ -326,7 +608,7 @@
+ 	}
+ 
+ 	/* Disable all switches */
+-	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
++	ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
+ 				WCD_USBSS_SWITCH_SETTINGS_ENABLE_DP_AUXP_TO_MGX_SWITCHES |
+ 				WCD_USBSS_SWITCH_SETTINGS_ENABLE_DP_AUXM_TO_MGX_SWITCHES |
+ 				WCD_USBSS_SWITCH_SETTINGS_ENABLE_DPR_SWITCHES |
+@@ -338,7 +620,7 @@
+ 		return ret;
+ 
+ 	/* Clear switches */
+-	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT0,
++	ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_SWITCH_SELECT0,
+ 				WCD_USBSS_SWITCH_SELECT0_DP_AUXP_SWITCHES |
+ 				WCD_USBSS_SWITCH_SELECT0_DP_AUXM_SWITCHES |
+ 				WCD_USBSS_SWITCH_SELECT0_DPR_SWITCHES |
+@@ -348,25 +630,25 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT1,
++	ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_SWITCH_SELECT1,
+ 				WCD_USBSS_SWITCH_SELECT1_AGND_SWITCHES);
+ 	if (ret)
+ 		return ret;
+ 
+ 	/* Enable OVP_MG1_BIAS PCOMP_DYN_BST_EN */
+-	ret = regmap_set_bits(usbss->regmap, WCD_USBSS_MG1_BIAS,
++	ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_MG1_BIAS,
+ 			      WCD_USBSS_MG1_BIAS_PCOMP_DYN_BST_EN);
+ 	if (ret)
+ 		return ret;
+ 
+ 	/* Enable OVP_MG2_BIAS PCOMP_DYN_BST_EN */
+-	ret = regmap_set_bits(usbss->regmap, WCD_USBSS_MG2_BIAS,
++	ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_MG2_BIAS,
+ 			      WCD_USBSS_MG2_BIAS_PCOMP_DYN_BST_EN);
+ 	if (ret)
+ 		return ret;
+ 
+ 	/* Disable Equalizer in safe mode */
+-	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_EQUALIZER1,
++	ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_EQUALIZER1,
+ 				WCD_USBSS_EQUALIZER1_EQ_EN);
+ 	if (ret)
+ 		return ret;
+@@ -375,6 +657,9 @@
+ 	ret = regmap_write_bits(usbss->regmap, WCD_USBSS_AUDIO_FSM_START,
+ 				WCD_USBSS_AUDIO_FSM_START_AUDIO_FSM_AUDIO_TRIG,
+ 				WCD_USBSS_AUDIO_FSM_START_AUDIO_FSM_AUDIO_TRIG);
++
++	if (ret)
++		return ret;
+ 
+ 	/* 35us to allow the SBU switch to turn off */
+ 	usleep_range(35, 1000);
+@@ -401,7 +686,7 @@
+ 		 */
+ 
+ 		/* Set AATC mode */
+-		ret = regmap_update_bits(usbss->regmap, WCD_USBSS_USB_SS_CNTL,
++		ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_USB_SS_CNTL,
+ 					 WCD_USBSS_USB_SS_CNTL_USB_SS_MODE,
+ 					 FIELD_PREP(WCD_USBSS_USB_SS_CNTL_USB_SS_MODE,
+ 						    WCD_USBSS_USB_SS_CNTL_USB_SS_MODE_AATC));
+@@ -409,7 +694,7 @@
+ 			return ret;
+ 
+ 		/* Select L for DNL_SWITCHES and R for DPR_SWITCHES */
+-		ret = regmap_update_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT0,
++		ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_SWITCH_SELECT0,
+ 				WCD_USBSS_SWITCH_SELECT0_DPR_SWITCHES |
+ 				WCD_USBSS_SWITCH_SELECT0_DNL_SWITCHES,
+ 				FIELD_PREP(WCD_USBSS_SWITCH_SELECT0_DNL_SWITCHES,
+@@ -421,12 +706,12 @@
+ 
+ 		if (reverse)
+ 			/* Select MG2 for MIC, SBU1 for Sense */
+-			ret = regmap_update_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT0,
++			ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_SWITCH_SELECT0,
+ 						 WCD_USBSS_SWITCH_SELECT0_MIC_SWITCHES,
+ 						 WCD_USBSS_SWITCH_SELECT0_MIC_SWITCHES);
+ 		else
+ 			/* Select MG1 for MIC, SBU2 for Sense */
+-			ret = regmap_update_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT0,
++			ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_SWITCH_SELECT0,
+ 						 WCD_USBSS_SWITCH_SELECT0_SENSE_SWITCHES,
+ 						 WCD_USBSS_SWITCH_SELECT0_SENSE_SWITCHES);
+ 		if (ret)
+@@ -434,17 +719,17 @@
+ 
+ 		if (reverse)
+ 			/* Disable OVP_MG1_BIAS PCOMP_DYN_BST_EN */
+-			ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_MG1_BIAS,
++			ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_MG1_BIAS,
+ 						WCD_USBSS_MG1_BIAS_PCOMP_DYN_BST_EN);
+ 		else
+ 			/* Disable OVP_MG2_BIAS PCOMP_DYN_BST_EN */
+-			ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_MG2_BIAS,
++			ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_MG2_BIAS,
+ 						WCD_USBSS_MG2_BIAS_PCOMP_DYN_BST_EN);
+ 		if (ret)
+ 			return ret;
+ 
+ 		/*  Enable SENSE, MIC switches */
+-		ret = regmap_set_bits(usbss->regmap, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
++		ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_SENSE_SWITCHES |
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_MIC_SWITCHES);
+ 		if (ret)
+@@ -452,38 +737,38 @@
+ 
+ 		if (reverse)
+ 			/* Select MG1 for AGND_SWITCHES */
+-			ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT1,
++			ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_SWITCH_SELECT1,
+ 						WCD_USBSS_SWITCH_SELECT1_AGND_SWITCHES);
+ 		else
+ 			/* Select MG2 for AGND_SWITCHES */
+-			ret = regmap_set_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT1,
++			ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_SWITCH_SELECT1,
+ 					      WCD_USBSS_SWITCH_SELECT1_AGND_SWITCHES);
+ 		if (ret)
+ 			return ret;
+ 
+ 		/* Enable AGND switches */
+-		ret = regmap_set_bits(usbss->regmap, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
++		ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_AGND_SWITCHES);
+ 		if (ret)
+ 			return ret;
+ 
+ 		/* Enable DPR, DNL switches */
+-		ret = regmap_set_bits(usbss->regmap, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
++		ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_DNL_SWITCHES |
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_DPR_SWITCHES);
+ 		if (ret)
+ 			return ret;
+ 
+ 		/* Setup FSM delays */
+-		ret = regmap_write(usbss->regmap, WCD_USBSS_DELAY_L_SW, 0x02);
+-		if (ret)
+-			return ret;
+-
+-		ret = regmap_write(usbss->regmap, WCD_USBSS_DELAY_R_SW, 0x02);
+-		if (ret)
+-			return ret;
+-
+-		ret = regmap_write(usbss->regmap, WCD_USBSS_DELAY_MIC_SW, 0x01);
++		ret = wcd939x_usbss_write(usbss, WCD_USBSS_DELAY_L_SW, 0x02);
++		if (ret)
++			return ret;
++
++		ret = wcd939x_usbss_write(usbss, WCD_USBSS_DELAY_R_SW, 0x02);
++		if (ret)
++			return ret;
++
++		ret = wcd939x_usbss_write(usbss, WCD_USBSS_DELAY_MIC_SW, 0x01);
+ 		if (ret)
+ 			return ret;
+ 
+@@ -495,16 +780,19 @@
+ 			return ret;
+ 
+ 		/* Default Linearlizer coefficients */
+-		for (i = 0; i < ARRAY_SIZE(wcd939x_usbss_coeff_init); ++i)
+-			regmap_update_bits(usbss->regmap,
++		for (i = 0; i < ARRAY_SIZE(wcd939x_usbss_coeff_init); ++i) {
++			ret = wcd939x_usbss_update_bits(usbss,
+ 					   wcd939x_usbss_coeff_init[i].offset,
+ 					   wcd939x_usbss_coeff_init[i].mask,
+ 					   wcd939x_usbss_coeff_init[i].value);
++			if (ret)
++				return ret;
++		}
+ 
+ 		return 0;
+ 	}
+ 
+-	ret = regmap_update_bits(usbss->regmap, WCD_USBSS_USB_SS_CNTL,
++	ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_USB_SS_CNTL,
+ 				 WCD_USBSS_USB_SS_CNTL_USB_SS_MODE,
+ 				 FIELD_PREP(WCD_USBSS_USB_SS_CNTL_USB_SS_MODE,
+ 					    WCD_USBSS_USB_SS_CNTL_USB_SS_MODE_USB));
+@@ -515,14 +803,14 @@
+ 	if (enable_usb) {
+ 		/* Do not enable Equalizer in safe mode */
+ 		if (usbss->mode != TYPEC_STATE_SAFE) {
+-			ret = regmap_set_bits(usbss->regmap, WCD_USBSS_EQUALIZER1,
++			ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_EQUALIZER1,
+ 					      WCD_USBSS_EQUALIZER1_EQ_EN);
+ 			if (ret)
+ 				return ret;
+ 		}
+ 
+ 		/* Select DN for DNL_SWITCHES and DP for DPR_SWITCHES */
+-		ret = regmap_update_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT0,
++		ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_SWITCH_SELECT0,
+ 					 WCD_USBSS_SWITCH_SELECT0_DPR_SWITCHES |
+ 					 WCD_USBSS_SWITCH_SELECT0_DNL_SWITCHES,
+ 					 FIELD_PREP(WCD_USBSS_SWITCH_SELECT0_DNL_SWITCHES,
+@@ -533,7 +821,7 @@
+ 			return ret;
+ 
+ 		/* Enable DNL_SWITCHES and DPR_SWITCHES */
+-		ret = regmap_set_bits(usbss->regmap, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
++		ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_DPR_SWITCHES |
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_DNL_SWITCHES);
+ 		if (ret)
+@@ -543,27 +831,27 @@
+ 	/* Enable DP AUX muxes */
+ 	if (enable_dp) {
+ 		/* Update Leakage Canceller Coefficient for AUXP pins */
+-		ret = regmap_update_bits(usbss->regmap, WCD_USBSS_DISP_AUXP_CTL,
++		ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_DISP_AUXP_CTL,
+ 					 WCD_USBSS_DISP_AUXP_CTL_LK_CANCEL_TRK_COEFF,
+ 					 FIELD_PREP(WCD_USBSS_DISP_AUXP_CTL_LK_CANCEL_TRK_COEFF,
+ 						    5));
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = regmap_set_bits(usbss->regmap, WCD_USBSS_DISP_AUXP_THRESH,
++		ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_DISP_AUXP_THRESH,
+ 				      WCD_USBSS_DISP_AUXP_THRESH_DISP_AUXP_OVPON_CM);
+ 		if (ret)
+ 			return ret;
+ 
+ 		if (reverse)
+ 			/* Select MG2 for AUXP and MG1 for AUXM */
+-			ret = regmap_update_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT0,
++			ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_SWITCH_SELECT0,
+ 						 WCD_USBSS_SWITCH_SELECT0_DP_AUXP_SWITCHES |
+ 						 WCD_USBSS_SWITCH_SELECT0_DP_AUXM_SWITCHES,
+ 						 WCD_USBSS_SWITCH_SELECT0_DP_AUXP_SWITCHES);
+ 		else
+ 			/* Select MG1 for AUXP and MG2 for AUXM */
+-			ret = regmap_update_bits(usbss->regmap, WCD_USBSS_SWITCH_SELECT0,
++			ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_SWITCH_SELECT0,
+ 						 WCD_USBSS_SWITCH_SELECT0_DP_AUXP_SWITCHES |
+ 						 WCD_USBSS_SWITCH_SELECT0_DP_AUXM_SWITCHES,
+ 						 WCD_USBSS_SWITCH_SELECT0_DP_AUXM_SWITCHES);
+@@ -571,10 +859,13 @@
+ 			return ret;
+ 
+ 		/* Enable DP_AUXP_TO_MGX and DP_AUXM_TO_MGX switches */
+-		ret = regmap_set_bits(usbss->regmap, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
++		ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_DP_AUXP_TO_MGX_SWITCHES |
+ 				      WCD_USBSS_SWITCH_SETTINGS_ENABLE_DP_AUXM_TO_MGX_SWITCHES);
+ 
++		if (ret)
++			return ret;
++
+ 		/* 15us to allow the SBU switch to turn on again */
+ 		usleep_range(15, 1000);
+ 	}
+@@ -582,6 +873,25 @@
+ 	return 0;
+ }
+ 
++static int wcd939x_usbss_configure(struct wcd939x_usbss *usbss)
++{
++	struct wcd939x_usbss_recovery *recovery = usbss->recovery;
++	int ret;
++
++	if (recovery) {
++		recovery->checkpoint = recovery->state;
++		recovery->checkpoint_active = true;
++	}
++	ret = wcd939x_usbss_set(usbss);
++	if (recovery)
++		recovery->checkpoint_active = false;
++	if (ret && recovery) {
++		recovery->state = recovery->checkpoint;
++		recovery->pending = true;
++	}
++	return ret;
++}
++
+ static int wcd939x_usbss_switch_set(struct typec_switch_dev *sw,
+ 				    enum typec_orientation orientation)
+ {
+@@ -589,11 +899,15 @@
+ 	int ret = 0;
+ 
+ 	mutex_lock(&usbss->lock);
+-
+-	if (usbss->orientation != orientation) {
++	ret = wcd939x_usbss_prepare_route(usbss, usbss->mode);
++
++	if (!ret && (usbss->orientation != orientation)) {
++		enum typec_orientation old = usbss->orientation;
++
+ 		usbss->orientation = orientation;
+-
+-		ret = wcd939x_usbss_set(usbss);
++		ret = wcd939x_usbss_configure(usbss);
++		if (ret)
++			usbss->orientation = old;
+ 	}
+ 
+ 	mutex_unlock(&usbss->lock);
+@@ -612,8 +926,12 @@
+ 	int ret = 0;
+ 
+ 	mutex_lock(&usbss->lock);
+-
+-	if (usbss->mode != state->mode) {
++	ret = wcd939x_usbss_prepare_route(usbss, state->mode);
++
++	if (!ret && (usbss->mode != state->mode)) {
++		unsigned long old_mode = usbss->mode;
++		unsigned int old_svid = usbss->svid;
++
+ 		usbss->mode = state->mode;
+ 
+ 		if (state->alt)
+@@ -621,7 +939,11 @@
+ 		else
+ 			usbss->svid = 0; // No SVID
+ 
+-		ret = wcd939x_usbss_set(usbss);
++		ret = wcd939x_usbss_configure(usbss);
++		if (ret) {
++			usbss->mode = old_mode;
++			usbss->svid = old_svid;
++		}
+ 	}
+ 
+ 	mutex_unlock(&usbss->lock);
+@@ -647,6 +969,13 @@
+ 
+ 	usbss->client = client;
+ 	mutex_init(&usbss->lock);
++	if (wcd939x_usbss_needs_recovery()) {
++		usbss->recovery = devm_kzalloc(dev, sizeof(*usbss->recovery), GFP_KERNEL);
++		if (!usbss->recovery)
++			return -ENOMEM;
++		usbss->recovery->usbss = usbss;
++		INIT_DELAYED_WORK(&usbss->recovery->work, wcd939x_usbss_recovery_work);
++	}
+ 
+ 	usbss->regmap = devm_regmap_init_i2c(client, &wcd939x_usbss_regmap_config);
+ 	if (IS_ERR(usbss->regmap))
+@@ -692,13 +1021,13 @@
+ 	msleep(20);
+ 
+ 	/* Disable standby */
+-	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_USB_SS_CNTL,
++	ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_USB_SS_CNTL,
+ 				WCD_USBSS_USB_SS_CNTL_STANDBY_STATE);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+ 	/* Set manual mode by default */
+-	ret = regmap_update_bits(usbss->regmap, WCD_USBSS_FUNCTION_ENABLE,
++	ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_FUNCTION_ENABLE,
+ 				 WCD_USBSS_FUNCTION_ENABLE_SOURCE_SELECT,
+ 				 FIELD_PREP(WCD_USBSS_FUNCTION_ENABLE_SOURCE_SELECT,
+ 					    WCD_USBSS_FUNCTION_ENABLE_SOURCE_SELECT_MANUAL));
+@@ -706,48 +1035,50 @@
+ 		goto err_regulator_disable;
+ 
+ 	/* Enable dynamic boosting for DP and DN */
+-	ret = regmap_set_bits(usbss->regmap, WCD_USBSS_DP_DN_MISC1,
++	ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_DP_DN_MISC1,
+ 			      WCD_USBSS_DP_DN_MISC1_DP_PCOMP_2X_DYN_BST_ON_EN |
+ 			      WCD_USBSS_DP_DN_MISC1_DN_PCOMP_2X_DYN_BST_ON_EN);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+ 	/* Enable dynamic boosting for MG1 OVP */
+-	ret = regmap_set_bits(usbss->regmap, WCD_USBSS_MG1_MISC,
++	ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_MG1_MISC,
+ 			      WCD_USBSS_MG1_MISC_PCOMP_2X_DYN_BST_ON_EN);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+ 	/* Enable dynamic boosting for MG2 OVP */
+-	ret = regmap_set_bits(usbss->regmap, WCD_USBSS_MG2_MISC,
++	ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_MG2_MISC,
+ 			      WCD_USBSS_MG2_MISC_PCOMP_2X_DYN_BST_ON_EN);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+ 	/* Write 0xFF to WCD_USBSS_CPLDO_CTL2 */
+-	ret = regmap_set_bits(usbss->regmap, WCD_USBSS_CPLDO_CTL2, 0xff);
++	ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_CPLDO_CTL2, 0xff);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+ 	/* Set RCO_EN: WCD_USBSS_USB_SS_CNTL Bit<3> --> 0x0 --> 0x1 */
+-	ret = regmap_clear_bits(usbss->regmap, WCD_USBSS_USB_SS_CNTL,
++	ret = wcd939x_usbss_clear_bits(usbss, WCD_USBSS_USB_SS_CNTL,
+ 				WCD_USBSS_USB_SS_CNTL_RCO_EN);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+-	ret = regmap_set_bits(usbss->regmap, WCD_USBSS_USB_SS_CNTL,
++	ret = wcd939x_usbss_set_bits(usbss, WCD_USBSS_USB_SS_CNTL,
+ 			      WCD_USBSS_USB_SS_CNTL_RCO_EN);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+ 	/* Disable all switches but enable the mux */
+-	ret = regmap_write(usbss->regmap, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
++	ret = wcd939x_usbss_write(usbss, WCD_USBSS_SWITCH_SETTINGS_ENABLE,
+ 			   WCD_USBSS_SWITCH_SETTINGS_ENABLE_DEVICE_ENABLE);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+ 	/* Setup in SAFE mode */
+-	ret = wcd939x_usbss_set(usbss);
++	mutex_lock(&usbss->lock);
++	ret = wcd939x_usbss_configure(usbss);
++	mutex_unlock(&usbss->lock);
+ 	if (ret)
+ 		goto err_regulator_disable;
+ 
+@@ -773,6 +1104,8 @@
+ 
+ 	i2c_set_clientdata(client, usbss);
+ 	dev_dbg(dev, "USBSS provider ready\n");
++	if (usbss->recovery)
++		queue_delayed_work(system_freezable_wq, &usbss->recovery->work, 0);
+ 
+ 	return 0;
+ 
+@@ -794,6 +1127,13 @@
+ static void wcd939x_usbss_remove(struct i2c_client *client)
+ {
+ 	struct wcd939x_usbss *usbss = i2c_get_clientdata(client);
++
++	if (usbss->recovery) {
++		mutex_lock(&usbss->lock);
++		usbss->recovery->stopping = true;
++		mutex_unlock(&usbss->lock);
++		cancel_delayed_work_sync(&usbss->recovery->work);
++	}
+ 
+ 	typec_mux_unregister(usbss->mux);
+ 	typec_switch_unregister(usbss->sw);
+@@ -819,15 +1159,27 @@
+ int wcd939x_usbss_audio_config(struct device *dev, bool enable)
+ {
+ 	struct wcd939x_usbss *usbss = dev ? dev_get_drvdata(dev) : NULL;
++	unsigned long old_mode;
++	unsigned int old_svid;
+ 	int ret;
+ 
+ 	if (!usbss)
+ 		return -ENODEV;
+ 
+ 	mutex_lock(&usbss->lock);
++	ret = wcd939x_usbss_prepare_route(usbss, enable ? TYPEC_MODE_AUDIO : TYPEC_STATE_SAFE);
++	if (ret)
++		goto unlock;
++	old_mode = usbss->mode;
++	old_svid = usbss->svid;
+ 	usbss->mode = enable ? TYPEC_MODE_AUDIO : TYPEC_STATE_SAFE;
+ 	usbss->svid = 0;
+-	ret = wcd939x_usbss_set(usbss);
++	ret = wcd939x_usbss_configure(usbss);
++	if (ret) {
++		usbss->mode = old_mode;
++		usbss->svid = old_svid;
++	}
++unlock:
+ 	mutex_unlock(&usbss->lock);
+ 
+ 	return ret;
+@@ -907,9 +1259,13 @@
+ 
+ 	lockdep_assert_held(&usbss->lock);
+ 	for (i = 0; i < ARRAY_SIZE(wcd939x_usbss_reset_regs); i++) {
+-		ret = regmap_update_bits(usbss->regmap, wcd939x_usbss_reset_regs[i],
++		ret = wcd939x_usbss_update_bits(usbss, wcd939x_usbss_reset_regs[i],
+ 					 WCD_USBSS_DP_DN_EN_P_THRESH_SEL, reset->saved[i]);
++		wcd939x_usbss_remember(usbss, wcd939x_usbss_reset_regs[i],
++				      WCD_USBSS_DP_DN_EN_P_THRESH_SEL, reset->saved[i]);
+ 		if (ret) {
++			if (usbss->recovery)
++				usbss->recovery->pending = true;
+ 			dev_err(&usbss->client->dev, "Reset protection restore %#x failed: %d\n",
+ 				wcd939x_usbss_reset_regs[i], ret);
+ 			if (!error)
+@@ -932,6 +1288,9 @@
+ 
+ 	reset->usbss = usbss;
+ 	mutex_lock(&usbss->lock);
++	ret = wcd939x_usbss_finish_recovery(usbss);
++	if (ret)
++		goto unlock;
+ 	for (i = 0; i < ARRAY_SIZE(wcd939x_usbss_reset_regs); i++) {
+ 		ret = regmap_read(usbss->regmap, wcd939x_usbss_reset_regs[i],
+ 				  &reset->saved[i]);
+@@ -969,7 +1328,7 @@
+ 
+ 	lockdep_assert_held(&usbss->lock);
+ 	for (i = 0; i < ARRAY_SIZE(wcd939x_usbss_reset_regs); i++) {
+-		ret = regmap_update_bits(usbss->regmap, wcd939x_usbss_reset_regs[i],
++		ret = wcd939x_usbss_update_bits(usbss, wcd939x_usbss_reset_regs[i],
+ 					 WCD_USBSS_DP_DN_EN_P_THRESH_SEL,
+ 					 FIELD_PREP(WCD_USBSS_DP_DN_EN_P_THRESH_SEL, 6));
+ 		if (ret) {
+@@ -1009,11 +1368,15 @@
+ 	int ret;
+ 
+ 	mutex_lock(&usbss->lock);
+-	ret = regmap_update_bits(usbss->regmap, WCD_USBSS_FUNCTION_ENABLE,
++	ret = wcd939x_usbss_finish_recovery(usbss);
++	if (ret)
++		goto unlock;
++	ret = wcd939x_usbss_update_bits(usbss, WCD_USBSS_FUNCTION_ENABLE,
+ 				 WCD_USBSS_FUNCTION_ENABLE_RDAC_CAL_SELECT,
+ 				 WCD_USBSS_FUNCTION_ENABLE_RDAC_CAL_SELECT);
+ 	if (!ret)
+ 		dev_dbg(&usbss->client->dev, "USBSS RDAC calibration selection initialized\n");
++unlock:
+ 	mutex_unlock(&usbss->lock);
+ 
+ 	return ret;
+@@ -1027,9 +1390,13 @@
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(wcd939x_usbss_measurement_regs); i++) {
+-		ret = regmap_write(usbss->regmap, wcd939x_usbss_measurement_regs[i].reg,
++		ret = wcd939x_usbss_write(usbss, wcd939x_usbss_measurement_regs[i].reg,
+ 				   measurement->saved[i]);
++		wcd939x_usbss_remember(usbss, wcd939x_usbss_measurement_regs[i].reg,
++				      0xff, measurement->saved[i]);
+ 		if (ret) {
++			if (usbss->recovery)
++				usbss->recovery->pending = true;
+ 			dev_err(&usbss->client->dev, "Measurement restore %#x failed: %d\n",
+ 				wcd939x_usbss_measurement_regs[i].reg, ret);
+ 			if (!error)
+@@ -1053,6 +1420,9 @@
+ 
+ 	measurement->usbss = usbss;
+ 	mutex_lock(&usbss->lock);
++	ret = wcd939x_usbss_finish_recovery(usbss);
++	if (ret)
++		goto unlock;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(wcd939x_usbss_measurement_regs); i++) {
+ 		ret = regmap_read(usbss->regmap, wcd939x_usbss_measurement_regs[i].reg,
+@@ -1102,9 +1472,12 @@
+ 
+ 	lockdep_assert_held(&usbss->lock);
+ 	for (i = 0; i < ARRAY_SIZE(taps); i++) {
+-		ret = regmap_update_bits(usbss->regmap, taps[i].reg,
++		ret = wcd939x_usbss_update_bits(usbss, taps[i].reg,
+ 					 taps[i].mask, taps[i].value);
++		wcd939x_usbss_remember(usbss, taps[i].reg, taps[i].mask, taps[i].value);
+ 		if (ret) {
++			if (usbss->recovery)
++				usbss->recovery->pending = true;
+ 			dev_err(&usbss->client->dev, "Measurement tap %#x failed: %d\n",
+ 				taps[i].reg, ret);
+ 			if (!measurement->error)
+@@ -1149,6 +1522,7 @@
+ 	.driver = {
+ 		.name = "wcd939x-usbss",
+ 		.of_match_table = wcd939x_usbss_of_table,
++		.pm = pm_sleep_ptr(&wcd939x_usbss_pm_ops),
+ 	},
+ 	.probe		= wcd939x_usbss_probe,
+ 	.remove		= wcd939x_usbss_remove,
+diff --git a/drivers/usb/typec/mux/wcd939x-usbss-quirks.h b/drivers/usb/typec/mux/wcd939x-usbss-quirks.h
+new file mode 100644
+--- /dev/null
++++ b/drivers/usb/typec/mux/wcd939x-usbss-quirks.h
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __WCD939X_USBSS_QUIRKS_H
++#define __WCD939X_USBSS_QUIRKS_H
++
++#include <linux/of.h>
++
++static inline bool wcd939x_usbss_needs_recovery(void)
++{
++	return of_machine_is_compatible("ayaneo,pocket-s2");
++}
++
++#endif

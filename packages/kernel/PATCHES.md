@@ -694,9 +694,81 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0081-ASoC-wcd939x-fix-headphone-analog-volume-controls.patch`
   source: armada
   upstream: local
+- `patches/0081b-ASoC-wcd939x-program-Class-H-transport-fields.patch`
+  source: armada
+  upstream: local
+  notes: Declare the Class-H sink FULL so SoundWire programs its window and packing fields. Based on ovid-io’s analysis in https://github.com/armada-os/armada/pull/803#issuecomment-6481609416 and Pocket S2 Android/Linux captures.
 - `patches/0074-soundwire-qcom-PCM-data-port-format-enable.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0074-soundwire-qcom-PCM-data-port-format-enable.patch
   upstream: unknown
+- `patches/0081c-soundwire-qcom-configure-Class-H-master-transport.patch`
+  source: armada
+  upstream: local
+  notes: Add optional master channel masks and SSP periods while preserving codec masks and existing defaults. Keep the PCM/PDM32 formatter enabled until both banks stop. Adapts Qualcomm’s master mapping and formatter lifecycle from https://api.github.com/repos/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8650/git/blobs/a42eca8f2ea2c3692decabf48930a12e83d2c426 and ovid-io’s transport analysis in PR #803.
+- `patches/0081d-dt-bindings-soundwire-qcom-describe-master-transport.patch`
+  source: armada
+  upstream: local
+  notes: Document optional master channel masks, SSP period and the PCM/PDM32 formatter mask. The Pocket S2 device tree selects these settings.
+- `patches/0081e-ASoC-wcd939x-initialize-revision-specific-bias-and-RCO.patch`
+  source: armada
+  upstream: local
+  notes: Adapt Qualcomm’s revision-specific bias/RCO initialization, checked against the retained Pocket S2 Android module. Revisions 1.1 and 2.0 receive checked initialization; revision 1.0 and unknown IDs retain existing behavior. Reference: https://api.github.com/repos/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8650/git/blobs/108c2b4bfa69fc5d372dfde2cdc46778422e49b5.
+- `patches/0081f-ASoC-wcd939x-preserve-PCM-ULP-mode-before-PA-enable.patch`
+  source: armada
+  upstream: local
+  notes: Keep PCM ULP selected during PA startup, following the Pocket S2 Android callback. Patch 0081g subsequently generalizes the selected-mode handling and replaces the intermediate startup sequence.
+- `patches/0081g-ASoC-wcd939x-align-PCM-headphone-lifecycle.patch`
+  source: https://api.github.com/repos/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8650/git/blobs/108c2b4bfa69fc5d372dfde2cdc46778422e49b5
+  upstream: unknown
+  notes: Adapt Qualcomm’s PCM setup order, per-channel compander shutdown and selected power mode. Relevant callbacks were compared with the retained Pocket S2 Android WCD939x module; Linux register masks and lifecycle handling are retained.
+- `patches/0081h-ASoC-wcd939x-sequence-shared-headphone-supplies-once.patch`
+  source: https://github.com/diogotr7/armada/commit/d7896cae0a0f1b957140ec779d609b6d6e0e889d
+  upstream: unknown
+  notes: Adapt Diogo Trindade’s first-start/last-stop Class-H handling while retaining the PCM lifecycle changes. Shared supplies are started once and stopped after the final headphone channel.
+- `patches/0081i-ASoC-wcd939x-sequence-revision-2-impedance-supplies.patch`
+  source: armada
+  upstream: local
+  notes: Adapt Qualcomm’s revision-2 impedance supply sequence, checked against the retained Pocket S2 Android WCD939x callback. Check temporary supply ownership and cleanup; invalidate failed measurements.
+- `patches/0081j-ASoC-wcd939x-manage-jack-leakage-override.patch`
+  source: armada
+  upstream: local
+  notes: Add the initial leakage lifecycle hook from Qualcomm WCD939x/common-MBHC source, including blob 19eec1c2782406139ae7ff47fc46a2c92cbf2346. Patch 0081k corrects its routing dependency and event semantics using the subsequently retained Pocket S2 common-MBHC module and jack traces.
+- `patches/0081k-ASoC-wcd939x-separate-jack-leakage-control.patch`
+  source: armada
+  upstream: local
+  notes: Separate codec leakage control from optional Type-C switch routing. Follow the retained Pocket S2 codec/common-MBHC insertion and removal sequence, including unclassified-plug cleanup.
+- `patches/0081l-ASoC-wcd939x-add-USBSS-jack-measurement-provider.patch`
+  source: armada
+  upstream: local
+  notes: Add a managed independent-jack USBSS provider with checked RDAC selection and serialized save/setup/tap/restore transactions. Adapts the retained Pocket S2 Android codec and Qualcomm USBSS sequence; Type-C audio routing remains separate.
+- `patches/0081m-ASoC-wcd939x-use-PCM-PA-settling-delays.patch`
+  source: armada
+  upstream: local
+  notes: Use the Android PCM path’s 20/21 ms PA settling delays instead of the PDM-compander 7 ms branch. Preserve PDM conditions and the shared delay flag; Android/Linux startup traces corroborate the sequence difference.
+- `patches/0081n-ASoC-wcd-mbhc-drain-workers-before-free.patch`
+  source: armada
+  upstream: local
+  notes: Drain jack detection, correction and delayed button work in producer order without holding the plug worker’s mutex. This shared MBHC teardown change protects provider and consumer removal.
+- `patches/0081o-dt-bindings-sound-wcd939x-describe-jack-measurement.patch`
+  source: armada
+  upstream: local
+  notes: Describe the independent-jack USBSS measurement supplier and exclude reciprocal Type-C audio routing dependencies.
+- `patches/0081p-ASoC-wcd939x-coordinate-codec-reset-with-USBSS.patch`
+  source: armada
+  upstream: local
+  notes: Coordinate USBSS protection fields before the first driver-controlled reset transition and restore operating values afterward. Adapt the retained Pocket S2 Android sequence with checked I/O, GPIO operations and cleanup; boards without the provider association keep their reset path.
+- `patches/0081q-dt-bindings-sound-wcd939x-describe-reset-coordination.patch`
+  source: armada
+  upstream: local
+  notes: Extend the independent-jack supplier binding to describe codec-reset protection as well as impedance measurement.
+- `patches/0081r-ASoC-wcd939x-handle-SoundWire-cache-recovery-errors.patch`
+  source: armada
+  upstream: local
+  notes: Preserve WCD939x cache state across detach/replay errors, check RX/TX initialization and provide one deferred PM recovery opportunity per successful attachment. Uses Linux 7.2.6 SoundWire/runtime-PM lifecycle APIs; no stream reconstruction or codec reset is added.
+- `patches/0081s-usb-typec-wcd939x-usbss-add-S2-state-recovery.patch`
+  source: https://api.github.com/repos/OnePlusOSS/android_kernel_oneplus_sm8650/git/blobs/8effe5ea6a8216bf5db182f673ca02b04a1fd14d
+  upstream: unknown
+  notes: Adapt Qualcomm’s periodic conditional recovery, checked against the installed Pocket S2 module. An S2 quirk restores only Linux-owned stable fields with uncached reads, transactional targets and suspend/removal cancellation. Android’s full cache replay and USB-C analogue-accessory codec notification are excluded.
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local
@@ -885,7 +957,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada keeps volume-up from waking the system, wires the upstream SY7758 driver, marks PCIe WAKE# active-low, idles the codec rails in LPM during s2idle, and keeps the RTC offset in an SDAM cell with the alarm enabled after copying `dts/sm8650-ayaneo-common.dtsi`.
 - `dts/sm8650-ayaneo-ps2.dts.patch`
   source: armada
-  notes: Armada selects the accepted Pocket S2 WSA2 sound-card mapping after copying the ROCKNIX DTS.
+  notes: Selects the Pocket S2 sound-card mapping, normally-closed jack switches from rafalrojek's [PR #663](https://github.com/armada-os/armada/pull/663), and HPH PCM adapted from ovid-io's [PR #803](https://github.com/armada-os/armada/pull/803). The Android reference supplies Class-H master mask 3 with codec mask 1, interval 0x3f, PCM/PDM32 formatter enable, SSP period 6 and headphone port 9 packing 1. Headphone port packing is supported by the Android table and codec DP6 capture; master readback alone is not sufficient.
 - `dts/sm8650-konkr-pf.dts.patch`
   source: armada
   notes: Armada selects the shared WSA2 channel mapping through a Pocket FIT-specific sound-card compatible and binds `konkr_sysbtn` to the controller MCU UART, and loads its own ADSP firmware.

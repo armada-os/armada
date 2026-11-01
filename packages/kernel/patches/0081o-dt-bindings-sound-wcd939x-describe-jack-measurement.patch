@@ -1,0 +1,42 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] dt-bindings: sound: wcd939x: describe USBSS jack measurement
+
+Describe the USBSS supplier for measurement on an independent headphone
+jack. Exclude the reciprocal Type-C audio graph and full-routing
+association, which require a different supplier lifecycle.
+
+---
+
+diff --git a/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml b/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml
+--- a/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml
++++ b/Documentation/devicetree/bindings/sound/qcom,wcd939x.yaml
+@@ -21,6 +21,15 @@
+ allOf:
+   - $ref: dai-common.yaml#
+   - $ref: qcom,wcd93xx-common.yaml#
++  - if:
++      required:
++        - qcom,usbss-measurement
++    then:
++      properties:
++        port: false
++        mode-switch: false
++        orientation-switch: false
++        qcom,usbss: false
+ 
+ properties:
+   compatible:
+@@ -47,6 +56,13 @@
+ 
+   vdd-px-supply:
+     description: A reference to the 1.2V PX supply
++
++  qcom,usbss-measurement:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: |
++      USBSS provider for impedance measurement and linearizer calibration on
++      an independent headphone jack. This does not enable USB-C analog audio
++      routing and cannot be combined with the codec's Type-C audio graph.
+ 
+ required:
+   - compatible

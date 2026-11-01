@@ -1,0 +1,162 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: sequence revision-2 impedance supplies
+
+Revision-2 impedance detection takes temporary ownership of the RX bias,
+buck/flyback clock and PA supply controls. Apply the vendor setup before
+measurement and release it at the common exit, including mono and floating
+headphone branches. Use the checked codec revision to limit the sequence.
+
+Abort measurement on setup failure, attempt every release operation and
+invalidate impedance results if supply ownership cannot be restored.
+Forced release writes also cover a failed setup write with stale cache.
+
+The masks and settling delays match the Pocket S2 Android WCD939x module
+and Qualcomm's published revision-2 sequence.
+
+Link: https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8650/blob/oneplus/sm8650_v_15.0.0_oneplus12/vendor/qcom/opensource/audio-kernel/asoc/codecs/wcd939x/wcd939x-mbhc.c
+---
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -215,6 +215,7 @@
+ 	bool comp1_enable;
+ 	bool comp2_enable;
+ 	bool hph_pcm_enabled;
++	bool zdet_v2;
+ 	bool ldoh;
+ };
+ 
+@@ -2396,14 +2397,84 @@
+ 		*z_val = ((*z_val) * 10000) / q1_cal;
+ }
+ 
++static int wcd939x_zdet_supplies_enable(struct wcd939x_priv *wcd939x)
++{
++	int ret;
++
++	/* MBHC owns the RX bias, buck/flyback clock and Vneg during ZDET. */
++	ret = regmap_update_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				 0x4e, 0x4e);
++	if (ret)
++		return ret;
++	usleep_range(100, 110);
++
++	ret = regmap_update_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				 0x10, 0x10);
++	if (ret)
++		return ret;
++	usleep_range(100, 110);
++
++	/* Keep both PAs disabled before enabling VPOS. */
++	ret = regmap_update_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				 0x01, 0x01);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				 0x20, 0x20);
++	if (ret)
++		return ret;
++	usleep_range(500, 510);
++
++	return 0;
++}
++
++static int wcd939x_zdet_supplies_disable(struct wcd939x_priv *wcd939x)
++{
++	int ret, err;
++
++	/* Attempt every release, including after an incomplete setup write. */
++	ret = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				0x20, 0x00);
++	usleep_range(500, 510);
++
++	err = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				0x11, 0x00);
++	if (!ret)
++		ret = err;
++	usleep_range(100, 110);
++
++	err = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				0x06, 0x00);
++	if (!ret)
++		ret = err;
++	usleep_range(100, 110);
++
++	err = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_VNEG_CTL,
++				0x48, 0x00);
++	if (!ret)
++		ret = err;
++
++	return ret;
++}
++
+ static void wcd939x_wcd_mbhc_calc_impedance(struct snd_soc_component *component,
+ 					    u32 *zl, uint32_t *zr)
+ {
+ 	struct wcd939x_priv *wcd939x = dev_get_drvdata(component->dev);
+ 	unsigned int reg0, reg1, reg2, reg3, reg4;
+-	int z_mono, z_diff1, z_diff2;
++	int z_mono, z_diff1, z_diff2, ret;
+ 	bool is_fsm_disable = false;
+ 	s32 z1l, z1r, z1ls;
++
++	if (wcd939x->zdet_v2) {
++		ret = wcd939x_zdet_supplies_enable(wcd939x);
++		if (ret) {
++			dev_err(component->dev, "ZDET supply setup failed: %d\n", ret);
++			*zl = *zr = 0;
++			wcd_mbhc_set_hph_type(wcd939x->wcd_mbhc, WCD_MBHC_HPH_NONE);
++			goto supplies_off;
++		}
++	}
+ 
+ 	reg0 = snd_soc_component_read(component, WCD939X_ANA_MBHC_BTN5);
+ 	reg1 = snd_soc_component_read(component, WCD939X_ANA_MBHC_BTN6);
+@@ -2509,13 +2580,13 @@
+ 		wcd_mbhc_set_hph_type(wcd939x->wcd_mbhc, WCD_MBHC_HPH_MONO);
+ 	}
+ 
++zdet_complete:
+ 	/* Enable surge protection again after impedance detection */
+ 	snd_soc_component_write_field(component, WCD939X_HPH_SURGE_EN,
+ 				      WCD939X_EN_EN_SURGE_PROTECTION_HPHR, true);
+ 	snd_soc_component_write_field(component, WCD939X_HPH_SURGE_EN,
+ 				      WCD939X_EN_EN_SURGE_PROTECTION_HPHL, true);
+ 
+-zdet_complete:
+ 	snd_soc_component_write(component, WCD939X_ANA_MBHC_BTN5, reg0);
+ 	snd_soc_component_write(component, WCD939X_ANA_MBHC_BTN6, reg1);
+ 	snd_soc_component_write(component, WCD939X_ANA_MBHC_BTN7, reg2);
+@@ -2535,6 +2606,16 @@
+ 	if (is_fsm_disable)
+ 		snd_soc_component_write_field(component, WCD939X_ANA_MBHC_ELECT,
+ 					      WCD939X_MBHC_ELECT_FSM_EN, true);
++
++supplies_off:
++	if (wcd939x->zdet_v2) {
++		ret = wcd939x_zdet_supplies_disable(wcd939x);
++		if (ret) {
++			dev_err(component->dev, "ZDET supply release failed: %d\n", ret);
++			*zl = *zr = 0;
++			wcd_mbhc_set_hph_type(wcd939x->wcd_mbhc, WCD_MBHC_HPH_NONE);
++		}
++	}
+ }
+ 
+ static void wcd939x_mbhc_gnd_det_ctrl(struct snd_soc_component *component,
+@@ -3243,6 +3324,7 @@
+ 	unsigned int id1, status1, version;
+ 	int ret;
+ 
++	wcd939x->zdet_v2 = false;
+ 	ret = regmap_read(wcd939x->regmap, WCD939X_DIGITAL_CHIP_ID1, &id1);
+ 	if (ret)
+ 		return ret;
+@@ -3264,6 +3346,7 @@
+ 		return 0;
+ 	}
+ 
++	wcd939x->zdet_v2 = version == WCD939X_VERSION_2_0;
+ 	dev_dbg(dev, "wcd939x version: %s\n", version_to_str(version));
+ 	if (version == WCD939X_VERSION_1_0)
+ 		return 0;

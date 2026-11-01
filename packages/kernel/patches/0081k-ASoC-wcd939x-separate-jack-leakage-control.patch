@@ -1,0 +1,159 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] ASoC: wcd939x: separate jack leakage from optional switch routing
+
+The Pocket S2 has no qcom,usbss routing property. Gating codec leakage
+control on that property leaves the existing boot and jack operations
+inactive. Initialize the codec leakage override independently and give
+MBHC a separate callback for it.
+
+Clear the override before insertion and optional switch connection.
+After removal, restore it only when the previous plug type was not NONE,
+matching the installed Android MBHC path. Preserve mechanical removal
+reporting and optional switch cleanup when classification was absent.
+
+The installed S2 codec/common-MBHC binaries and jack trace establish this
+sequence. Distortion causality and sleep recovery remain unverified.
+---
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -422,11 +422,8 @@
+ 				WCD939X_CFG0_AUTO_DISABLE_ANC);
+ 
+ 	/* Keep the jack leakage pull-up disabled until insertion. */
+-	if (wcd939x->usbss_dev)
+-		return regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
+-					 BIT(7), BIT(7));
+-
+-	return 0;
++	return regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
++				 BIT(7), BIT(7));
+ }
+ 
+ static int wcd939x_sdw_connect_port(const struct wcd_sdw_ch_info *ch_info,
+@@ -2734,15 +2731,24 @@
+ 				      enable);
+ }
+ 
++static int wcd939x_mbhc_zdet_leakage_ctrl(struct snd_soc_component *component,
++					bool disable)
++{
++	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
++	int ret;
++
++	ret = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
++				BIT(7), disable ? BIT(7) : 0);
++	if (ret)
++		dev_err(component->dev, "Failed to %s jack leakage pull-up: %d\n",
++			disable ? "disable" : "enable", ret);
++
++	return ret;
++}
++
+ /* Provided by the WCD939x USBSS analog-switch driver (built-in). */
+ int wcd939x_usbss_audio_config(struct device *dev, bool enable);
+ 
+-/*
+- * Route the WCD939x USBSS into/out of audio-accessory mode when the MBHC
+- * detects an integrated 3.5mm jack via the mechanical path.  Without it the
+- * jack's HPHL/HPHR lines float through the switch and MBHC reports a gnd/mic
+- * swap.  No-op on boards without a USBSS (usbss_dev == NULL).
+- */
+ static void wcd939x_mbhc_ext_switch_ctrl(struct snd_soc_component *component,
+ 					 bool enable)
+ {
+@@ -2751,34 +2757,17 @@
+ 
+ 	if (!wcd939x->usbss_dev)
+ 		return;
+-
+-	if (enable) {
+-		ret = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
+-					BIT(7), 0);
+-		if (ret) {
+-			dev_err(component->dev, "Failed to enable jack leakage pull-up: %d\n",
+-				ret);
+-			return;
+-		}
+-	}
+ 
+ 	ret = wcd939x_usbss_audio_config(wcd939x->usbss_dev, enable);
+ 	if (ret)
+ 		dev_err(component->dev, "Failed to %s jack audio switch: %d\n",
+ 			enable ? "enable" : "disable", ret);
+-
+-	if (!enable) {
+-		ret = regmap_write_bits(wcd939x->regmap, WCD939X_MBHC_ZDET_BIAS_CTL,
+-					BIT(7), BIT(7));
+-		if (ret)
+-			dev_err(component->dev, "Failed to disable jack leakage pull-up: %d\n",
+-				ret);
+-	}
+ }
+ 
+ static const struct wcd_mbhc_cb mbhc_cb = {
+ 	.clk_setup = wcd939x_mbhc_clk_setup,
+ 	.mbhc_ext_switch_ctrl = wcd939x_mbhc_ext_switch_ctrl,
++	.zdet_leakage_ctrl = wcd939x_mbhc_zdet_leakage_ctrl,
+ 	.mbhc_bias = wcd939x_mbhc_mbhc_bias_control,
+ 	.set_btn_thr = wcd939x_mbhc_program_btn_thr,
+ 	.micbias_enable_status = wcd939x_mbhc_micb_en_status,
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.c b/sound/soc/codecs/wcd-mbhc-v2.c
+--- a/sound/soc/codecs/wcd-mbhc-v2.c
++++ b/sound/soc/codecs/wcd-mbhc-v2.c
+@@ -515,7 +515,8 @@
+ 	struct wcd_mbhc *mbhc = container_of(work, struct wcd_mbhc, mbhc_plug_detect_work);
+ 	struct snd_soc_component *component = mbhc->component;
+ 	enum snd_jack_types jack_type;
+-	bool detection_type;
++	bool detection_type, restore_leakage = false;
++	int ret;
+ 
+ 	mutex_lock(&mbhc->lock);
+ 
+@@ -535,12 +536,10 @@
+ 	if (detection_type) {
+ 		if (mbhc->current_plug != MBHC_PLUG_TYPE_NONE)
+ 			goto exit;
+-		/*
+-		 * Route the external analog switch (if any) into audio mode so
+-		 * an integrated jack presents a real HPHL/HPHR load to plug
+-		 * detection instead of floating (which reads as a gnd/mic swap).
+-		 */
+-		if (mbhc->mbhc_cb->mbhc_ext_switch_ctrl)
++		ret = 0;
++		if (mbhc->mbhc_cb->zdet_leakage_ctrl)
++			ret = mbhc->mbhc_cb->zdet_leakage_ctrl(component, false);
++		if (!ret && mbhc->mbhc_cb->mbhc_ext_switch_ctrl)
+ 			mbhc->mbhc_cb->mbhc_ext_switch_ctrl(component, true);
+ 		/* Make sure MASTER_BIAS_CTL is enabled */
+ 		mbhc->mbhc_cb->mbhc_bias(component, true);
+@@ -551,6 +550,7 @@
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_FSM_EN, 0);
+ 		wcd_mbhc_write_field(mbhc, WCD_MBHC_BTN_ISRC_CTL, 0);
+ 		mbhc->extn_cable_hph_rem = false;
++		restore_leakage = mbhc->current_plug != MBHC_PLUG_TYPE_NONE;
+ 
+ 		if (mbhc->current_plug == MBHC_PLUG_TYPE_NONE)
+ 			goto report_removed;
+@@ -603,6 +603,8 @@
+ exit:
+ 	if (!detection_type && mbhc->mbhc_cb->mbhc_ext_switch_ctrl)
+ 		mbhc->mbhc_cb->mbhc_ext_switch_ctrl(component, false);
++	if (restore_leakage && mbhc->mbhc_cb->zdet_leakage_ctrl)
++		mbhc->mbhc_cb->zdet_leakage_ctrl(component, true);
+ 	mbhc->in_swch_irq_handler = false;
+ 	mutex_unlock(&mbhc->lock);
+ }
+diff --git a/sound/soc/codecs/wcd-mbhc-v2.h b/sound/soc/codecs/wcd-mbhc-v2.h
+--- a/sound/soc/codecs/wcd-mbhc-v2.h
++++ b/sound/soc/codecs/wcd-mbhc-v2.h
+@@ -272,6 +272,7 @@
+ 	 * wired through such a switch.
+ 	 */
+ 	void (*mbhc_ext_switch_ctrl)(struct snd_soc_component *component, bool enable);
++	int (*zdet_leakage_ctrl)(struct snd_soc_component *component, bool disable);
+ };
+ 
+ #if IS_ENABLED(CONFIG_SND_SOC_WCD_MBHC)
