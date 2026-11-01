@@ -1,0 +1,15 @@
+{
+  "Thunks": ["GL", "Vulkan", "drm"],
+  "LibraryDirs": [
+    "/usr/lib",
+    "/usr/lib32",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib/i386-linux-gnu",
+    "/lib/x86_64-linux-gnu",
+    "/lib/i386-linux-gnu",
+    "/usr/lib/pressure-vessel/overrides/lib/x86_64-linux-gnu",
+    "/usr/lib/pressure-vessel/overrides/lib/i386-linux-gnu",
+    "/run/gfx/main/usr/lib",
+    "/run/gfx/main/usr/lib32"
+  ]
+}

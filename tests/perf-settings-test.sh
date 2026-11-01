@@ -301,6 +301,34 @@ check("FEX config unaffected by perf keys", plain == with_perf)
 check("FEX config content sane", plain["Config"]["Multiblock"] == "0")
 check("missing profile uses safety fallback",
       launch.resolve_fex_config({}, profiles)["Multiblock"] == "0")
+check("thunk settings override base FEX config defaults",
+      launch.thunk_settings({"thunks": {"Vulkan": True}}, {"Vulkan": 0, "GL": 1}) == {"Vulkan": 1, "GL": 1})
+
+launch.armada_fex_thunks.OVERLAYS = pathlib.Path(ROOT) / "system_files/usr/share/armada/fex-thunk-overlays.json"
+fex_tool = pathlib.Path(WORK) / "FEX-Emu"
+steam_db = fex_tool / "usr/share/fex-emu/ThunksDB.json"
+steam_db.parent.mkdir(parents=True)
+(fex_tool / "fex-compat-tool").touch()
+steam_db.write_text(json.dumps({"DB": {
+    "Vulkan": {"Library": "libvulkan-guest.so", "Overlay": ["@PREFIX_LIB@/libvulkan.so.1", "@HOME@/pinned"]},
+    "cuda": {"Library": "libcuda-guest.so", "Overlay": ["@PREFIX_LIB@/libcuda.so"]}}}))
+compat = pathlib.Path(WORK) / "compatdata" / "620"
+game_db = compat / "fex-emu" / "ThunksDB.json"
+def install_db(tools):
+    launch.install_steam_thunk_db({"STEAM_COMPAT_DATA_PATH": str(compat), "STEAM_COMPAT_TOOL_PATHS": tools})
+    return json.loads(game_db.read_text())["DB"] if game_db.exists() else None
+check("no thunk DB for games not on Steam's FEX", install_db(f"{WORK}/Proton") is None)
+db = install_db(f"{WORK}/Proton:{fex_tool}")
+check("game thunk DB holds only Armada's thunks plus extra library dirs",
+      list(db) == ["Vulkan"] and "@HOME@/pinned" in db["Vulkan"]["Overlay"] and
+      "/usr/lib/libvulkan.so.1" in db["Vulkan"]["Overlay"])
+text, missing = launch.armada_fex_thunks.merged_text(steam_db)
+check("full merge keeps other thunks and reports missing ones",
+      "cuda" in json.loads(text)["DB"] and missing == ["GL", "drm"])
+steam_db.write_text("{")
+with contextlib.suppress(ValueError):
+    install_db(str(fex_tool))
+check("unreadable Steam DB removes the game's copy", not game_db.exists())
 
 # --- armada-game-launch: Turnip driver selection -----------------------------
 turnip_root = pathlib.Path(WORK) / "turnip"
