@@ -181,15 +181,6 @@ FROM scratch AS out-scx-scheds
 COPY --from=pkg-scx-scheds /work/out/ /rpms/
 
 
-FROM builder-base AS pkg-plasma-mobile
-COPY plasma-mobile/ /work/
-WORKDIR /work
-RUN ./build.sh && /src/scrub-scratch.sh
-
-FROM scratch AS out-plasma-mobile
-COPY --from=pkg-plasma-mobile /work/out/ /rpms/
-
-
 FROM builder-base AS pkg-powerdevil
 COPY powerdevil/ /work/
 WORKDIR /work
