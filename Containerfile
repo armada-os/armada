@@ -56,6 +56,9 @@ FROM ${LIBSSC_REF} AS libssc
 ARG HEXAGONRPC_REF
 FROM ${HEXAGONRPC_REF} AS hexagonrpc
 
+ARG VELA_NPU_REF
+FROM ${VELA_NPU_REF} AS vela-npu
+
 ARG STEAMOS_MANAGER_REF
 FROM ${STEAMOS_MANAGER_REF} AS steamos-manager
 
@@ -146,6 +149,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=inputplumber,source=/rpms,target=/packages/inputplumber \
     --mount=type=bind,from=libssc,source=/rpms,target=/packages/libssc \
     --mount=type=bind,from=hexagonrpc,source=/rpms,target=/packages/hexagonrpc \
+    --mount=type=bind,from=vela-npu,source=/rpms,target=/packages/vela-npu \
     --mount=type=bind,from=steamos-manager,source=/rpms,target=/packages/steamos-manager \
     --mount=type=bind,from=networkmanager,source=/rpms,target=/packages/networkmanager \
     --mount=type=bind,from=wpa_supplicant,source=/rpms,target=/packages/wpa_supplicant \
