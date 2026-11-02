@@ -180,7 +180,7 @@ check("factory gamescope policy loaded",
       factory_global["gamescopeVulkanRealtime"] is True)
 check("factory scheduler loaded", factory_global["scheduler"] is None)
 check("factory thunk defaults loaded",
-      set(factory_global["thunks"]) == {"Vulkan", "GL", "drm", "WaylandClient", "asound"} and
+      set(factory_global["thunks"]) == {"Vulkan", "GL", "drm"} and
       all(factory_global["thunks"].values()))
 factory_perf = ap.sanitize_perf(factory_tweaks["global"], ENV)
 check("gamescope nice defaults to -20",
@@ -303,6 +303,8 @@ check("missing profile uses safety fallback",
       launch.resolve_fex_config({}, profiles)["Multiblock"] == "0")
 check("thunk settings override base FEX config defaults",
       launch.thunk_settings({"thunks": {"Vulkan": True}}, {"Vulkan": 0, "GL": 1}) == {"Vulkan": 1, "GL": 1})
+check("thunks missing from the base FEX config stay off",
+      launch.thunk_settings({"thunks": {"asound": True}}, {"GL": 1}) == {"GL": 1})
 
 launch.armada_fex_thunks.OVERLAYS = pathlib.Path(ROOT) / "system_files/usr/share/armada/fex-thunk-overlays.json"
 fex_tool = pathlib.Path(WORK) / "FEX-Emu"
