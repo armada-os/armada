@@ -9,6 +9,9 @@ src=/usr/share/decky-plugins
 
 loader_needs_seed() {
     [[ ! -x "${homebrew}/services/PluginLoader" ]] && return 0
+    # Decky under FEX sees x86_64 and never updates itself to arm64 (ELF machine b7).
+    [[ $(od -An -tx1 -j18 -N1 "${homebrew}/services/PluginLoader") == *b7 ]] || return 0
+
     [[ -f "${loader_version_src}" ]] || return 1
     [[ -f "${homebrew}/services/.loader.version" ]] || return 0
 
