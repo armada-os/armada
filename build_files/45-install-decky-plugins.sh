@@ -23,7 +23,7 @@ decky_release="$(
         jq -r 'first(.[])'
 )"
 decky_version="$(jq -r '.tag_name' <<<"${decky_release}")"
-decky_url="$(jq -r '.assets[].browser_download_url | select(endswith("PluginLoader"))' <<<"${decky_release}")"
+decky_url="$(jq -r '.assets[].browser_download_url | select(endswith("PluginLoader-arm64"))' <<<"${decky_release}")"
 decky_service_url=https://raw.githubusercontent.com/SteamDeckHomebrew/decky-loader/main/dist/plugin_loader-prerelease.service
 
 [[ -n "${decky_version}" && "${decky_version}" != "null" ]]
