@@ -170,6 +170,9 @@ v9_20260801_sachin_garg_media_iris_cache_work_mode_in_iris_set_stage.patch
 1036-media-iris-only-rescale-decoder-power-on-bitstream-queue.patch
 1037-media-iris-decode-in-stage-1-at-the-top-clock-by-default.patch
 1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch
+1087-media-iris-release-gen1-input-internal-buffers-when-stopping-before-decode.patch
+1088-media-iris-defer-gen1-capture-setup-until-the-sequence-is-known.patch
+1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch
 
 # ============== System tweaks ==============
 0500-ROCKNIX-set-boot-fanspeed.patch

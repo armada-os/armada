@@ -468,6 +468,15 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch`
   source: https://github.com/kettlelinux/kettlelinux/blob/2b7661b4d937d7efbb487c4bba84f8705be7cc5d/kernel/patches/40-kettle/1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch
   upstream: unknown
+- `patches/1087-media-iris-release-gen1-input-internal-buffers-when-stopping-before-decode.patch`
+  source: https://github.com/shuuri-labs/pocknix-os/blob/97ee6429d6e68f82d10309aeae390b9d2fa4a220/kernel/common/patches/1087-media-iris-release-gen1-input-internal-buffers-when-stopping-before-decode.patch
+  upstream: unknown
+- `patches/1088-media-iris-defer-gen1-capture-setup-until-the-sequence-is-known.patch`
+  source: https://github.com/shuuri-labs/pocknix-os/blob/97ee6429d6e68f82d10309aeae390b9d2fa4a220/kernel/common/patches/1088-media-iris-defer-gen1-capture-setup-until-the-sequence-is-known.patch
+  upstream: unknown
+- `patches/1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch`
+  source: https://github.com/shuuri-labs/pocknix-os/blob/00f393be748c778d117fd98e38b42533785d6b74/kernel/common/patches/1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch
+  upstream: unknown
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown
