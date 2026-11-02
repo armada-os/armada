@@ -1,0 +1,53 @@
+From: shuuri-labs <61762328+shuuri-labs@users.noreply.github.com>
+Subject: [PATCH] media: iris: never return a gen1 decoded frame stamped zero
+
+Steam's arm64 Remote Play client numbers its bitstream buffers from 0 and
+reads a capture buffer that comes back with timestamp 0 as a failed
+decode. Its first frame always does, so every stream starts with a
+restart of both queues on the same fd, fed P-frames only.
+
+Gen2 firmware decodes on through that. Gen1 (sm8250) firmware needs a
+new keyframe after the restart and returns nothing, so Steam keeps
+restarting: H.264 streams start frozen for seconds, and HEVC gives up
+after about 3 s and falls back to H.264.
+
+On gen1, return a decoded frame whose timestamp is 0 as 1 us instead.
+The frame and every other timestamp are unchanged.
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -987,6 +987,10 @@ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf)
+ 
+ 	state = VB2_BUF_STATE_DONE;
+ 	vb2->timestamp = buf->timestamp;
++	/* Steam's client reads a decoded frame stamped 0 as a failed decode and restarts */
++	if (V4L2_TYPE_IS_CAPTURE(type) && !vb2->timestamp &&
++	    inst->core->iris_firmware_data->nonzero_capture_ts)
++		vb2->timestamp = NSEC_PER_USEC;
+ 	v4l2_m2m_buf_done(vbuf, state);
+ 
+ 	return 0;
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
+@@ -414,6 +414,7 @@ static const u32 sm8250_enc_ip_int_buf_tbl[] = {
+ const struct iris_firmware_data iris_hfi_gen1_data = {
+ 	.init_hfi_ops = &iris_hfi_gen1_sys_ops_init,
+ 	.defer_capture_until_seq = true,
++	.nonzero_capture_ts = true,
+ 
+ 	.inst_fw_caps_dec = inst_fw_cap_sm8250_dec,
+ 	.inst_fw_caps_dec_size = ARRAY_SIZE(inst_fw_cap_sm8250_dec),
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -241,6 +241,8 @@ struct iris_firmware_data {
+ 	void (*init_hfi_ops)(struct iris_core *core);
+ 	/* firmware cannot take output port setup before it has parsed a sequence header */
+ 	bool defer_capture_until_seq;
++	/* firmware cannot resume after a client restart without a new keyframe */
++	bool nonzero_capture_ts;
+ 
+ 	u32 core_arch;
+ 

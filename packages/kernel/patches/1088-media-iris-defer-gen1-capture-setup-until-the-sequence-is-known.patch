@@ -1,0 +1,197 @@
+From: shuuri-labs <61762328+shuuri-labs@users.noreply.github.com>
+Subject: [PATCH] media: iris: defer gen1 capture setup until the sequence is known
+
+V4L2 lets a stateful decoder client start the capture queue before the
+first source change, and Steam's streaming client does so: it streams
+on OUTPUT and CAPTURE back to back and queues its capture buffers once.
+On gen1 (sm8250) iris then sets up the output port and queues DPB
+buffers before the firmware has parsed a sequence header, and the
+firmware raises SYS_ERROR. Remote Play stays green.
+
+On gen1, hold capture setup in that state. Capture buffers queued
+meanwhile are kept as deferred, and the source change finishes the
+setup from a work item, since the client may never queue again. If
+setup fails, the queues are errored so the client wakes up. Stopping
+capture first returns the held buffers, and close disables the work
+before the queues are released.
+
+Gen2 firmware accepts the early setup and is unchanged.
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
+@@ -413,6 +413,7 @@ static const u32 sm8250_enc_ip_int_buf_tbl[] = {
+ 
+ const struct iris_firmware_data iris_hfi_gen1_data = {
+ 	.init_hfi_ops = &iris_hfi_gen1_sys_ops_init,
++	.defer_capture_until_seq = true,
+ 
+ 	.inst_fw_caps_dec = inst_fw_cap_sm8250_dec,
+ 	.inst_fw_caps_dec_size = ARRAY_SIZE(inst_fw_cap_sm8250_dec),
+diff --git a/drivers/media/platform/qcom/iris/iris_instance.h b/drivers/media/platform/qcom/iris/iris_instance.h
+--- a/drivers/media/platform/qcom/iris/iris_instance.h
++++ b/drivers/media/platform/qcom/iris/iris_instance.h
+@@ -6,6 +6,7 @@
+ #ifndef __IRIS_INSTANCE_H__
+ #define __IRIS_INSTANCE_H__
+ 
++#include <linux/workqueue.h>
+ #include <media/v4l2-ctrls.h>
+ 
+ #include "iris_buffer.h"
+@@ -67,6 +68,9 @@ enum iris_fmt_type_cap {
+  * @metadata_idx: index for metadata buffer
+  * @codec: codec type
+  * @last_buffer_dequeued: a flag to indicate that last buffer is sent by driver
++ * @seq_seen: firmware has reported the sequence since input streaming started
++ * @capture_deferred: capture is streaming but not yet set up in firmware
++ * @deferred_capture_work: sets up a deferred capture once the sequence is known
+  * @last_buf_ns: start time of received input buffer for current one second FPS window
+  * @frame_counter: input buffer counter for current one second FPS window
+  * @frame_rate: frame rate of current instance
+@@ -114,6 +118,9 @@ struct iris_inst {
+ 	u32				metadata_idx;
+ 	u32				codec;
+ 	bool				last_buffer_dequeued;
++	bool				seq_seen;
++	bool				capture_deferred;
++	struct work_struct		deferred_capture_work;
+ 	u64				last_buf_ns;
+ 	u32				frame_counter;
+ 	u32				frame_rate;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -237,6 +237,8 @@ enum platform_pm_domain_type {
+ 
+ struct iris_firmware_data {
+ 	void (*init_hfi_ops)(struct iris_core *core);
++	/* firmware cannot take output port setup before it has parsed a sequence header */
++	bool defer_capture_until_seq;
+ 
+ 	u32 core_arch;
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -231,6 +231,14 @@ void iris_vb2_stop_streaming(struct vb2_queue *q)
+ 
+ 	inst = vb2_get_drv_priv(q);
+ 
++	if (V4L2_TYPE_IS_CAPTURE(q->type) && inst->capture_deferred) {
++		mutex_lock(&inst->lock);
++		inst->capture_deferred = false;
++		iris_helper_buffers_done(inst, q->type, VB2_BUF_STATE_ERROR);
++		mutex_unlock(&inst->lock);
++		return;
++	}
++
+ 	if (V4L2_TYPE_IS_CAPTURE(q->type) && inst->state == IRIS_INST_INIT)
+ 		return;
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_vdec.c b/drivers/media/platform/qcom/iris/iris_vdec.c
+--- a/drivers/media/platform/qcom/iris/iris_vdec.c
++++ b/drivers/media/platform/qcom/iris/iris_vdec.c
+@@ -16,6 +16,32 @@
+ 
+ #define DEFAULT_CODEC_ALIGNMENT 16
+ 
++static void iris_vdec_deferred_capture_work(struct work_struct *work)
++{
++	struct iris_inst *inst = container_of(work, struct iris_inst, deferred_capture_work);
++	int ret;
++
++	/* ctx_q_lock is the queues' lock, so STREAMON/STREAMOFF cannot interleave */
++	mutex_lock(&inst->ctx_q_lock);
++	mutex_lock(&inst->lock);
++	if (!inst->capture_deferred || inst->state != IRIS_INST_INPUT_STREAMING)
++		goto unlock;
++
++	inst->capture_deferred = false;
++	ret = iris_vdec_streamon_output(inst);
++	if (!ret)
++		ret = iris_queue_internal_deferred_buffers(inst, BUF_DPB);
++	if (!ret)
++		ret = iris_queue_deferred_buffers(inst, BUF_OUTPUT);
++	if (ret) {
++		iris_inst_change_state(inst, IRIS_INST_ERROR);
++		iris_vb2_queue_error(inst);
++	}
++unlock:
++	mutex_unlock(&inst->lock);
++	mutex_unlock(&inst->ctx_q_lock);
++}
++
+ int iris_vdec_inst_init(struct iris_inst *inst)
+ {
+ 	struct iris_core *core = inst->core;
+@@ -25,6 +51,7 @@ int iris_vdec_inst_init(struct iris_inst *inst)
+ 	inst->fmt_dst = kzalloc_obj(*inst->fmt_dst);
+ 
+ 	inst->fw_min_count = 0;
++	INIT_WORK(&inst->deferred_capture_work, iris_vdec_deferred_capture_work);
+ 
+ 	f = inst->fmt_src;
+ 	f->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+@@ -349,6 +376,10 @@ void iris_vdec_src_change(struct iris_inst *inst)
+ 	struct v4l2_event event = {0};
+ 	struct vb2_queue *src_q;
+ 
++	inst->seq_seen = true;
++	if (inst->capture_deferred)
++		schedule_work(&inst->deferred_capture_work);
++
+ 	src_q = v4l2_m2m_get_src_vq(m2m_ctx);
+ 	if (!vb2_is_streaming(src_q))
+ 		return;
+@@ -362,6 +393,9 @@ int iris_vdec_streamon_input(struct iris_inst *inst)
+ {
+ 	int ret;
+ 
++	if (inst->state == IRIS_INST_INIT)
++		inst->seq_seen = false;
++
+ 	ret = iris_set_properties(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+ 	if (ret)
+ 		return ret;
+@@ -394,6 +428,18 @@ int iris_vdec_streamon_output(struct iris_inst *inst)
+ 	const struct iris_hfi_session_ops *hfi_ops = inst->hfi_session_ops;
+ 	int ret;
+ 
++	/*
++	 * Clients may start capture before the first source change. Gen1 firmware
++	 * crashes when the output port is set up that early, so hold the setup until
++	 * the sequence is known; iris_vdec_deferred_capture_work() finishes it.
++	 */
++	if (inst->core->iris_firmware_data->defer_capture_until_seq &&
++	    (inst->state == IRIS_INST_INIT ||
++	     (inst->state == IRIS_INST_INPUT_STREAMING && !inst->seq_seen))) {
++		inst->capture_deferred = true;
++		return 0;
++	}
++
+ 	ret = hfi_ops->session_set_config_params(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
+ 	if (ret)
+ 		return ret;
+@@ -440,7 +486,7 @@ int iris_vdec_qbuf(struct iris_inst *inst, struct vb2_v4l2_buffer *vbuf)
+ 		iris_set_ts_metadata(inst, vbuf);
+ 
+ 	q = v4l2_m2m_get_vq(inst->m2m_ctx, vb2->type);
+-	if (!vb2_is_streaming(q)) {
++	if (!vb2_is_streaming(q) || (buf->type == BUF_OUTPUT && inst->capture_deferred)) {
+ 		buf->attr |= BUF_ATTR_DEFERRED;
+ 		return 0;
+ 	}
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -285,6 +285,9 @@ int iris_close(struct file *filp)
+ {
+ 	struct iris_inst *inst = iris_get_inst(filp);
+ 
++	/* a source change can still queue it while the queues are released below */
++	if (inst->domain == DECODER)
++		disable_work_sync(&inst->deferred_capture_work);
+ 	v4l2_ctrl_handler_free(&inst->ctrl_handler);
+ 	v4l2_m2m_ctx_release(inst->m2m_ctx);
+ 	v4l2_m2m_release(inst->m2m_dev);
