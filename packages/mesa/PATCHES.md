@@ -40,25 +40,14 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0011-tu-z-mutable-ubwc.patch`
   source: https://github.com/Vauzi-17/710/blob/6828465a8bc2ae08b705e4a67a6a2bb76197e231/patches/30-tu-z-mutable.py
   affects: A6xx and A7xx up to A740 (not A750 or A8xx)
-  notes: script converted to a patch
+  notes: script converted to a patch; modified to allow RGBA-type images with no format list to
+  go linear, so apps that view them as BGRA render red and blue correctly
 - `patches/0012-tu-z-mutable-ubwc-copy-format.patch`
   source: armada
   affects: A740
 - `patches/0013-freedreno-a7xx-gen1-no-early-preamble.patch`
   source: armada
   affects: A710, A720, A722, A725, A730 (A710 and A720 only on devel)
-
-Disabled (kept in `patches/disabled/`, which isn't applied):
-
-- `patches/disabled/0001-disable-turnip-sparse-sync.patch`
-  source: https://github.com/batocera-linux/batocera.linux/blob/bca5c05d90b606ad859ba2e4e82ab0a515ccb956/board/batocera/patches/mesa3d/001-fix-freedreno-vulkan.patch
-  notes: disables the graphics/sparse-queue cross-sync added by Mesa 0cc0e786e096.
-  disabled: a temporary diagnostic workaround for A740 GPU translation-fault storms.
-- `patches/disabled/0003-ir3-disable-bindless-ubo-const-lowering.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/0adbe00f1745512609b289ef9435df897c28b780/projects/ROCKNIX/packages/graphics/mesa/patches/SM8550/0001-freedreno-ir3-vulkan-disable-bindless-ubo-const-lowering.patch
-  notes: offsets updated for 26.2.0.
-  disabled: ROCKNIX dropped it as no longer needed, and upstream fixed the related
-  bugs in 2a841d0d and 2755d64a.
 
 ## Variants
 
@@ -91,12 +80,3 @@ Based on devel, plus:
   source: https://github.com/WinNative-Emu/Drivers/blob/c71f600a2977a141f21a922c9ed2e14fb09b13d3/linux/patches/0004-tu-Invalidate-bindless-descriptors-through-the-A8XX-.patch
   affects: A8xx
   notes: flush hunk dropped (upstream c88b6ebd3 covers it); offsets updated.
-
-Disabled (kept in `variants/winnative/patches/disabled/`, which isn't applied):
-
-- `variants/winnative/patches/disabled/0005-freedreno-enable-a740-ubwc-hint.patch`
-  source: https://github.com/WinNative-Emu/Drivers/blob/c71f600a2977a141f21a922c9ed2e14fb09b13d3/patches/apply_a7xx_gen2_ubwc_hint.py
-  notes: script converted to a patch.
-  disabled: upstream Mesa uses this as a compatibility switch when a mismatch
-  between drivers breaks scaled blits. Since these are system driver builds this
-  switch is unnecessary.
