@@ -430,6 +430,19 @@
         "releases": "https://api.github.com/repos/justradical/decky-optiscaler-arm64ec/releases/394141296",
         "asset": "^OptiScaler\\.zip$"
       }
+    },
+    {
+      "id": "vela",
+      "name": "Vela",
+      "summary": "FSR 4 (on the NPU), FSR 3 or SGSR 2 instead of a game's DLSS/FSR",
+      "category": "plugins",
+      "icon": "https://raw.githubusercontent.com/zrprod9-cmyk/vela/main/docs/icon.png",
+      "note": "FSR 4 on the NPU: SM8550 only",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/zrprod9-cmyk/vela/releases/432506920",
+        "asset": "^vela-0\\.8\\.16\\.zip$"
+      }
     }
   ]
 }
