@@ -715,6 +715,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: AYANEO Pocket DS only. With the compander speaker path from `0075`, the speakers audibly distorted at WSA RX digital volume 73 and were clean at 71 across the bass, hot-master and vocal test clips, so the upstream limit of 81 is lowered to 71 on this board. A peak limiter in userspace could allow a higher cap later.
+- `patches/0539-ASoC-qcom-sc8280xp-cap-Pocket-S2-headphone-digital-volume.patch`
+  source: armada
+  upstream: local
+  notes: AYANEO Pocket S2 only. With the WCD939x compander on, the HPHL/HPHR PA gain has no effect on the output level, so the headphone volume is the RX digital volume, whose range reaches +40 dB. Limited to 74 (-10 dB) so the top of the slider stays at a safe level; the UCM maps it as `HP Digital`.
 - `patches/0529-ASoC-qdsp6-q6apm-fail-the-graph-open-when-the-DSP-rejects-it.patch`
   source: armada
   upstream: local

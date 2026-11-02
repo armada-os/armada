@@ -1,0 +1,32 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: qcom: sc8280xp: cap Pocket S2 headphone digital volume
+
+The Pocket S2 headphone volume is the RX digital volume: with the WCD939x
+compander enabled the HPHL/HPHR PA gain has no effect on the output level.
+The control spans -84..+40 dB, so exposing it as the playback volume would
+map 100% of the slider to +40 dB. Limit it to 74 (-10 dB) on this board
+only.
+
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 00f1a3c..217245f 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -59,6 +59,18 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+ 			snd_soc_limit_volume(card, "WSA_RX1 Digital Volume", 71);
+ 		}
+ 		break;
++	case RX_CODEC_DMA_RX_0:
++	case RX_CODEC_DMA_RX_1:
++		/*
++		 * Pocket S2 headphones are driven from the RX digital volume
++		 * (the PA gain has no effect with the compander on). Its range
++		 * runs up to +40 dB, so cap it at -10 dB for the whole slider.
++		 */
++		if (of_machine_is_compatible("ayaneo,pocket-s2")) {
++			snd_soc_limit_volume(card, "RX_RX0 Digital Volume", 74);
++			snd_soc_limit_volume(card, "RX_RX1 Digital Volume", 74);
++		}
++		break;
+ 	case DISPLAY_PORT_RX_0:
+ 		/* DISPLAY_PORT dai ids are not contiguous */
+ 		dp_pcm_id = 0;
