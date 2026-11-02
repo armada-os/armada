@@ -50,6 +50,10 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0013-freedreno-a7xx-gen1-no-early-preamble.patch`
   source: armada
   affects: A710, A720, A722, A725, A730 (A710 and A720 only on devel)
+- `patches/0015-ir3-array-to-ssa-resolve-trivial-phi-chains.patch`
+  source: https://github.com/armada-os/armada/issues/748#issuecomment-6373073950
+  affects: all GPUs
+  notes: comment shortened
 
 ## Variants
 
@@ -60,7 +64,7 @@ apply (`BASE_PATCHES`, default all), or takes both from another variant
 
 ### devel
 
-Mesa main with 0001 and 0005-0013 (0002 and 0004 are upstream).
+Mesa main with 0001, 0005-0013 and 0015 (0002 and 0004 are upstream).
 
 ### winnative
 
