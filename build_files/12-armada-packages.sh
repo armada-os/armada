@@ -50,7 +50,7 @@ pkgs=(
     /packages/kwin/kwin-common-[0-9]*.rpm
     /packages/kwin/kwin-libs-[0-9]*.rpm
 
-    # Carry Plasma Mobile's input-region crash fix until Fedora backports it.
+    # Plasma Mobile rebuilt from the Fedora SRPM (no patches since Plasma 6.8 includes the input-region fix).
     /packages/plasma-mobile/plasma-mobile-[0-9]*.rpm
     /packages/plasma-mobile/plasma-lookandfeel-fedora-mobile-[0-9]*.rpm
 
