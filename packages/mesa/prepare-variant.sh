@@ -48,7 +48,7 @@ rm -rf "${dest}"
 mkdir -p "${dest}"
 tar xf "${tarball}" -C "${dest}" --strip-components=1
 for patch in "${patches[@]}"; do
-    patch -d "${dest}" -p1 --forward --no-backup-if-mismatch <"${patch}"
+    patch -d "${dest}" -p1 --fuzz=0 --forward --no-backup-if-mismatch <"${patch}"
 done
 
 "${here}/turnip-build-id.sh" source - "${SOURCE_SHA256}" "${patches[@]}" >"${dest}/source-id"
