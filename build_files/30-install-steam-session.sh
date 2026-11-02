@@ -30,7 +30,7 @@ rm -rf "${STEAM_BOOTSTRAP_HOME}"
 mkdir -p "${STEAM_BOOTSTRAP_HOME}"
 tar --zstd -xf /packages/steam-bootstrap/steam-bootstrap.tar.zst -C "${STEAM_BOOTSTRAP_HOME}"
 python3 /ctx/build_files/verify-steam-bootstrap.py \
-    "${STEAM_HOME}/package/steam_client_steamdeck_publicbeta_linuxarm64.installed" "${STEAM_HOME}"
+    "${STEAM_HOME}/package/steam_client_steamdeck_stable_linuxarm64.installed" "${STEAM_HOME}"
 rm -f /etc/steamos-oobe-image
 
 # Proton CachyOS, included for SM8250 
