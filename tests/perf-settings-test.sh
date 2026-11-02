@@ -262,6 +262,19 @@ finally:
     else:
         os.environ["PATH"] = saved_path
 
+id_keys = ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId")
+saved_ids = {key: os.environ.pop(key) for key in id_keys if key in os.environ}
+try:
+    os.environ.update({"STEAM_COMPAT_APP_ID": "0", "SteamAppId": "3715325483"})
+    check("shortcut compat app id 0 falls through to SteamAppId",
+          launch.appid() == "3715325483")
+    os.environ.update({"STEAM_COMPAT_APP_ID": "620", "SteamAppId": "620"})
+    check("Steam game uses its compat app id", launch.appid() == "620")
+finally:
+    for key in id_keys:
+        os.environ.pop(key, None)
+    os.environ.update(saved_ids)
+
 base_fex = os.path.join(WORK, "base-fex.json")
 with open(base_fex, "w") as f:
     json.dump({"Config": {"TSOEnabled": "1"}, "ThunksDB": {"Vulkan": 1, "GL": 1}}, f)
