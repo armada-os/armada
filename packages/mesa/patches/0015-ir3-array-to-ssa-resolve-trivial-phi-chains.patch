@@ -1,0 +1,23 @@
+diff --git a/src/freedreno/ir3/ir3_array_to_ssa.c b/src/freedreno/ir3/ir3_array_to_ssa.c
+index dacd516d..896bee97 100644
+--- a/src/freedreno/ir3/ir3_array_to_ssa.c
++++ b/src/freedreno/ir3/ir3_array_to_ssa.c
+@@ -161,10 +161,14 @@ remove_trivial_phi(struct ir3_instruction *phi)
+ static struct ir3_register *
+ lookup_value(struct ir3_register *reg)
+ {
+-   if (!reg)
+-      return NULL;
+-   if (reg->instr->opc == OPC_META_PHI)
+-      return reg->instr->data;
++   /* A trivial phi's data can be another phi that is removed later, so
++    * follow the chain to the final definition. */
++   while (reg && reg->instr->opc == OPC_META_PHI) {
++      struct ir3_register *next = reg->instr->data;
++      if (next == reg)
++         break;
++      reg = next;
++   }
+    return reg;
+ }
+ 
