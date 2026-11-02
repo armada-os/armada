@@ -10,7 +10,7 @@ source /work/BASE.env
 STEAM_BOOTSTRAP_HOME=/work/work/home
 STEAM="${STEAM_BOOTSTRAP_HOME}/.local/share/Steam"
 DOT_STEAM="${STEAM_BOOTSTRAP_HOME}/.steam"
-STEAM_ARM_CHANNEL="steamdeck_publicbeta"
+STEAM_ARM_CHANNEL="steamdeck_stable"
 STEAM_ARM_MANIFEST_NAME="steam_client_${STEAM_ARM_CHANNEL}_linuxarm64"
 STEAM_BOOTSTRAP_TIMEOUT="${STEAM_BOOTSTRAP_TIMEOUT:-900}"
 
