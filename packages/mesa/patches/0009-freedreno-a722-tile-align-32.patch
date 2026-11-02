@@ -1,0 +1,19 @@
+From: Armada <no-reply@armadaos.dev>
+Subject: [PATCH] freedreno: A722 uses 32-row tile alignment
+
+tile_align_h = 32 follows the A720, its closest sibling, and matches
+Vauzi-17's blob traces (add_710_720_722.py):
+https://github.com/Vauzi-17/710/blob/5db89bde562d/add_710_720_722.py
+---
+diff --git a/src/freedreno/common/freedreno_devices.py b/src/freedreno/common/freedreno_devices.py
+--- a/src/freedreno/common/freedreno_devices.py
++++ b/src/freedreno/common/freedreno_devices.py
+@@ -1128,7 +1128,7 @@
+                                         storage_ubwc_internal_quirk = True)],
+         num_ccu = 2,
+         tile_align_w = 64,
+-        tile_align_h = 16,
++        tile_align_h = 32,
+         tile_max_w = 1024,
+         tile_max_h = 1024,
+         num_vsc_pipes = 32,

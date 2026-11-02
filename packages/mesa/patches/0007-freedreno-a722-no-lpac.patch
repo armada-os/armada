@@ -19,6 +19,6 @@ index e805e9f..fa893cc 100644
 -        [a7xx_base, a7xx_gen1, GPUProps(no_bv = True)],
 +        [a7xx_base, a7xx_gen1, GPUProps(no_bv = True,
 +                                        has_lpac = False)],
-         num_ccu = 1,
+         num_ccu = 2,
          tile_align_w = 64,
          tile_align_h = 16,
