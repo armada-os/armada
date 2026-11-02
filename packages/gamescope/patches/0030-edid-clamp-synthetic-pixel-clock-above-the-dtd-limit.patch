@@ -1,0 +1,85 @@
+From: enij90 <226572015+enij90@users.noreply.github.com>
+Subject: [PATCH] edid: clamp the synthetic pixel clock above the DTD limit
+
+A detailed timing descriptor encodes at most 655.35 MHz. High-resolution
+high-refresh DSI panels exceed it (Lenovo TB321FU: 1600x2560@144 is
+949.666 MHz), so no synthetic EDID was generated and the connector lost
+known-display matching and --custom-refresh-rates entirely. The EDID only
+identifies the panel to gamescope and clients; the scanout mode still comes
+from the kernel. Describe the same geometry at the highest encodable clock
+instead of giving up.
+
+diff --git a/src/edid.cpp b/src/edid.cpp
+--- a/src/edid.cpp
++++ b/src/edid.cpp
+@@ -364,7 +364,7 @@ namespace gamescope
+
+     std::vector<uint8_t> GenerateSimpleEdid( const EdidModeInfo &mode )
+     {
+-        if ( !mode.clockKHz || mode.clockKHz > 655350 ||
++        if ( !mode.clockKHz ||
+              !mode.hdisplay || mode.hdisplay > 4095 ||
+              mode.hsyncStart < mode.hdisplay || mode.hsyncEnd < mode.hsyncStart || mode.htotal < mode.hsyncEnd ||
+              !mode.vdisplay || mode.vdisplay > 4095 ||
+@@ -392,8 +392,11 @@ namespace gamescope
+         const uint32_t vsyncOffset = std::min<uint32_t>( mode.vsyncStart - mode.vdisplay, 63 );
+         const uint32_t vsyncWidth = std::clamp<uint32_t>( mode.vsyncEnd - mode.vsyncStart, 1, 63 );
+
+-        const uint32_t pixelClock10KHz = ( mode.clockKHz + 5 ) / 10;
+-        if ( !pixelClock10KHz || pixelClock10KHz > UINT16_MAX )
++        // The DTD pixel clock tops out at 655.35 MHz. Faster panels keep their
++        // geometry and are described at the highest encodable clock (a lower
++        // refresh); the mode itself always comes from the kernel.
++        const uint32_t pixelClock10KHz = std::min<uint32_t>( ( mode.clockKHz + 5 ) / 10, UINT16_MAX );
++        if ( !pixelClock10KHz )
+             return {};
+
+         std::vector<uint8_t> edid = GenerateSimpleEdid( mode.hdisplay, mode.vdisplay );
+diff --git a/tests/test_edid.cpp b/tests/test_edid.cpp
+--- a/tests/test_edid.cpp
++++ b/tests/test_edid.cpp
+@@ -188,6 +188,44 @@ TEST_CASE("Synthetic EDID rejects timings EDID cannot encode", "[edid]")
+     REQUIRE( GenerateSimpleEdid( mode ).empty() );
+ }
+
++TEST_CASE("Synthetic EDID clamps pixel clocks above the DTD limit", "[edid]")
++{
++    // Lenovo TB321FU BOE panel, 1600x2560@144 over dual DSI.
++    const EdidModeInfo mode
++    {
++        .clockKHz = 949666,
++        .hdisplay = 1600,
++        .hsyncStart = 1600 + 566,
++        .hsyncEnd = 1600 + 566 + 40,
++        .htotal = 1600 + 566 + 40 + 108,
++        .vdisplay = 2560,
++        .vsyncStart = 2560 + 30,
++        .vsyncEnd = 2560 + 30 + 2,
++        .vtotal = 2560 + 30 + 2 + 258,
++        .physicalWidthMm = 118,
++        .physicalHeightMm = 190,
++    };
++
++    const std::vector<uint8_t> edid = GenerateSimpleEdid( mode );
++    REQUIRE( edid.size() == 256 );
++
++    const uint8_t *dtd = &edid[0x36];
++    const uint32_t pixelClock10KHz = dtd[0] | ( dtd[1] << 8 );
++    const uint32_t hactive = dtd[2] | ( ( dtd[4] >> 4 ) << 8 );
++    const uint32_t hblank = dtd[3] | ( ( dtd[4] & 0xf ) << 8 );
++    const uint32_t vactive = dtd[5] | ( ( dtd[7] >> 4 ) << 8 );
++    const uint32_t vblank = dtd[6] | ( ( dtd[7] & 0xf ) << 8 );
++    CHECK( pixelClock10KHz == UINT16_MAX );
++    CHECK( hactive == mode.hdisplay );
++    CHECK( hblank == mode.htotal - mode.hdisplay );
++    CHECK( vactive == mode.vdisplay );
++    CHECK( vblank == mode.vtotal - mode.vdisplay );
++
++    di_info *info = di_info_parse_edid( edid.data(), edid.size() );
++    REQUIRE( info != nullptr );
++    di_info_destroy( info );
++}
++
+ TEST_CASE("Synthetic EDID clamps sync porches it cannot describe", "[edid]")
+ {
+     EdidModeInfo mode = k_Odin3Mode;
