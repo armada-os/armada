@@ -8,12 +8,20 @@ import {
 type ButtonValueRenderer = (value: unknown) => unknown;
 
 type DropdownProps = {
+  setting?: unknown;
   rgOptions?: PerformanceProfileOption[];
   renderButtonValue?: ButtonValueRenderer;
 } & Record<string, unknown>;
 
+type SettingFiber = {
+  pendingProps?: { setting?: unknown };
+  memoizedProps?: { setting?: unknown };
+  return?: SettingFiber | null;
+};
+
 type DropdownInstance = {
   props: DropdownProps;
+  _reactInternals?: SettingFiber;
 };
 
 type DropdownMethod = (this: DropdownInstance, ...args: unknown[]) => unknown;
@@ -31,6 +39,21 @@ type MethodPatch = {
 type SteamSettings = {
   GetCurrentLanguage?: () => Promise<unknown> | unknown;
 };
+
+const PERFORMANCE_PROFILE_SETTING = "steamos_platform_performance_profile";
+
+function isPerformanceProfileDropdown(dropdown: DropdownInstance): boolean {
+  if (typeof dropdown.props?.setting === "string") {
+    return dropdown.props.setting === PERFORMANCE_PROFILE_SETTING;
+  }
+  // Steam's setting wrapper consumes `setting` before rendering Dropdown.
+  // The nearest setting owner identifies the control without inspecting options.
+  for (let owner = dropdown._reactInternals?.return; owner; owner = owner.return) {
+    const setting = owner.pendingProps?.setting ?? owner.memoizedProps?.setting;
+    if (typeof setting === "string") return setting === PERFORMANCE_PROFILE_SETTING;
+  }
+  return false;
+}
 
 function readSteamLanguage(): Promise<unknown> {
   const steamClient = (window as unknown as {
@@ -76,6 +99,9 @@ export function registerSteamProfileLocalization(): () => void {
   const patchMethod = (name: "render" | "BuildMenu"): MethodPatch => {
     let patch: MethodPatch;
     const handler = function (this: DropdownInstance, args: unknown[]) {
+      if (locale === "en" || !isPerformanceProfileDropdown(this)) {
+        return patch.original.apply(this, args);
+      }
       const props = this.props;
       const options = props?.rgOptions;
       const localized = localizePerformanceProfileOptions(options, locale);

@@ -96,39 +96,47 @@ test("accepts a shuffled native order", () => {
   assert.deepEqual(localized.map((option) => option.data), ["Performance", "Eco", "Balanced"]);
 });
 
-test("rejects custom labels on native data", () => {
+test("preserves custom labels while translating other native profiles", () => {
   const options = nativeOptions();
   options[0] = { ...options[0], label: "Eco Mode" };
-  assert.equal(localizePerformanceProfileOptions(options, "zh-CN"), options);
+  const localized = localizePerformanceProfileOptions(options, "zh-CN");
+  assert.ok(localized);
+  assert.deepEqual(localized.map((option) => option.label), ["Eco Mode", "均衡", "性能"]);
+  assert.equal(localized[0], options[0]);
 });
 
-test("rejects unknown profile data", () => {
+test("preserves unknown profile data while translating known profiles", () => {
   const options = nativeOptions();
   options[2] = { data: "Turbo", label: "Turbo", icon: "turbo.svg" };
+  const localized = localizePerformanceProfileOptions(options, "zh-CN");
+  assert.ok(localized);
+  assert.deepEqual(localized.map((option) => option.label), ["节能", "均衡", "Turbo"]);
+  assert.equal(localized[2], options[2]);
+});
+
+test("does not translate labels associated with unknown IDs", () => {
+  const options = [
+    { data: "eco", label: "eco" },
+    { data: "balanced", label: "balanced" },
+    { data: "custom", label: "Performance" },
+  ];
   assert.equal(localizePerformanceProfileOptions(options, "zh-CN"), options);
 });
 
-test("rejects unrelated dropdowns that reuse the same words", () => {
-  const lowercase = [
-    { data: "eco", label: "eco" },
-    { data: "balanced", label: "balanced" },
-    { data: "performance", label: "performance" },
-  ];
-  assert.equal(localizePerformanceProfileOptions(lowercase, "zh-CN"), lowercase);
-
-  const duplicated = [
-    { data: "Eco", label: "Eco" },
-    { data: "Eco", label: "Eco" },
-    { data: "Eco", label: "Eco" },
-  ];
-  assert.equal(localizePerformanceProfileOptions(duplicated, "zh-CN"), duplicated);
-});
-
-test("rejects dropdowns that are not exactly three options", () => {
+test("supports subsets and extended lists in the target setting", () => {
   const options = nativeOptions();
   const two = options.slice(0, 2);
-  assert.equal(localizePerformanceProfileOptions(two, "zh-CN"), two);
-  assert.equal(localizePerformanceProfileOptions([], "zh-CN")?.length, 0);
+  assert.deepEqual(
+    localizePerformanceProfileOptions(two, "zh-CN")?.map((option) => option.label),
+    ["节能", "均衡"],
+  );
+  const extended = [...options, { data: "Turbo", label: "Turbo" }];
+  assert.deepEqual(
+    localizePerformanceProfileOptions(extended, "zh-CN")?.map((option) => option.label),
+    ["节能", "均衡", "性能", "Turbo"],
+  );
+  const empty: Option[] = [];
+  assert.equal(localizePerformanceProfileOptions(empty, "zh-CN"), empty);
   assert.equal(localizePerformanceProfileOptions(undefined, "zh-CN"), undefined);
 });
 
@@ -197,8 +205,15 @@ type HookResult = {
   buttonLabel?: unknown;
 };
 
+type SettingFiber = {
+  pendingProps?: Record<string, unknown>;
+  memoizedProps?: Record<string, unknown>;
+  return?: SettingFiber | null;
+};
+
 type FakeDropdown = {
   props: Record<string, unknown>;
+  _reactInternals?: SettingFiber;
   state: { value?: { data?: unknown; label?: unknown } };
   failWith?: Error;
   render: (...args: unknown[]) => HookResult;
@@ -215,6 +230,19 @@ const { registerSteamProfileLocalization } = await import(dataUrl(integrationOut
   registerSteamProfileLocalization: () => () => void;
 };
 
+const PROFILE_SETTING = "steamos_platform_performance_profile";
+
+function withProfileSetting(dropdown: FakeDropdown): FakeDropdown {
+  // Steam consumes `setting` above the feature wrapper and native Dropdown.
+  dropdown._reactInternals = {
+    return: {
+      memoizedProps: { feature: undefined },
+      return: { memoizedProps: { setting: PROFILE_SETTING } },
+    },
+  };
+  return dropdown;
+}
+
 test("localizes both native dropdown hooks through the real prototype", async () => {
   const globalRecord = globalThis as { window?: unknown };
   const savedWindow = globalRecord.window;
@@ -223,6 +251,7 @@ test("localizes both native dropdown hooks through the real prototype", async ()
     LocalizationManager: { m_rgLocalesToUse: ["schinese"] },
     SteamClient: { Settings: steamSettings },
   };
+  let unregister: (() => void) | undefined;
   try {
     const nativeRender = ui.Dropdown.prototype.render;
     const nativeBuildMenu = ui.Dropdown.prototype.BuildMenu;
@@ -238,12 +267,12 @@ test("localizes both native dropdown hooks through the real prototype", async ()
       strDefaultLabel: "Profile",
     };
 
-    let unregister = registerSteamProfileLocalization();
+    unregister = registerSteamProfileLocalization();
     await Promise.resolve();
     assert.equal(ui.installedPatchCount(), 2);
     assert.notEqual(ui.Dropdown.prototype.render, nativeRender);
 
-    const dropdown = new ui.Dropdown(props);
+    const dropdown = withProfileSetting(new ui.Dropdown(props));
     for (const hook of ["render", "BuildMenu"] as const) {
       const result = dropdown[hook]("forwarded", 7);
       assert.equal(result.hook, hook);
@@ -267,16 +296,18 @@ test("localizes both native dropdown hooks through the real prototype", async ()
       formatterCalls += 1;
       return `[${value}]`;
     };
-    const formatted = new ui.Dropdown({ ...props, renderButtonValue: formatter });
+    const formatted = withProfileSetting(new ui.Dropdown({ ...props, renderButtonValue: formatter }));
     assert.equal(formatted.render().buttonLabel, "[节能]");
     assert.equal(formatterCalls, 1);
     assert.equal(formatted.state.value, options[0]);
     assert.equal(formatted.props.renderButtonValue, formatter);
     assert.equal("renderButtonValue" in props, false);
 
-    const failing = new ui.Dropdown(props);
+    const failing = withProfileSetting(new ui.Dropdown(props));
     failing.failWith = new Error("native render failed");
-    assert.throws(() => failing.render(), /native render failed/);
+    for (const hook of ["render", "BuildMenu"] as const) {
+      assert.throws(() => failing[hook](), /native render failed/);
+    }
     assert.equal(failing.props, props);
     assert.equal(failing.state.value, options[0]);
 
@@ -292,7 +323,7 @@ test("localizes both native dropdown hooks through the real prototype", async ()
     unregister = registerSteamProfileLocalization();
     assert.equal(ui.installedPatchCount(), 2);
     assert.deepEqual(
-      new ui.Dropdown(props).BuildMenu().options.map((option) => option.label),
+      withProfileSetting(new ui.Dropdown(props)).BuildMenu().options.map((option) => option.label),
       ["节能", "均衡", "性能"],
     );
     unregister();
@@ -305,7 +336,10 @@ test("localizes both native dropdown hooks through the real prototype", async ()
       await Promise.resolve();
       await Promise.resolve();
       assert.equal(ui.installedPatchCount(), 2);
-      const english = new ui.Dropdown(props);
+      const english = withProfileSetting(new ui.Dropdown(props));
+      Object.defineProperty(english, "_reactInternals", {
+        get() { throw new Error("English must not inspect React owners"); },
+      });
       for (const hook of ["render", "BuildMenu"] as const) {
         const result = english[hook]("forwarded", 7);
         assert.equal(result.hook, hook);
@@ -321,7 +355,94 @@ test("localizes both native dropdown hooks through the real prototype", async ()
       assert.equal(ui.installedPatchCount(), 0);
     }
   } finally {
+    unregister?.();
     if (savedWindow === undefined) delete globalRecord.window;
     else globalRecord.window = savedWindow;
   }
+});
+
+test("uses the nearest setting identifier, never an option list, to select dropdowns", async () => {
+  const globalRecord = globalThis as { window?: unknown };
+  const savedWindow = globalRecord.window;
+  globalRecord.window = {
+    LocalizationManager: { m_rgLocalesToUse: ["schinese"] },
+    SteamClient: { Settings: { GetCurrentLanguage: () => Promise.resolve("schinese") } },
+  };
+  const unregister = registerSteamProfileLocalization();
+  try {
+    await Promise.resolve();
+    await Promise.resolve();
+    const options = nativeOptions();
+    const props = { rgOptions: options, selectedOption: "Eco" };
+    const cases: Array<{ name: string; dropdown: FakeDropdown; localized: boolean }> = [
+      { name: "no setting", dropdown: new ui.Dropdown(props), localized: false },
+      {
+        name: "unrelated setting with identical profile words",
+        dropdown: new ui.Dropdown({ ...props, setting: "unrelated_setting" }),
+        localized: false,
+      },
+      {
+        name: "direct profile setting",
+        dropdown: new ui.Dropdown({ ...props, setting: PROFILE_SETTING }),
+        localized: true,
+      },
+      {
+        name: "setting consumed by an ancestor",
+        dropdown: withProfileSetting(new ui.Dropdown(props)),
+        localized: true,
+      },
+    ];
+    const pending = new ui.Dropdown(props);
+    pending._reactInternals = {
+      return: { pendingProps: { setting: PROFILE_SETTING }, memoizedProps: {} },
+    };
+    cases.push({ name: "pending ancestor props", dropdown: pending, localized: true });
+
+    const nested = withProfileSetting(new ui.Dropdown(props));
+    nested._reactInternals!.return!.memoizedProps = { setting: "another_setting" };
+    cases.push({ name: "nearest unrelated setting", dropdown: nested, localized: false });
+
+    const changing = new ui.Dropdown(props);
+    changing._reactInternals = {
+      return: {
+        pendingProps: { setting: "another_setting" },
+        memoizedProps: { setting: PROFILE_SETTING },
+      },
+    };
+    cases.push({ name: "new setting overrides committed setting", dropdown: changing, localized: false });
+
+    for (const { name, dropdown, localized } of cases) {
+      const originalProps = dropdown.props;
+      for (const hook of ["render", "BuildMenu"] as const) {
+        const result = dropdown[hook](name, 7);
+        assert.deepEqual(result.args, [name, 7]);
+        assert.deepEqual(
+          result.options.map((option) => option.label),
+          localized ? ["节能", "均衡", "性能"] : ["Eco", "Balanced", "Performance"],
+          name,
+        );
+        if (!localized) assert.equal(result.options, options, name);
+        assert.equal(result.buttonLabel, hook === "render" ? (localized ? "节能" : "Eco") : undefined, name);
+        assert.equal(dropdown.props, originalProps, name);
+        assert.equal(dropdown.state.value, options[0], name);
+      }
+    }
+
+    // The original methods throw before reading props. A translation hook must
+    // not inspect rgOptions at all when the dropdown belongs to another setting.
+    const unrelated = new ui.Dropdown({ ...props, setting: "another_setting" });
+    const nativeError = new Error("native method reached");
+    unrelated.failWith = nativeError;
+    Object.defineProperty(unrelated.props, "rgOptions", {
+      get() { throw new Error("unrelated rgOptions inspected"); },
+    });
+    for (const hook of ["render", "BuildMenu"] as const) {
+      assert.throws(() => unrelated[hook](), (error) => error === nativeError);
+    }
+  } finally {
+    unregister();
+    if (savedWindow === undefined) delete globalRecord.window;
+    else globalRecord.window = savedWindow;
+  }
+  assert.equal(ui.installedPatchCount(), 0);
 });
