@@ -127,7 +127,9 @@ for name in $files; do
     [ -n "$adsp" ] || adsp=$fw/$name
     adsp_sha256="$adsp_sha256 $name:$(sha256sum "$fw/$name" | cut -d' ' -f1)"
 done
-adsp_version=$(grep -a -o -m1 'QC_IMAGE_VERSION_STRING=[A-Za-z0-9._-]*' "$adsp" | cut -d= -f2 || true)
+# A split image keeps the string in one of its segments.
+adsp_version=$(grep -a -h -s -o -m1 'QC_IMAGE_VERSION_STRING=[A-Za-z0-9._-]*' \
+    "$adsp" "${adsp%.mdt}".b[0-9][0-9] | head -1 | cut -d= -f2 || true)
 if [ -z "$adsp_version" ]; then
     echo "no QC_IMAGE_VERSION_STRING in $adsp" >&2
     exit 1
