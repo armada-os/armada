@@ -43,7 +43,7 @@ index 578e582..e805e9f 100644
          CHIP.A7XX,
 -        [a7xx_base, a7xx_gen1],
 +        [a7xx_base, a7xx_gen1, GPUProps(no_bv = True)],
-         num_ccu = 1,
+         num_ccu = 2,
          tile_align_w = 64,
          tile_align_h = 16,
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc

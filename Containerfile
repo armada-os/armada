@@ -32,9 +32,6 @@ FROM ${GAMESCOPE_SESSION_STEAM_REF} AS gamescope-session-steam
 ARG KWIN_REF
 FROM ${KWIN_REF} AS kwin
 
-ARG PLASMA_MOBILE_REF
-FROM ${PLASMA_MOBILE_REF} AS plasma-mobile
-
 ARG POWERDEVIL_REF
 FROM ${POWERDEVIL_REF} AS powerdevil
 
@@ -138,7 +135,6 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=gamescope-session,source=/rpms,target=/packages/gamescope-session \
     --mount=type=bind,from=gamescope-session-steam,source=/rpms,target=/packages/gamescope-session-steam \
     --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
-    --mount=type=bind,from=plasma-mobile,source=/rpms,target=/packages/plasma-mobile \
     --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
     --mount=type=bind,from=proton-cachyos,source=/,target=/packages/proton-cachyos \
     --mount=type=bind,from=protontricks,source=/rpms,target=/packages/protontricks \

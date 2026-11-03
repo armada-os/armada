@@ -65,7 +65,8 @@ def prepare_appimage_path(args):
 def appid():
     for key in ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId"):
         value = os.environ.get(key, "").strip()
-        if value.isdigit():
+        # Steam sets STEAM_COMPAT_APP_ID=0 for non-Steam shortcuts.
+        if value.isdigit() and value != "0":
             return value
     return None
 

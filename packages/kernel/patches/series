@@ -170,6 +170,9 @@ v9_20260801_sachin_garg_media_iris_cache_work_mode_in_iris_set_stage.patch
 1036-media-iris-only-rescale-decoder-power-on-bitstream-queue.patch
 1037-media-iris-decode-in-stage-1-at-the-top-clock-by-default.patch
 1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch
+1087-media-iris-release-gen1-input-internal-buffers-when-stopping-before-decode.patch
+1088-media-iris-defer-gen1-capture-setup-until-the-sequence-is-known.patch
+1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch
 
 # ============== System tweaks ==============
 0500-ROCKNIX-set-boot-fanspeed.patch
@@ -251,7 +254,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
 0613-ASoC-q6apm-scope-prepare-start-to-MI2S.patch
 0528-ASoC-qcom-sc8280xp-suspend-the-card-and-its-streams.patch
-0538-ASoC-qcom-sc8280xp-cap-Pocket-DS-speaker-digital-volume.patch
 0539-ASoC-qcom-sc8280xp-cap-Pocket-S2-headphone-digital-volume.patch
 0529-ASoC-qdsp6-q6apm-fail-the-graph-open-when-the-DSP-rejects-it.patch
 0530-ASoC-qdsp6-release-AudioReach-graphs-across-system-suspend.patch
@@ -291,6 +293,8 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1110-arm64-dts-qcom-eliza-gpu-cooling.patch
 1111-drm-panel-vtdr6130-add-pocket-duo.patch
 1114-remoteproc-qcom-add-eliza-wpss.patch
+1115-drm-msm-a6xx-mask-unhandled-rbbm-interrupts.patch
+1116-drm-msm-a6xx-set-up-a722-without-a-bv-pipe.patch
 1140-wifi-ath12k-move-MSI-state-from-ath12k-pci-to-ath12k-base.patch
 1141-wifi-ath12k-share-the-register-window-geometry-with-the-core.patch
 1142-wifi-ath12k-let-the-MSI-CE-DP-IRQ-setup-serve-platform-devices.patch

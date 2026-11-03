@@ -52,7 +52,7 @@ fi
 tar xf "$TARBALL"
 cd "$(tar tf "$TARBALL" | head -1 | cut -d/ -f1)"
 for patch in /src/mesa/patches/*.patch "${HERE}"/patches/*.patch; do
-    patch -p1 <"$patch"
+    patch -p1 --fuzz=0 <"$patch"
 done
 
 TOOL=/tmp/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin

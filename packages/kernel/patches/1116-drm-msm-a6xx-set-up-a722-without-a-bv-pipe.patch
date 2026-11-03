@@ -1,0 +1,119 @@
+From: Armada <no-reply@armadaos.dev>
+Subject: [PATCH] drm/msm/a6xx: set up the Adreno 722 without a BV pipe
+
+The A722 (gen7_17_0) has no BV pipe, but msm sets it up like the other
+A7xx parts, which have one: its catalog entry copies the A730's, and
+the GRAS_NC_MODE_CNTL, APRIV and RPTR setup in a6xx_gpu.c is shared by
+all A7xx. With preemption on (the default for this GPU), workloads
+hung it within minutes ("preemption timed out", "hangcheck detected
+gpu lockup").
+
+Qualcomm's KGSL puts this GPU in the gen7 "no concurrent binning"
+family and sets it up differently:
+
+- Its power-up list, gen7_pwrup_reglist_no_cb, restores
+  GRAS_NC_MODE_CNTL and SP_NC_MODE_CNTL as static entries. The A730
+  setup instead restores GRAS_NC_MODE_CNTL from per-pipe dynamic
+  entries, one for BR and one for the missing BV, each read and
+  replayed through its pipe's aperture, and never restores
+  SP_NC_MODE_CNTL. The CP replays this list on every preemption.
+- GRAS_NC_MODE_CNTL is written once, not per pipe through the aperture.
+- CP_BV_APRIV_CNTL and CP_BV_RB_RPTR_ADDR are not written, and
+  CP_LPAC_APRIV_CNTL only on GPUs with an LPAC pipe, which the A722
+  lacks.
+
+This stops the hangs with linux-firmware's 0x179 SQE. The 0x182 SQE
+from the Duo's Android runs preemption without hangs even without this
+patch, but the setup still matches KGSL and restores SP_NC_MODE_CNTL,
+which the A730 setup never does.
+
+https://github.com/qualcomm-linux/kgsl/blob/2b2d762c0b843c560d2ae2203f6b3cfe1474fb3f/adreno_gen7.c
+---
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -1382,6 +1382,33 @@
+ 
+ DECLARE_ADRENO_REGLIST_LIST(a7xx_pwrup_reglist);
+ 
++/*
++ * A722 has no BV pipe: restore the GRAS and SP bank settings from the
++ * static list instead of per-pipe dynamic entries. Mirrors KGSL's
++ * gen7_pwrup_reglist_no_cb.
++ */
++static const uint32_t a722_pwrup_reglist_regs[] = {
++	REG_A6XX_UCHE_TRAP_BASE,
++	REG_A6XX_UCHE_TRAP_BASE + 1,
++	REG_A6XX_UCHE_WRITE_THRU_BASE,
++	REG_A6XX_UCHE_WRITE_THRU_BASE + 1,
++	REG_A6XX_UCHE_GMEM_RANGE_MIN,
++	REG_A6XX_UCHE_GMEM_RANGE_MIN + 1,
++	REG_A6XX_UCHE_GMEM_RANGE_MAX,
++	REG_A6XX_UCHE_GMEM_RANGE_MAX + 1,
++	REG_A6XX_UCHE_CACHE_WAYS,
++	REG_A6XX_UCHE_MODE_CNTL,
++	REG_A6XX_RB_NC_MODE_CNTL,
++	REG_A6XX_RB_CMP_DBG_ECO_CNTL,
++	REG_A7XX_GRAS_NC_MODE_CNTL,
++	REG_A6XX_SP_NC_MODE_CNTL,
++	REG_A6XX_RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE,
++	REG_A6XX_UCHE_GBIF_GX_CONFIG,
++	REG_A6XX_UCHE_CLIENT_PF,
++};
++
++DECLARE_ADRENO_REGLIST_LIST(a722_pwrup_reglist);
++
+ /* Applicable for X185, A750 */
+ static const u32 a750_ifpc_reglist_regs[] = {
+ 	REG_A6XX_TPL1_BICUBIC_WEIGHTS_TABLE(0),
+@@ -1516,8 +1543,7 @@
+ 		.a6xx = &(const struct a6xx_info) {
+ 			.hwcg = a730_hwcg,
+ 			.protect = &a730_protect,
+-			.pwrup_reglist = &a7xx_pwrup_reglist,
+-			.dyn_pwrup_reglist = &a7xx_dyn_pwrup_reglist,
++			.pwrup_reglist = &a722_pwrup_reglist,
+ 			.gbif_cx = a640_gbif,
+ 			.gmu_chipid = 0x07110000,
+ 			.gmu_cgc_mode = 0x00020000,
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gpu.c
+@@ -782,7 +782,11 @@
+ 		  min_acc_len_64b << 3 |
+ 		  hbb_lo << 1 | ubwc_mode);
+ 
+-	if (adreno_is_a7xx(adreno_gpu)) {
++	if (adreno_is_a722(adreno_gpu)) {
++		/* No BV pipe: a plain write, no per-pipe aperture */
++		gpu_write(gpu, REG_A7XX_GRAS_NC_MODE_CNTL,
++			  FIELD_PREP(GENMASK(8, 5), hbb_lo));
++	} else if (adreno_is_a7xx(adreno_gpu)) {
+ 		for (u32 pipe_id = PIPE_BR; pipe_id <= PIPE_BV; pipe_id++) {
+ 			gpu_write(gpu, REG_A7XX_CP_APERTURE_CNTL_HOST,
+ 				  A7XX_CP_APERTURE_CNTL_HOST_PIPE(pipe_id));
+@@ -1406,10 +1410,13 @@
+ 		if (adreno_is_a7xx(adreno_gpu)) {
+ 			gpu_write(gpu, REG_A6XX_CP_APRIV_CNTL,
+ 				  A7XX_BR_APRIVMASK);
+-			gpu_write(gpu, REG_A7XX_CP_BV_APRIV_CNTL,
+-				  A7XX_APRIV_MASK);
+-			gpu_write(gpu, REG_A7XX_CP_LPAC_APRIV_CNTL,
+-				  A7XX_APRIV_MASK);
++			/* A722 has neither a BV nor an LPAC pipe */
++			if (!adreno_is_a722(adreno_gpu)) {
++				gpu_write(gpu, REG_A7XX_CP_BV_APRIV_CNTL,
++					  A7XX_APRIV_MASK);
++				gpu_write(gpu, REG_A7XX_CP_LPAC_APRIV_CNTL,
++					  A7XX_APRIV_MASK);
++			}
+ 		} else
+ 			gpu_write(gpu, REG_A6XX_CP_APRIV_CNTL,
+ 				  BIT(6) | BIT(5) | BIT(3) | BIT(2) | BIT(1));
+@@ -1458,7 +1465,7 @@
+ 	}
+ 
+ 	/* ..which means "always" on A7xx, also for BV shadow */
+-	if (adreno_is_a7xx(adreno_gpu)) {
++	if (adreno_is_a7xx(adreno_gpu) && !adreno_is_a722(adreno_gpu)) {
+ 		gpu_write64(gpu, REG_A7XX_CP_BV_RB_RPTR_ADDR,
+ 			    rbmemptr(gpu->rb[0], bv_rptr));
+ 	}

@@ -1,0 +1,56 @@
+From: shuuri-labs <61762328+shuuri-labs@users.noreply.github.com>
+Subject: [PATCH] media: iris: release gen1 input internal buffers when stopping before decode
+
+Stopping the input queue before capture is set up sends SESSION_STOP and
+RELEASE_RESOURCES but leaves the input internal buffers marked as queued
+to the firmware. The next input STREAMON frees only dequeued internal
+buffers, so it allocates a second set and keeps the first until close.
+
+A client that restarts decoding over and over leaks a full set each
+time. Steam Remote Play does this while it waits for a keyframe, about
+30 times a second, and at 1728x1080 each set is ~64 MB, so an sm8250
+device runs out of memory within a few seconds and resets.
+
+Release the buffers to the firmware after RELEASE_RESOURCES. The release
+waits for the firmware to acknowledge each buffer and then frees it.
+---
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -786,7 +786,7 @@ static int iris_release_internal_buffers(struct iris_inst *inst,
+ 	return 0;
+ }
+ 
+-static int iris_release_input_internal_buffers(struct iris_inst *inst)
++int iris_release_input_internal_buffers(struct iris_inst *inst)
+ {
+ 	const struct iris_firmware_data *firmware_data = inst->core->iris_firmware_data;
+ 	const u32 *internal_buf_type;
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.h b/drivers/media/platform/qcom/iris/iris_buffer.h
+--- a/drivers/media/platform/qcom/iris/iris_buffer.h
++++ b/drivers/media/platform/qcom/iris/iris_buffer.h
+@@ -117,6 +117,7 @@ int iris_destroy_all_internal_buffers(struct iris_inst *inst, u32 plane);
+ int iris_destroy_dequeued_internal_buffers(struct iris_inst *inst, u32 plane);
+ int iris_alloc_and_queue_persist_bufs(struct iris_inst *inst, enum iris_buffer_type buf_type);
+ int iris_alloc_and_queue_input_int_bufs(struct iris_inst *inst);
++int iris_release_input_internal_buffers(struct iris_inst *inst);
+ int iris_queue_buffer(struct iris_inst *inst, struct iris_buffer *buf);
+ int iris_queue_deferred_buffers(struct iris_inst *inst, enum iris_buffer_type buf_type);
+ int iris_vb2_buffer_done(struct iris_inst *inst, struct iris_buffer *buf);
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -226,6 +226,13 @@ static int iris_hfi_gen1_session_stop(struct iris_inst *inst, u32 plane)
+ 			if (!ret)
+ 				ret = iris_wait_for_session_response(inst, false);
+ 
++			/*
++			 * The next input stream-on allocates a fresh set of internal buffers,
++			 * so hand these back now or every stop/start cycle leaks a full set.
++			 */
++			if (!ret)
++				ret = iris_release_input_internal_buffers(inst);
++
+ 			iris_inst_change_sub_state(inst, IRIS_INST_SUB_LOAD_RESOURCES, 0);
+ 
+ 			iris_helper_buffers_done(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
