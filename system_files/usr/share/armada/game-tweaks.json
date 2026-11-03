@@ -10,9 +10,7 @@
     "thunks": {
       "Vulkan": true,
       "GL": true,
-      "drm": true,
-      "WaylandClient": true,
-      "asound": true
+      "drm": true
     },
     "wineTopology": true
   }
