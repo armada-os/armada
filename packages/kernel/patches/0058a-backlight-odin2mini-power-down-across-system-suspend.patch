@@ -1,0 +1,155 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] backlight: odin2mini: power the LED driver down across system suspend
+
+The driver enables vcc_1v2 and vcc_3v3 at probe and holds them (and the
+LED driver IC) on through suspend. vcc_3v3 is the PMIC bob2 rail shared
+with the gamepad MCU, so the rail that the rsinput suspend path
+deliberately releases can never power down; vcc_1v2 (the panel vdd rail)
+is held the same way. The always-on buck rails keep drawing through
+s2idle sleep and are a large part of the Odin 2 Mini's sleep battery
+drain.
+
+Cut the supplies at suspend and restore them at resume, then reprogram
+the gain. remove() now balances the probe enable. The enable line is
+wired together with the blvdd fixed regulator's GPIO on this board, so
+the request can lose the race with the fixed regulator and return
+-EBUSY; treat that (and a missing line, via get_optional) as "not ours"
+instead of dereferencing the error pointer. update_status() additionally
+honours the backlight power state so bl_power writes actually turn the
+string gain off.
+
+---
+--- a/drivers/video/backlight/odin2mini-backlight.c
++++ b/drivers/video/backlight/odin2mini-backlight.c
+@@ -5,21 +5,25 @@
+  */
+ 
+ #include <linux/backlight.h>
++#include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
++#include <linux/pm.h>
+ #include <linux/regmap.h>
+ #include <linux/slab.h>
+ #include <linux/uaccess.h>
+ 
+ #define MAX_BRIGHTNESS      255
+ #define	ODIN2MINI_REG_0     0x0000
++#define ODIN2MINI_GAIN_OFF 0x0000
+ 
+ struct odin2miniled {
+ 	struct i2c_client *client;
+ 	struct regmap *regmap;
+ 	struct gpio_desc *enable;
+ 	struct regulator_bulk_data *supplies;
++	bool supplies_on;
+ };
+ 
+ static const struct regulator_bulk_data miniled_supplies[] = {
+@@ -74,6 +78,9 @@
+ 	unsigned int brightness = backlight_get_brightness(backlight_dev);
+ 	unsigned int reg_value = gain_lut[brightness];
+ 
++	if (backlight_dev->props.power != BACKLIGHT_POWER_ON)
++		reg_value = ODIN2MINI_GAIN_OFF;
++
+     return regmap_write(miniled->regmap, ODIN2MINI_REG_0, reg_value);
+ }
+ 
+@@ -103,10 +110,21 @@
+         dev_err(&client->dev, "Failed to enable regulators: %d\n", ret);
+         return ret;
+     }
++    miniled->supplies_on = true;
+ 
+-    miniled->enable = devm_gpiod_get(&client->dev, "enable", GPIOD_OUT_HIGH);
+-    if (PTR_ERR(miniled->enable) == -EPROBE_DEFER){
+-        return -EPROBE_DEFER;
++    miniled->enable = devm_gpiod_get_optional(&client->dev, "enable",
++                                              GPIOD_OUT_HIGH);
++    if (IS_ERR(miniled->enable)) {
++        /*
++         * The enable line is wired together with the blvdd fixed-regulator
++         * GPIO on this board; whichever device claimed it first owns the
++         * LED string power. Drive it only while it is owned here, the
++         * gpiod calls ignore a NULL descriptor.
++         */
++        if (PTR_ERR(miniled->enable) != -EBUSY)
++            return dev_err_probe(&client->dev, PTR_ERR(miniled->enable),
++                                 "failed to get enable gpio\n");
++        miniled->enable = NULL;
+     }
+ 
+ 	gpiod_set_value_cansleep(miniled->enable, 1);
+@@ -138,11 +156,62 @@
+ static void odin2miniled_remove(struct i2c_client *client)
+ {
+ 	struct backlight_device *backlight_dev = i2c_get_clientdata(client);
++	struct odin2miniled *miniled = bl_get_data(backlight_dev);
++
+ 	backlight_dev->props.power = BACKLIGHT_POWER_OFF;
+ 	backlight_dev->props.brightness = 0;
+ 	backlight_update_status(backlight_dev);
++
++	if (miniled->supplies_on &&
++	    !regulator_bulk_disable(ARRAY_SIZE(miniled_supplies), miniled->supplies))
++		miniled->supplies_on = false;
++}
++
++static int odin2miniled_suspend(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct backlight_device *backlight_dev = i2c_get_clientdata(client);
++	struct odin2miniled *miniled = bl_get_data(backlight_dev);
++	int ret;
++
++	gpiod_set_value_cansleep(miniled->enable, 0);
++
++	ret = regulator_bulk_disable(ARRAY_SIZE(miniled_supplies),
++				     miniled->supplies);
++	if (ret) {
++		dev_err(dev, "Failed to disable regulators: %d\n", ret);
++		gpiod_set_value_cansleep(miniled->enable, 1);
++		return ret;
++	}
++	miniled->supplies_on = false;
++
++	return 0;
+ }
+ 
++static int odin2miniled_resume(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct backlight_device *backlight_dev = i2c_get_clientdata(client);
++	struct odin2miniled *miniled = bl_get_data(backlight_dev);
++	int ret;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(miniled_supplies),
++				    miniled->supplies);
++	if (ret) {
++		dev_err(dev, "Failed to enable regulators: %d\n", ret);
++		return ret;
++	}
++	miniled->supplies_on = true;
++
++	gpiod_set_value_cansleep(miniled->enable, 1);
++	usleep_range(10000, 11000);
++
++	return backlight_update_status(backlight_dev);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(odin2miniled_pm_ops, odin2miniled_suspend,
++				odin2miniled_resume);
++
+ static const struct i2c_device_id odin2miniled_id[] = {
+     { "odin2miniled" },
+     { }
+@@ -161,6 +230,7 @@
+     .driver = {
+         .name = "odin2miniled",
+ 		.of_match_table = odin2miniled_match_table,
++		.pm = pm_sleep_ptr(&odin2miniled_pm_ops),
+     },
+     .probe = odin2miniled_probe,
+     .remove = odin2miniled_remove,

@@ -1,0 +1,94 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] Input: hynitron_cstxxx - power the cst340 down across system suspend
+
+The Odin 2 Mini drives the panel with an in-tree hynitron cst340, which
+keeps scanning and raises an edge interrupt on the shared TLMM line about
+once every 1500ms even with nothing touching the screen. Nothing masks
+that line at system suspend and no vdd-aware suspend path exists, so the
+idle edges keep pulling the SoC out of its deepest s2idle state for the
+whole sleep, and vreg_l2b_3p0 (vdd) stays enabled, refcounted by the
+probe-time regulator_enable() that 0059 introduced. Together these are a
+large part of the Odin 2 Mini's sleep battery drain.
+
+Mask the interrupt, assert the controller reset and drop vdd at suspend,
+and reverse that at resume (restore the rails and the default pin state,
+then run the same power-on reset hyn_probe() uses). The pinctrl sleep
+state the board DTS already describes is selected explicitly, since i2c
+clients do not get it applied for free.
+
+---
+--- a/drivers/input/touchscreen/hynitron_cstxxx.c
++++ b/drivers/input/touchscreen/hynitron_cstxxx.c
+@@ -19,7 +19,10 @@
+ #include <linux/input.h>
+ #include <linux/input/mt.h>
+ #include <linux/input/touchscreen.h>
++#include <linux/interrupt.h>
+ #include <linux/module.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/pm.h>
+ #include <linux/property.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/unaligned.h>
+@@ -483,6 +486,53 @@
+ 	return 0;
+ }
+ 
++static int hyn_suspend(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct hynitron_ts_data *ts_data = i2c_get_clientdata(client);
++
++	/*
++	 * The cst340 cannot be told to stop scanning: it raises an edge
++	 * interrupt roughly once every 1500ms even when nothing touches the
++	 * panel, and every one of those edges pulls the SoC out of its deepest
++	 * idle state. Mask the line and cut vdd for the duration of the sleep,
++	 * holding the controller in reset so it draws nothing.
++	 */
++	disable_irq(client->irq);
++
++	gpiod_set_value_cansleep(ts_data->reset_gpio, 1);
++	regulator_disable(ts_data->vdd);
++
++	pinctrl_pm_select_sleep_state(dev);
++
++	return 0;
++}
++
++static int hyn_resume(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct hynitron_ts_data *ts_data = i2c_get_clientdata(client);
++	int err;
++
++	pinctrl_pm_select_default_state(dev);
++
++	err = regulator_enable(ts_data->vdd);
++	if (err) {
++		dev_err(dev, "failed to restore touch power: %d\n", err);
++		enable_irq(client->irq);
++		return err;
++	}
++
++	/* vdd was cut, so the controller needs a fresh power-on reset. */
++	hyn_reset_proc(client, 60);
++
++	enable_irq(client->irq);
++
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(hyn_pm_ops, hyn_suspend, hyn_resume);
++
+ static const struct hynitron_ts_chip_data cst3xx_data = {
+ 	.max_touch_num		= 5,
+ 	.ic_chkcode		= 0xcaca0000,
+@@ -509,6 +559,7 @@
+ 		.name = "Hynitron-TS",
+ 		.of_match_table = hyn_dt_match,
+ 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++		.pm = pm_sleep_ptr(&hyn_pm_ops),
+ 	},
+ 	.id_table = hyn_tpd_id,
+ 	.probe = hyn_probe,

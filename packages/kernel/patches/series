@@ -43,6 +43,7 @@
 
 # ============== Panel power + backlight ==============
 0058_AYN-Odin2-Mini--backlight.patch
+0058a-backlight-odin2mini-power-down-across-system-suspend.patch
 0060-backlight-Add-SY7758-LED-driver.patch
 0060-dt-bindings-silergy-sy7758.patch
 0054-regulator-add-sgm3804-i2c-regulator-for-panel-power-.patch
@@ -63,6 +64,7 @@
 0054b-input-goodix-allow-overriding-input-device-name.patch
 0029-Input-edt-ft5x06-add-no_regmap_bulk_read-option.patch
 0059_AYN-Odin2-Mini--hynitron--cstxxx.patch
+0059a-input-hynitron-cstxxx-power-down-across-system-suspend.patch
 0060-input-touchscreen-add-synaptics-dsx-kconfig.patch
 0060-input-touchscreen-add-synaptics-dsx-driver.patch
 
