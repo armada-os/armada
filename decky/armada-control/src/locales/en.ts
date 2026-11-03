@@ -18,6 +18,7 @@ export const en = {
   "options.eco": "Eco",
   "options.balanced": "Balanced",
   "options.performance": "Performance",
+  "options.conservative": "Conservative",
   "options.ondemand": "Ondemand",
   "options.userspace": "Userspace",
   "options.schedutil": "Schedutil",
