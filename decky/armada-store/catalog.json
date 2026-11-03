@@ -440,8 +440,8 @@
       "note": "FSR 4 on the NPU: SM8550 only",
       "install": {
         "type": "deckyplugin",
-        "releases": "https://api.github.com/repos/zrprod9-cmyk/vela/releases/432506920",
-        "asset": "^vela-0\\.8\\.16\\.zip$"
+        "releases": "https://api.github.com/repos/zrprod9-cmyk/vela/releases/432701242",
+        "asset": "^vela-0\\.8\\.18\\.zip$"
       }
     }
   ]
