@@ -454,6 +454,61 @@ finally:
     os.environ.update(saved_vk)
     os.environ["HOME"] = saved_home
 
+# --- armada-game-launch: Decky plugin wrappers -------------------------------
+plugins = pathlib.Path(WORK) / "homebrew-plugins"
+fake_home = pathlib.Path(WORK) / "plugin-home"
+fake_home.mkdir()
+
+
+def plugin(name, manifest, script=None, mode=0o755):
+    d = plugins / name
+    d.mkdir(parents=True)
+    (d / "plugin.json").write_text(manifest if isinstance(manifest, str) else json.dumps(manifest))
+    if script:
+        target = pathlib.Path(os.path.expanduser(script)) if script.startswith("~") else d / script
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("#!/bin/sh\nexec \"$@\"\n")
+        target.chmod(mode)
+
+
+saved_home = os.environ["HOME"]
+os.environ["HOME"] = str(fake_home)
+try:
+    plugin("b-lsfg", {"armada": {"launch": {"wrapper": "~/.lsfg"}}}, "~/.lsfg")
+    plugin("a-vela", {"armada": {"launch": {"wrapper": "bin/wrap"}}}, "bin/wrap")
+    plugin("c-plain", {"name": "no armada block"})
+    plugin("d-broken", "{not json")
+    plugin("e-noexec", {"armada": {"launch": {"wrapper": "wrap"}}}, "wrap", mode=0o644)
+    plugin("f-missing", {"armada": {"launch": {"wrapper": "/nonexistent/wrap"}}})
+    plugin("g-badtype", {"armada": {"launch": {"wrapper": ["x"]}}})
+    found = launch.plugin_wrappers(plugins)
+    check("plugin wrappers: sorted, ~ and relative paths resolved, bad ones skipped",
+          found == [str(plugins / "a-vela" / "bin" / "wrap"), str(fake_home / ".lsfg")])
+    check("no plugins dir means no wrappers",
+          launch.plugin_wrappers(pathlib.Path(WORK) / "absent") == [])
+
+    calls = []
+    real_execv, real_wrappers = os.execv, launch.plugin_wrappers
+    launch.plugin_wrappers = lambda: found
+    os.environ.pop(launch.WRAPPED_ENV, None)
+    try:
+        os.execv = lambda path, argv: calls.append((path, argv, os.environ.get(launch.WRAPPED_ENV)))
+        launch.exec_plugin_wrappers(["/game", "-x"])
+        check("wrappers exec in front of this script with the marker set",
+              calls == [(found[0], [*found, os.path.abspath(sys.argv[0]), "/game", "-x"], "1")])
+
+        def fail(path, argv):
+            raise OSError("exec format error")
+        os.execv = fail
+        os.environ.pop(launch.WRAPPED_ENV, None)
+        launch.exec_plugin_wrappers(["/game"])
+        check("failed wrapper exec clears the marker", launch.WRAPPED_ENV not in os.environ)
+    finally:
+        os.execv = real_execv
+        launch.plugin_wrappers = real_wrappers
+finally:
+    os.environ["HOME"] = saved_home
+
 # --- armada-game-launch: explicit affinity reset ----------------------------
 saved = os.sched_getaffinity(0)
 topology_keys = ("WINE_CPU_TOPOLOGY", "PROTON_CPU_TOPOLOGY")
