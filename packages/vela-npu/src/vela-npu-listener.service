@@ -4,7 +4,8 @@
 # set and a read-only system. Pulled in by vela-npu@.service (Wants=), stopped when unneeded.
 [Unit]
 Description=Vela NPU: cDSP guest-OS listener (cdsprpcd) for fsr4npud
-ConditionFirmware=device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8750)
 # The cDSP shell is not part of this package (see packages/vela-npu/README.md).
 ConditionPathExists=/usr/lib/rfsa/adsp/fastrpc_shell_unsigned_3
 Requires=vela-npu-setup.service

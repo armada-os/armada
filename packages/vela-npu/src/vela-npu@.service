@@ -2,9 +2,11 @@
 # (vela-npu@nf4_exact = full FSR 4.1.1, abstract socket @fsr4npud_nf4_exact).
 # Idle cost: one QNN context per daemon, no HTP work until a game connects.
 [Unit]
-Description=Vela NPU: FSR 4 graph %i helper daemon (QNN HTP v73 on the cDSP)
-# The graphs are compiled for the SM8550 HTP (v73); nothing to do on other chips.
-ConditionFirmware=device-tree-compatible(qcom,sm8550)
+Description=Vela NPU: FSR 4 graph %i helper daemon (QNN HTP on the cDSP)
+# The graphs are compiled for the SM8550 HTP (v73) and the SM8750 HTP (v79, selected by
+# vela-npu@.service.d/50-vela-npu-chip.conf); nothing to do on other chips.
+ConditionFirmware=|device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8750)
 # The cDSP shell is not part of this package (see packages/vela-npu/README.md).
 ConditionPathExists=/usr/lib/rfsa/adsp/fastrpc_shell_unsigned_3
 # vela-npu-setup.service waits for the device nodes (a ConditionPathExists on them raced

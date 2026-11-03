@@ -3,7 +3,8 @@
 # vela-npu-listener.service and vela-npu@.service start (Requires= + After=).
 [Unit]
 Description=Vela NPU: device nodes for fsr4npud (dma-heap module, udev rule re-applied)
-ConditionFirmware=device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8750)
 After=systemd-sysext.service systemd-udevd.service systemd-udev-trigger.service
 Wants=systemd-udevd.service
 

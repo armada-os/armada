@@ -2,7 +2,8 @@
 
 The system part of [Vela](https://github.com/zrprod9-cmyk/vela) (a Decky plugin that swaps a
 game's DLSS / FSR 2-3 / XeSS for FSR 4): `fsr4npud` runs the AMD FSR 4 network on the Hexagon NPU
-of Snapdragon 8 Gen 2 (SM8550) devices. Vela's Vulkan layer hands each frame to the daemon over
+of Snapdragon 8 Gen 2 (SM8550) devices, and (experimental, not tested on a device yet) of
+Snapdragon 8 Elite (SM8750) devices. Vela's Vulkan layer hands each frame to the daemon over
 an abstract unix socket and falls back to FSR 4 on the GPU whenever the daemon is missing, busy
 or slow.
 
@@ -15,18 +16,20 @@ the binaries and graphs out of it. Units, udev rule and modules-load file are th
 | `/usr/lib64/vela-npu/fsr4npud` | NPU daemon, one instance per graph, `DynamicUser`, group `render` |
 | `/usr/lib64/vela-npu/fsr4npu-check` (`/usr/bin/fsr4npu-check`) | Runs a fixed input through a daemon and prints the output hash |
 | `/usr/lib64/vela-npu/nf4*.bin` | 7 FSR 4 graphs compiled for HTP v73 (SM8550) |
+| `/usr/lib64/vela-npu/v79/nf4*.bin` | the same 7 graphs compiled for HTP v79 (SM8750) |
 | `/usr/lib64/vela-npu/cdsprpcd`, `libcdsprpc.so*`, `libcdsp_default_listener.so*` | quic/fastrpc `a56e9d4` (v1.0.8-2), BSD-3-Clause, private copy |
-| `/usr/lib64/vela-npu/libQnnHtp.so`, `libQnnHtpV73Stub.so`, `libQnnSystem.so`; `/usr/lib/rfsa/adsp/libQnnHtpV73Skel.so`, `libQairtHtpV73Skel.so`, `libQnnHtpV73.so` | Qualcomm AI Engine Direct SDK runtime 2.47.0.260601 (QNN HTP v73), unmodified, Qualcomm AI Stack License |
+| `/usr/lib64/vela-npu/libQnnHtp.so`, `libQnnHtpV73Stub.so`, `libQnnSystem.so`; `/usr/lib/rfsa/adsp/libQnnHtpV73Skel.so`, `libQairtHtpV73Skel.so`, `libQnnHtpV73.so`; `libQnnHtpV79Stub.so`, `libQnnHtpV79Skel.so`, `libQairtHtpV79Skel.so`, `libQnnHtpV79.so` | Qualcomm AI Engine Direct SDK runtime 2.47.0.260601 (QNN HTP v73 and v79), unmodified, Qualcomm AI Stack License |
 | `/usr/lib64/vela-npu/MANIFEST.sha256` | Hashes of the files above |
 | `vela-npu@<graph>.service` | One daemon per graph |
 | `vela-npu-listener.service` | `cdsprpcd` on `/dev/fastrpc-cdsp-secure` (root, reduced capabilities) |
 | `vela-npu-setup.service` | Loads `system_heap`, waits for the cDSP nodes, re-applies the udev rule |
+| `vela-npu-setup.service.d/50-vela-npu-chip.conf`, `vela-npu@.service.d/50-vela-npu-chip.conf` | On qcom,sm8750 only: link `/run/vela-npu/graphs` to `v79/` and mount each daemon's v79 graph over its `--ctx` path |
 | `70-vela-npu.rules` | `render` group on `/dev/fastrpc-cdsp` and `/dev/dma_heap/system` |
 
 ## When it runs
 
-Every unit has `ConditionFirmware=device-tree-compatible(qcom,sm8550)`: on any other chip it is
-skipped. **The package contains the Qualcomm AI Engine Direct (QNN) HTP runtime** (6 files, see
+Every unit has `ConditionFirmware=|device-tree-compatible(qcom,sm8550)` and
+`ConditionFirmware=|device-tree-compatible(qcom,sm8750)`: on any other chip it is skipped. **The package contains the Qualcomm AI Engine Direct (QNN) HTP runtime** (6 files, see
 the table). The daemons and the listener also need the cDSP shell with its C++ runtime
 (`fastrpc_shell_unsigned_3`, `libc++.so.1`, `libc++abi.so.1`), which this package does not ship:
 Vela's installer copies them from the device's own `dsp` partition into a system extension
@@ -39,7 +42,7 @@ the Qualcomm host libraries carry `$ORIGIN` (the same directory). No setuid file
 ## Updating
 
 Set `vela_npu_version` and `vela_npu_sha256` in `vela-npu.spec` and add a changelog entry.
-Package versions follow Vela's NPU part (12 = Vela 0.8.16).
+Package versions follow Vela's NPU part (12 = Vela 0.8.16, 13 = Vela 0.8.17).
 
 ## Turning it off
 

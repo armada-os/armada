@@ -82,8 +82,8 @@ pkgs=(
     # Patched hexagonrpc: sns_registry for the Portal's sensors PD
     /packages/hexagonrpc/hexagonrpc-[0-9]*.rpm
 
-    # Vela NPU helper: FSR 4 on the SM8550 Hexagon NPU for the Vela plugin.
-    # Its units only start on qcom,sm8550 with the QNN runtime present.
+    # Vela NPU helper: FSR 4 on the SM8550 / SM8750 Hexagon NPU for the Vela plugin.
+    # Its units only start on qcom,sm8550 or qcom,sm8750 with the QNN runtime present.
     /packages/vela-npu/vela-npu-[0-9]*.rpm
 
     # FEX Emu for emulating x86_64 applications
