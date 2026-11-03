@@ -718,7 +718,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0539-ASoC-qcom-sc8280xp-cap-Pocket-S2-headphone-digital-volume.patch`
   source: armada
   upstream: local
-  notes: AYANEO Pocket S2 only. With the WCD939x compander on, the HPHL/HPHR PA gain has no effect on the output level, so the headphone volume is the RX digital volume, whose range reaches +40 dB. Limited to 74 (-10 dB) so the top of the slider stays at a safe level; the UCM maps it as `HP Digital`.
+  notes: AYANEO Pocket S2 only. With the WCD939x compander on, the HPHL/HPHR PA gain has no effect on the output level, so the headphone volume is the RX digital volume, whose range reaches +40 dB. Limited to 59 (-25 dB): in listening tests the headphone output was clean up to there and crackled above it, with or without the compander. PCM HPH mode (as on Android) only produced loud noise with `qcom,pcm-ports-mask` and the PCM switches, so it is not used. The UCM maps it as `HP Digital`.
 - `patches/0529-ASoC-qdsp6-q6apm-fail-the-graph-open-when-the-DSP-rejects-it.patch`
   source: armada
   upstream: local
