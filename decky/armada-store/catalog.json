@@ -437,11 +437,11 @@
       "summary": "FSR 4 (on the NPU), FSR 3 or SGSR 2 instead of a game's DLSS/FSR",
       "category": "plugins",
       "icon": "https://raw.githubusercontent.com/zrprod9-cmyk/vela/main/docs/icon.png",
-      "note": "FSR 4 on the NPU: SM8550 only",
+      "note": "FSR 4 on the NPU: Snapdragon 8 Gen 2 and 8 Elite",
       "install": {
         "type": "deckyplugin",
-        "releases": "https://api.github.com/repos/zrprod9-cmyk/vela/releases/432701242",
-        "asset": "^vela-0\\.8\\.18\\.zip$"
+        "releases": "https://api.github.com/repos/zrprod9-cmyk/vela/releases/432871043",
+        "asset": "^vela-0\\.8\\.19\\.zip$"
       }
     }
   ]
