@@ -1,5 +1,6 @@
 {
   "global": {
+    "autoHdr": false,
     "cores": null,
     "fexProfile": "default",
     "gamescopeCores": null,

@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, "/usr/lib/armada")
+import armada_auto_hdr
 import armada_game_tweaks
 import armada_perf
 
@@ -459,16 +460,20 @@ def action_get_swipe_gestures_enabled(request):
     return {"enabled": enabled}
 
 
+def gamescope_control(*args, timeout=2):
+    return subprocess.run(
+        session_user_command(
+            "GAMESCOPE_WAYLAND_DISPLAY=gamescope-primary",
+            "/usr/bin/gamescopectl", *args,
+        ),
+        check=True, capture_output=True, text=True, timeout=timeout,
+    )
+
+
 def gamescope_swipe_gestures(enabled):
     # A valueless convar call resets it; use help to check support instead.
     for args in (("help",), ("enable_touch_gestures", str(int(enabled)))):
-        result = subprocess.run(
-            session_user_command(
-                "GAMESCOPE_WAYLAND_DISPLAY=gamescope-primary",
-                "/usr/bin/gamescopectl", *args,
-            ),
-            check=True, capture_output=True, text=True, timeout=5,
-        )
+        result = gamescope_control(*args, timeout=5)
         if args == ("help",) and not re.search(
             r"\benable_touch_gestures:", result.stdout + result.stderr,
         ):
@@ -755,13 +760,21 @@ class PerfManager:
         self.pidfd = None
         self.pidfd_gen = 0
         self.env = armada_perf.device_env()
+        self.auto_hdr = armada_auto_hdr.AutoHdrController(self.env, gamescope_control)
         state = armada_perf.read_state()
         override = state.get("override")
-        if isinstance(override, dict) and self.pid_alive(override.get("pid")):
-            self.arm_pidfd(override["pid"])
+        if self.auto_hdr.supported and (
+            state.get("autoHdr") is True
+            or isinstance(override, dict) and override.get("autoHdr") is True
+        ):
+            # Retry pending cleanup even if the old game override is gone.
+            self.auto_hdr.active = None
+        if (isinstance(override, dict) and self.pid_alive(override.get("pid"))
+                and self.arm_pidfd(override["pid"])):
             self.refresh(keep_override=True)
         else:
             self.refresh()
+        self.retry_auto_hdr()
 
     def pid_alive(self, pid):
         return isinstance(pid, int) and os.path.isdir(f"/proc/{pid}")
@@ -786,8 +799,25 @@ class PerfManager:
                 merged = armada_game_tweaks.merged_settings(tweaks, old.get("appid"))
                 override = self.gamescope_layer(merged)
                 override.update({"appid": old.get("appid"), "pid": old["pid"]})
+                if old.get("autoHdr") is True and self.auto_hdr.supported:
+                    override["autoHdr"] = True
                 state["override"] = override
+        if self.auto_hdr.active is not False:
+            state["autoHdr"] = True
         armada_perf.write_state(state)
+
+    def retry_auto_hdr(self):
+        if not self.auto_hdr.supported:
+            return
+        override = armada_perf.read_state().get("override")
+        enabled = (self.pidfd is not None and isinstance(override, dict)
+                   and override.get("autoHdr") is True)
+        previous = self.auto_hdr.active
+        if enabled == previous:
+            return
+        self.auto_hdr.apply(enabled)
+        if self.auto_hdr.active != previous:
+            self.refresh(keep_override=True)
 
     def arm_pidfd(self, pid):
         self.disarm_pidfd()
@@ -820,6 +850,8 @@ class PerfManager:
     def game_exited(self, generation=None):
         if generation is not None and generation != self.pidfd_gen:
             return
+        if self.auto_hdr.active is not False:
+            self.auto_hdr.clear()
         self.disarm_pidfd()
         self.refresh()
 
@@ -867,8 +899,19 @@ class PerfManager:
         override.update({"appid": appid, "pid": session_pid})
         state = armada_perf.read_state()
         if self.arm_pidfd(session_pid):
+            if self.auto_hdr.supported and merged.get("autoHdr") is True:
+                override["autoHdr"] = True
             state["override"] = override
+            if self.auto_hdr.active is not False:
+                state["autoHdr"] = True
             armada_perf.write_state(state)
+            self.retry_auto_hdr()
+        else:
+            old = state.get("override")
+            if (self.auto_hdr.active is not False
+                    or isinstance(old, dict) and old.get("autoHdr") is True):
+                self.auto_hdr.clear()
+                self.refresh()
         return {"applied": True}
 
     def reapply(self):
@@ -1027,6 +1070,7 @@ def main():
     while True:
         for key, _events in selector.select(BOTTOM_SCREEN_BRIGHTNESS_RESTORE_INTERVAL):
             key.data()
+        PERF.retry_auto_hdr()
         restore_bottom_screen_brightness(bottom_screen_backlight)
 
 
