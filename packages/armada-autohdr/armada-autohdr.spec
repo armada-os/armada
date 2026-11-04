@@ -3,7 +3,7 @@
 
 Name:           armada-autohdr
 # Keep this in sync with CMakeLists.txt.
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}.armada
 Summary:        SDR inverse tone mapping and HDR presentation policy
 License:        GPL-2.0-or-later
@@ -17,14 +17,15 @@ BuildRequires:  ninja-build
 
 %description
 Shared AutoHDR library with inverse tone mapping, presentation policy and
-plane-allocation decisions. Compositor adapters supply display and frame data.
+plane-allocation decisions. Compositors load its C interface and supply display,
+frame and allocation callbacks.
 
 %package devel
 Summary:        Development files for %{name}
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 
 %description devel
-C API headers and pkg-config metadata for integrating %{name}.
+C provider interface and pkg-config metadata for integrating %{name}.
 
 %prep
 %autosetup -c -n %{name}
@@ -44,7 +45,7 @@ CTEST_OUTPUT_ON_FAILURE=1 %cmake_build --target test
 %{_libdir}/libarmada-autohdr.so.*
 
 %files devel
-%{_includedir}/armada-autohdr.h
+%{_includedir}/gamescope-color-provider.h
 %{_libdir}/libarmada-autohdr.so
 %{_libdir}/pkgconfig/armada-autohdr.pc
 

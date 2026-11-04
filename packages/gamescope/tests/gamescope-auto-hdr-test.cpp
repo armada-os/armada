@@ -1,26 +1,21 @@
 #include <bit>
 #include <cstdint>
+#include <memory>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 // Test the production samplers without exporting them from Gamescope.
 #include "color_helpers.cpp"
-#include <armada-autohdr.h>
+#include <gamescope-color-provider.h>
 
-static armada_autohdr_transform test_transform( const glm::mat3 &matrix, float sdrNits, float targetNits )
+static gamescope_color_config test_config( const glm::mat3 &matrix, float sdrNits, float targetNits, float gain )
 {
-	armada_autohdr_transform transform{ {}, sdrNits, targetNits };
+	gamescope_color_config transform{ {}, sdrNits, targetNits, gain };
 	for ( int column = 0; column < 3; column++ )
 		for ( int row = 0; row < 3; row++ )
 			transform.native_from_output[column * 3 + row] = matrix[column][row];
 	return transform;
-}
-
-static glm::vec3 apply_transform( glm::vec3 color, const armada_autohdr_transform &transform )
-{
-	const auto mapped = armada_autohdr_apply_transform( &transform, { color.r, color.g, color.b } );
-	return { mapped.r, mapped.g, mapped.b };
 }
 
 static constexpr displaycolorimetry_t kNativeP3{
@@ -66,15 +61,20 @@ static AutoHdrTestLuts build_luts( const displaycolorimetry_t &display, EOTF eot
 	luts.nativeFromOutput = display == luts.output ? glm::mat3( 1.0f ) :
 		glm::inverse( normalised_primary_matrix( display.primaries, display.white, 1.0f ) ) *
 			normalised_primary_matrix( luts.output.primaries, luts.output.white, 1.0f );
-	const auto transform = test_transform( luts.nativeFromOutput, 100.0f, peak );
+	const auto *provider = gamescope_color_provider_get_interface( GAMESCOPE_COLOR_PROVIDER_ABI );
+	REQUIRE( provider );
+	const auto config = test_config( luts.nativeFromOutput, 100.0f, peak, gain );
+	std::unique_ptr<void, void (*)( void * )> instance( autoHdr ? provider->create() : nullptr, provider->destroy );
 	tonemapping_t tonemapping{};
 	tonemapping.g22_luminance = peak;
 	if ( autoHdr )
 	{
-		tonemapping.preGainTransform = []( glm::vec3 color, const void *data ) {
-			return apply_transform( color, *static_cast<const armada_autohdr_transform *>( data ) );
-		};
-		tonemapping.preGainTransformData = &transform;
+		REQUIRE( instance );
+		const auto plan = provider->configure( instance.get(), &config );
+		gain = plan.input_gain;
+		tonemapping.g22_luminance = plan.g22_luminance;
+		tonemapping.preGainTransform = plan.map;
+		tonemapping.preGainTransformData = plan.data;
 	}
 	calcColorTransform<rendervulkan::s_nLutEdgeSize3d>( &luts.shaper, rendervulkan::s_nLutSize1d,
 		&luts.color, input, EOTF_Gamma22, luts.output, eotf, display, {},

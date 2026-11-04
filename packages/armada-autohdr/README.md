@@ -1,5 +1,5 @@
-`armada-autohdr` builds an independent shared library with a C API. The runtime
-RPM installs `libarmada-autohdr.so.1`; the development RPM installs its header,
+`armada-autohdr` builds an optional color provider. The runtime RPM installs
+`libarmada-autohdr.so.2`; the development RPM installs the plain C interface,
 linker symlink and pkg-config metadata.
 
 ```sh
@@ -7,22 +7,26 @@ just package armada-autohdr
 just package gamescope
 ```
 
-The core in `src/` accepts plain matrices, luminance values and frame facts.
-It owns inverse tone mapping, eligibility, presentation state and pipeline
-retry policy. It has no Gamescope, Vulkan or DRM header dependency.
+The provider accepts matrices, luminance values and frame facts. It owns inverse
+tone mapping, eligibility, color plans, presentation sequencing and scanout
+retries. It has no Gamescope, GLM, Vulkan, DRM or libliftoff header dependency.
 
-All Gamescope hooks, adapter code and shader selection live in
+Gamescope's host bridge and shader selection live in
 [`0035-drm-add-direct-auto-hdr.patch`](../gamescope/patches/0035-drm-add-direct-auto-hdr.patch),
-applied through its normal numbered patch stack. Gamescope builds against this
-library's development RPM. The adapter reuses Gamescope's SDR mapping and LUT
-builder for both scanout and composition while SDR overlays keep their own LUTs.
-Gamescope updates still need review of the LUT stage order, frame/layer contract,
-shader slots and libliftoff boundary.
+applied through its numbered patch stack. Gamescope builds against the interface
+header and loads the provider at runtime. An absent or incompatible provider
+keeps the native path. The host reuses its SDR mapping and LUT builder for both
+scanout and composition while SDR overlays keep their own LUTs.
 
-The disabled setting bypasses library presentation and allocation processing.
-Switching it off clears the previous frame's constraints once. Color generation,
-allocation and shader selection use separate hooks at their existing stages;
-combining them at presentation would replace more of Gamescope's pipeline.
+The host keeps its textures, frame references and atomic requests. Synchronous
+callbacks attach LUTs, present frames and test plane allocation. Each provider
+instance owns its state; callbacks do not retain host objects. A configured
+color plan stays valid until that instance is configured again or destroyed.
+
+The disabled setting bypasses provider processing after one-time cleanup.
+Gamescope's normal pending/current color state decides when to rebuild LUTs.
+Updates still need review of color-stage order, frame/layer facts, shader slots
+and the libliftoff callback boundary.
 
 Build and test the library without Gamescope:
 
@@ -34,9 +38,12 @@ ctest --test-dir /tmp/armada-autohdr-build --output-on-failure
 
 The production build enables fast math to match Gamescope. Configure with
 `-DARMADA_AUTOHDR_FAST_MATH=OFF` to test the strict floating-point build.
-Compatible updates keep the version 1 C ABI; breaking changes need a new soname.
-Gamescope's package hash follows the public header and its own package files.
-Core-only updates can reuse the existing Gamescope binary.
+`gamescope_color_provider_get_interface` is the only exported entry point. It
+returns the requested versioned table or null. Consumers check its version,
+size and required callbacks before creating an instance. Breaking interface
+changes need a new provider ABI. Soname 2 replaces the former direct-call API.
+Gamescope's package hash follows the interface header and its own package files;
+compatible provider-only updates can reuse the existing Gamescope binary.
 
 Run the integration color tests against a fully prepared Gamescope source tree
 with the library's development files installed:

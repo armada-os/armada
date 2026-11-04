@@ -51,7 +51,7 @@ INSERT_LINE="$(
     printf "\n"
   fi
 
-  printf "BuildRequires: pkgconfig(armada-autohdr) >= 0.1.0\n\n"
+  printf "BuildRequires: pkgconfig(armada-autohdr) >= 0.2.0\n\n"
 
   tail -n "+${INSERT_LINE}" "${SPEC}"
 } >"${SPEC}.tmp"

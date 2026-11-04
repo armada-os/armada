@@ -1,15 +1,20 @@
-#include "armada-autohdr.h"
+#include "gamescope-color-provider.h"
 
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <new>
 
-uint32_t armada_autohdr_abi_version(void)
+namespace
 {
-    return ARMADA_AUTOHDR_ABI_VERSION;
-}
+struct Instance
+{
+    gamescope_color_config color{};
+    uint32_t hdr_presented = 0;
+    uint64_t preferred_pipeline = 0;
+};
 
-float armada_autohdr_inverse_tone_map(float value, float sdr_nits, float target_nits)
+float inverse_tone_map(float value, float sdr_nits, float target_nits)
 {
     if (!(value > 0.0f && sdr_nits > 0.0f && target_nits > 0.0f))
         return 0.0f;
@@ -31,12 +36,12 @@ float armada_autohdr_inverse_tone_map(float value, float sdr_nits, float target_
     return std::pow(y, inverse_gamma);
 }
 
-armada_autohdr_rgb armada_autohdr_apply_transform(
-    const armada_autohdr_transform *transform, armada_autohdr_rgb color)
+gamescope_color_rgb map_color(gamescope_color_rgb color, const void *data)
 {
+    const auto *transform = static_cast<const gamescope_color_config *>(data);
     const float *matrix = transform->native_from_output;
     // Measure the peak in the panel gamut, including for BT.2020 output.
-    const armada_autohdr_rgb native{
+    const gamescope_color_rgb native{
         matrix[0] * color.r + matrix[3] * color.g + matrix[6] * color.b,
         matrix[1] * color.r + matrix[4] * color.g + matrix[7] * color.b,
         matrix[2] * color.r + matrix[5] * color.g + matrix[8] * color.b,
@@ -46,56 +51,61 @@ armada_autohdr_rgb armada_autohdr_apply_transform(
         return {0.0f, 0.0f, 0.0f};
 
     // One RGB gain preserves the SDR channel ratios.
-    const float mapped = armada_autohdr_inverse_tone_map(maximum / transform->target_nits,
+    const float mapped = inverse_tone_map(maximum / transform->target_nits,
         transform->sdr_nits, transform->target_nits) * transform->target_nits;
     const float gain = std::min(mapped, transform->target_nits) / maximum;
     return {color.r * gain, color.g * gain, color.b * gain};
 }
 
-uint32_t armada_autohdr_available(uint32_t enabled, const armada_autohdr_capabilities *caps)
+void *create()
 {
-    return enabled && caps->color_management && caps->hdr && !caps->lease_client &&
+    return new (std::nothrow) Instance;
+}
+
+void destroy(void *instance)
+{
+    delete static_cast<Instance *>(instance);
+}
+
+uint32_t available(const gamescope_color_capabilities *caps)
+{
+    return caps->color_management && caps->hdr && !caps->lease_client &&
         !caps->legacy_itm && !caps->override_luts && caps->hardware_luts && caps->peak_nits > 0;
 }
 
-uint32_t armada_autohdr_active(uint32_t available, const armada_autohdr_content *content)
+uint32_t active(uint32_t available, const gamescope_color_content *content)
 {
     // A separate Steam overlay must not change the held game's mapping.
     return available && content->game && !content->hdr && !content->steam_focused;
 }
 
-uint32_t armada_autohdr_reconcile(armada_autohdr_state *state, uint32_t requested)
+gamescope_color_plan configure(void *instance, const gamescope_color_config *config)
 {
-    state->requested = requested != 0;
-    return state->requested != state->luts_enabled;
+    auto &state = *static_cast<Instance *>(instance);
+    state.color = *config;
+    return {config->input_gain, config->target_nits, map_color, &state.color};
 }
 
-void armada_autohdr_luts_updated(armada_autohdr_state *state)
+gamescope_color_present_result present(void *instance,
+    const gamescope_color_frame *frame, const gamescope_color_present_ops *ops)
 {
-    state->luts_enabled = state->requested;
+    auto &state = *static_cast<Instance *>(instance);
+    const bool converted = frame->enabled && frame->active && !frame->fading &&
+        frame->has_layers && frame->has_luts && !frame->hdr;
+    if (converted)
+        ops->attach_game_luts(ops->data);
+    if (!frame->enabled && frame->primary)
+        state.hdr_presented = 0;
+
+    const int status = ops->present(ops->data);
+    if (frame->enabled && frame->primary)
+        state.hdr_presented = frame->has_connector && status == 0 && converted;
+    return {status, state.hdr_presented};
 }
 
-uint32_t armada_autohdr_prepare(
-    uint32_t active, uint32_t fading, uint32_t has_layers, uint32_t has_luts, uint32_t hdr)
+int scanout(void *instance, uint32_t game_layer_mask, const gamescope_color_scanout_ops *ops)
 {
-    return active && !fading && has_layers && has_luts && !hdr;
-}
-
-void armada_autohdr_presented(
-    armada_autohdr_state *state, uint32_t primary, uint32_t success, uint32_t converted)
-{
-    if (primary)
-        state->presented = success && converted;
-}
-
-uint32_t armada_autohdr_hdr_presented(const armada_autohdr_state *state)
-{
-    return state->presented;
-}
-
-int armada_autohdr_scanout_apply(
-    armada_autohdr_scanout_state *state, uint32_t game_layer_mask, const armada_autohdr_scanout_ops *ops)
-{
+    auto &state = *static_cast<Instance *>(instance);
     if (ops->layer_count > 32)
         return -EINVAL;
 
@@ -115,8 +125,8 @@ int armada_autohdr_scanout_apply(
         return false;
     };
     // Do not retry a pipeline that disappeared from the current plane list.
-    if (!find_pipeline(state->preferred_pipeline, ops->pipeline_count))
-        state->preferred_pipeline = 0;
+    if (!find_pipeline(state.preferred_pipeline, ops->pipeline_count))
+        state.preferred_pipeline = 0;
 
     auto try_pipeline = [&](uint64_t pipeline)
     {
@@ -129,18 +139,18 @@ int armada_autohdr_scanout_apply(
         {
             if (!ops->needs_composition(ops->data))
             {
-                state->preferred_pipeline = pipeline;
+                state.preferred_pipeline = pipeline;
                 return 0;
             }
             ret = -EINVAL;
         }
-        if (pipeline == state->preferred_pipeline)
-            state->preferred_pipeline = 0;
+        if (pipeline == state.preferred_pipeline)
+            state.preferred_pipeline = 0;
         return ret;
     };
 
     // Try the last working pipeline before other layouts, without allocating.
-    const uint64_t preferred = state->preferred_pipeline;
+    const uint64_t preferred = state.preferred_pipeline;
     bool tried_pipeline = preferred != 0;
     int ret = preferred ? try_pipeline(preferred) : -EINVAL;
     if (tried_pipeline && ret != -EINVAL)
@@ -157,4 +167,14 @@ int armada_autohdr_scanout_apply(
             return ret;
     }
     return tried_pipeline ? ret : ops->apply(ops->data);
+}
+}
+
+const gamescope_color_provider *gamescope_color_provider_get_interface(uint32_t abi_version)
+{
+    static const gamescope_color_provider provider{
+        GAMESCOPE_COLOR_PROVIDER_ABI, sizeof(gamescope_color_provider),
+        create, destroy, available, active, configure, present, scanout,
+    };
+    return abi_version == GAMESCOPE_COLOR_PROVIDER_ABI ? &provider : nullptr;
 }
