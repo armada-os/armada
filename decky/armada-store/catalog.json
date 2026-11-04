@@ -440,8 +440,8 @@
       "note": "FSR 4 on the NPU: Snapdragon 8 Gen 2 and 8 Elite",
       "install": {
         "type": "deckyplugin",
-        "releases": "https://api.github.com/repos/zrprod9-cmyk/vela/releases/432871043",
-        "asset": "^vela-0\\.8\\.19\\.zip$"
+        "releases": "https://api.github.com/repos/zrprod9-cmyk/vela/releases/433607049",
+        "asset": "^vela-0\\.8\\.20\\.zip$"
       }
     }
   ]
