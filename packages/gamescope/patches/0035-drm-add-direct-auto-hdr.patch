@@ -1,35 +1,35 @@
-From 457711d34695c81d1e7849f021cfd42bfd90558e Mon Sep 17 00:00:00 2001
+From d249e3af5bbda5b36cf8fe305fc43b764d697381 Mon Sep 17 00:00:00 2001
 From: Raxcoms <mpaulo968@gmail.com>
-Date: Thu, 29 Oct 2026 07:49:27 -0300
+Date: Wed, 4 Nov 2026 12:07:33 -0300
 Subject: [PATCH] gamescope: connect the standalone Armada AutoHDR library
 
 Supply device and game facts to the version 1 C API through a thin adapter.
-The library owns inverse tone mapping, eligibility, presentation state and
-pipeline retries. Gamescope keeps its frame resources and atomic commits.
+The library owns inverse tone mapping, eligibility, presentation feedback
+and pipeline retries. Gamescope keeps frame resources and atomic commits.
 
-Reuse the existing SDR gamut policy and LUT builder. A linear-color hook
-runs before the shared gain, white balance and output encoding. One extra
-LUT pair lets the game retain HDR while SDR overlays use standard tables.
+Reuse the SDR gamut policy, LUT builder and native color-state tracking.
+A linear-color hook runs before shared gain, white balance and output
+encoding. One extra LUT pair preserves HDR games beneath SDR overlays.
 Direct scanout and the normal composition fallback share that mapping.
 
-The adapter uses the native presentation/allocation path when disabled,
-with one cleanup when leaving AutoHDR. No extra GPU pass is introduced.
-Update reviews must check the color-stage order, frame/layer contract,
-shader slots and libliftoff call boundary.
+The disabled setting uses native presentation and allocation, with one
+cleanup when leaving AutoHDR. No extra GPU conversion pass is introduced.
+Update reviews must check LUT order, frame/layer identity, shader slots
+and the libliftoff callback boundary.
 ---
- src/Backends/DRMBackend.cpp            |  34 +++-
+ src/Backends/DRMBackend.cpp            |  34 ++++-
  src/armada_autohdr.glsl                |  16 ++
- src/armada_autohdr.h                   | 228 +++++++++++++++++++++++++
+ src/armada_autohdr.h                   | 203 +++++++++++++++++++++++++
  src/backend.h                          |   2 +
  src/color_helpers.cpp                  |   4 +
  src/color_helpers.h                    |   8 +
  src/meson.build                        |   1 +
  src/rendervulkan.cpp                   |   9 +-
- src/rendervulkan.hpp                   |   7 +-
+ src/rendervulkan.hpp                   |   8 +-
  src/shaders/composite.h                |   9 +-
  src/shaders/descriptor_set_constants.h |   3 +-
- src/steamcompmgr.cpp                   |  63 ++++++-
- 12 files changed, 363 insertions(+), 21 deletions(-)
+ src/steamcompmgr.cpp                   |  69 ++++++++-
+ 12 files changed, 345 insertions(+), 21 deletions(-)
  create mode 100644 src/armada_autohdr.glsl
  create mode 100644 src/armada_autohdr.h
 
@@ -158,10 +158,10 @@ index 0000000..19fee2a
 +#endif
 diff --git a/src/armada_autohdr.h b/src/armada_autohdr.h
 new file mode 100644
-index 0000000..e571ad3
+index 0000000..a915157
 --- /dev/null
 +++ b/src/armada_autohdr.h
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,203 @@
 +#pragma once
 +
 +#include <armada-autohdr.h>
@@ -271,31 +271,6 @@ index 0000000..e571ad3
 +		bool Active( bool available, const armada_autohdr_content &content ) const
 +		{
 +			return armada_autohdr_active( available, &content );
-+		}
-+
-+		void ReconcileColorState( gamescope_color_mgmt_t &pending, bool enabled )
-+		{
-+			if ( !enabled && !m_state.requested && !m_state.luts_enabled )
-+				return;
-+			if ( armada_autohdr_reconcile( &m_state, enabled ) )
-+				pending.externalDirtyCtr++;
-+		}
-+
-+		template<typename BuildLuts>
-+		void UpdateLuts( gamescope_color_mgmt_luts &luts,
-+			const gamescope_color_mgmt_t &color, float sdrNits, BuildLuts build )
-+		{
-+			if ( !m_state.requested && !m_state.luts_enabled )
-+				return;
-+			luts.reset();
-+			if ( m_state.requested )
-+			{
-+				const auto transform = AutoHdrTransform::Create( color.displayColorimetry,
-+					color.outputEncodingColorimetry, sdrNits, color.flInternalDisplayBrightness );
-+				build( luts, transform );
-+			}
-+			// The normal color-management serial covers the completed update.
-+			armada_autohdr_luts_updated( &m_state );
 +		}
 +
 +		int PresentFrame( IBackendConnector *connector, FrameInfo_t &frame,
@@ -498,7 +473,7 @@ index 8d577e1..bf8631e 100644
  
  			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
 diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
-index 9ab5054..8e24753 100644
+index 9ab5054..1d38142 100644
 --- a/src/rendervulkan.hpp
 +++ b/src/rendervulkan.hpp
 @@ -297,8 +297,8 @@ struct FrameInfo_t
@@ -520,7 +495,15 @@ index 9ab5054..8e24753 100644
  		bool applyColorMgmt; // drm only
  
  		AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
-@@ -584,7 +585,7 @@ struct gamescope_color_mgmt_tracker_t
+@@ -505,6 +506,7 @@ using mat3x4 = std::array<std::array<float, 4>, 3>;
+ 
+ struct gamescope_color_mgmt_t
+ {
++	bool autoHdr = false;
+ 	bool enabled;
+ 	uint32_t externalDirtyCtr;
+ 	nightmode_t nightmode;
+@@ -584,7 +586,7 @@ struct gamescope_color_mgmt_tracker_t
  };
  
  extern gamescope_color_mgmt_tracker_t g_ColorMgmt;
@@ -583,7 +566,7 @@ index e81b006..5bac416 100644
  
  #endif
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index 3fb8a0f..4994bb4 100644
+index 409dd6e..f503f9b 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
 @@ -94,6 +94,7 @@
@@ -658,22 +641,28 @@ index 3fb8a0f..4994bb4 100644
  		( GetBackend()->GetCurrentConnector()->GetHDRInfo().bSoftwareBacklight && g_ColorMgmt.pending.enabled && g_ColorMgmt.pending.outputEncodingEOTF == EOTF_PQ )
  			? std::max( g_BacklightWatcher.GetFactor(), 0.01f ) : 1.0f;
  
-+	gamescope::g_AutoHdr.ReconcileColorState( g_ColorMgmt.pending, steamcompmgr_auto_hdr_available() );
++	g_ColorMgmt.pending.autoHdr = steamcompmgr_auto_hdr_available();
 +
  #ifdef COLOR_MGMT_MICROBENCH
  	struct timespec t0, t1;
  #else
-@@ -674,6 +697,9 @@ update_color_mgmt()
+@@ -674,6 +697,15 @@ update_color_mgmt()
  			g_ColorMgmtLuts[i].reset();
  	}
  
-+	gamescope::g_AutoHdr.UpdateLuts( g_ColorMgmtLuts[EOTF_Count], g_ColorMgmt.pending, g_flHDRItmSdrNits,
-+		[&]( auto &luts, const auto &transform ) { create_color_mgmt_luts( g_ColorMgmt.pending, &luts, false, &transform ); } );
++	if ( g_ColorMgmt.pending.autoHdr )
++	{
++		const auto transform = gamescope::AutoHdrTransform::Create( g_ColorMgmt.pending.displayColorimetry,
++			g_ColorMgmt.pending.outputEncodingColorimetry, g_flHDRItmSdrNits, g_ColorMgmt.pending.flInternalDisplayBrightness );
++		create_color_mgmt_luts( g_ColorMgmt.pending, &g_ColorMgmtLuts[EOTF_Count], false, &transform );
++	}
++	else if ( g_ColorMgmt.current.autoHdr )
++		g_ColorMgmtLuts[EOTF_Count].reset();
 +
  #ifdef COLOR_MGMT_MICROBENCH
  	clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
  #endif
-@@ -3156,6 +3182,19 @@ static bool PaintBlankOverlayPlaceholder()
+@@ -3156,6 +3188,19 @@ static bool PaintBlankOverlayPlaceholder()
  	return s_bPaint;
  }
  
@@ -693,7 +682,7 @@ index 3fb8a0f..4994bb4 100644
  static void
  paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
  {
-@@ -3587,7 +3626,10 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+@@ -3587,7 +3632,10 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
  		}
  	}
  
@@ -705,7 +694,7 @@ index 3fb8a0f..4994bb4 100644
  	{
  		return;
  	}
-@@ -3654,6 +3696,7 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+@@ -3654,6 +3702,7 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
  
  			if ( drmCaptureFormat == DRM_FORMAT_NV12 || oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
  			{
@@ -713,7 +702,7 @@ index 3fb8a0f..4994bb4 100644
  				// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
  				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
  				{
-@@ -7623,6 +7666,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+@@ -7610,6 +7659,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
  			g_flHDRItmSdrNits = 100.f;
  		else if ( g_flHDRItmSdrNits > 1000.f)
  			g_flHDRItmSdrNits = 1000.f;
@@ -722,7 +711,7 @@ index 3fb8a0f..4994bb4 100644
  		hasRepaint = true;
  	}
  	if ( ev->atom == ctx->atoms.gamescopeHDRItmTargetNits )
-@@ -10583,7 +10628,7 @@ steamcompmgr_main(int argc, char **argv)
+@@ -10570,7 +10621,7 @@ steamcompmgr_main(int argc, char **argv)
  
  		// Capability is advertised to clients regardless of the live "active"
  		// state below, so games can request HDR while the panel is idling in SDR.
@@ -731,7 +720,7 @@ index 3fb8a0f..4994bb4 100644
  
  		{
  			gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
-@@ -10608,6 +10653,9 @@ steamcompmgr_main(int argc, char **argv)
+@@ -10595,6 +10646,9 @@ steamcompmgr_main(int argc, char **argv)
  					}
  				}
  			}
@@ -741,7 +730,7 @@ index 3fb8a0f..4994bb4 100644
  			if ( bOutputHDRActive != g_bOutputHDREnabled )
  				xwm_log.infof( "HDR output %s%s", bOutputHDRActive ? "enabled" : "disabled", bContentDriven ? " (hdr_content_driven)" : "" );
  			g_bOutputHDREnabled = bOutputHDRActive;
-@@ -10839,7 +10887,8 @@ steamcompmgr_main(int argc, char **argv)
+@@ -10826,7 +10880,8 @@ steamcompmgr_main(int argc, char **argv)
  					app_hdr_metadata = pCurrentFocus->HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
  			}
  
