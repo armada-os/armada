@@ -218,9 +218,81 @@ def apply_perf(settings, game_id):
         print(f"armada-game-launch: session daemon unavailable: {exc}", file=sys.stderr)
 
 
-def apply_turnip(settings):
+def flatpak_run_at(args):
+    # (flatpak's index, where sandbox options go) in "flatpak [opts] run [opts] APP" when
+    # flatpak is args[0] or follows a "--" (Steam's wrappers: "pw-audio-namespace -- reaper
+    # ... -- flatpak"); None for any other command.
+    for start, arg in enumerate(args):
+        if (start == 0 or args[start - 1] == "--") and pathlib.Path(arg).name == "flatpak":
+            verb = next((i for i in range(start + 1, len(args))
+                         if not args[i].startswith("-")), None)
+            return (start, verb + 1) if verb is not None and args[verb] == "run" else None
+    return None
+
+
+def flatpak_driver(driver, command, at):
+    # (manifest, paths to expose) as the sandbox sees them, or why the pick can't be used
+    # (one that won't load would leave the app no Vulkan). command starts with flatpak; at
+    # is where its run options end.
+    if driver.startswith(armada_turnip.USER_PREFIX):
+        library = armada_turnip.user_library(
+            pathlib.Path.home(), driver.removeprefix(armada_turnip.USER_PREFIX))
+        manifests = library and turnip_manifests(driver)
+        if not manifests:
+            return "isn't installed"
+        # home paths are the same inside the sandbox
+        manifest = manifests[0]
+        exposed = [str(pathlib.Path(manifest).parent), str(library.parent)]
+    else:
+        manifest = armada_turnip.flatpak_manifest(driver)
+        if not manifest:
+            return "has no Flatpak build"
+        library = armada_turnip.FLATPAK_SYSTEM_DIR / driver / "aarch64" / armada_turnip.LIBRARY
+        exposed = []  # in the GL.host extension
+    # a ":" would break --filesystem=PATH:ro
+    if any(":" in path for path in (manifest, *exposed)):
+        return "has a ':' in its path"
+    app = next((i for i in range(at, len(command)) if not command[i].startswith("-")), None)
+    problem = ("no app in the command" if app is None else
+               armada_turnip.flatpak_problem(command[:app], command[app], [library], exposed))
+    if problem:
+        return f"can't load in this Flatpak app ({problem})"
+    return manifest, exposed
+
+
+def turnip_pick(settings):
+    # the picked driver, or None for the system default
     driver = settings.get("turnipDriver")
-    if not isinstance(driver, str) or driver in ("", armada_turnip.STABLE):
+    picked = isinstance(driver, str) and driver not in ("", armada_turnip.DEFAULT_DRIVER)
+    return driver if picked else None
+
+
+def flatpak_turnip(settings, args, start, at):
+    # The global override (/usr/share/armada/flatpak-override) beats inherited env, so the
+    # pick goes in as "flatpak run" options.
+    driver = turnip_pick(settings)
+    options = [f"--env={key}={os.environ[key]}" for key in VK_DRIVER_ENV if key in os.environ]
+    # the sandbox's /usr is the runtime's, so a host /usr manifest would leave no driver
+    if any(path.startswith("/usr/") for key in VK_DRIVER_ENV
+           for path in os.environ.get(key, "").split(os.pathsep)):
+        print("armada-game-launch: the driver override names host /usr files, which Flatpak "
+              "apps can't see; ignoring it", file=sys.stderr)
+        options = []
+    if not options and driver:
+        found = flatpak_driver(driver, args[start:], at - start)
+        if isinstance(found, str):
+            print(f"armada-game-launch: Turnip driver {driver!r} {found}, using the default",
+                  file=sys.stderr)
+        else:
+            manifest, paths = found
+            options = [*(f"--filesystem={path}:ro" for path in paths),
+                       *(f"--env={key}={manifest}" for key in VK_DRIVER_ENV)]
+    return [*args[:at], *options, *args[at:]]
+
+
+def apply_turnip(settings):
+    driver = turnip_pick(settings)
+    if not driver:
         return
     if any(key in os.environ for key in VK_DRIVER_ENV):
         return
@@ -331,7 +403,11 @@ def main():
 
     # after apply_perf so a driver override in the user's env settings wins
     try:
-        apply_turnip(settings)
+        flatpak = flatpak_run_at(args)
+        if flatpak is None:
+            apply_turnip(settings)
+        else:
+            args = flatpak_turnip(settings, args, *flatpak)
     except Exception as exc:
         print(f"armada-game-launch: Turnip driver skipped: {exc}", file=sys.stderr)
 

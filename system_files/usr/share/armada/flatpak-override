@@ -1,0 +1,11 @@
+# Flatpak apps default to Armada's stable Turnip and GLX vendor (EGL finds GL.host on
+# its own); armada-game-launch applies per-game picks. An app whose runtime can't load
+# them falls back to its runtime's Mesa for GL and gets no Vulkan; armada-flatpak-drivers
+# lists those. Linked from /var/lib/flatpak/overrides/global by
+# tmpfiles.d/armada-flatpak-drivers.conf.
+# Opt one app out: flatpak override --user --unset-env=VK_DRIVER_FILES
+#   --unset-env=VK_ICD_FILENAMES --unset-env=__GLX_VENDOR_LIBRARY_NAME APP
+[Environment]
+VK_DRIVER_FILES=/usr/lib/aarch64-linux-gnu/GL/host/turnip/stable/flatpak.aarch64.json
+VK_ICD_FILENAMES=/usr/lib/aarch64-linux-gnu/GL/host/turnip/stable/flatpak.aarch64.json
+__GLX_VENDOR_LIBRARY_NAME=armada
