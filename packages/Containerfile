@@ -72,6 +72,7 @@ COPY --from=pkg-armada-autohdr /work/out/ /rpms/
 
 FROM builder-base AS pkg-gamescope
 COPY gamescope/ /work/
+COPY --from=pkg-armada-autohdr /work/out/ /src/armada-autohdr-rpms/
 WORKDIR /work
 RUN ./build.sh && /src/scrub-scratch.sh
 

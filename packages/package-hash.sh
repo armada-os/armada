@@ -10,6 +10,7 @@ pkg="${1:?usage: package-hash.sh <package>}"
 
 paths=("${pkg}" toolchain.env Containerfile scrub-scratch.sh)
 case "${pkg}" in
+    gamescope) paths+=(armada-autohdr/include) ;;
     mesa-x86|mesa-android) paths+=(mesa) ;;
     lepton) paths+=(mesa mesa-android) ;;
 esac
