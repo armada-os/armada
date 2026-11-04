@@ -62,6 +62,14 @@ RUN ./build.sh && /src/scrub-scratch.sh
 FROM scratch AS out-armada-logos
 COPY --from=pkg-armada-logos /work/out/ /rpms/
 
+FROM builder-base AS pkg-armada-autohdr
+COPY armada-autohdr/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-armada-autohdr
+COPY --from=pkg-armada-autohdr /work/out/ /rpms/
+
 FROM builder-base AS pkg-gamescope
 COPY gamescope/ /work/
 WORKDIR /work

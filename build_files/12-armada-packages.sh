@@ -42,6 +42,9 @@ pkgs=(
     /packages/armada-rgb/*.rpm
     /packages/armada-ssc/*.rpm
 
+    # Shared AutoHDR core used by Gamescope.
+    /packages/armada-autohdr/armada-autohdr-[0-9]*.rpm
+
     # Replace Fedora styling with Armada styling
     /packages/armada-logos/*.rpm
 
