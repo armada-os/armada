@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mirror the BLS entries and their kernels onto the ESP for systemd-boot and OpenABL.
+# Mirror the BLS entries and their kernels onto the ESP for OpenABL.
 set -euo pipefail
 
 ESP=${ESP:-/boot/efi}
@@ -47,11 +47,6 @@ if [ ! -x "${deploy}/usr/libexec/armada/armada-efi-update" ]; then
     exit 0
 fi
 
-loader=${deploy}/usr/lib/systemd/boot/efi/systemd-bootaa64.efi
-dtbloader=${deploy}/usr/lib/dtbloader/dtbloaderaa64.efi
-for file in "${loader}" "${dtbloader}"; do
-    [ -s "${file}" ] || die "missing or empty EFI asset: ${file}"
-done
 linux=$(sed -n 's/^linux //p' "${entry}" | head -1)
 dtbs=${BOOTROOT}$(dirname "${linux#/boot}")/dtb/qcom
 [ -d "${dtbs}" ] || die "missing DTB directory: ${dtbs}"
@@ -79,7 +74,7 @@ for file in "${BOOTROOT}/loader/entries"/*.conf; do
             for (i = 1; i <= n; i++) print lines[i]
         }' "${file}" > "${work}/entries/armada-${file##*/}"
 done
-# ostree gives the next-boot deployment the highest entry number, and systemd-boot
+# ostree gives the next-boot deployment the highest entry number, and OpenABL
 # lists the highest first, so the glob never needs rewriting.
 printf 'timeout 3\neditor no\ndefault armada-*\n' > "${work}/loader.conf"
 
@@ -108,19 +103,15 @@ stage() {
 while IFS= read -r -d '' file; do
     stage "${file}" "${ESP}/${file#"${BOOTROOT}/"}"
 done < <(find "${BOOTROOT}/ostree" -type f -print0)
-# dtbloader and OpenABL's device model menu both search \dtbs\qcom.
+# OpenABL's device model menu searches \dtbs\qcom.
 for dtb in "${dtbs}"/*.dtb; do
     stage "${dtb}" "${ESP}/dtbs/qcom/${dtb##*/}"
 done
-stage "${dtbloader}" "${ESP}/EFI/systemd/drivers/dtbloaderaa64.efi"
 for file in "${work}/entries"/*.conf; do
     stage "${file}" "${ESP}/loader/entries/${file##*/}"
 done
 # Like bootctl install, write loader.conf once and leave it to the user after.
 [ -e "${ESP}/loader/loader.conf" ] || stage "${work}/loader.conf" "${ESP}/loader/loader.conf"
-# Bootloaders discover these paths, so install them last.
-stage "${loader}" "${ESP}/EFI/systemd/systemd-bootaa64.efi"
-stage "${loader}" "${ESP}/EFI/BOOT/BOOTAA64.EFI"
 available=$(df -B1 --output=avail "${ESP}" | tail -1)
 [ "${available}" -ge "${needed}" ] || die "insufficient space on ${ESP} (need ${needed} bytes)"
 for i in "${!sources[@]}"; do
@@ -131,7 +122,7 @@ for i in "${!sources[@]}"; do
     mv -f "${target}.new" "${target}" || die "could not install ${target}"
 done
 
-# bootc-image-builder installs shim and GRUB, which would shadow systemd-boot.
+# bootc-image-builder's shim and GRUB can't boot these devices.
 rm -f "${ESP}/EFI/BOOT/fbaa64.efi" "${ESP}/EFI/BOOT/BOOTAA64.CSV" \
     "${ESP}/EFI/BOOT/grub.cfg" "${ESP}/EFI/BOOT/grubaa64.efi"
 rm -rf "${ESP}/EFI/fedora" "${ESP}/EFI.disabled"
