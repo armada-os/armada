@@ -54,8 +54,6 @@
 	touchscreen@38 {
 		/* FT5452: provisional use of the family FT5x06 protocol. */
 		compatible = "focaltech,ft5426";
-		touchscreen-inverted-x;
-		touchscreen-inverted-y;
 	};
 };
 
@@ -86,6 +84,12 @@
 
 	data-pins {
 		drive-strength = <16>;
+	};
+};
+
+&uart15 {
+	gamepad {
+		gamepad-name = "AYN Odin3 Portal Gamepad";
 	};
 };
 
