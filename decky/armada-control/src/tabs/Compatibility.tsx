@@ -82,9 +82,7 @@ const fexKnobs = [
 const thunkModules = [
   { module: "Vulkan", label: "Host Vulkan" },
   { module: "GL", label: "Host OpenGL" },
-  { module: "asound", label: "Host ALSA" },
   { module: "drm", label: "Host DRM" },
-  { module: "WaylandClient", label: "Host Wayland" },
 ];
 
 function ConfirmResetAllModal({ closeModal, onConfirm }: { closeModal?: () => void; onConfirm: () => void }) {

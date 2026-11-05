@@ -468,6 +468,15 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch`
   source: https://github.com/kettlelinux/kettlelinux/blob/2b7661b4d937d7efbb487c4bba84f8705be7cc5d/kernel/patches/40-kettle/1370-media-iris-a-resolution-change-last-buffer-is-not-an-error.patch
   upstream: unknown
+- `patches/1087-media-iris-release-gen1-input-internal-buffers-when-stopping-before-decode.patch`
+  source: https://github.com/shuuri-labs/pocknix-os/blob/97ee6429d6e68f82d10309aeae390b9d2fa4a220/kernel/common/patches/1087-media-iris-release-gen1-input-internal-buffers-when-stopping-before-decode.patch
+  upstream: unknown
+- `patches/1088-media-iris-defer-gen1-capture-setup-until-the-sequence-is-known.patch`
+  source: https://github.com/shuuri-labs/pocknix-os/blob/97ee6429d6e68f82d10309aeae390b9d2fa4a220/kernel/common/patches/1088-media-iris-defer-gen1-capture-setup-until-the-sequence-is-known.patch
+  upstream: unknown
+- `patches/1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch`
+  source: https://github.com/shuuri-labs/pocknix-os/blob/00f393be748c778d117fd98e38b42533785d6b74/kernel/common/patches/1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch
+  upstream: unknown
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown
@@ -700,7 +709,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local
-  notes: AYANEO Pocket S2, Pocket DS and KONKR Pocket FIT fix. The WSA884x amplifier's POST_PMU sequence selects the SoundWire compander, but the unmute path immediately overrode it with the fixed CSR gain, discarding the boards' matched compander plus digital-volume configuration. The driver now keeps the compander selection when its port is enabled, gated on the `ayaneo,pocket-s2`, `ayaneo,pocketds` and `konkr,pocket-fit` machine compatibles, so every other WSA884x machine keeps the original fixed-gain behavior. This requires a matching UCM that enables both macro companders, initializes both PA controls to 17 (hardware gain index 14, unity), and uses digital volume. Scoped to the Armada distribution; not a Linux upstream submission.
+  notes: AYANEO Pocket S2 and Pocket FIT fix. The WSA884x amplifier's POST_PMU sequence selects the SoundWire compander, but the unmute path immediately overrode it with the fixed CSR gain, discarding the boards' matched compander plus digital-volume configuration. The driver now keeps the compander selection when its port is enabled, gated on the `ayaneo,pocket-s2` and `konkr,pocket-fit` machine compatibles, so every other WSA884x machine keeps the original fixed-gain behavior. This requires a matching UCM that enables both macro companders, initializes both PA controls to 17 (hardware gain index 14, unity), and uses digital volume. Scoped to the Armada distribution; not a Linux upstream submission.
 - `patches/0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
   upstream: unknown
@@ -711,10 +720,6 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0528-ASoC-qcom-sc8280xp-suspend-the-card-and-its-streams.patch`
   source: armada
   upstream: local
-- `patches/0538-ASoC-qcom-sc8280xp-cap-Pocket-DS-speaker-digital-volume.patch`
-  source: armada
-  upstream: local
-  notes: AYANEO Pocket DS only. With the compander speaker path from `0075`, the speakers audibly distorted at WSA RX digital volume 73 and were clean at 71 across the bass, hot-master and vocal test clips, so the upstream limit of 81 is lowered to 71 on this board. A peak limiter in userspace could allow a higher cap later.
 - `patches/0529-ASoC-qdsp6-q6apm-fail-the-graph-open-when-the-DSP-rejects-it.patch`
   source: armada
   upstream: local
@@ -1006,10 +1011,22 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: Armada implementation from the unit's Android panel properties.
   upstream: No.
 
+
+
 - `patches/1114-remoteproc-qcom-add-eliza-wpss.patch`
   source: Armada; existing Linux Milos/SC7280 WPSS support and Qualcomm Kera downstream sources, checked against the Duo Android FDT.
   upstream: No.
   notes: Reuses the PAS driver with auto_boot=false. Adds the WPSS firmware processor support used by the WCN7750 ath12k backport.
+
+- `patches/1115-drm-msm-a6xx-mask-unhandled-rbbm-interrupts.patch`
+  source: armada
+  upstream: local
+  notes: A6XX/A7XX_INT_MASK enable sources a6xx_irq() never handles; one re-asserting on a hung A722 stormed CPU0 and froze the Duo. Masks each unhandled bit the first time it fires, with a rate-limited warning; hw_init restores the mask.
+
+- `patches/1116-drm-msm-a6xx-set-up-a722-without-a-bv-pipe.patch`
+  source: armada
+  upstream: local
+  notes: Follows KGSL's gen7 no-concurrent-binning setup: GRAS/SP_NC_MODE_CNTL restored from the static list, no per-pipe GRAS entries, no BV/LPAC registers.
 
 - `patches/1140-wifi-ath12k-move-MSI-state-from-ath12k-pci-to-ath12k-base.patch`
   source: https://github.com/RetroidPocket/linux/commit/be7f234a62cd0a47ce043fa9329faaef509eb030

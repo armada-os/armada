@@ -2,8 +2,8 @@
 
 key 304   BUTTON_A
 key 305   BUTTON_B
-key 307   BUTTON_X
-key 308   BUTTON_Y
+key 307   BUTTON_Y
+key 308   BUTTON_X
 key 310   BUTTON_L1
 key 311   BUTTON_R1
 key 314   BUTTON_SELECT
@@ -22,3 +22,5 @@ axis 0x02 LTRIGGER
 axis 0x03 Z
 axis 0x04 RZ
 axis 0x05 RTRIGGER
+axis 0x14 LTRIGGER
+axis 0x15 RTRIGGER

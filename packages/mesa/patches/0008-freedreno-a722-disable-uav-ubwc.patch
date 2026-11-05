@@ -35,7 +35,7 @@ index fa893cc..8356bd8 100644
 -                                        has_lpac = False)],
 +                                        has_lpac = False,
 +                                        storage_ubwc_internal_quirk = True)],
-         num_ccu = 1,
+         num_ccu = 2,
          tile_align_w = 64,
          tile_align_h = 16,
 diff --git a/src/freedreno/vulkan/tu_image.cc b/src/freedreno/vulkan/tu_image.cc

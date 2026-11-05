@@ -11,14 +11,6 @@ DTB_LIST="${DTB_LIST:-/usr/lib/armada/supported-dtbs}"
 ARGS_FILE="${ARGS_FILE:-/usr/lib/armada/bootimg-args}"
 KERNEL_OUT="${ESP}/KERNEL"
 STAMP="${ESP}/.armada-bootimg.id"
-# Plain 8.3: a long name would also generate a short alias next to KERNEL, the
-# one name the ABL looks up.
-PREV_OUT="${ESP}/KERNEL.BAK"
-PREV_TMP="${ESP}/KERNEL.TMP"
-PREV_STAMP="${ESP}/.armada-bootimg.prev.id"
-
-snapshot=0
-[ "${1:-}" = "--snapshot-prev" ] && snapshot=1
 
 [ -r "${DTB_LIST}" ] || { echo "armada-bootimg-update: missing ${DTB_LIST}" >&2; exit 1; }
 [ -r "${ARGS_FILE}" ] || { echo "armada-bootimg-update: missing ${ARGS_FILE}" >&2; exit 1; }
@@ -40,42 +32,9 @@ findmnt -rn "${ESP}" >/dev/null 2>&1 || {
     exit 1
 }
 
-# A spare to rename over a corrupt /KERNEL from any PC that reads the SD card;
-# the initramfs fallback ships inside /KERNEL and cannot rescue that. Boot-time
-# only, so the spare is an image the ABL booted; never fails the caller.
-snapshot_prev() {
-    local cur need avail
-    [ -f "${KERNEL_OUT}" ] || return 0
-    cur=$(cat "${STAMP}" 2>/dev/null || true)
-    [ -n "${cur}" ] || return 0
-    # The spare has to still be on disk: a stamp outliving its image, which a
-    # manual recovery does, must not suppress recreating it.
-    if [ "${cur}" = "$(cat "${PREV_STAMP}" 2>/dev/null || true)" ] && [ -s "${PREV_OUT}" ]; then
-        return 0
-    fi
-    need=$(stat -c %s "${KERNEL_OUT}" 2>/dev/null || echo 0)
-    avail=$(df -B1 --output=avail "${ESP}" 2>/dev/null | tail -1 | tr -dc '0-9')
-    if [ "${avail:-0}" -lt $((need + 4 * 1024 * 1024)) ]; then
-        echo "armada-bootimg-update: ${ESP} lacks room for ${PREV_OUT##*/}; skipping snapshot" >&2
-        return 0
-    fi
-    # Drop the stamp first: it must never describe an image that is not there.
-    rm -f "${PREV_STAMP}" 2>/dev/null || true
-    if cp -f "${KERNEL_OUT}" "${PREV_TMP}" &&
-        sync "${PREV_TMP}" &&
-        mv -f "${PREV_TMP}" "${PREV_OUT}"; then
-        printf '%s' "${cur}" > "${PREV_STAMP}" 2>/dev/null || true
-        sync
-        echo "armada-bootimg-update: saved known-good ${PREV_OUT}"
-    else
-        rm -f "${PREV_TMP}" 2>/dev/null || true
-        echo "armada-bootimg-update: ${PREV_OUT} snapshot failed (continuing)" >&2
-    fi
-    return 0
-}
-if [ "${snapshot}" = 1 ]; then
-    snapshot_prev
-fi
+# Clean up the old spare and any partial copy left by a failed run.
+rm -f "${ESP}/KERNEL.BAK" "${ESP}/KERNEL.TMP" "${ESP}/.armada-bootimg.prev.id" \
+    "${ESP}/.KERNEL.new" || true
 
 # Next-boot deployment = highest-version BLS entry (ostree gives its default,
 # and the rollback target, the highest version), via the shared helper.

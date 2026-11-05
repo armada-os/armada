@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Covers the /KERNEL regeneration path: the shared BLS-to-cmdline transform,
-# the known-good KERNEL.BAK snapshot, the target-deployment DTB list lookup,
+# the removal of the old KERNEL.BAK spare, the target-deployment DTB list lookup,
 # and the initramfs ostree fallback that rescues a stale /KERNEL.
 
 set -euo pipefail
@@ -58,7 +58,7 @@ assert_eq "transform shell options" "$-" "$before"
 (( ${#cmdline} <= ARMADA_CMDLINE_MAX )) ||
     fail "transform: ${#cmdline}B exceeds ${ARMADA_CMDLINE_MAX}B"
 
-# --- armada-bootimg-update: snapshot + DTB list resolution -------------------
+# --- armada-bootimg-update: spare cleanup + DTB list resolution --------------
 
 # Neutralize the two things a test cannot provide: a mounted ESP and a
 # lock under /run. Everything else runs as shipped.
@@ -108,48 +108,27 @@ assert_contains "regen" "$out" "wrote $ESP/KERNEL"
 # A second run is a no-op: the stamp matches.
 assert_contains "regen idempotence" "$(run_update)" "already current"
 
-# The snapshot is boot-time only; a shutdown-style run must never write it.
-[[ ! -e "$ESP/KERNEL.BAK" ]] || fail "snapshot: written without --snapshot-prev"
+# Spares left by older images go even when /KERNEL is already current.
+printf 'spare' > "$ESP/KERNEL.BAK"; printf 'tmp' > "$ESP/KERNEL.TMP"
+printf 'id' > "$ESP/.armada-bootimg.prev.id"; printf 'partial' > "$ESP/.KERNEL.new"
+assert_contains "spare cleanup" "$(run_update)" "already current"
+for f in KERNEL.BAK KERNEL.TMP .armada-bootimg.prev.id .KERNEL.new; do
+    [[ ! -e "$ESP/$f" ]] || fail "spare cleanup: $f left on the ESP"
+done
 
-out="$(run_update --snapshot-prev)"
-assert_contains "snapshot" "$out" "saved known-good"
-# cmp, not $(cat): these are real boot images with null bytes.
-cmp -s "$ESP/KERNEL.BAK" "$ESP/KERNEL" || fail "snapshot: spare differs from /KERNEL"
-assert_eq "snapshot stamp" "$(cat "$ESP/.armada-bootimg.prev.id")" "$(cat "$ESP/.armada-bootimg.id")"
-
-# Unchanged stamp means no repeat copy (this would be ~68 MB on every boot).
-printf 'mutated' > "$ESP/KERNEL"
-run_update --snapshot-prev >/dev/null
-cmp -s "$ESP/KERNEL.BAK" "$ESP/KERNEL" && fail "snapshot: recopied on an unchanged stamp"
-
-# A new /KERNEL means the spare refreshes to the image that just booted.
-printf 'booted-image' > "$ESP/KERNEL"; printf 'NEW-ID' > "$ESP/.armada-bootimg.id"
-run_update --snapshot-prev >/dev/null
-assert_eq "snapshot refresh" "$(cat "$ESP/KERNEL.BAK")" "booted-image"
-
-# Never leave the staging temp behind.
-[[ ! -e "$ESP/KERNEL.TMP" ]] || fail "snapshot: staging temp leaked"
-
-# A failing snapshot must not divert the regen: at shutdown a nonzero exit
-# here would make the finalize hook roll back a healthy update.
-printf 'X' > "$ESP/KERNEL"; printf 'UNWRITABLE' > "$ESP/.armada-bootimg.id"
+# A regen that cannot write must leave the booted /KERNEL in place.
+cp "$ESP/KERNEL" "$WORK/kernel.good"; printf 'STALE' > "$ESP/.armada-bootimg.id"
 chmod a-w "$ESP"
-out="$(run_update --snapshot-prev)"
+status=0
+out="$(ESP="$ESP" BOOTROOT="$BOOT" SYSROOT="$SYS" ARGS_FILE="$ARMADA_LIB/bootimg-args" \
+    DTB_LIST="$ARMADA_LIB/supported-dtbs" MKBOOTIMG="$ROOT/build_files/vendor/mkbootimg/mkbootimg.py" \
+    bash "$WORK/update.sh" 2>&1)" || status=$?
 chmod u+w "$ESP"
-assert_contains "snapshot failure" "$out" "snapshot failed"
-[[ "$out" == *"already current"* || "$out" == *"KERNEL"* ]] ||
-    fail "snapshot failure: regen did not continue"
-
-# A stamp that outlived its image must not suppress recreating the spare: a
-# manual recovery moves KERNEL.BAK away and leaves the hidden stamp behind.
-# Settle /KERNEL first, so the spare's stamp matches and the skip would fire.
+# A zero exit here would suppress the finalize rollback.
+(( status != 0 )) || fail "failed write: exited 0"
+[[ "$out" != *"wrote $ESP/KERNEL"* ]] || fail "failed write: reported success"
+cmp -s "$WORK/kernel.good" "$ESP/KERNEL" || fail "failed write: /KERNEL changed or lost"
 run_update >/dev/null
-run_update --snapshot-prev >/dev/null
-[[ -f "$ESP/KERNEL.BAK" ]] || fail "snapshot: no spare to start the deletion case from"
-assert_contains "snapshot skip precondition" "$(run_update --snapshot-prev)" "already current"
-rm -f "$ESP/KERNEL.BAK"
-run_update --snapshot-prev >/dev/null
-[[ -f "$ESP/KERNEL.BAK" ]] || fail "snapshot: a surviving stamp suppressed recreating the spare"
 
 # An ostree= karg that resolves to nothing means the entry does not describe a
 # deployment that exists. Baking it would stamp an unbootable /KERNEL current and
@@ -179,7 +158,7 @@ fi
 abl_dropin="$ROOT/packages/openabl-updater/src/armada-bootimg-sync-openabl-updater.conf"
 mapfile -t sync_stops < <(sed -n 's/^ExecStop=//p' "$sync_unit" "$abl_dropin")
 assert_eq "sync bootimg ordering" "${sync_stops[0]:-}" \
-    "/usr/libexec/armada/armada-bootimg-update"
+    "/usr/libexec/armada/armada-boot-update"
 assert_eq "sync ABL ordering" "${sync_stops[1]:-}" \
     "-/usr/libexec/openabl-updater/armada-abl-finalize"
 

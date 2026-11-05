@@ -1,14 +1,23 @@
 From: Armada <noreply@armada.local>
 Subject: [PATCH] arm64: dts: qcom: pocket-s2: use the dedicated sound card
 
+Also describe the 3.5mm jack switch polarity as the vendor DT does
+(msm-mbhc-hphl-swh = msm-mbhc-gnd-swh = 0): without it MBHC reads the plug
+with inverted polarity and detection never completes.
+
 --- a/arch/arm64/boot/dts/qcom/sm8650-ayaneo-ps2.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8650-ayaneo-ps2.dts
-@@ -12,6 +12,10 @@
+@@ -12,6 +12,15 @@
  	compatible = "ayaneo,pocket-s2", "qcom,sm8650";
  };
  
 +&{/sound} {
 +	compatible = "ayaneo,pocket-s2-sndcard";
++};
++
++&wcd939x {
++	qcom,hphl-jack-type-normally-closed;
++	qcom,ground-jack-type-normally-closed;
 +};
 +
  &i2c4 {

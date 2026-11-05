@@ -167,7 +167,7 @@ jobs:
             "oci-archive:${RUNNER_TEMP}/export/${PACKAGE}.tar"
 
       - name: Upload package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pkg-${{ matrix.package }}
           path: ${{ runner.temp }}/export/${{ matrix.package }}.tar
@@ -361,7 +361,7 @@ jobs:
             "oci-archive:${RUNNER_TEMP}/armada-${DISK_TAG}.tar"
 
       - name: Upload container image
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: armada-container-pr${{ github.event.pull_request.number }}
           path: ${{ runner.temp }}/armada-${{ env.DISK_TAG }}.tar
@@ -404,7 +404,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload disk image
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: armada-disk-pr${{ github.event.pull_request.number }}
           path: |

@@ -30,6 +30,9 @@ ln -sf libbz2.so.1 /usr/lib64/libbz2.so.1.0
 # Some AppImages link zlib's unversioned development soname.
 ln -sf libz.so.1 /usr/lib64/libz.so
 
+# Upstream's thunk overlays miss the Arch guest's library dirs, so append them.
+python3 /usr/lib/armada/armada_fex_thunks.py /usr/share/fex-emu/ThunksDB.json
+
 # The vendored entries land after the RPM scriptlets ran, so mimeinfo.cache
 # would not otherwise list them.
 update-desktop-database -q /usr/share/applications

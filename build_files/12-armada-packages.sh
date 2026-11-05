@@ -50,16 +50,15 @@ pkgs=(
     /packages/kwin/kwin-common-[0-9]*.rpm
     /packages/kwin/kwin-libs-[0-9]*.rpm
 
-    # Carry Plasma Mobile's input-region crash fix until Fedora backports it.
-    /packages/plasma-mobile/plasma-mobile-[0-9]*.rpm
-    /packages/plasma-mobile/plasma-lookandfeel-fedora-mobile-[0-9]*.rpm
-
     # PowerDevil's KWin backend treats 0 as safe; reserve 5% for internal panels.
     /packages/powerdevil/powerdevil-*.fc44.armada.*.rpm
 
     # scx_cosmos/scx_lavd for the Armada Control scheduler setting; without the
     # binaries armada-powerd reports the scheduler choice as unavailable.
     /packages/scx-scheds/scx-scheds-[0-9]*.rpm
+
+    # Devicetree for EFI platforms without OpenABL
+    /packages/dtbloader/dtbloader-*.rpm
 
     # MTP support
     /packages/umtp-responder/umtp-responder-*.rpm
@@ -88,3 +87,11 @@ pkgs=(
 )
 
 dnf5 -y install --setopt=install_weak_deps=False "${pkgs[@]}"
+
+# A stale rebuilt kwin/powerdevil downgrades part of Plasma and KWin fails to start.
+plasma_ver=$(rpm -q --qf '%{VERSION}' kglobalacceld)
+for pkg in kwin powerdevil; do
+    ver=$(rpm -q --qf '%{VERSION}' "$pkg")
+    [ "$ver" = "$plasma_ver" ] \
+        || { echo "ERROR: $pkg $ver does not match Plasma $plasma_ver; rebase packages/$pkg"; exit 1; }
+done

@@ -32,9 +32,6 @@ FROM ${GAMESCOPE_SESSION_STEAM_REF} AS gamescope-session-steam
 ARG KWIN_REF
 FROM ${KWIN_REF} AS kwin
 
-ARG PLASMA_MOBILE_REF
-FROM ${PLASMA_MOBILE_REF} AS plasma-mobile
-
 ARG POWERDEVIL_REF
 FROM ${POWERDEVIL_REF} AS powerdevil
 
@@ -101,6 +98,9 @@ FROM ${ARMADA_RGB_REF} AS armada-rgb
 ARG ARMADA_SSC_REF
 FROM ${ARMADA_SSC_REF} AS armada-ssc
 
+ARG DTBLOADER_REF
+FROM ${DTBLOADER_REF} AS dtbloader
+
 ARG UMTP_RESPONDER_REF
 FROM ${UMTP_RESPONDER_REF} AS umtp-responder
 
@@ -135,7 +135,6 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=gamescope-session,source=/rpms,target=/packages/gamescope-session \
     --mount=type=bind,from=gamescope-session-steam,source=/rpms,target=/packages/gamescope-session-steam \
     --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
-    --mount=type=bind,from=plasma-mobile,source=/rpms,target=/packages/plasma-mobile \
     --mount=type=bind,from=powerdevil,source=/rpms,target=/packages/powerdevil \
     --mount=type=bind,from=proton-cachyos,source=/,target=/packages/proton-cachyos \
     --mount=type=bind,from=protontricks,source=/rpms,target=/packages/protontricks \
@@ -157,6 +156,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=armada-rgb,source=/rpms,target=/packages/armada-rgb \
     --mount=type=bind,from=armada-ssc,source=/rpms,target=/packages/armada-ssc \
     --mount=type=bind,from=openabl-updater,source=/rpms,target=/packages/openabl-updater \
+    --mount=type=bind,from=dtbloader,source=/rpms,target=/packages/dtbloader \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \

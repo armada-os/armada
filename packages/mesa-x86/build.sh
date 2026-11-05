@@ -42,7 +42,7 @@ printf '%s  %s\n' "${SOURCE_SHA256}" "${SOURCE_TARBALL}" | sha256sum --check --s
 tar xf "${SOURCE_TARBALL}"
 cd "$(tar tf "${SOURCE_TARBALL}" | head -1 | cut -d/ -f1)"
 for patch in /src/mesa/patches/*.patch; do
-    patch -p1 <"$patch"
+    patch -p1 --fuzz=0 <"$patch"
 done
 
 cat >/tmp/cross32 <<EOF

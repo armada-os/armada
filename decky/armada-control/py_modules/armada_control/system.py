@@ -274,6 +274,7 @@ def set_sleep_logs_enabled(enabled):
             stderr=subprocess.PIPE,
             text=True,
             timeout=15,
+            env=clean_env(),
         )
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(exc.stderr.strip() or "Could not reload systemd sleep logging.") from exc

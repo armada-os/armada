@@ -90,6 +90,11 @@ under a tag derived from its own sources, so an unchanged package is never
 rebuilt. `just build` uses a locally built package when you have one and the
 published image otherwise, so you only build what you are changing.
 
+Disk images carry a deprecated `/KERNEL` for older ABLs and an EFI boot path:
+systemd-boot and OpenABL reads the BLS entries that `armada-efi-update` mirrors
+onto the ESP, dtbloader supplies the devicetree on EFI platforms booting with
+systemd-boot.
+
 Issues and pull requests are welcome. For installation or device support, check
 the [troubleshooting documentation](https://armadaos.dev/troubleshooting/frequently-asked-questions/)
 or ask in the [Armada Discord community](https://discord.gg/HdmdSxTD5S).

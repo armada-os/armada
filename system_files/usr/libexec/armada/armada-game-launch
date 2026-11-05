@@ -13,6 +13,7 @@ import sys
 import time
 
 sys.path.insert(0, "/usr/lib/armada")
+import armada_fex_thunks
 import armada_game_tweaks
 import armada_perf
 import armada_turnip
@@ -65,7 +66,8 @@ def prepare_appimage_path(args):
 def appid():
     for key in ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId"):
         value = os.environ.get(key, "").strip()
-        if value.isdigit():
+        # Steam sets STEAM_COMPAT_APP_ID=0 for non-Steam shortcuts.
+        if value.isdigit() and value != "0":
             return value
     return None
 
@@ -82,11 +84,47 @@ def load_fex_contract():
     return contract
 
 
-def thunk_settings(settings, modules):
+def thunk_settings(settings, defaults):
     thunks = settings.get("thunks")
     if not isinstance(thunks, dict):
         thunks = {}
-    return {name: 1 if thunks.get(name, True) else 0 for name in modules}
+    return {name: 1 if thunks.get(name, default) else 0 for name, default in defaults.items()}
+
+
+def steam_fex_tool(env):
+    for tool in env.get("STEAM_COMPAT_TOOL_PATHS", "").split(":"):
+        if tool and (pathlib.Path(tool) / "fex-compat-tool").is_file():
+            return pathlib.Path(tool)
+    return None
+
+
+def install_steam_thunk_db(env):
+    # Steam's FEX reads its own ThunksDB, then the game's, which wins per thunk.
+    # Write only Armada's thunks, built from Steam's current entries.
+    data_path = env.get("STEAM_COMPAT_DATA_PATH")
+    tool = steam_fex_tool(env)
+    if not data_path or not pathlib.Path(data_path).is_absolute() or not tool:
+        return
+    target = pathlib.Path(data_path) / "fex-emu" / "ThunksDB.json"
+    try:
+        text, _ = armada_fex_thunks.merged_text(tool / "usr/share/fex-emu/ThunksDB.json", only_ours=True)
+    except Exception:
+        # A stale copy would override Steam's current DB.
+        target.unlink(missing_ok=True)
+        raise
+    wanted = text.encode()
+    try:
+        if target.read_bytes() == wanted:
+            return
+    except OSError:
+        pass
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".ThunksDB.json.{os.getpid()}.tmp")
+    try:
+        tmp.write_bytes(wanted)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def cache_dir(name):
@@ -121,7 +159,7 @@ def apply_fex(settings, game_id, profiles, env):
     allowed = set().union(*(profile["config"].keys() for profile in profiles.values()))
     fex_config = resolve_fex_config(settings, profiles)
     config.setdefault("Config", {}).update({k: v for k, v in fex_config.items() if k in allowed})
-    config["ThunksDB"] = thunk_settings(settings, config.get("ThunksDB", {}).keys())
+    config["ThunksDB"] = thunk_settings(settings, config.get("ThunksDB", {}))
 
     config_dir = cache_dir("armada-fex")
     config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -317,6 +355,11 @@ def main():
         apply_fex(settings, game_id, contract["profiles"], os.environ)
     except Exception as exc:
         print(f"armada-game-launch: failed to apply settings: {exc}", file=sys.stderr)
+
+    try:
+        install_steam_thunk_db(os.environ)
+    except Exception as exc:
+        print(f"armada-game-launch: thunk DB skipped: {exc}", file=sys.stderr)
 
     prepare_appimage_path(args)
 

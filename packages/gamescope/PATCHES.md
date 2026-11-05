@@ -54,8 +54,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0026-upscale-use-sgsr-for-sdr-fsr-requests.patch`
   source: armada
-- `patches/0027-steamcompmgr-elapsed-time-fps-limiter.patch`
-  source: armada
 - `patches/0029-drm-mirror-internal-screen-sleep-to-the-lease-companion.patch`
   source: armada
 - `patches/0030-drm-lock-the-lease-companion-with-the-broker.patch`
