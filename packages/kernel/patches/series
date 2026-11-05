@@ -15,6 +15,8 @@
 0070-arm64-dts-qcom-dpu-lutdma-reg.patch
 0076-drm-msm-dpu-expose-abgr-xbgr-2101010-on-planes.patch
 0077-drm-msm-dpu-plane-igc-3d-lut-color-pipelines.patch
+0077a-drm-atomic-duplicate-state-of-all-colorops.patch
+0077b-drm-msm-dpu-return-einval-when-no-sspp-is-free.patch
 0078-drm-msm-dpu-fix-vblank-timestamps-on-command-mode-panels.patch
 0078a-drm-msm-dpu-program-merge3d-for-command-mode.patch
 0016-rp5-smooth-brightness-adjustment.patch
