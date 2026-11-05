@@ -1239,3 +1239,11 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Add configurable ADC references and share reset and supply sequencing between probe and resume; existing board defaults are retained.
+
+- `dts/cq8725s-ayn-odin3portal.dts`
+  source: Armada; clock, regulator, SD and pinctrl portions adapted from `cq8725s-ayn-common.dtsi` and `cq8725s-ayn-odin3.dts` (Teguh Sobirin).
+  upstream: local
+
+- `patches/1304-drm-panel-vtdr6130-add-odin3portal.patch`
+  source: Armada
+  upstream: local
