@@ -53,6 +53,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://lore.kernel.org/r/20260811171011.184964-4-mwen@igalia.com
   upstream: https://lore.kernel.org/r/20260811171011.184964-4-mwen@igalia.com
   notes: Patch 3 of the v4 series "drm/atomic: don't allow changes to inactive colorops & other fixes", taken alone; the patch 2 check it depends on isn't in this kernel. Keeps a plane's colorops across a suspend entered while gamescope was compositing.
+- `patches/0077b-drm-msm-dpu-return-einval-when-no-sspp-is-free.patch`
+  source: armada
+  upstream: local
 - `patches/0078-drm-msm-dpu-fix-vblank-timestamps-on-command-mode-panels.patch`
   source: armada
   upstream: local
