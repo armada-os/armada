@@ -99,7 +99,7 @@ turnip_meson=(--buildtype release --prefix /usr
     -Dplatforms=x11,wayland -Dglx=disabled -Degl=disabled -Dgbm=disabled
     -Dopengl=false -Dllvm=disabled -Ddisplay-info=disabled -Dspirv-tools=disabled)
 # Flatpak builds may link only what every runtime ships (plus their own libgallium) and
-# need nothing newer than the oldest supported runtime (25.08: glibc 2.42, GCC 15).
+# need nothing newer than the oldest branch in tmpfiles.d/armada-flatpak-drivers.conf.
 # Unversioned symbols (wayland, xcb, drm) aren't checked here: armada-flatpak-drivers and
 # armada-game-launch catch those on the device with ldd -r.
 FLATPAK_NEEDED='^(ld-linux-aarch64\.so\.1|libgallium-[0-9a-z.-]+-armada\.so|lib(c|m|gcc_s|stdc\+\+|z|zstd|expat|drm|gbm|udev|wayland-client|X11|X11-xcb|Xext|Xxf86vm|xshmfence|xcb(-[a-z0-9]+)?)\.so\.[0-9]+)$'
@@ -206,7 +206,13 @@ cp -a "$gl_root"/lib/libEGL_armada.so.0* "$gl_root"/lib/libGLX_armada.so.0* \
 # so the backend alone (not libgbm) takes msm devices.
 install -m 0755 "$gl_root/lib/gbm/dri_gbm.so" "$gl_out/lib/gbm/msm_gbm.so"
 # glvnd tries EGL vendors in file name order: Armada first, then GL.default's 50_mesa.
-cp "$gl_root/share/glvnd/egl_vendor.d/50_armada.json" "$gl_out/glvnd/egl_vendor.d/10_armada.json"
+# Full path: Flatpak's ld.so cache misses GL.host changes.
+sed -E "s|\"library_path\" *: *\"[^\"]*\"|\"library_path\" : \"${FLATPAK_GL_PREFIX}/lib/libEGL_armada.so.0\"|" \
+    "$gl_root/share/glvnd/egl_vendor.d/50_armada.json" >"$gl_out/glvnd/egl_vendor.d/10_armada.json"
+grep -q "\"${FLATPAK_GL_PREFIX}/lib/libEGL_armada.so.0\"" "$gl_out/glvnd/egl_vendor.d/10_armada.json"
+# Takes the runtime's Turnip manifest's place in Flatpak's merged vulkan/icd.d.
+install -D -m 0644 /work/out/turnip/stable/flatpak.aarch64.json \
+    "$gl_out/vulkan/icd.d/freedreno_icd.aarch64.json"
 cp -a "$gl_root/share/drirc.d" "$gl_out/share/"
 check_flatpak_portable "$gl_out"/lib/*.so.0.0.0 "$gl_out"/lib/libgallium-*-armada.so "$gl_out/lib/gbm/msm_gbm.so"
 
