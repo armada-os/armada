@@ -63,6 +63,7 @@
 	panel@0 {
 		compatible = "vtdr6130,o3p";
 		tvdd-supply = <&vreg_l4b_1p8>;
+		rotation = <270>;
 	};
 };
 

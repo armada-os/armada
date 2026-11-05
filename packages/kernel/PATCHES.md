@@ -835,7 +835,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada adapts the Elite touchscreen node to the full ROCKNIX Chipone fork shared with the SM8650 Pocket FIT, keeps volume-up from waking the system, and adds the DisplayPort playback link required for USB-C DP Alt Mode audio; the touchscreen driver is selected only by those two device-tree nodes. Armada also marks PCIe WAKE# active-low and idles the codec rails in LPM during s2idle, and points the SoCCP remoteproc at the Elite's own firmware.
 - `dts/cq8725s-ayn-common.dtsi`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0046-arm64-dts-qcom-Add-AYN-CQ8725S-Common.patch
-  notes: Maintained directly by Armada. Shares clocks, regulators, SD, display/touch wiring, keys, fan wiring and USB2 between Odin 3 and Portal.
+  notes: Maintained directly by Armada. Shares clocks, regulators, Adreno 830, SD, display/touch wiring, keys, fan wiring and USB2 between Odin 3 and Portal.
 - `dts/cq8725s-ayn-odin3.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0047-arm64-dts-qcom-Add-AYN-Odin3.patch
   notes: Maintained directly by Armada with later ROCKNIX updates, including haptics from commit `81a31e3d0f`. Carries Odin 3 peripherals and Armada display, audio, gamepad and suspend settings.

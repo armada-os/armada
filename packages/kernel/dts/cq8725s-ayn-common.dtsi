@@ -295,6 +295,14 @@
 	status = "okay";
 };
 
+&gpu {
+	status = "okay";
+};
+
+&gpu_zap_shader {
+	firmware-name = "qcom/sm8750/gen80000_zap.mbn";
+};
+
 &i2c4 {
 	clock-frequency = <400000>;
 	status = "okay";
