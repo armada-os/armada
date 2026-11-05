@@ -2,7 +2,8 @@
 set -euxo pipefail
 
 # A separate rechunk component keeps a driver bump from invalidating unrelated layers.
-python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"turnip")' /usr/share/armada/turnip
+python3 -c 'import os,sys; [os.setxattr(p,"user.component",b"turnip") for p in sys.argv[1:]]' \
+    /usr/share/armada/turnip /usr/share/armada/flatpak-mesa
 
 # Identify large independently updated components for content-aware layer packing.
 python3 -c 'import os,sys; os.setxattr(sys.argv[1],"user.component",b"steam")' \
