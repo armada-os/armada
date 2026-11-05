@@ -1,6 +1,6 @@
-From d9022c112977db923c802e1776240d6071da7ca1 Mon Sep 17 00:00:00 2001
+From c4aad21d06fe988220a770984d6255aee041fa3f Mon Sep 17 00:00:00 2001
 From: Raxcoms <mpaulo968@gmail.com>
-Date: Wed, 4 Nov 2026 16:45:23 -0300
+Date: Thu, 5 Nov 2026 18:17:37 -0300
 Subject: [PATCH] gamescope: add hooks for an optional external color provider
 
 Load the AutoHDR provider through one versioned C interface. The provider
@@ -25,13 +25,13 @@ need review of host hook ordering, layer identity and shader slots.
  src/color_helpers.cpp                  |   8 +
  src/color_helpers.h                    |  10 ++
  src/color_provider.glsl                |  16 ++
- src/color_provider.h                   | 230 +++++++++++++++++++++++++
+ src/color_provider.h                   | 233 +++++++++++++++++++++++++
  src/rendervulkan.cpp                   |   9 +-
  src/rendervulkan.hpp                   |   8 +-
  src/shaders/composite.h                |   9 +-
  src/shaders/descriptor_set_constants.h |   3 +-
  src/steamcompmgr.cpp                   |  70 +++++++-
- 11 files changed, 377 insertions(+), 21 deletions(-)
+ 11 files changed, 380 insertions(+), 21 deletions(-)
  create mode 100644 src/color_provider.glsl
  create mode 100644 src/color_provider.h
 
@@ -225,10 +225,10 @@ index 0000000..173f062
 +#endif
 diff --git a/src/color_provider.h b/src/color_provider.h
 new file mode 100644
-index 0000000..2e6e354
+index 0000000..8e6b539
 --- /dev/null
 +++ b/src/color_provider.h
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,233 @@
 +#pragma once
 +
 +#include <gamescope-color-provider.h>
@@ -379,7 +379,10 @@ index 0000000..2e6e354
 +				.data = &context,
 +				.attach_game_luts = []( void *data ) {
 +					auto &ctx = *static_cast<Context *>( data );
-+					ctx.frame.layers.get( 0 ).colorProvider = true;
++					auto &game = ctx.frame.layers.get( 0 );
++					game.colorProvider = true;
++					// Cached frames also need the scanout color pipeline.
++					game.applyColorMgmt = true;
 +					ctx.frame.shaperLut[EOTF_Count] = ctx.luts.vk_lut1d;
 +					ctx.frame.lut3D[EOTF_Count] = ctx.luts.vk_lut3d;
 +				},
