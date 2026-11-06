@@ -1,0 +1,18 @@
+# Vela NPU: device nodes for fsr4npud. Loads the dma-heap module, waits for the cDSP nodes
+# (a late remoteproc included), re-applies 70-vela-npu.rules to both nodes, and only then lets
+# vela-npu-listener.service and vela-npu@.service start (Requires= + After=).
+[Unit]
+Description=Vela NPU: device nodes for fsr4npud (dma-heap module, udev rule re-applied)
+ConditionFirmware=|device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8750)
+After=systemd-sysext.service systemd-udevd.service systemd-udev-trigger.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=-/usr/sbin/modprobe -q system_heap
+ExecStart=/usr/bin/udevadm wait --timeout=90 /dev/fastrpc-cdsp /dev/fastrpc-cdsp-secure
+ExecStart=/usr/bin/udevadm trigger --action=change --settle --subsystem-match=misc --sysname-match=fastrpc-cdsp
+ExecStart=/usr/bin/udevadm trigger --action=change --settle --subsystem-match=dma_heap --sysname-match=system
+TimeoutStartSec=120

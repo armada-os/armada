@@ -71,6 +71,11 @@ systemctl enable armada-controller-type.service
 systemctl enable inputplumber.service
 systemctl enable inputplumber-suspend.service
 systemctl enable armada-ssc.service
+# One daemon per FSR 4 graph; each is a no-op unless the device is qcom,sm8550 or qcom,sm8750
+# and the QNN runtime is present (see packages/vela-npu/README.md).
+for graph in nf4_exact nf4_k1h nf4_k1h_360 nf4_k1h_450 nf4up_k1h nf4up_k1h_360 nf4up_k1h_450; do
+    systemctl enable "vela-npu@${graph}.service"
+done
 systemctl enable armada-guestos.service
 systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service
