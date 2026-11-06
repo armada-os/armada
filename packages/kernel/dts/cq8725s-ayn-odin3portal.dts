@@ -177,14 +177,6 @@
 	status = "okay";
 };
 
-&usb {
-	/delete-property/ usb-role-switch;
-	dr_mode = "peripheral";
-	maximum-speed = "high-speed";
-	phys = <&usb_hsphy>;
-	phy-names = "usb2-phy";
-};
-
 &{/thermal-zones/cpu-0-0-0-thermal} {
 	polling-delay = <1000>;
 

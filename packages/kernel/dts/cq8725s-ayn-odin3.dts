@@ -20,64 +20,6 @@
 
 	sound {
 		model = "SM8750-AYN";
-		dp-dai-link {
-			link-name = "DisplayPort Playback";
-
-			codec {
-				sound-dai = <&mdss_dp0>;
-			};
-
-			cpu {
-				sound-dai = <&q6apmbedai DISPLAY_PORT_RX_0>;
-			};
-
-			platform {
-				sound-dai = <&q6apm>;
-			};
-		};
-	};
-
-	pmic-glink {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		orientation-gpios = <&tlmm 61 GPIO_ACTIVE_HIGH>;
-
-		connector@0 {
-			compatible = "usb-c-connector";
-			reg = <0>;
-
-			power-role = "dual";
-			data-role = "dual";
-
-			ports {
-				#address-cells = <1>;
-				#size-cells = <0>;
-
-				port@0 {
-					reg = <0>;
-
-					pmic_glink_hs_in: endpoint {
-						remote-endpoint = <&usb_dwc3_hs>;
-					};
-				};
-
-				port@1 {
-					reg = <1>;
-
-					pmic_glink_ss_in: endpoint {
-						remote-endpoint = <&redriver_ss_out>;
-					};
-				};
-
-				port@2 {
-					reg = <2>;
-
-					pmic_glink_sbu: endpoint {
-						remote-endpoint = <&wcd_usbss_sbu_mux>;
-					};
-				};
-			};
-		};
 	};
 
 	vdd_bl_5v0: vdd-bl-5v0-regulator {
@@ -351,41 +293,6 @@
 	};
 };
 
-&i2c3 {
-	status = "okay";
-
-	wcd_usbss: typec-mux@e {
-		compatible = "qcom,wcd9395-usbss", "qcom,wcd9390-usbss";
-		reg = <0xe>;
-
-		vdd-supply = <&vreg_l15b_1p8>;
-		reset-gpios = <&tlmm 152 GPIO_ACTIVE_HIGH>;
-
-		mode-switch;
-		orientation-switch;
-
-		ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			port@0 {
-				reg = <0>;
-
-				wcd_usbss_sbu_mux: endpoint {
-					remote-endpoint = <&pmic_glink_sbu>;
-				};
-			};
-
-			port@1 {
-				reg = <1>;
-
-				wcd_usbss_headset_out: endpoint {
-				};
-			};
-		};
-	};
-};
-
 &i2c4 {
 	touchscreen@38 {
 		compatible = "focaltech,ft5426";
@@ -607,10 +514,6 @@
 	status = "okay";
 };
 
-&mdss_dp0 {
-	status = "okay";
-};
-
 &mdss_dsi0 {
 	panel@0 {
 		compatible = "chipone,icna3520";
@@ -623,6 +526,10 @@
 
 		rotation = <90>;
 	};
+};
+
+&pmic_glink_ss_in {
+	remote-endpoint = <&redriver_ss_out>;
 };
 
 &pm8550_pwm {
@@ -894,21 +801,8 @@
 	status = "okay";
 };
 
-&usb_dp_qmpphy {
-	vdda-phy-supply = <&vreg_l3g_1p2>;
-	vdda-pll-supply = <&vreg_l2d_0p88>;
-
-	mode-switch;
-
-	status = "okay";
-};
-
 &usb_dp_qmpphy_out {
 	remote-endpoint = <&redriver_ss_in>;
-};
-
-&usb_dwc3_hs {
-	remote-endpoint = <&pmic_glink_hs_in>;
 };
 
 /* Cycling the four WCN7860 rails at resume can hang the SoC. */
@@ -926,4 +820,8 @@
 
 &vreg_s5f_0p85 {
 	regulator-always-on;
+};
+
+&wcd_usbss {
+	reset-gpios = <&tlmm 152 GPIO_ACTIVE_HIGH>;
 };
