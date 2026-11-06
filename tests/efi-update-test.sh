@@ -63,9 +63,8 @@ run() {
 
 run > "${work}/log"
 grep -Fq 'armada-efi-update: synced' "${work}/log"
-cmp "${deploy}/usr/lib/systemd/boot/efi/systemd-bootaa64.efi" "${esp}/EFI/BOOT/BOOTAA64.EFI"
-cmp "${deploy}/usr/lib/systemd/boot/efi/systemd-bootaa64.efi" "${esp}/EFI/systemd/systemd-bootaa64.efi"
-cmp "${deploy}/usr/lib/dtbloader/dtbloaderaa64.efi" "${esp}/EFI/systemd/drivers/dtbloaderaa64.efi"
+test ! -e "${esp}/EFI/BOOT/BOOTAA64.EFI"
+test ! -e "${esp}/EFI/systemd"
 cmp "${bootdir}/vmlinuz" "${esp}/ostree/default-test/vmlinuz"
 cmp "${old_bootdir}/initramfs" "${esp}/ostree/default-old/initramfs"
 cmp "${bootdir}/dtb/qcom/sc8280xp-lenovo-thinkpad-x13s.dtb" \
@@ -124,7 +123,6 @@ test -s "${esp}/KERNEL"
 # Moving forward again restores the EFI boot files.
 sed -i 's/^version 0$/version 2/' "${boot}/loader/entries/ostree-2.conf"
 run > "${work}/log"
-test -s "${esp}/EFI/BOOT/BOOTAA64.EFI"
 test -s "${esp}/loader/entries/armada-ostree-2.conf"
 cmp "${bootdir}/vmlinuz" "${esp}/ostree/default-test/vmlinuz"
 

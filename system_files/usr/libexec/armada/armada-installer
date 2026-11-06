@@ -571,7 +571,7 @@ class Installation:
         with tempfile.TemporaryDirectory(prefix=".armada-bootimg.", dir=target) as scratch:
             run(BOOTIMG, env=dict(env, TMPDIR=scratch))
         run(EFIUPDATE, env=env)
-        for name in ("KERNEL", "EFI/BOOT/BOOTAA64.EFI"):
+        for name in ("KERNEL", "loader/loader.conf"):
             result = target / "boot/efi" / name
             if not result.is_file() or not result.stat().st_size:
                 raise Error(f"The internal boot file {name} was not created")

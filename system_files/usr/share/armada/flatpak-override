@@ -1,0 +1,10 @@
+# Flatpak apps on runtimes with GL.host (tmpfiles.d/armada-flatpak-drivers.conf) get
+# Armada's Turnip, EGL and GLX; others keep their runtime's Mesa. VK_DRIVER_FILES names
+# the merged folder once, as /usr/share/vulkan/icd.d links to it too; 21.08's loader
+# ignores it. armada-game-launch applies per-game picks.
+# Opt one app's Vulkan and GLX out: flatpak override --user
+#   --unset-env=__GLX_VENDOR_LIBRARY_NAME
+#   --env=VK_DRIVER_FILES=/usr/lib/aarch64-linux-gnu/GL/default/vulkan/icd.d APP
+[Environment]
+VK_DRIVER_FILES=/usr/lib/aarch64-linux-gnu/GL/vulkan/icd.d
+__GLX_VENDOR_LIBRARY_NAME=armada

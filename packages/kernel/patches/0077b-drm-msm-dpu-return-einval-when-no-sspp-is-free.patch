@@ -1,0 +1,31 @@
+From: Armada <armada@armadaos.dev>
+Subject: [PATCH] drm/msm/dpu: return -EINVAL when no SSPP is free
+
+With virtual planes, a plane that finds no free SSPP failed the atomic
+check with -ENODEV. The atomic_check contract is -EINVAL for a state the
+hardware can't support, and userspace relies on it: libliftoff treats
+only -EINVAL, -ERANGE and -ENOSPC as a layout that doesn't fit, so it
+logged -ENODEV as an error and stopped searching, and gamescope, which
+caches only -EINVAL failures, retried the layout every frame.
+---
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -1258,7 +1258,7 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
+ 
+ 	pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
+ 	if (!pipe->sspp)
+-		return -ENODEV;
++		return -EINVAL;
+ 	pipe->multirect_index = DPU_SSPP_RECT_SOLO;
+ 	pipe->multirect_mode = DPU_SSPP_MULTIRECT_NONE;
+ 
+@@ -1274,7 +1274,7 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
+ 
+ 	r_pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
+ 	if (!r_pipe->sspp)
+-		return -ENODEV;
++		return -EINVAL;
+ 	r_pipe->multirect_index = DPU_SSPP_RECT_SOLO;
+ 	r_pipe->multirect_mode = DPU_SSPP_MULTIRECT_NONE;
+ 

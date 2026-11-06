@@ -1,0 +1,97 @@
+#!/usr/bin/python3
+# Lists Flatpak apps and whether they get Armada's Mesa. Runtimes without GL.host
+# (tmpfiles.d/armada-flatpak-drivers.conf) keep their own. A problem means a runtime with
+# GL.host can't load ours, which leaves its apps no Vulkan GPU.
+import os
+import pathlib
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/lib/armada")
+import armada_turnip
+
+
+GLOBAL_OVERRIDE = pathlib.Path("/var/lib/flatpak/overrides/global")
+OVERRIDE = pathlib.Path("/usr/share/armada/flatpak-override")
+GL_HOST = pathlib.Path("/usr/lib/aarch64-linux-gnu/GL/host")
+# what the global override points apps at, as the sandbox sees it
+LIBRARIES = (
+    armada_turnip.FLATPAK_SYSTEM_DIR / armada_turnip.DEFAULT_DRIVER / "aarch64"
+    / armada_turnip.LIBRARY,
+    GL_HOST / "lib/libGLX_armada.so.0",
+    GL_HOST / "lib/libEGL_armada.so.0",
+)
+# the probes need no session services
+RUN = ["flatpak", "run", "--no-session-bus", "--no-a11y-bus", "--no-documents-portal"]
+
+
+def installed_apps():
+    # an x86_64 app can't use our drivers (or run ldd)
+    result = subprocess.run(["flatpak", "list", "--app", "--arch=aarch64",
+                             "--columns=application"],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            timeout=60, check=True)
+    return sorted(set(result.stdout.split()))
+
+
+def override_problem():
+    # A plain "flatpak override --system" turns the link into a copy that image updates
+    # and rollbacks no longer change.
+    if not GLOBAL_OVERRIDE.is_symlink():
+        return f"{GLOBAL_OVERRIDE} is not a link to {OVERRIDE}" if GLOBAL_OVERRIDE.exists() \
+            else f"{GLOBAL_OVERRIDE} is missing"
+    if os.readlink(GLOBAL_OVERRIDE) != str(OVERRIDE):
+        return f"{GLOBAL_OVERRIDE} links to {os.readlink(GLOBAL_OVERRIDE)}, not {OVERRIDE}"
+    return None
+
+
+def offered(app):
+    # True or False, or why it couldn't check
+    try:
+        result = subprocess.run([*RUN, "--command=test", app, "-d", str(GL_HOST)],
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"couldn't check: {exc}"
+    output = (result.stdout + result.stderr).strip().splitlines()
+    # flatpak's own errors (no such app) also exit 1
+    failed = [line for line in output if line.startswith("error:")]
+    if result.returncode in (0, 1) and not failed:
+        return result.returncode == 0
+    output = failed or output
+    return f"couldn't check: {output[-1] if output else f'exited {result.returncode}'}"
+
+
+def runtime(app):
+    try:
+        result = subprocess.run(["flatpak", "info", "--show-runtime", app],
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return "its runtime"
+    return result.stdout.strip() or "its runtime"
+
+
+def main(apps):
+    # The probes run each app's own sandbox, so run it as the user who runs the apps.
+    if os.geteuid() == 0:
+        raise SystemExit("armada-flatpak-drivers: run this as your user, not root")
+    problems = 0
+    problem = override_problem()
+    if problem:
+        problems += 1
+        print(f"global override: {problem}")
+    for app in apps or installed_apps():
+        has_host = offered(app)
+        if has_host is False:
+            print(f"{app}: its runtime's Mesa ({runtime(app)} isn't offered Armada's)")
+            continue
+        problem = has_host if isinstance(has_host, str) else \
+            armada_turnip.flatpak_problem(RUN, app, LIBRARIES, [])
+        problems += bool(problem)
+        print(f"{app}: {problem or 'ok'}")
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

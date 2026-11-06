@@ -4,6 +4,10 @@ set -euxo pipefail
 # Someone needs to comment what this is and why it exists
 mkdir -p /usr/share/armada
 cp -a /packages/mesa/turnip /usr/share/armada/turnip
+# Mesa for Flatpak apps (GL.host extension, see armada-flatpak-drivers.conf). They see
+# only this tree, so Turnip is hard-linked in: the same files, no copy.
+cp -a /packages/mesa/flatpak-gl /usr/share/armada/flatpak-mesa
+cp -al /usr/share/armada/turnip /usr/share/armada/flatpak-mesa/turnip
 
 # Is this still needed? If so, can we make it an rpm. This is messy
 install -Dpm 0755 /packages/extest/libextest.so /usr/lib/extest/libextest.so
