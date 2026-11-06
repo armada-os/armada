@@ -1,0 +1,71 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] soundwire: qcom: skip the clock stop handshake for the PMIC haptics port
+
+The PMIC haptics SoundWire port, 0217:f002 (qcom,pm8550b-swr-haptics in
+Qualcomm's downstream device tree), shares the WCD939x bus on SM8550 and
+SM8650 boards and has no driver here. Without driver properties it is not
+simple_clk_stop_capable, so clock stop prepare and de-prepare write its
+SCP_SystemCtrl and wait for ClockStopNotFinished to clear. On the KONKR
+Pocket FIT it keeps that bit set after de-prepare while the WCD9390
+reports completion, so each s2idle resume waits out the clock stop
+timeout and the speakers pop.
+
+Add a peripheral quirk for devices that do not complete the clock stop
+handshake, skip them in prepare and de-prepare, and set it for this
+port when the Qualcomm controller enumerates it.
+---
+diff --git a/include/linux/soundwire/sdw.h b/include/linux/soundwire/sdw.h
+--- a/include/linux/soundwire/sdw.h
++++ b/include/linux/soundwire/sdw.h
+@@ -400,6 +400,8 @@
+ };
+ 
+ #define SDW_SLAVE_QUIRKS_INVALID_INITIAL_PARITY	BIT(0)
++/* Skip SCP clock stop prepare and de-prepare accesses */
++#define SDW_SLAVE_QUIRKS_NO_CLK_STOP_PREP	BIT(1)
+ 
+ /**
+  * struct sdw_master_prop - Master properties
+diff --git a/drivers/soundwire/bus.c b/drivers/soundwire/bus.c
+--- a/drivers/soundwire/bus.c
++++ b/drivers/soundwire/bus.c
+@@ -1086,7 +1086,8 @@
+ 		}
+ 
+ 		/* Only prepare a Slave device if needed */
+-		if (!slave->prop.simple_clk_stop_capable) {
++		if (!slave->prop.simple_clk_stop_capable &&
++		    !(slave->prop.quirks & SDW_SLAVE_QUIRKS_NO_CLK_STOP_PREP)) {
+ 			simple_clk_stop = false;
+ 
+ 			ret = sdw_slave_clk_stop_prepare(slave,
+@@ -1209,7 +1210,8 @@
+ 			dev_warn(&slave->dev, "clock stop pre-deprepare cb failed:%d\n", ret);
+ 
+ 		/* Only de-prepare a Slave device if needed */
+-		if (!slave->prop.simple_clk_stop_capable) {
++		if (!slave->prop.simple_clk_stop_capable &&
++		    !(slave->prop.quirks & SDW_SLAVE_QUIRKS_NO_CLK_STOP_PREP)) {
+ 			simple_clk_stop = false;
+ 
+ 			ret = sdw_slave_clk_stop_prepare(slave, SDW_CLK_STOP_MODE0,
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -687,6 +687,16 @@
+ 		}
+ 	}
+ 
++	/*
++	 * The PMIC haptics port (qcom,pm8550b-swr-haptics downstream) has no
++	 * driver here and can keep ClockStopNotFinished set after de-prepare.
++	 */
++	mutex_lock(&bus->bus_lock);
++	list_for_each_entry(slave, &bus->slaves, node)
++		if (slave->id.mfg_id == 0x0217 && slave->id.part_id == 0xf002)
++			slave->prop.quirks |= SDW_SLAVE_QUIRKS_NO_CLK_STOP_PREP;
++	mutex_unlock(&bus->bus_lock);
++
+ 	complete(&ctrl->enumeration);
+ 	return 0;
+ }
