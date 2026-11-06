@@ -1,6 +1,6 @@
-From c4aad21d06fe988220a770984d6255aee041fa3f Mon Sep 17 00:00:00 2001
+From dada8c24bacae3f590f95ddf0be25f9c516dd0f0 Mon Sep 17 00:00:00 2001
 From: Raxcoms <mpaulo968@gmail.com>
-Date: Thu, 5 Nov 2026 18:17:37 -0300
+Date: Thu, 5 Nov 2026 23:49:08 -0300
 Subject: [PATCH] gamescope: add hooks for an optional external color provider
 
 Load the AutoHDR provider through one versioned C interface. The provider
@@ -20,7 +20,7 @@ the provider after one-time cleanup. No GPU conversion pass is added.
 The interface is independent of private Gamescope layouts; updates still
 need review of host hook ordering, layer identity and shader slots.
 ---
- src/Backends/DRMBackend.cpp            |  33 +++-
+ src/Backends/DRMBackend.cpp            |  42 ++++-
  src/backend.h                          |   2 +
  src/color_helpers.cpp                  |   8 +
  src/color_helpers.h                    |  10 ++
@@ -31,12 +31,12 @@ need review of host hook ordering, layer identity and shader slots.
  src/shaders/composite.h                |   9 +-
  src/shaders/descriptor_set_constants.h |   3 +-
  src/steamcompmgr.cpp                   |  70 +++++++-
- 11 files changed, 380 insertions(+), 21 deletions(-)
+ 11 files changed, 385 insertions(+), 25 deletions(-)
  create mode 100644 src/color_provider.glsl
  create mode 100644 src/color_provider.h
 
 diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
-index 8ead53d..5638118 100644
+index 8ead53d..2051d4c 100644
 --- a/src/Backends/DRMBackend.cpp
 +++ b/src/Backends/DRMBackend.cpp
 @@ -61,6 +61,8 @@
@@ -76,7 +76,7 @@ index 8ead53d..5638118 100644
  		}
  
  		return hash;
-@@ -2936,7 +2941,9 @@ static int drm_set_plane_luts( struct drm_t *drm, const FrameInfo_t *frameInfo )
+@@ -2936,16 +2941,19 @@ static int drm_set_plane_luts( struct drm_t *drm, const FrameInfo_t *frameInfo )
  			continue;
  
  		// Not a layout failure, so kept out of the liftoff state cache.
@@ -87,7 +87,21 @@ index 8ead53d..5638118 100644
  		if ( !drm->pending.shaperlut_id[ uEOTF ] || !drm->pending.lut3d_id[ uEOTF ] )
  			return -EAGAIN;
  
-@@ -3000,6 +3007,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
+ 		auto &props = pPlane->GetProperties();
+ 		props.COLOR_PIPELINE->SetPendingValue( drm->req, pPlane->GetLutPipeline(), false );
+-		props.IGC_DATA->SetPendingValue( drm->req, drm->pending.shaperlut_id[ uEOTF ]->GetBlobValue(), false );
+-		props.IGC_BYPASS->SetPendingValue( drm->req, 0, false );
+-		props.LUT3D_DATA->SetPendingValue( drm->req, drm->pending.lut3d_id[ uEOTF ]->GetBlobValue(), false );
+-		props.LUT3D_BYPASS->SetPendingValue( drm->req, 0, false );
++		// Resume resets inactive colorops behind the property cache.
++		props.IGC_DATA->SetPendingValue( drm->req, drm->pending.shaperlut_id[ uEOTF ]->GetBlobValue(), true );
++		props.IGC_BYPASS->SetPendingValue( drm->req, 0, true );
++		props.LUT3D_DATA->SetPendingValue( drm->req, drm->pending.lut3d_id[ uEOTF ]->GetBlobValue(), true );
++		props.LUT3D_BYPASS->SetPendingValue( drm->req, 0, true );
+ 	}
+ 
+ 	return drmModeAtomicCommit( drm->fd, drm->req,
+@@ -3000,6 +3008,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
  		}
  		entry.layerState[i].eAlphaBlendingMode = frameInfo->layers.get( i ).eAlphaBlendingMode;
  		entry.layerState[i].applyColorMgmt = frameInfo->layers.get( i ).applyColorMgmt;
@@ -95,7 +109,7 @@ index 8ead53d..5638118 100644
  	}
  
  	return entry;
-@@ -3964,7 +3972,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+@@ -3964,7 +3973,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
  		.timeout_ns = std::numeric_limits<int64_t>::max()
  	};
  
@@ -106,7 +120,7 @@ index 8ead53d..5638118 100644
  
  	// The NVIDIA 555 series drivers started advertising DRM_CAP_SYNCOBJ, but do
  	// not support IN_FENCE_FD. However, there is no way to hide the IN_FENCE_FD
-@@ -4531,7 +4541,7 @@ static bool drm_update_plane_luts(struct drm_t *drm)
+@@ -4531,7 +4542,7 @@ static bool drm_update_plane_luts(struct drm_t *drm)
  	static constexpr uint32_t k_nLut3DSize = s_nLutEdgeSize3d * s_nLutEdgeSize3d * s_nLutEdgeSize3d;
  	auto ToLut32 = []( uint16_t val ) { return uint32_t( val ) * 0x10001u; };
  
@@ -115,7 +129,7 @@ index 8ead53d..5638118 100644
  	{
  		const gamescope_color_mgmt_luts &luts = g_ColorMgmtLuts[e];
  		drm->pending.shaperlut_id[e] = nullptr;
-@@ -5572,6 +5582,19 @@ namespace gamescope
+@@ -5572,6 +5583,19 @@ namespace gamescope
  			return g_DRM.pending.output_degamma && g_DRM.pending.output_lut3d;
  		}
  
