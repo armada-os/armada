@@ -2,10 +2,12 @@
 """Exercise device gamma conversion, profile selection, and write permissions."""
 
 import os
+import fcntl
 import json
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -185,6 +187,9 @@ class SteamBacklightTest(unittest.TestCase):
             source = source.replace('/usr/libexec/armada/steam-backlight-value', str(CONVERTER))
             source = source.replace('/sys/class/backlight', tmp)
             source = source.replace('systemd-cat -t armada-steamos-priv-write -p info', 'cat >/dev/null')
+            async_source = source
+            # Finish the background logind write before returning, so each call is observable.
+            source = source.replace('</dev/null >/dev/null 2>&1 &\n  exit 0', '</dev/null >/dev/null 2>&1 &\n  wait\n  exit 0')
             commands = path / 'bin'
             commands.mkdir()
             bus_log = path / 'bus-call.json'
@@ -198,7 +203,7 @@ class SteamBacklightTest(unittest.TestCase):
             pkexec = commands / 'pkexec'
             pkexec.write_text('#!/bin/sh\necho "unexpected pkexec" >&2\nexit 99\n')
             pkexec.chmod(0o755)
-            env = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}")
+            env = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}", XDG_RUNTIME_DIR=tmp)
             target = path / "secondary/brightness"
             result = subprocess.run(["bash", "-s", "--", str(target), "1024"],
                                     input=source, text=True, capture_output=True, env=env)
@@ -216,19 +221,22 @@ class SteamBacklightTest(unittest.TestCase):
             self.assertEqual((path / "primary/brightness").read_text(), "173\n")
             previous = (path / "primary/brightness").read_text()
             bus_log.unlink()
+            # Out of range: the converter rejects it before logind is called.
             result = subprocess.run(["bash", "-s", "--", str(target), "3446"],
                                     input=source, text=True, capture_output=True, env=env)
-            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(bus_log.exists())
             self.assertEqual((path / "primary/brightness").read_text(), previous)
 
+            # A failed logind write happens after the helper has returned.
             result = subprocess.run(['bash', '-s', '--', str(target), '1024'],
                                     input=source, text=True, capture_output=True,
                                     env=dict(env, TEST_BUSCTL_FAIL='1'))
-            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(bus_log.exists())
             self.assertEqual((path / 'primary/brightness').read_text(), previous)
             bus_log.unlink()
-            root_source = source.replace('if false; then', 'if true; then', 1)
+            root_source = source.replace('if false; then', 'if true; then')
             result = subprocess.run(['bash', '-s', '--', str(target), '1024'],
                                     input=root_source, text=True, capture_output=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -238,6 +246,33 @@ class SteamBacklightTest(unittest.TestCase):
                 '/sys/class/drm/card0/device/power_dpm_force_performance_level', 'auto'],
                 input=source, text=True, capture_output=True, env=env)
             self.assertEqual(result.returncode, 99)
+
+            # A drag against a slow logind: every call returns at once and only the last request is written.
+            writes = path / 'writes'
+            busctl.write_text('#!/usr/bin/env python3\n'
+                              'import sys, time\nfrom pathlib import Path\n'
+                              f'with open({str(writes)!r}, "a") as f: f.write(sys.argv[-1] + "\\n")\n'
+                              'time.sleep(0.2)\n'
+                              f'(Path({tmp!r}) / sys.argv[-2] / "brightness").write_text(sys.argv[-1] + "\\n")\n')
+            values = list(range(300, 3300, 300))
+            final = str(convert(values[-1], 3445, 3445, 2.4, .01, .05))
+            # Hold the writers' lock so every request queues before any is applied.
+            with open(path / 'armada-backlight-request.lock', 'w') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                for value in values:
+                    start = time.monotonic()
+                    result = subprocess.run(['bash', '-s', '--', str(target), str(value)],
+                                            input=async_source, text=True, capture_output=True, env=env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertLess(time.monotonic() - start, 1)
+                self.assertFalse(writes.exists())
+            deadline = time.monotonic() + 10
+            while (path / 'primary/brightness').read_text().strip() != final:
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.05)
+            with open(path / 'armada-backlight-request.lock') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            self.assertEqual(writes.read_text().split(), [final])
 
     def test_device_profiles(self):
         for model, expected in (("Retroid Pocket Nova", '2.4'), ("AYN Thor", '1'),
@@ -250,7 +285,7 @@ class SteamBacklightTest(unittest.TestCase):
             self.assertIn('ARMADA_BACKLIGHT_INPUT_MIN=' +
                           ('0.01' if model == 'Retroid Pocket Nova' else '0') + '\n', output)
             self.assertIn('ARMADA_BACKLIGHT_MIN=' +
-                          ('0.05' if model == 'Retroid Pocket Nova' else '0.01') + '\n', output)
+                          ('0.05' if model == 'Retroid Pocket Nova' else '0') + '\n', output)
 
 
 if __name__ == "__main__":
