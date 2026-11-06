@@ -129,7 +129,7 @@
 };
 
 &remoteproc_soccp {
-	status = "disabled";
+	firmware-name = "qcom/sm8750/ayn/odin3portal/soccp.mbn";
 };
 
 &sdc2_default {
