@@ -22,6 +22,8 @@ early_firmware=(
     /usr/lib/firmware/qcom/gen80000_gmu.bin
     /usr/lib/firmware/qcom/gen80000_aqe.fw
     /usr/lib/firmware/qcom/sm8750/gen80000_zap.mbn
+    /usr/lib/firmware/qcom/sm8750/ayn/odin3portal/adsp.mbn
+    /usr/lib/firmware/qcom/sm8750/ayn/odin3portal/adsp_dtb.mbn
 )
 
 for firmware in "${early_firmware[@]}"; do

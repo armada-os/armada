@@ -137,9 +137,6 @@
 	};
 
 	pmic-glink {
-		compatible = "qcom,sm8750-pmic-glink",
-			     "qcom,sm8550-pmic-glink",
-			     "qcom,pmic-glink";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		orientation-gpios = <&tlmm 61 GPIO_ACTIVE_HIGH>;
@@ -1028,8 +1025,6 @@
 &remoteproc_adsp {
 	firmware-name = "qcom/sm8750/ayn/odin3/adsp.mbn",
 			"qcom/sm8750/ayn/odin3/adsp_dtb.mbn";
-
-	status = "okay";
 };
 
 &remoteproc_cdsp {
