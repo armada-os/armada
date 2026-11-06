@@ -111,13 +111,6 @@
 		vdd-l11-supply = <&vreg_s7i_1p2>;
 		vdd-l17-supply = <&vreg_bob2>;
 
-		bob1 {
-			regulator-state-mem {
-				regulator-on-in-suspend;
-				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
-			};
-		};
-
 		vreg_bob2: bob2 {
 			regulator-name = "vreg_bob2";
 			regulator-min-microvolt = <2704000>;
@@ -195,13 +188,6 @@
 						   RPMH_REGULATOR_MODE_HPM>;
 		};
 
-		ldo15 {
-			regulator-state-mem {
-				regulator-on-in-suspend;
-				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
-			};
-		};
-
 		vreg_l16b_2p8: ldo16 {
 			regulator-name = "vreg_l16b_2p8";
 			regulator-min-microvolt = <2800000>;
@@ -268,13 +254,6 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
-		smps3 {
-			regulator-state-mem {
-				regulator-on-in-suspend;
-				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
-			};
-		};
-
 		vreg_s4g_0p75: smps4 {
 			regulator-name = "vreg_s4g_0p75";
 			regulator-min-microvolt = <300000>;
@@ -307,13 +286,6 @@
 		vdd-l1-supply = <&vreg_s7i_1p2>;
 		vdd-s8-supply = <&vph_pwr>;
 
-		smps7 {
-			regulator-state-mem {
-				regulator-on-in-suspend;
-				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
-			};
-		};
-
 		vreg_s8i_0p9: smps8 {
 			regulator-name = "vreg_s8i_0p9";
 			regulator-min-microvolt = <900000>;
@@ -329,13 +301,6 @@
 			regulator-allow-set-load;
 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
 						   RPMH_REGULATOR_MODE_HPM>;
-		};
-
-		ldo2 {
-			regulator-state-mem {
-				regulator-on-in-suspend;
-				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
-			};
 		};
 	};
 

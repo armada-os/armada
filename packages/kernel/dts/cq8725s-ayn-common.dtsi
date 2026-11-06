@@ -339,6 +339,11 @@
 			regulator-min-microvolt = <3008000>;
 			regulator-max-microvolt = <4000000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+
+			regulator-state-mem {
+				regulator-on-in-suspend;
+				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+			};
 		};
 
 		vreg_l4b_1p8: ldo4 {
@@ -409,6 +414,11 @@
 			regulator-allow-set-load;
 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
 						   RPMH_REGULATOR_MODE_HPM>;
+
+			regulator-state-mem {
+				regulator-on-in-suspend;
+				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+			};
 		};
 	};
 
@@ -508,6 +518,11 @@
 			regulator-allow-set-load;
 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
 						   RPMH_REGULATOR_MODE_HPM>;
+
+			regulator-state-mem {
+				regulator-on-in-suspend;
+				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+			};
 		};
 
 		vreg_l3g_1p2: ldo3 {
@@ -534,6 +549,11 @@
 			regulator-min-microvolt = <1224000>;
 			regulator-max-microvolt = <1340000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+
+			regulator-state-mem {
+				regulator-on-in-suspend;
+				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+			};
 		};
 
 		vreg_l2i_1p2: ldo2 {
@@ -544,6 +564,11 @@
 			regulator-allow-set-load;
 			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
 						   RPMH_REGULATOR_MODE_HPM>;
+
+			regulator-state-mem {
+				regulator-on-in-suspend;
+				regulator-mode = <RPMH_REGULATOR_MODE_LPM>;
+			};
 		};
 
 		vreg_l3i_0p88: ldo3 {
