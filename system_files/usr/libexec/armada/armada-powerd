@@ -13,6 +13,7 @@ import warnings
 from pathlib import Path
 
 sys.path.insert(0, "/usr/lib/armada")
+import armada_charge_led
 import armada_perf
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -296,6 +297,9 @@ class ArmadaPower:
         self.apply_sleep_charging_pwm()
         self.fan_tick()
         GLib.timeout_add_seconds(3, self.fan_tick)
+        self.charge_led = armada_charge_led.ChargeLed()
+        self.charge_led_tick()
+        GLib.timeout_add_seconds(5, self.charge_led_tick)
 
     def discover(self):
         self.gpu = self.discover_gpu()
@@ -893,6 +897,13 @@ class ArmadaPower:
     def charging_floor(self, target):
         floor = self.fan_config["charging_pwm"]
         return max(target, floor) if floor and external_power_online() else target
+
+    def charge_led_tick(self):
+        try:
+            self.charge_led.update()
+        except Exception as exc:
+            print(f"armada-powerd: charge LED update failed: {exc}", file=sys.stderr)
+        return True
 
     def fan_tick(self):
         self.perf_tick()
