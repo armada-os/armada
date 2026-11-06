@@ -61,6 +61,35 @@
 		};
 	};
 
+	sound {
+		compatible = "qcom,sm8750-sndcard", "qcom,sm8450-sndcard";
+
+		pinctrl-0 = <&i2s1_default>;
+		pinctrl-names = "default";
+
+		clocks = <&q6prmcc LPASS_CLK_ID_SEC_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		clock-names = "i2s_clk";
+
+		assigned-clocks = <&q6prmcc LPASS_CLK_ID_SEC_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		assigned-clock-rates = <1536000>;
+
+		spk-i2s-dai-link {
+			link-name = "Secondary MI2S Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai SECONDARY_MI2S_RX>;
+			};
+
+			codec {
+				sound-dai = <&spk_amp_l 0>, <&spk_amp_r 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+	};
+
 	pmic-glink {
 		compatible = "qcom,sm8750-pmic-glink",
 			     "qcom,sm8550-pmic-glink",
@@ -493,6 +522,31 @@
 	status = "okay";
 };
 
+&i2c5 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	spk_amp_l: spk_amp_l@34 {
+		compatible = "awinic,aw88166";
+		reg = <0x34>;
+		#sound-dai-cells = <1>;
+		reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
+		awinic,audio-channel = <1>;
+		awinic,sync-flag;
+		sound-name-prefix = "SPK_L";
+	};
+
+	spk_amp_r: spk_amp_r@35 {
+		compatible = "awinic,aw88166";
+		reg = <0x35>;
+		#sound-dai-cells = <1>;
+		reset-gpios = <&tlmm 126 GPIO_ACTIVE_LOW>;
+		awinic,audio-channel = <0>;
+		awinic,sync-flag;
+		sound-name-prefix = "SPK_R";
+	};
+};
+
 &mdss_dsi0 {
 	vdda-supply = <&vreg_l3g_1p2>;
 
@@ -633,6 +687,39 @@
 
 &tlmm {
 	gpio-reserved-ranges = <36 4>, <74 1>;
+
+	i2s1_default: i2s1-default-state {
+		sck-pins {
+			pins = "gpio121";
+			function = "i2s1_sck";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+
+		data0-pins {
+			pins = "gpio122";
+			function = "i2s1_data0";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio123";
+			function = "i2s1_ws";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+
+		data1-pins {
+			pins = "gpio124";
+			function = "i2s1_data1";
+			drive-strength = <8>;
+			bias-disable;
+			output-high;
+		};
+	};
 
 	bt_default: bt-default-state {
 		sw-ctrl-pins {

@@ -18,6 +18,10 @@
 		mmc0 = &sdhc_2;
 	};
 
+	sound {
+		model = "SM8750-AYN-Portal";
+	};
+
 	pwm-fan {
 		pwms = <&pm8550_pwm 3 50000>;
 	};
@@ -90,6 +94,14 @@
 	data-pins {
 		drive-strength = <16>;
 	};
+};
+
+&spk_amp_l {
+	firmware-name = "qcom/sm8750/ayn/odin3portal/aw883xx_acf.bin";
+};
+
+&spk_amp_r {
+	firmware-name = "qcom/sm8750/ayn/odin3portal/aw883xx_acf.bin";
 };
 
 &uart15 {

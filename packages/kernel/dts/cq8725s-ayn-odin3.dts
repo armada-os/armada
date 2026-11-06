@@ -50,17 +50,6 @@
 	};
 
 	sound {
-		compatible = "qcom,sm8750-sndcard", "qcom,sm8450-sndcard";
-
-		pinctrl-0 = <&i2s1_default>;
-		pinctrl-names = "default";
-
-		clocks = <&q6prmcc LPASS_CLK_ID_SEC_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
-		clock-names = "i2s_clk";
-
-		assigned-clocks = <&q6prmcc LPASS_CLK_ID_SEC_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
-		assigned-clock-rates = <1536000>;
-
 		model = "SM8750-AYN";
 		audio-routing = "IN1_HPHL", "HPHL_OUT",
 				"IN2_HPHR", "HPHR_OUT",
@@ -70,22 +59,6 @@
 				"DMIC3", "MIC BIAS3",
 				"TX SWR_INPUT6", "DMIC3_OUTPUT";
 		widgets = "Microphone", "Internal Mic";
-
-		spk-i2s-dai-link {
-			link-name = "Secondary MI2S Playback";
-
-			cpu {
-				sound-dai = <&q6apmbedai SECONDARY_MI2S_RX>;
-			};
-
-			codec {
-				sound-dai = <&spk_amp_l 0>, <&spk_amp_r 0>;
-			};
-
-			platform {
-				sound-dai = <&q6apm>;
-			};
-		};
 
 		wcd-playback-dai-link {
 			link-name = "WCD Playback";
@@ -538,31 +511,6 @@
 };
 
 &i2c5 {
-	clock-frequency = <400000>;
-	status = "okay";
-
-	spk_amp_l: spk_amp_l@34 {
-		compatible = "awinic,aw88166";
-		reg = <0x34>;
-		#sound-dai-cells = <1>;
-		reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
-		awinic,audio-channel = <1>;
-		awinic,sync-flag;
-		sound-name-prefix = "SPK_L";
-		firmware-name = "qcom/sm8750/ayn/odin3/aw883xx_acf.bin";
-	};
-
-	spk_amp_r: spk_amp_r@35 {
-		compatible = "awinic,aw88166";
-		reg = <0x35>;
-		#sound-dai-cells = <1>;
-		reset-gpios = <&tlmm 126 GPIO_ACTIVE_LOW>;
-		awinic,audio-channel = <0>;
-		awinic,sync-flag;
-		sound-name-prefix = "SPK_R";
-		firmware-name = "qcom/sm8750/ayn/odin3/aw883xx_acf.bin";
-	};
-
 	typec_mux_redriver: typec-mux@1c {
 		compatible = "onnn,nb7vpq904m";
 		reg = <0x1c>;
@@ -1038,6 +986,14 @@
 	firmware-name = "qcom/sm8750/ayn/odin3/soccp.mbn";
 };
 
+&spk_amp_l {
+	firmware-name = "qcom/sm8750/ayn/odin3/aw883xx_acf.bin";
+};
+
+&spk_amp_r {
+	firmware-name = "qcom/sm8750/ayn/odin3/aw883xx_acf.bin";
+};
+
 &swr1 {
 	status = "okay";
 
@@ -1063,39 +1019,6 @@
 };
 
 &tlmm {
-	i2s1_default: i2s1-default-state {
-		sck-pins {
-			pins = "gpio121";
-			function = "i2s1_sck";
-			drive-strength = <8>;
-			bias-disable;
-			output-high;
-		};
-
-		data0-pins {
-			pins = "gpio122";
-			function = "i2s1_data0";
-			drive-strength = <8>;
-			bias-disable;
-		};
-
-		ws-pins {
-			pins = "gpio123";
-			function = "i2s1_ws";
-			drive-strength = <8>;
-			bias-disable;
-			output-high;
-		};
-
-		data1-pins {
-			pins = "gpio124";
-			function = "i2s1_data1";
-			drive-strength = <8>;
-			bias-disable;
-			output-high;
-		};
-	};
-
 	wcd_default: wcd-reset-n-active-state {
 		pins = "gpio101";
 		function = "gpio";
