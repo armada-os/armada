@@ -936,6 +936,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch`
   source: armada
   upstream: local
+- `patches/0570-soundwire-qcom-skip-the-clock-stop-handshake-for-the-pmic-haptics-port.patch`
+  source: armada
+  upstream: local
 - `patches/0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch`
   source: armada
   upstream: local
