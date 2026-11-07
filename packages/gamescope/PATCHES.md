@@ -69,3 +69,7 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 
 - `patches/0034-vulkan-allow-linear-composition-output.patch`
   source: armada
+
+- `patches/0035-drm-add-direct-auto-hdr.patch`
+  source: armada
+  notes: Adds the C provider bridge and shared LUT hooks for optional AutoHDR without requiring composition.

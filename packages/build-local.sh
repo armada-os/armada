@@ -20,6 +20,9 @@ phase2=()
 phase2_args=()
 
 case "${pkg}" in
+    gamescope)
+        bash "${PKGROOT}/build-local.sh" armada-autohdr
+        run_args+=(--volume "${PKGROOT}/armada-autohdr/out:/src/armada-autohdr-rpms:ro,Z") ;;
     # These cross-build to arm64 from an x86_64 host.
     mesa-android|lepton)
         platform=linux/amd64 ;;
