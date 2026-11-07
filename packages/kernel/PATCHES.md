@@ -1234,6 +1234,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: Armada
   upstream: local
 
+- `patches/1183-wifi-ath12k-associate-WCN7750-as-HE-on-6-GHz.patch`
+  source: armada
+  upstream: local
+
 - `patches/0515a-input-rsinput-accept-large-uart-batches.patch`
   source: armada
   upstream: local
