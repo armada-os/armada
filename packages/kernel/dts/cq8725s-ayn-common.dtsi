@@ -744,6 +744,10 @@
 	};
 };
 
+&iris {
+	status = "okay";
+};
+
 &lpass_vamacro {
 	qcom,dmic-sample-rate = <4800000>;
 };
@@ -1149,6 +1153,22 @@
 		pinctrl-0 = <&mcu_en_default>;
 		pinctrl-names = "default";
 	};
+};
+
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 215 GPIO_ACTIVE_LOW>;
+
+	vcc-supply = <&vreg_l17b_2p5>;
+	vccq-supply = <&vreg_l1d_1p2>;
+
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l1j_0p91>;
+	vdda-pll-supply = <&vreg_l3g_1p2>;
+
+	status = "okay";
 };
 
 &usb {
