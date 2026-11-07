@@ -884,6 +884,17 @@
 	vdd3-supply = <&vreg_l5b_3p1>;
 };
 
+&pmk8550_rtc {
+	nvmem-cells = <&rtc_offset>;
+	nvmem-cell-names = "offset";
+};
+
+&pmk8550_sdam_2 {
+	rtc_offset: rtc-offset@72 {
+		reg = <0x72 0x4>;
+	};
+};
+
 &pon_pwrkey {
 	status = "okay";
 };

@@ -711,18 +711,6 @@
 	};
 };
 
-/* RTC registers are TZ-locked; persist the wall-clock offset in SDAM. */
-&pmk8550_rtc {
-	nvmem-cells = <&rtc_offset>;
-	nvmem-cell-names = "offset";
-};
-
-&pmk8550_sdam_2 {
-	rtc_offset: rtc-offset@72 {
-		reg = <0x72 0x4>;
-	};
-};
-
 &remoteproc_adsp {
 	firmware-name = "qcom/sm8750/ayn/odin3/adsp.mbn",
 			"qcom/sm8750/ayn/odin3/adsp_dtb.mbn";
