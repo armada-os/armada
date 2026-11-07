@@ -37,6 +37,7 @@
 0063-gpu-drm-panel-add-wt0600-1k-panel.patch
 0104-drm-panel-Add-Retroid-Pocket-6-panel.patch
 0104a-drm-panel-visionox-vtdr6130-add-sm8250.patch
+1111-drm-panel-vtdr6130-add-pocket-duo.patch
 0105-dt-bindings-display-panel-retroid-il97680a.patch
 0105a-drm-panel-retroid-il97680a.patch
 0105b-drm-panel-il97680a-backport-orientation-helper.patch
@@ -225,7 +226,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0304-ASoC-wcd938x-treat-failed-zdet-ramp-as-floating.patch
 0305-backlight-qcom-wled-always-disable-ovp-irq-at-probe.patch
 
-# ============== SM8750 (AYN Odin 3, KONKR Pocket FIT Elite) ==============
+# ============== SM8750 (AYN Odin 3 / Portal, KONKR Pocket FIT Elite) ==============
 0026-dt-bindings-arm-qcom-ids-Add-SoC-ID-for-CQ8725S.patch
 0027-soc-qcom-socinfo-Add-CQ8725S-SoC-ID.patch
 0034-arm64-dts-qcom-sm8750-Add-UART15.patch
@@ -264,6 +265,9 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1022-wifi-ath12k-split-WCN7860-scans-by-firmware-ranges.patch
 1023-wifi-ath12k-protect-TX-during-associated-range-scans.patch
 
+# ============== AYN Odin 3 Portal ==============
+1304-drm-panel-vtdr6130-add-odin3portal.patch
+
 # ============== LPASS clocks released in s2idle (7.3 backports + force suspend) ==============
 0557-ASoC-codecs-lpass-wsa-macro-switch-to-pm-clock-framework.patch
 0558-ASoC-codecs-lpass-va-macro-switch-to-pm-clock-framework.patch
@@ -274,6 +278,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0563-ASoC-codecs-lpass-macro-force-runtime-suspend-across-system-sleep.patch
 0080-ASoC-codecs-lpass-tx-macro-track-every-active-decimator.patch
 0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch
+0570-soundwire-qcom-skip-the-clock-stop-handshake-for-the-pmic-haptics-port.patch
 0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch
 
 # ============== Firmware ==============
@@ -292,7 +297,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1108-arm64-dts-qcom-eliza-gpu-smmu.patch
 1109-arm64-dts-qcom-eliza-gpu.patch
 1110-arm64-dts-qcom-eliza-gpu-cooling.patch
-1111-drm-panel-vtdr6130-add-pocket-duo.patch
 1114-remoteproc-qcom-add-eliza-wpss.patch
 1115-drm-msm-a6xx-mask-unhandled-rbbm-interrupts.patch
 1116-drm-msm-a6xx-set-up-a722-without-a-bv-pipe.patch

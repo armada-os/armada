@@ -104,27 +104,12 @@ def composite_name(path):
     return parts[1] if len(parts) >= 2 else ""
 
 
-def current_target_paths(path):
-    try:
-        result = subprocess.run(
-            ["busctl", "--system", "get-property", SERVICE, path, IFACE, "TargetDevices"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return re.findall(r'"([^"]*)"', result.stdout)
-
-
-def extra_targets(path):
-    extras = []
-    for target_path in current_target_paths(path):
-        segment = target_path.rsplit("/", 1)[-1].rstrip("0123456789")
-        if segment in ("keyboard", "mouse") and segment not in extras:
-            extras.append(segment)
-    return extras
+def target_devices(value):
+    # The set OpenGamepadUI sends. Not read back from TargetDevices, which lags target creation.
+    targets = [value, "keyboard", "mouse"]
+    if value in ("xb360", "xbox-series"):
+        targets.append("touchpad")
+    return targets
 
 
 def apply_type(value):
@@ -133,7 +118,7 @@ def apply_type(value):
         return False
     ok = False
     for path in paths:
-        targets = [value] + extra_targets(path)
+        targets = target_devices(value)
         try:
             subprocess.run(
                 ["busctl", "--system", "call", SERVICE, path, IFACE, "SetTargetDevices", "as", str(len(targets)), *targets],

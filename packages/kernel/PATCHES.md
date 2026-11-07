@@ -842,16 +842,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada adapts the Elite touchscreen node to the full ROCKNIX Chipone fork shared with the SM8650 Pocket FIT, keeps volume-up from waking the system, and adds the DisplayPort playback link required for USB-C DP Alt Mode audio; the touchscreen driver is selected only by those two device-tree nodes. Armada also marks PCIe WAKE# active-low and idles the codec rails in LPM during s2idle, and points the SoCCP remoteproc at the Elite's own firmware.
 - `dts/cq8725s-ayn-common.dtsi`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0046-arm64-dts-qcom-Add-AYN-CQ8725S-Common.patch
-  notes: Armada extracted this DTS from the cited ROCKNIX patch and then applied later ROCKNIX DTS updates, including the Odin 3 haptics nodes from ROCKNIX commit `81a31e3d0f`.
+  notes: Maintained directly by Armada. Shares clocks, regulators, ADSP enablement, PMIC-GLINK, speaker I2S wiring and amplifiers, Adreno 830, WCN7860 Wi-Fi, RSInput controller and back paddles, SD, display/touch wiring, keys, fan wiring and USB2 between Odin 3 and Portal.
 - `dts/cq8725s-ayn-odin3.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0047-arm64-dts-qcom-Add-AYN-Odin3.patch
-  notes: Armada extracted this DTS from the cited ROCKNIX patch and then applied later ROCKNIX DTS updates.
-- `dts/cq8725s-ayn-odin3.dts.patch`
-  source: armada
-  notes: Armada enables DPU dithering, codec-rail LPM sleep states, the PM8550 RGB charge LED and the WCD DMIC internal mic route after copying `dts/cq8725s-ayn-odin3.dts`.
-- `dts/cq8725s-ayn-common.dtsi.patch`
-  source: armada
-  notes: Armada keeps volume-up from waking the system, marks Odin 3's RSInput node as connected to the Qualcomm haptics device, supplies the device's 1024 range, marks PCIe WAKE# active-low, and keeps the four switched WCN7860 PMU supply rails always-on because re-enabling them at resume can hang the SoC. The 70-count `axis-deadzone` (an unmeasured ROCKNIX bring-up value) was dropped; like the RP6 and every other RSInput device the Odin 3 now passes its stick value through, leaving deadzone policy to Steam Input and the game.
+  notes: Maintained directly by Armada with later ROCKNIX updates, including haptics from commit `81a31e3d0f`. Carries Odin 3 peripherals and Armada display, audio, gamepad and suspend settings.
 - `dts/qcs8550-ayaneo-pocket-common.dtsi.patch`
   source: armada
   notes: Armada keeps volume-up from waking the system, removes the SDHCI capability mask, marks PCIe WAKE# active-low, and idles the codec rail in LPM during s2idle after copying `dts/qcs8550-ayaneo-pocket-common.dtsi`.
@@ -934,6 +928,9 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
 - `patches/0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch`
+  source: armada
+  upstream: local
+- `patches/0570-soundwire-qcom-skip-the-clock-stop-handshake-for-the-pmic-haptics-port.patch`
   source: armada
   upstream: local
 - `patches/0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch`
@@ -1246,3 +1243,12 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Add configurable ADC references and share reset and supply sequencing between probe and resume; existing board defaults are retained.
+
+- `dts/cq8725s-ayn-odin3portal.dts`
+  source: Armada; includes the shared `cq8725s-ayn-common.dtsi` base derived from Teguh Sobirin's Odin 3 work.
+  upstream: local
+  notes: Speaker playback reuses the Odin 3 topology and amplifier firmware. The Portal stock ACF has identical DSP firmware and tuning, differing only in I2SCTRL1 framing and checksums; Odin 3's 16-bit settings match the current Linux MI2S stream.
+
+- `patches/1304-drm-panel-vtdr6130-add-odin3portal.patch`
+  source: Armada
+  upstream: local

@@ -151,9 +151,8 @@ DTS_TARGET="${SRC_DIR}/arch/arm64/boot/dts/qcom"
 mkdir -p "${DTS_TARGET}"
 cp -v "${DTS_DIR}"/*.dts "${DTS_DIR}"/*.dtsi "${DTS_TARGET}/" 2>&1 | sed 's/^/  /'
 
-# Apply armada's DTS edits (dts/*.dts(i) are vendored verbatim; the deltas are
-# dts/*.patch). Board DTS aren't in the tree at patch time, so they patch here,
-# after the copy above.
+# Apply remaining edits to vendored DTS files after copying them into the tree.
+# Armada-maintained DTS files carry their changes directly.
 echo "==> Applying DTS edit patches"
 for p in "${DTS_DIR}"/*.patch; do
     [ -e "${p}" ] || continue

@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+version: 1
+kind: CompositeDevice
+name: AYN Odin 3 Portal
+
+options:
+  auto_manage: true
+
+matches:
+  - udev:
+      sys_path: /sys/firmware/devicetree/base
+      attributes:
+        - name: compatible
+          value: ayn,odin3portal
+
+source_devices:
+  - group: gamepad
+    capability_map_id: rsinput1
+    evdev:
+      name: AYN Odin3 Portal Gamepad
+      phys_path: rsinput-gamepad/input0
+      vendor_id: "2020"
+      product_id: "3001"
+      handler: event*
+
+  - group: gamepad
+    capability_map_id: rsinput1
+    evdev:
+      name: gpio-keys-paddles
+      phys_path: gpio-keys/input0
+      handler: event*
+
+  - group: imu
+    fastrpc:
+      name: fastrpc-adsp-secure
+    config:
+      imu:
+        mount_matrix:
+          x: [0, -1, 0]
+          y: [0, 0, 1]
+          z: [-1, 0, 0]
+        gyro_auto_calibration: true
+
+target_devices:
+  - xbox-elite

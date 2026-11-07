@@ -1,0 +1,171 @@
+Subject: [PATCH] drm/panel: visionox-vtdr6130-cog: add Odin 3 Portal
+
+Add the Portal's stock 60/120 Hz modes, initialization and supplies.
+Select the panel refresh rate with command 0x6c; both modes share the
+pixel clock and DSC configuration. Keep the stock vendor DSC payload
+and send a generated 12-line PPS after initialization.
+
+diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+--- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
++++ b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+@@ -65,6 +65,7 @@
+ 	unsigned int default_brightness;
+ 	bool vendor_dcs_long;
+ 	bool needs_d0;
++	bool off_in_lpm;
+ 	unsigned int sleep_out_delay_ms;
+ 	unsigned int pps_delay_ms;
+ 	unsigned int display_on_delay_ms;
+@@ -405,6 +406,132 @@
+ 	.default_brightness = 2047,
+ };
+ 
++static int vtdr6130_odin3portal_init_sequence(struct panel_info *pinfo)
++{
++	struct mipi_dsi_multi_context ctx = { .dsi = pinfo->dsi };
++	struct drm_dsc_picture_parameter_set pps;
++	int mode = vtdr6130_get_current_mode(pinfo);
++	int refresh = drm_mode_vrefresh(&pinfo->desc->modes[mode]);
++
++	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	vtdr6130_write_seq(pinfo, &ctx, 0x03, 0x01);
++	vtdr6130_write_seq(pinfo, &ctx, 0x35, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x53, 0x20);
++	vtdr6130_write_seq(pinfo, &ctx, 0x51, 0x04, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x59, 0x09);
++	if (refresh == 120)
++		vtdr6130_write_seq(pinfo, &ctx, 0x6c, 0x00);
++	else
++		vtdr6130_write_seq(pinfo, &ctx, 0x6c, 0x01);
++	vtdr6130_write_seq(pinfo, &ctx, 0x6f, 0x02);
++	vtdr6130_write_seq(pinfo, &ctx,
++			   0x70, 0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x07,
++			   0x80, 0x04, 0x38, 0x00, 0x08, 0x02, 0x1c, 0x02,
++			   0x1c, 0x02, 0x00, 0x02, 0x0e, 0x00, 0x20, 0x00,
++			   0xbb, 0x00, 0x07, 0x00, 0x0c, 0x0d, 0xb7, 0x0c,
++			   0xb7, 0x18, 0x00, 0x10, 0xf0, 0x03, 0x0c, 0x20,
++			   0x00, 0x06, 0x0b, 0x0b, 0x33, 0x0e, 0x1c, 0x2a,
++			   0x38, 0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79,
++			   0x7b, 0x7d, 0x7e, 0x01, 0x02, 0x01, 0x00, 0x09,
++			   0x40, 0x09, 0xbe, 0x19, 0xfc, 0x19, 0xfa, 0x19,
++			   0xf8, 0x1a, 0x38, 0x1a, 0x78, 0x1a, 0xb6, 0x2a,
++			   0xb6, 0x2a, 0xf4, 0x2a, 0xf4, 0x4b, 0x34, 0x63,
++			   0x74, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x72, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf0, 0xaa, 0x10);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x04);
++	vtdr6130_write_seq(pinfo, &ctx, 0xb1, 0x00, 0x18);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x0b);
++	vtdr6130_write_seq(pinfo, &ctx, 0xb1, 0x07, 0xbe);
++	vtdr6130_write_seq(pinfo, &ctx, 0xff, 0x5a, 0x80);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x0a);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf9, 0xa8);
++	vtdr6130_write_seq(pinfo, &ctx, 0xff, 0x5a, 0x81);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x06);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x87);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x09);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x0a);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x10);
++	vtdr6130_write_seq(pinfo, &ctx, 0x65, 0x10);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf3, 0x10);
++	vtdr6130_write_seq(pinfo, &ctx, 0xf0, 0xaa, 0x00);
++	vtdr6130_write_seq(pinfo, &ctx, 0xff, 0x5a, 0x00);
++	mipi_dsi_dcs_exit_sleep_mode_multi(&ctx);
++	mipi_dsi_msleep(&ctx, 120);
++	mipi_dsi_dcs_set_display_on_multi(&ctx);
++	mipi_dsi_msleep(&ctx, 20);
++
++	drm_dsc_pps_payload_pack(&pps, &pinfo->desc->dsc);
++	mipi_dsi_picture_parameter_set_multi(&ctx, &pps);
++
++	return ctx.accum_err;
++}
++
++static const struct drm_display_mode vtdr6130_odin3portal_modes[] = {
++	{
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 18 + 4 + 14) * 120 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 18,
++		.vsync_end = 1920 + 18 + 4,
++		.vtotal = 1920 + 18 + 4 + 14,
++	},
++	{
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 1974 + 4 + 14) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 1974,
++		.vsync_end = 1920 + 1974 + 4,
++		.vtotal = 1920 + 1974 + 4 + 14,
++	},
++};
++
++static const struct regulator_bulk_data odin3portal_panel_supplies[] = {
++	{ .supply = "vddio" },
++	{ .supply = "tvdd" },
++};
++
++static const struct vtdr6130_supply_config odin3portal_supply_config[] = {
++	{ 1800000, 1800000, 154000, 45000, 20, 0 },
++	{ 1800000, 1800000, 0, 0, 20, 0 },
++};
++
++static struct panel_desc vtdr6130_odin3portal_desc = {
++	.modes = vtdr6130_odin3portal_modes,
++	.num_modes = ARRAY_SIZE(vtdr6130_odin3portal_modes),
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET |
++		      MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = vtdr6130_odin3portal_init_sequence,
++	.vendor_dcs_long = true,
++	.off_in_lpm = true,
++	.dsc = {
++		.dsc_version_major = 1,
++		.dsc_version_minor = 1,
++		.slice_height = 12,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++	.supplies = odin3portal_panel_supplies,
++	.num_supplies = ARRAY_SIZE(odin3portal_panel_supplies),
++	.supply_config = odin3portal_supply_config,
++	.display_off_delay_ms = 20,
++	.default_brightness = 1024,
++};
++
+ static int vtdr6130_power_off(struct panel_info *pinfo, unsigned int count)
+ {
+ 	const struct vtdr6130_supply_config *config = pinfo->desc->supply_config;
+@@ -511,7 +638,10 @@
+ 	struct panel_info *pinfo = to_panel_info(panel);
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
+ 
+-	pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++	if (pinfo->desc->off_in_lpm)
++		pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++	else
++		pinfo->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+ 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
+ 	mipi_dsi_msleep(&dsi_ctx, pinfo->desc->display_off_delay_ms ?: 50);
+@@ -703,6 +833,7 @@
+ }
+ 
+ static const struct of_device_id vtdr6130_of_match[] = {
++	{ .compatible = "vtdr6130,o3p", .data = &vtdr6130_odin3portal_desc },
+ 	{ .compatible = "vtdr6130,rpduo", .data = &vtdr6130_duo_desc },
+ 	{ .compatible = "vtdr6130,rp6", .data = &vtdr6130_rp6_desc },
+ 	{ .compatible = "vtdr6130,rp5", .data = &vtdr6130_sm8250_desc },
