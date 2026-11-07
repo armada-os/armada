@@ -1,0 +1,12 @@
+[Unit]
+Description=Automatically apply JamesDSP speaker config when speakers are in use, disable when headphones are in use.
+After=pipewire.service
+
+[Service]
+ExecStart=/usr/libexec/armada/armada-jamesdsp-daemon
+Restart=OnFailure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+
