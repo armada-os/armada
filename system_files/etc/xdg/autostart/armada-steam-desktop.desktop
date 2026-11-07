@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Steam Desktop Controls
+Comment=Steam Input's desktop layout drives the cursor from the controller
+Exec=/usr/bin/steam -silent
+Terminal=false
+NoDisplay=true
+OnlyShowIn=KDE;
