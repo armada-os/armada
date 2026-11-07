@@ -284,6 +284,10 @@
 	status = "okay";
 };
 
+&iris {
+	status = "okay";
+};
+
 &mdss_dsi0 {
 	panel@0 {
 		compatible = "vtdr6130,o3p";
