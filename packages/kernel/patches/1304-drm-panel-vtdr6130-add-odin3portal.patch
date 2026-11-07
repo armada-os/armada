@@ -1,8 +1,9 @@
 Subject: [PATCH] drm/panel: visionox-vtdr6130-cog: add Odin 3 Portal
 
-Add the Portal's 60 Hz mode, initialization and supply configuration.
-Keep the stock vendor DSC payload and send a generated 12-line PPS
-from the host configuration after initialization.
+Add the Portal's stock 60/120 Hz modes, initialization and supplies.
+Select the panel refresh rate with command 0x6c; both modes share the
+pixel clock and DSC configuration. Keep the stock vendor DSC payload
+and send a generated 12-line PPS after initialization.
 
 diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
 --- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
@@ -15,7 +16,7 @@ diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/d
  	unsigned int sleep_out_delay_ms;
  	unsigned int pps_delay_ms;
  	unsigned int display_on_delay_ms;
-@@ -405,6 +406,116 @@
+@@ -405,6 +406,132 @@
  	.default_brightness = 2047,
  };
  
@@ -23,6 +24,8 @@ diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/d
 +{
 +	struct mipi_dsi_multi_context ctx = { .dsi = pinfo->dsi };
 +	struct drm_dsc_picture_parameter_set pps;
++	int mode = vtdr6130_get_current_mode(pinfo);
++	int refresh = drm_mode_vrefresh(&pinfo->desc->modes[mode]);
 +
 +	pinfo->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 +
@@ -31,7 +34,10 @@ diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/d
 +	vtdr6130_write_seq(pinfo, &ctx, 0x53, 0x20);
 +	vtdr6130_write_seq(pinfo, &ctx, 0x51, 0x04, 0x00);
 +	vtdr6130_write_seq(pinfo, &ctx, 0x59, 0x09);
-+	vtdr6130_write_seq(pinfo, &ctx, 0x6c, 0x01);
++	if (refresh == 120)
++		vtdr6130_write_seq(pinfo, &ctx, 0x6c, 0x00);
++	else
++		vtdr6130_write_seq(pinfo, &ctx, 0x6c, 0x01);
 +	vtdr6130_write_seq(pinfo, &ctx, 0x6f, 0x02);
 +	vtdr6130_write_seq(pinfo, &ctx,
 +			   0x70, 0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x07,
@@ -78,6 +84,17 @@ diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/d
 +}
 +
 +static const struct drm_display_mode vtdr6130_odin3portal_modes[] = {
++	{
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 18 + 4 + 14) * 120 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 18,
++		.vsync_end = 1920 + 18 + 4,
++		.vtotal = 1920 + 18 + 4 + 14,
++	},
 +	{
 +		.clock = (1080 + 44 + 10 + 100) * (1920 + 1974 + 4 + 14) * 60 / 1000,
 +		.hdisplay = 1080,
@@ -132,7 +149,7 @@ diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/d
  static int vtdr6130_power_off(struct panel_info *pinfo, unsigned int count)
  {
  	const struct vtdr6130_supply_config *config = pinfo->desc->supply_config;
-@@ -511,7 +622,10 @@
+@@ -511,7 +638,10 @@
  	struct panel_info *pinfo = to_panel_info(panel);
  	struct mipi_dsi_multi_context dsi_ctx = { .dsi = pinfo->dsi };
  
@@ -144,7 +161,7 @@ diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/d
  
  	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
  	mipi_dsi_msleep(&dsi_ctx, pinfo->desc->display_off_delay_ms ?: 50);
-@@ -703,6 +817,7 @@
+@@ -703,6 +833,7 @@
  }
  
  static const struct of_device_id vtdr6130_of_match[] = {
