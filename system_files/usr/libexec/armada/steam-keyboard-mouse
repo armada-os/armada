@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+# Steam's keyboard leaves the right stick idle; while it is open, InputPlumber
+# turns that stick into a mouse and its click into the left button.
+#   steam-keyboard-mouse on|off
+# As root it changes InputPlumber; as the session user it asks armada-control.
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+SERVICE = "org.shadowblip.InputPlumber"
+PATH = "/org/shadowblip/InputPlumber/CompositeDevice0"
+IFACE = "org.shadowblip.Input.CompositeDevice"
+BUSCTL = os.environ.get("ARMADA_BUSCTL", "/usr/bin/busctl")
+CONTROLLER_TYPE = os.environ.get("ARMADA_CONTROLLER_TYPE", "/usr/libexec/armada/controller-type")
+STATE = Path(os.environ.get("ARMADA_KEYBOARD_MOUSE_STATE", "/run/armada/steam-keyboard-mouse.json"))
+SESSION_SOCKET = os.environ.get("ARMADA_SESSION_SOCKET", "/run/armada/session.sock")
+MAPPINGS = """\
+- name: Armada Steam keyboard mouse
+  source_event:
+    gamepad:
+      axis:
+        name: RightStick
+  target_events:
+  - mouse:
+      motion:
+        speed_pps: 800
+- name: Armada Steam keyboard mouse click
+  source_event:
+    gamepad:
+      button: RightStick
+  target_events:
+  - mouse:
+      button: Left
+"""
+
+
+def busctl(*args):
+    return subprocess.run(
+        [BUSCTL, "--system", *args], check=True, capture_output=True, text=True, timeout=8
+    ).stdout
+
+
+def call(method, signature=None, *values):
+    args = ["--json=short", "call", SERVICE, PATH, IFACE, method]
+    if signature:
+        args += [signature, *values]
+    out = busctl(*args).strip()
+    return json.loads(out)["data"] if out else []
+
+
+def prop(name):
+    return json.loads(busctl("--json=short", "get-property", SERVICE, PATH, IFACE, name))["data"]
+
+
+def set_targets(types):
+    call("SetTargetDevices", "as", str(len(types)), *types)
+
+
+def targets(with_mouse):
+    gamepad = subprocess.check_output([CONTROLLER_TYPE, "get"], text=True, timeout=5).strip()
+    extras = []
+    for target in prop("TargetDevices"):
+        kind = re.sub(r"[0-9]+$", "", target.rsplit("/", 1)[-1])
+        if kind in ("keyboard", "mouse") and kind not in extras:
+            extras.append(kind)
+    extras = [kind for kind in extras if kind != "mouse"]
+    return [gamepad, *extras] + (["mouse"] if with_mouse else [])
+
+
+def enable():
+    if STATE.exists():
+        return
+    had_mouse = any(target.rstrip("0123456789").endswith("/mouse") for target in prop("TargetDevices"))
+    original = call("GetProfileYaml")[0]
+    # InputPlumber writes mapping as the last key, so its list can be extended as text.
+    keys = re.findall(r"^([a-z_]+):", original, re.M)
+    if not keys or keys[-1] != "mapping":
+        raise RuntimeError("unexpected profile layout")
+    profile = re.sub(r"^mapping: \[\]$", "mapping:", original.rstrip("\n"), flags=re.M) + "\n" + MAPPINGS
+    # Written first, so a failure halfway can still be undone.
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps({"path": prop("ProfilePath"), "yaml": original, "had_mouse": had_mouse}))
+    if not had_mouse:
+        set_targets(targets(with_mouse=True))
+    call("LoadProfileFromYaml", "s", profile)
+
+
+def disable():
+    try:
+        state = json.loads(STATE.read_text())
+    except FileNotFoundError:
+        return
+    if state["path"] and Path(state["path"]).is_file():
+        call("LoadProfilePath", "s", state["path"])
+    else:
+        call("LoadProfileFromYaml", "s", state["yaml"])
+    if not state["had_mouse"]:
+        set_targets(targets(with_mouse=False))
+    STATE.unlink()
+
+
+def request(enabled):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(10)
+        sock.connect(SESSION_SOCKET)
+        sock.sendall((json.dumps({"action": "steam_keyboard_mouse", "enabled": enabled}) + "\n").encode())
+        reply = json.loads(sock.makefile().readline() or "{}")
+    if not reply.get("ok"):
+        raise RuntimeError(reply.get("error", "no reply from armada-control"))
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] not in ("on", "off"):
+        print("usage: steam-keyboard-mouse on|off", file=sys.stderr)
+        return 2
+    enabled = argv[1] == "on"
+    if os.geteuid() != 0:
+        request(enabled)
+    elif enabled:
+        enable()
+    else:
+        disable()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
