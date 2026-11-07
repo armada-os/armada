@@ -723,6 +723,58 @@ with open(etc, "w") as f:
 powerd.CONFIG_FILE = powerd.Path(etc)
 check("[system] override parsed", power.parse_config()[6]["irq_cores"] == "0-2")
 
+# --- armada-powerd: governor tunables ---------------------------------------
+tunables = system_config["governor_tunables"]
+check("factory conservative tunables",
+      tunables.get("conservative") == {"freq_step": "10", "sampling_down_factor": "10",
+                                       "up_threshold": "80"})
+check("factory ondemand tunables",
+      tunables.get("ondemand") == {"up_threshold": "60", "sampling_down_factor": "10"})
+gov_etc = os.path.join(WORK, "etc-governor.conf")
+with open(gov_etc, "w") as f:
+    f.write("[governor.conservative]\nfreq_step=25\nup_threshold=../x\n"
+            "[governor.../evil]\nfoo=1\n[governor.ondemand]\nbad-key=5\n")
+powerd.CONFIG_FILE = powerd.Path(gov_etc)
+gov_override = power.parse_config()[6]["governor_tunables"]
+powerd.CONFIG_FILE = powerd.Path(etc)
+# a bad /etc value replaces the factory one in the merge, so it's skipped
+# and the kernel keeps its own default for that tunable
+check("/etc governor tunables merge over factory",
+      gov_override["conservative"] == {"freq_step": "25", "sampling_down_factor": "10"})
+check("unsafe governor names dropped", not any("/" in g or "." in g for g in gov_override))
+check("unsafe tunable names dropped", "bad-key" not in gov_override["ondemand"])
+
+gov_tree = os.path.join(WORK, "gov-sys")
+gov_policy = powerd.Path(gov_tree, "policy3")
+os.makedirs(gov_policy / "conservative")
+(gov_policy / "scaling_available_governors").write_text("conservative ondemand performance\n")
+(gov_policy / "scaling_governor").write_text("performance\n")
+for name, value in (("freq_step", "5"), ("sampling_down_factor", "1"), ("up_threshold", "80"),
+                    ("down_threshold", "20")):
+    (gov_policy / "conservative" / name).write_text(value + "\n")
+gov_power = powerd.ArmadaPower.__new__(powerd.ArmadaPower)
+gov_power.system_config = {"governor_tunables": tunables}
+gov_power.write_governor(gov_policy, "conservative")
+check("conservative tunables written after governor switch",
+      [(gov_policy / "conservative" / n).read_text().strip()
+       for n in ("freq_step", "sampling_down_factor", "up_threshold", "down_threshold")]
+      == ["10", "10", "80", "20"])
+# no per-policy dir: tunables live in the shared cpufreq/<governor> dir
+os.makedirs(os.path.join(gov_tree, "ondemand"))
+for name in ("up_threshold", "sampling_down_factor"):
+    powerd.Path(gov_tree, "ondemand", name).write_text("95\n")
+gov_power.write_governor(gov_policy, "ondemand")
+check("ondemand tunables written to the global dir",
+      powerd.Path(gov_tree, "ondemand", "up_threshold").read_text().strip() == "60"
+      and powerd.Path(gov_tree, "ondemand", "sampling_down_factor").read_text().strip() == "10")
+gov_power.write_governor(gov_policy, "performance")
+check("governors without tunables are left alone",
+      (gov_policy / "scaling_governor").read_text().strip() == "performance")
+no_config = powerd.ArmadaPower.__new__(powerd.ArmadaPower)
+no_config.write_governor(gov_policy, "conservative")
+check("write_governor works before config is loaded",
+      (gov_policy / "scaling_governor").read_text().strip() == "conservative")
+
 power.system_config = {"irq_cores": "auto"}
 power.env = {"ARMADA_IRQ_CORES": "0-2"}
 check("irq auto mask", power.irq_mask() == 0b111)
