@@ -1,0 +1,7 @@
+#!/usr/bin/bash
+set -eu
+# shellcheck source=/dev/null
+[[ -r /etc/armada/splash.conf ]] && source /etc/armada/splash.conf
+exec "${ARMADA_SPLASH_BIN:-/usr/libexec/armada/armada-splash}" \
+    --write-language-file "${ARMADA_SPLASH_LOCALE_FILE:-/run/armada/splash/language}" \
+    --language "${ARMADA_SPLASH_LANGUAGE:-auto}"
