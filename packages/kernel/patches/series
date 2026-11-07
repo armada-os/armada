@@ -341,3 +341,8 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1182-arm64-dts-qcom-eliza-add-cpu-l3-scaling.patch
 1302-input-rsinput-support-retroid-pocket-duo.patch
 1303-serial-qcom-geni-allow-shorter-rx-dma-transfer.patch
+# ============== USB: pre-plug enumeration in linux usb mode ==============
+# Ignore the bootloader's static dr_mode=host when the controller declares a
+# usb-role-switch, so the TYPE-C/UCSI role flip (after the charger PDR) creates
+# the host controller instead of an early pre-PDR first scan.
+1400-dwc3-ignore-dr-mode-host-with-role-switch.patch
