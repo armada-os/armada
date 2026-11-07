@@ -1,0 +1,11 @@
+{
+    "KPlugin": {
+        "Description": "Docks Steam's on-screen keyboard to the bottom of the screen, over the panel",
+        "Id": "armadasteamkeyboard",
+        "License": "GPL",
+        "Name": "Armada Steam Keyboard"
+    },
+    "X-Plasma-API": "javascript",
+    "X-Plasma-MainScript": "code/main.js",
+    "KPackageStructure": "KWin/Script"
+}

@@ -22,6 +22,7 @@ SOCKET = Path("/run/armada/control.sock")
 SESSION_SOCKET = Path(armada_perf.SESSION_SOCKET)
 ABL_VERSION_TOOL = "/usr/libexec/openabl-updater/abl-version"
 RGB_TOOL = "/usr/bin/armada-rgb"
+STEAM_KEYBOARD_MOUSE = "/usr/libexec/armada/steam-keyboard-mouse"
 ABL_PARTITIONS = (
     ("A", "/dev/disk/by-partlabel/abl_a"),
     ("B", "/dev/disk/by-partlabel/abl_b"),
@@ -954,6 +955,12 @@ def handle_session(request, conn):
         return PERF.game_launched(appid, pid)
     if action == "reapply_perf":
         return PERF.reapply()
+    if action == "steam_keyboard_mouse":
+        enabled = request.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("invalid enabled value")
+        run([STEAM_KEYBOARD_MOUSE, "on" if enabled else "off"], timeout=15)
+        return {"enabled": enabled}
     raise ValueError("unknown action")
 
 
@@ -1010,6 +1017,9 @@ def main():
     PERF = PerfManager(selector)
     bottom_screen_backlight = secondary_backlight()
     restore_bottom_screen_brightness(bottom_screen_backlight)
+    # A restart mid-session must not leave the right stick as a mouse.
+    subprocess.run([STEAM_KEYBOARD_MOUSE, "off"], check=False, timeout=15,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     # Root-only socket; config rendering still belongs to the plugin client.
     control = bind_socket(SOCKET, 0o600)
     session = bind_socket(SESSION_SOCKET, 0o660, group="armada")

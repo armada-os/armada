@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+# Closes Steam's Game Mode keyboard on a tap or click above it.
+# While the keyboard is up, gamescope hands every pointer and touch event to
+# Steam's overlay, which ignores those outside its keys, so the app below
+# never sees them. The keyboard is docked to the bottom and drawn inside a
+# full-screen overlay without geometry of its own; the upper half is
+# always outside it.
+import ctypes
+import ctypes.util
+import fcntl
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+STEAM = os.environ.get("ARMADA_STEAM", "/usr/bin/steam")
+STEAM_PID = Path(os.environ.get("ARMADA_STEAM_PID", f"{os.environ.get('HOME', '')}/.steam/steam.pid"))
+KEYBOARD_MOUSE = os.environ.get("ARMADA_KEYBOARD_MOUSE", "/usr/libexec/armada/steam-keyboard-mouse")
+DEVICE_ENV = os.environ.get("ARMADA_DEVICE_ENV", "/usr/libexec/armada/device-env")
+INPUT = Path(os.environ.get("ARMADA_INPUT_DIR", "/dev/input"))
+# Tells steam-keyboard-follow the keyboard went away without a focus change.
+CLOSED_MARKER = Path(os.environ.get("ARMADA_STEAM_KEYBOARD_CLOSED",
+                                    f"{os.environ.get('XDG_RUNTIME_DIR', '/tmp')}/armada-steam-keyboard-closed"))
+OUTSIDE_ABOVE = 0.5
+
+EV_KEY, EV_REL, EV_ABS = 1, 2, 3
+BTN_LEFT, BTN_TOUCH = 0x110, 0x14a
+ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 0x35, 0x36, 0x39
+INPUT_PROP_DIRECT = 0x01
+EVENT = struct.Struct("llHHi")
+
+
+def ioc_read(nr, size):
+    return (2 << 30) | (size << 16) | (ord("E") << 8) | nr
+
+
+def bits(fd, nr, size):
+    buf = bytearray(size)
+    fcntl.ioctl(fd, ioc_read(nr, size), buf)
+    return int.from_bytes(buf, "little")
+
+
+def absmax(fd, code):
+    buf = bytearray(24)
+    fcntl.ioctl(fd, ioc_read(0x40 + code, 24), buf)
+    return struct.unpack("6i", buf)[2] or 1
+
+
+def to_screen(orientation, u, v):
+    """Panel-native touch position (0..1) to the rotated screen (0..1)."""
+    return {
+        "left": (1 - v, u),
+        "right": (v, 1 - u),
+        "inverted": (1 - u, 1 - v),
+    }.get(orientation, (u, v))
+
+
+def panel_orientation():
+    try:
+        out = subprocess.run([DEVICE_ENV], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "normal"
+    for line in out.splitlines():
+        key, _, value = line.partition("=")
+        if key == "ARMADA_PANEL_ORIENTATION":
+            return value.strip("'\"") or "normal"
+    return "normal"
+
+
+class Display:
+    """An Xwayland of gamescope: Steam's, with its overlay, or the nested desktop's."""
+
+    def __init__(self, display):
+        self.x = ctypes.cdll.LoadLibrary(ctypes.util.find_library("X11") or "libX11.so.6")
+        self.x.XOpenDisplay.restype = ctypes.c_void_p
+        self.x.XDefaultRootWindow.restype = ctypes.c_ulong
+        self.x.XInternAtom.restype = ctypes.c_ulong
+        self.dpy = ctypes.c_void_p(self.x.XOpenDisplay(display.encode()))
+        if not self.dpy:
+            raise SystemExit(f"cannot open {display}")
+        self.root = self.x.XDefaultRootWindow(self.dpy)
+        self.width = max(self.x.XDisplayWidth(self.dpy, 0), 1)
+        self.height = max(self.x.XDisplayHeight(self.dpy, 0), 1)
+        self.focus_atom = self.x.XInternAtom(self.dpy, b"STEAM_INPUT_FOCUS", False)
+
+    def keyboard_open(self):
+        # Steam sets STEAM_INPUT_FOCUS=2 on its overlay while its keyboard is up.
+        root, parent = ctypes.c_ulong(), ctypes.c_ulong()
+        children, count = ctypes.POINTER(ctypes.c_ulong)(), ctypes.c_uint()
+        self.x.XQueryTree(self.dpy, self.root, ctypes.byref(root), ctypes.byref(parent),
+                          ctypes.byref(children), ctypes.byref(count))
+        try:
+            for i in range(count.value):
+                kind, fmt, items, after = ctypes.c_ulong(), ctypes.c_int(), ctypes.c_ulong(), ctypes.c_ulong()
+                data = ctypes.POINTER(ctypes.c_ubyte)()
+                if self.x.XGetWindowProperty(self.dpy, ctypes.c_ulong(children[i]), self.focus_atom, 0, 1, False, 0,
+                                             ctypes.byref(kind), ctypes.byref(fmt), ctypes.byref(items),
+                                             ctypes.byref(after), ctypes.byref(data)) != 0 or not items.value:
+                    continue
+                value = ctypes.cast(data, ctypes.POINTER(ctypes.c_uint32))[0]
+                self.x.XFree(data)
+                if value == 2:
+                    return True
+        finally:
+            if children:
+                self.x.XFree(children)
+        return False
+
+    def pointer(self):
+        root, child = ctypes.c_ulong(), ctypes.c_ulong()
+        rx, ry, wx, wy, mask = ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_uint()
+        self.x.XQueryPointer(self.dpy, self.root, ctypes.byref(root), ctypes.byref(child), ctypes.byref(rx),
+                             ctypes.byref(ry), ctypes.byref(wx), ctypes.byref(wy), ctypes.byref(mask))
+        return rx.value / self.width, ry.value / self.height
+
+    def warp(self, x, y):
+        self.x.XWarpPointer(self.dpy, 0, self.root, 0, 0, 0, 0, int(x * self.width), int(y * self.height))
+        self.x.XFlush(self.dpy)
+
+
+class Device:
+    def __init__(self, path):
+        self.path = path
+        self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        keys = bits(self.fd, 0x20 + EV_KEY, 96)
+        abs_bits = bits(self.fd, 0x20 + EV_ABS, 8)
+        rel_bits = bits(self.fd, 0x20 + EV_REL, 2)
+        props = bits(self.fd, 0x09, 4)
+        self.touch = bool(abs_bits >> ABS_MT_POSITION_X & 1 and props >> INPUT_PROP_DIRECT & 1)
+        self.pointer = bool(rel_bits & 1 and keys >> BTN_LEFT & 1)
+        if self.touch:
+            self.max_x, self.max_y = absmax(self.fd, ABS_MT_POSITION_X), absmax(self.fd, ABS_MT_POSITION_Y)
+        self.x = self.y = 0
+
+
+def scan(devices, primary_touch):
+    for path in sorted(INPUT.glob("event*")):
+        if str(path) in devices:
+            continue
+        try:
+            device = Device(str(path))
+        except OSError:
+            continue
+        if device.touch and primary_touch and os.path.realpath(path) != os.path.realpath(primary_touch):
+            device.touch = False
+        if device.touch or device.pointer:
+            devices[str(path)] = device
+        else:
+            os.close(device.fd)
+
+
+def close_keyboard(app, x, y):
+    subprocess.run([KEYBOARD_MOUSE, "off"], capture_output=True, timeout=15, check=False)
+    subprocess.run([STEAM, "steam://close/keyboard"], capture_output=True, timeout=15, check=False)
+    CLOSED_MARKER.touch()
+    # Gamescope hands focus back with the app's own last pointer position, the field typed into.
+    if app:
+        time.sleep(0.3)
+        app.warp(x, y)
+
+
+def steam_display():
+    """The Xwayland Steam's overlay is on; nested sessions get a different one."""
+    try:
+        environ = Path(f"/proc/{STEAM_PID.read_text().strip()}/environ").read_bytes().split(b"\0")
+    except (OSError, ValueError):
+        return None
+    env = dict(item.decode(errors="replace").partition("=")[::2] for item in environ if b"=" in item)
+    if env.get("XAUTHORITY"):
+        os.environ["XAUTHORITY"] = env["XAUTHORITY"]
+    return env.get("DISPLAY")
+
+
+def main(_argv):
+    # The Xwayland hosting the nested desktop; opened before XAUTHORITY switches to Steam's.
+    app = None
+    if os.environ.get("ARMADA_HOST_DISPLAY"):
+        os.environ["XAUTHORITY"] = os.environ.get("ARMADA_HOST_XAUTHORITY", "")
+        try:
+            app = Display(os.environ["ARMADA_HOST_DISPLAY"])
+        except SystemExit:
+            pass
+    display = steam_display()
+    while not display:
+        time.sleep(5)
+        display = steam_display()
+    overlay = Display(display)
+    orientation = panel_orientation()
+    primary_touch = os.environ.get("ARMADA_PRIMARY_TOUCHSCREEN", "")
+    devices = {}
+    next_scan = 0.0
+    while True:
+        # The stick's mouse target comes and goes with the keyboard.
+        if time.monotonic() >= next_scan:
+            scan(devices, primary_touch)
+            next_scan = time.monotonic() + 2
+        ready = select.select([d.fd for d in devices.values()], [], [], 2)[0]
+        for device in [d for d in devices.values() if d.fd in ready]:
+            try:
+                data = os.read(device.fd, EVENT.size * 64)
+            except OSError:
+                os.close(device.fd)
+                del devices[device.path]
+                continue
+            pressed = False
+            for offset in range(0, len(data) - EVENT.size + 1, EVENT.size):
+                _, _, kind, code, value = EVENT.unpack_from(data, offset)
+                if kind == EV_ABS and code == ABS_MT_POSITION_X:
+                    device.x = value
+                elif kind == EV_ABS and code == ABS_MT_POSITION_Y:
+                    device.y = value
+                elif (kind == EV_ABS and code == ABS_MT_TRACKING_ID and value >= 0) or \
+                        (kind == EV_KEY and code in (BTN_LEFT, BTN_TOUCH) and value == 1):
+                    pressed = True
+            if not pressed:
+                continue
+            if device.touch:
+                x, y = to_screen(orientation, device.x / device.max_x, device.y / device.max_y)
+            else:
+                x, y = overlay.pointer()
+            if y < OUTSIDE_ABOVE and overlay.keyboard_open():
+                close_keyboard(app, x, y)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
