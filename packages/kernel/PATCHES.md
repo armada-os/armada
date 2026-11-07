@@ -1249,3 +1249,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Add configurable ADC references and share reset and supply sequencing between probe and resume; existing board defaults are retained.
+- `patches/1400-dwc3-ignore-dr-mode-host-with-role-switch.patch`
+  source: armada
+  upstream: local
+  notes: In `linux usb` boot mode the bootloader adds a static `dr_mode = "host"` to the in-RAM device tree, forcing DWC3 into HOST mode from probe so the first root-hub scan fires before the charger_pd PDR; a pre-plugged drive is then never enumerated. When the controller also declares `usb-role-switch`, the forced HOST is demoted to OTG so the UCSI role flip (after the PDR) creates the host controller, matching a normal boot. No-op when there is no `dr_mode` property.

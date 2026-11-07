@@ -1,0 +1,44 @@
+From: keks2293 <rusik2293@gmail.com>
+Subject: [PATCH] usb: dwc3: ignore a static dr_mode=host when usb-role-switch is present
+
+In `linux usb` boot mode the bootloader unconditionally adds a
+dr_mode = "host" property to the device tree in RAM before handing off to
+the kernel. That forces the DWC3 controller into HOST mode from probe, so
+xhci-hcd is probed immediately and the first root-hub scan fires before the
+charger_pd PDR indication. On a pre-plugged drive that early scan is absorbed
+(the charger path is still in standby waiting for the charger type), so the
+drive is never enumerated.
+
+A static dr_mode=host contradicts a device that declares a dynamic
+usb-role-switch: on such a controller the TYPE-C state machine (UCSI) must
+decide the role, not a fixed property. When both are present, demote the
+forced HOST to OTG so the role-switch/UCSI path takes over and the host
+controller is created only after the role flips, i.e. after the PDR. This
+reproduces the behavior of a normal (non-overlay) boot, which enumerates a
+pre-plugged drive on its first scan.
+
+On a normal boot there is no dr_mode property, so dwc->dr_mode is already
+OTG and this change is a no-op; it only alters the bootloader-overlay case.
+---
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -56,6 +56,19 @@
+ 	struct device *dev = dwc->dev;
+ 	unsigned int hw_mode;
+ 
++	/*
++	 * A static dr_mode=host (e.g. forced by the bootloader) contradicts a
++	 * dynamic usb-role-switch. When the controller declares a role switch,
++	 * the TYPE-C state machine must decide the role, not a fixed property.
++	 * Demote to OTG so the role-switch/UCSI path can take over.
++	 */
++	if (dwc->dr_mode == USB_DR_MODE_HOST &&
++	    device_property_read_bool(dev, "usb-role-switch")) {
++		dev_warn(dev,
++			 "dr_mode=host ignored: usb-role-switch present, using OTG\n");
++		dwc->dr_mode = USB_DR_MODE_OTG;
++	}
++
+ 	if (dwc->dr_mode == USB_DR_MODE_UNKNOWN)
+ 		dwc->dr_mode = USB_DR_MODE_OTG;
+ 
