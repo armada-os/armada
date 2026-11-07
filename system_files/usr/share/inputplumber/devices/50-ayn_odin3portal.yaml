@@ -30,5 +30,16 @@ source_devices:
       phys_path: gpio-keys/input0
       handler: event*
 
+  - group: imu
+    fastrpc:
+      name: fastrpc-adsp-secure
+    config:
+      imu:
+        mount_matrix:
+          x: [0, -1, 0]
+          y: [0, 0, 1]
+          z: [-1, 0, 0]
+        gyro_auto_calibration: true
+
 target_devices:
   - xbox-elite
