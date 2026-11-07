@@ -18,19 +18,7 @@ early_firmware=(
     /usr/lib/firmware/qcom/sm7750/retroidpocket/duo/gen70e00_zap.mbn
     /usr/lib/firmware/qcom/sm7750/retroidpocket/duo/adsp.mbn
     /usr/lib/firmware/qcom/sm7750/retroidpocket/duo/adsp_dtb.mbn
-    /usr/lib/firmware/qcom/gen80000_sqe.fw
-    /usr/lib/firmware/qcom/gen80000_gmu.bin
-    /usr/lib/firmware/qcom/gen80000_aqe.fw
-    /usr/lib/firmware/qcom/sm8750/gen80000_zap.mbn
-    /usr/lib/firmware/qcom/sm8750/ayn/odin3portal/adsp.mbn
-    /usr/lib/firmware/qcom/sm8750/ayn/odin3portal/adsp_dtb.mbn
 )
-
-for firmware in "${early_firmware[@]}"; do
-    if [[ ! -f "${firmware}" && -f "${firmware}.xz" ]]; then
-        xz --decompress --keep "${firmware}.xz"
-    fi
-done
 
 dracut \
     --force \
