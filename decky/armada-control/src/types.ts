@@ -31,7 +31,12 @@ export interface CpuTopology {
   little: string;
 }
 
-export interface FanCurve {
+export interface SleepLogsStatus {
+  enabled: boolean;
+  directory: string | null;
+}
+
+export interface FanCurve extends FanSettings {
   label: string;
   curve: string;
 }
@@ -49,6 +54,8 @@ export interface GameTweak {
   name?: string;
   fexProfile?: string;
   fexConfig?: Record<string, string>;
+  steamCompatTool?: string;
+  steamResolution?: string;
   turnipDriver?: string;
   thunks?: Record<string, boolean>;
   [key: string]: any;
@@ -116,6 +123,8 @@ export interface CalibrationState {
   canApply?: boolean;
   backend?: string;
   saved?: boolean;
+  calibratedAt?: string | null;
+  hasCalibration?: boolean;
   params?: Record<string, number>;
   progress?: CalibrationProgress;
 }
@@ -155,11 +164,9 @@ export interface PerfInfo {
   cpuCount: number;
 }
 
-export interface Config {
-  power: PowerConfig;
-  powerDefaults: PowerConfig;
-  freqLimits: FreqLimits;
+export interface InitialConfig {
   tweaks: Tweaks;
+  tweaksDefaults?: Tweaks;
   installedGames: InstalledGame[];
   fexProfiles: Record<string, FexProfile>;
   turnipDrivers?: TurnipDriver[];
@@ -168,28 +175,52 @@ export interface Config {
   cpuDeviceClass: string;
   rgbSupported: boolean;
   protonDefaults: string[];
+  game?: GameRef | null;
+  selectedGame?: GameRef | null;
+}
+
+export interface ProfilesConfig {
+  power: PowerConfig;
+  powerDefaults: PowerConfig;
+  freqLimits: FreqLimits;
+}
+
+export interface AboutConfig {
   osVersion: string;
   ablVersion: string;
+  sshEnabled: boolean;
+}
+
+export interface DeviceConfig {
+  panelCalibrationSupported: boolean;
+  chargingFanSupported: boolean;
+  chargingFanPwm: number;
+}
+
+export interface ExperimentalConfig {
   bottomScreenSupported: boolean;
   bottomScreenEnabled: boolean;
   bottomScreenBrightnessSupported: boolean;
   bottomScreenActive: boolean;
   bottomScreenBrightness: number;
-  chargingFanPwm: number;
-  sshEnabled: boolean;
   swipeGesturesEnabled: boolean;
-  gyro: { supported: boolean; enabled: boolean };
   mtpEnabled: boolean;
   desktopMode: string;
   desktopModes: DropdownChoice[];
   sleepMode: string;
   sleepModes: DropdownChoice[];
+}
+
+export interface ControllerConfig {
+  gyro: { supported: boolean; enabled: boolean };
   controllerType: string;
   controllerTypes: DropdownChoice[];
-  calibration?: CalibrationState;
-  game?: GameRef | null;
-  selectedGame?: GameRef | null;
+  calibratedAt: string | null;
+  hasCalibration: boolean;
 }
+
+export type FullConfig = InitialConfig & ProfilesConfig & ControllerConfig & DeviceConfig & ExperimentalConfig & AboutConfig;
+export type Config = InitialConfig & Partial<ProfilesConfig & ControllerConfig & DeviceConfig & ExperimentalConfig & AboutConfig>;
 
 export interface DropdownChoice {
   data: string;
@@ -211,13 +242,9 @@ export interface FanSettings {
 export interface CurvesState {
   fanCurves: Record<string, FanCurve>;
   factoryFanCurves: Record<string, FanCurve>;
-  fanSettings: FanSettings;
-  factoryFanSettings: FanSettings;
   profiles: Record<string, ProfileSummary>;
   // Falls back to the configured default, then any profile, if the daemon state can't be read.
   activeProfile: string;
-  // Live marker instead polls get_current_temp (see hooks/useCurrentTemp).
-  currentTemp: number | null;
 }
 
 export type PanelAttr = "frame_len_120" | "frame_len_60";

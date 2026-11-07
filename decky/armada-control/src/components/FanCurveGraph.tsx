@@ -1,13 +1,14 @@
 import { Focusable, GamepadButton } from "@decky/ui";
-import type { GamepadEvent } from "@decky/ui";
-import { useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { FocusableProps, GamepadEvent } from "@decky/ui";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ComponentType, PointerEvent as ReactPointerEvent } from "react";
 import { t } from "../i18n";
 import {
   CURVE_PWM_MAX as PWM_MAX,
   CURVE_PWM_MIN as PWM_MIN,
   CURVE_TEMP_MAX as TEMP_MAX,
   CURVE_TEMP_MIN as TEMP_MIN,
+  compareCurvePoints,
   percentToPwm,
   pwmToPercent,
 } from "../lib/fanCurve";
@@ -26,6 +27,7 @@ const TEMP_TICKS = [0, 20, 40, 60, 80, 100, 120];
 const PWM_TICK_PERCENTS = [0, 25, 50, 75, 100];
 const CONTROLLER_TEMP_STEP = 1;
 const CONTROLLER_PWM_STEP = 5;
+const GraphFocusable = Focusable as ComponentType<FocusableProps & { focusable: boolean }>;
 
 function xForTemp(temp: number) {
   return PAD_LEFT + (clamp(temp, TEMP_MIN, TEMP_MAX) - TEMP_MIN) / (TEMP_MAX - TEMP_MIN) * PLOT_W;
@@ -36,14 +38,22 @@ function yForPwm(pwm: number) {
 }
 
 interface DragState {
+  initial: CurvePoint[];
   points: CurvePoint[];
   index: number;
+  target: SVGCircleElement;
+  pointerId: number;
 }
 
-export function FanCurveGraph({ points, onChange, currentTemp }: {
+function releaseDrag(drag: DragState | null) {
+  if (drag?.target.hasPointerCapture(drag.pointerId)) drag.target.releasePointerCapture(drag.pointerId);
+}
+
+export function FanCurveGraph({ points, onChange, currentTemp, disabled = false }: {
   points: CurvePoint[];
   onChange: (next: CurvePoint[]) => void;
   currentTemp?: number | null;
+  disabled?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -51,8 +61,17 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [controllerActive, setControllerActive] = useState(false);
   const [controllerIndex, setControllerIndex] = useState(0);
-  const shown = livePoints ?? points;
-  const sorted = useMemo(() => [...shown].sort((a, b) => a.temp - b.temp), [shown]);
+  const editing = controllerActive && !disabled;
+  const shown = disabled ? points : livePoints ?? points;
+  const sorted = useMemo(() => [...shown].sort(compareCurvePoints), [shown]);
+  useEffect(() => {
+    if (!disabled) return;
+    releaseDrag(dragRef.current);
+    dragRef.current = null;
+    setLivePoints(null);
+    setActiveIndex(null);
+    setControllerActive(false);
+  }, [disabled]);
   if (!sorted.length) return null;
 
   const eventToPoint = (e: ReactPointerEvent): CurvePoint | null => {
@@ -68,12 +87,14 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
     return { temp: clamp(temp, TEMP_MIN, TEMP_MAX), pwm: clamp(pwm, PWM_MIN, PWM_MAX) };
   };
   const onPointerDown = (index: number) => (e: ReactPointerEvent<SVGCircleElement>) => {
+    if (disabled) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { points: points.map((p) => ({ ...p })), index };
+    dragRef.current = { initial: points, points: points.map((p) => ({ ...p })), index, target: e.currentTarget, pointerId: e.pointerId };
     setActiveIndex(index);
     setLivePoints(points.map((p) => ({ ...p })));
   };
   const onPointerMove = (e: ReactPointerEvent<SVGCircleElement>) => {
+    if (disabled) return;
     const drag = dragRef.current;
     if (!drag) return;
     const next = eventToPoint(e);
@@ -81,41 +102,38 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
     drag.points[drag.index] = next;
     setLivePoints([...drag.points]);
   };
-  const endDrag = (e: ReactPointerEvent<SVGCircleElement>) => {
+  const finishDrag = (commit: boolean) => {
     const drag = dragRef.current;
     if (!drag) return;
     dragRef.current = null;
     setActiveIndex(null);
     setLivePoints(null);
-    onChange(drag.points);
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // already released (e.g. pointercancel) -- fine to ignore
-    }
+    releaseDrag(drag);
+    if (commit && !disabled && JSON.stringify(points) === JSON.stringify(drag.initial)) onChange(drag.points);
   };
   const enterControllerMode = () => {
-    if (!points.length) return;
+    if (disabled || !points.length) return;
     setControllerActive(true);
     setControllerIndex((current) => clamp(current, 0, points.length - 1));
   };
   const exitControllerMode = () => setControllerActive(false);
   const cycleControllerPoint = (delta: number) => {
-    if (!points.length) return;
+    if (disabled || !points.length) return;
     setControllerIndex((current) => (current + delta + points.length) % points.length);
   };
   const moveControllerPoint = (deltaTemp: number, deltaPwm: number) => {
-    if (!points.length) return;
+    if (disabled || !points.length) return;
     const index = clamp(controllerIndex, 0, points.length - 1);
     const current = points[index];
-    const lowerBound = index > 0 ? points[index - 1].temp + 1 : TEMP_MIN;
-    const upperBound = index < points.length - 1 ? points[index + 1].temp - 1 : TEMP_MAX;
+    const lowerBound = index > 0 ? points[index - 1].temp : TEMP_MIN;
+    const upperBound = index < points.length - 1 ? points[index + 1].temp : TEMP_MAX;
     const nextTemp = clamp(current.temp + deltaTemp, Math.max(TEMP_MIN, lowerBound), Math.min(TEMP_MAX, upperBound));
     const nextPwm = clamp(current.pwm + deltaPwm, PWM_MIN, PWM_MAX);
     if (nextTemp === current.temp && nextPwm === current.pwm) return;
     onChange(points.map((point, i) => (i === index ? { temp: nextTemp, pwm: nextPwm } : point)));
   };
   const handleGraphButtonDown = (e: GamepadEvent) => {
+    if (!editing) return;
     switch (e.detail.button) {
       case GamepadButton.BUMPER_LEFT:
         cycleControllerPoint(-1);
@@ -130,6 +148,7 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
     e.stopPropagation();
   };
   const handleGraphDirection = (e: GamepadEvent) => {
+    if (!editing) return;
     switch (e.detail.button) {
       case GamepadButton.DIR_UP:
         moveControllerPoint(0, CONTROLLER_PWM_STEP);
@@ -183,29 +202,39 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
   const currentTempY = hasCurrentTemp ? yForPwm(interpolatePwm(currentTemp as number)) : 0;
 
   return (
-    <Focusable
-      className={controllerActive ? "afc-graph-focusable afc-graph-editing" : "afc-graph-focusable"}
+    <GraphFocusable
+      className={editing ? "afc-graph-focusable afc-graph-editing" : "afc-graph-focusable"}
       focusClassName="afc-graph-focused"
+      focusable={!disabled}
+      aria-disabled={disabled}
       onActivate={enterControllerMode}
       onOKButton={enterControllerMode}
-      onCancelButton={controllerActive ? exitControllerMode : undefined}
-      onButtonDown={controllerActive ? handleGraphButtonDown : undefined}
-      onGamepadDirection={controllerActive ? handleGraphDirection : undefined}
-      onGamepadBlur={controllerActive ? exitControllerMode : undefined}
-      onOKActionDescription={controllerActive ? undefined : t("fanCurve.editPoint")}
-      onCancelActionDescription={controllerActive ? t("fanCurve.stopEditing") : undefined}
+      onCancelButton={editing ? (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        exitControllerMode();
+      } : undefined}
+      onButtonDown={editing ? handleGraphButtonDown : undefined}
+      onGamepadDirection={editing ? handleGraphDirection : undefined}
+      onGamepadBlur={editing ? exitControllerMode : undefined}
+      onOKActionDescription={editing || disabled ? undefined : t("fanCurve.editPoint")}
+      onCancelActionDescription={editing ? t("fanCurve.stopEditing") : undefined}
+      actionDescriptionMap={editing ? {
+        [GamepadButton.BUMPER_LEFT]: t("fanCurve.previousPoint"),
+        [GamepadButton.BUMPER_RIGHT]: t("fanCurve.nextPoint"),
+      } : undefined}
     >
       <svg
         ref={svgRef}
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        style={{ width: "100%", height: "auto", display: "block", touchAction: "none", userSelect: "none" }}
+        className="armada-fan-graph"
       >
-        <rect x={PAD_LEFT} y={PAD_TOP} width={PLOT_W} height={PLOT_H} fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.15)" />
+        <rect className="armada-fan-graph-surface" x={PAD_LEFT} y={PAD_TOP} width={PLOT_W} height={PLOT_H} />
       {fanStopActive ? (
         <g pointerEvents="none">
-          <rect x={PAD_LEFT} y={PAD_TOP} width={Math.max(0, fanStopX - PAD_LEFT)} height={PLOT_H} fill="rgba(255,209,102,0.14)" />
-          <line x1={fanStopX} x2={fanStopX} y1={PAD_TOP} y2={PAD_TOP + PLOT_H} stroke="rgba(255,209,102,0.55)" strokeDasharray="2,2" />
-          <text x={PAD_LEFT + 2} y={PAD_TOP + 9} fontSize="7" textAnchor="start" fill="rgba(255,209,102,0.85)">
+          <rect className="armada-fan-graph-stop" x={PAD_LEFT} y={PAD_TOP} width={Math.max(0, fanStopX - PAD_LEFT)} height={PLOT_H} />
+          <line className="armada-fan-graph-stop-line" x1={fanStopX} x2={fanStopX} y1={PAD_TOP} y2={PAD_TOP + PLOT_H} strokeDasharray="2,2" />
+          <text className="armada-fan-graph-warning" x={PAD_LEFT + 2} y={PAD_TOP + 9} textAnchor="start">
             {t("fanCurve.stopped")}
           </text>
         </g>
@@ -214,8 +243,8 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
         const pwm = percentToPwm(percent);
         return (
           <g key={`pwm-${percent}`}>
-            <line x1={PAD_LEFT} x2={PAD_LEFT + PLOT_W} y1={yForPwm(pwm)} y2={yForPwm(pwm)} stroke="rgba(255,255,255,0.08)" />
-            <text x={PAD_LEFT - 4} y={yForPwm(pwm) + 3} fontSize="7" textAnchor="end" fill="rgba(255,255,255,0.55)">
+            <line className="armada-fan-graph-grid" x1={PAD_LEFT} x2={PAD_LEFT + PLOT_W} y1={yForPwm(pwm)} y2={yForPwm(pwm)} />
+            <text x={PAD_LEFT - 4} y={yForPwm(pwm) + 3} textAnchor="end">
               {`${percent}%`}
             </text>
           </g>
@@ -223,23 +252,22 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
       })}
       {TEMP_TICKS.map((temp) => (
         <g key={`temp-${temp}`}>
-          <line x1={xForTemp(temp)} x2={xForTemp(temp)} y1={PAD_TOP} y2={PAD_TOP + PLOT_H} stroke="rgba(255,255,255,0.06)" />
-          <text x={xForTemp(temp)} y={HEIGHT - 4} fontSize="7" textAnchor="middle" fill="rgba(255,255,255,0.55)">
+          <line className="armada-fan-graph-grid" x1={xForTemp(temp)} x2={xForTemp(temp)} y1={PAD_TOP} y2={PAD_TOP + PLOT_H} />
+          <text x={xForTemp(temp)} y={HEIGHT - 4} textAnchor="middle">
             {temp}
           </text>
         </g>
       ))}
-      <path d={pathD} fill="none" stroke="#5cc8ff" strokeWidth={2} />
+      <path className="armada-fan-graph-curve" d={pathD} strokeWidth={2} />
       {hasCurrentTemp ? (
         <g pointerEvents="none">
-          <circle cx={currentTempX} cy={currentTempY} r={7} fill="rgba(255,255,255,0.18)" />
-          <circle cx={currentTempX} cy={currentTempY} r={3.5} fill="#ffffff" stroke="#0D141C" strokeWidth={1.5} />
+          <circle className="armada-fan-graph-marker-halo" cx={currentTempX} cy={currentTempY} r={7} />
+          <circle className="armada-fan-graph-marker" cx={currentTempX} cy={currentTempY} r={3.5} strokeWidth={1.5} />
           <text
             x={clamp(currentTempX, PAD_LEFT + 14, PAD_LEFT + PLOT_W - 14)}
             y={currentTempY - 10 < PAD_TOP ? currentTempY + 15 : currentTempY - 10}
-            fontSize="7"
+            className="armada-fan-graph-temperature"
             textAnchor="middle"
-            fill="#ffffff"
           >
             {`${currentTemp}°C`}
           </text>
@@ -247,28 +275,27 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
       ) : null}
       {sorted.map((point) => {
         const index = shown.indexOf(point);
-        const isActive = activeIndex !== null
+        const isActive = !disabled && (activeIndex !== null
           ? shown[activeIndex] === point
-          : controllerActive && clamp(controllerIndex, 0, points.length - 1) === index;
+          : editing && clamp(controllerIndex, 0, points.length - 1) === index);
         return (
           <g key={`point-${index}`}>
             <circle
               cx={xForTemp(point.temp)}
               cy={yForPwm(point.pwm)}
               r={14}
-              fill="transparent"
+              className="armada-fan-graph-hit-target"
               onPointerDown={onPointerDown(index)}
               onPointerMove={onPointerMove}
-              onPointerUp={endDrag}
-              onPointerCancel={endDrag}
-              style={{ cursor: "grab", touchAction: "none" }}
+              onPointerUp={() => finishDrag(true)}
+              onPointerCancel={() => finishDrag(false)}
             />
             <circle
               cx={xForTemp(point.temp)}
               cy={yForPwm(point.pwm)}
               r={isActive ? 6 : 4.5}
-              fill={isActive ? "#ffd166" : "#5cc8ff"}
-              stroke="#0D141C"
+              className="armada-fan-graph-point"
+              data-active={isActive}
               strokeWidth={1.5}
               pointerEvents="none"
             />
@@ -276,9 +303,8 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
               <text
                 x={xForTemp(point.temp)}
                 y={yForPwm(point.pwm) - 12 < PAD_TOP ? yForPwm(point.pwm) + 14 : yForPwm(point.pwm) - 12}
-                fontSize="8"
+                className="armada-fan-graph-warning"
                 textAnchor="middle"
-                fill="#ffd166"
               >
                 {`${point.temp}°C / ${pwmToPercent(point.pwm)}%`}
               </text>
@@ -287,7 +313,7 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
         );
       })}
       </svg>
-      {controllerActive ? (
+      {editing ? (
         <div className="afc-controller-hint">
           {t("fanCurve.controllerEditStatus", {
             current: clamp(controllerIndex, 0, points.length - 1) + 1,
@@ -295,6 +321,6 @@ export function FanCurveGraph({ points, onChange, currentTemp }: {
           })}
         </div>
       ) : null}
-    </Focusable>
+    </GraphFocusable>
   );
 }

@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, "/usr/lib/armada")
 import armada_perf
+from armada_fan import FAN_DEFAULTS, discover_fan_hwmon, read_fan_settings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -241,16 +242,7 @@ def external_power_online():
 
 
 def fan_safe_once():
-    fan_hwmon = None
-    for path in Path("/sys/class/hwmon").glob("hwmon*"):
-        if read_text(path / "name") == "pwmfan" and (path / "pwm1").exists():
-            fan_hwmon = path
-            break
-    if not fan_hwmon:
-        for path in Path("/sys/class/hwmon").glob("hwmon*"):
-            if (path / "pwm1").exists():
-                fan_hwmon = path
-                break
+    fan_hwmon = discover_fan_hwmon()
     if not fan_hwmon:
         return
     enable = fan_hwmon / "pwm1_enable"
@@ -274,6 +266,7 @@ class ArmadaPower:
         self.manual_gpu_clock = 0
         self.gpu_manual_shown = {}
         self.smoothed_temp = 0.0
+        self.fan_control_signature = None
         self.last_pwm = 0
         self.suspended = False
         self.suspend_save = {}
@@ -336,6 +329,13 @@ class ArmadaPower:
         default_profile = parser.get("general", "default_profile").strip().lower()
         if default_profile not in PROFILES:
             raise ValueError(f"invalid default_profile: {default_profile}")
+        require_section(parser, "fan")
+        fan_config = read_fan_settings(parser)
+        fan_config["max_pwm"] = clamp(parser.getint("fan", "max_pwm"), fan_config["min_pwm"], 255)
+        fan_config["pwm_quantum"] = clamp(parser.getint("fan", "pwm_quantum", fallback=1), 1, 255)
+        fan_config["charging_pwm"] = clamp(
+            parser.getint("fan", "charging_pwm", fallback=0), 0, fan_config["max_pwm"]
+        )
         for section in parser.sections():
             if not section.startswith("underclock."):
                 continue
@@ -364,7 +364,7 @@ class ArmadaPower:
                 continue
             curve = parse_fan_curve(parser.get(section, "curve", fallback=""))
             if curve:
-                fan_curves[parts[1]] = curve
+                fan_curves[parts[1]] = {"curve": curve, **read_fan_settings(parser, section, fan_config)}
         if not fan_curves:
             raise ValueError("missing fan curves")
         for profile in PROFILES:
@@ -401,19 +401,6 @@ class ArmadaPower:
                 except ValueError:
                     pass
             profile_config[profile] = config
-        require_section(parser, "fan")
-        fan_config = {
-            key: parser.getint("fan", key)
-            for key in ("min_pwm", "max_pwm", "ramp_up", "ramp_down")
-        }
-        fan_config["smoothing"] = clamp(parser.getfloat("fan", "smoothing"), 0.0, 0.99)
-        fan_config["pwm_quantum"] = clamp(parser.getint("fan", "pwm_quantum", fallback=1), 1, 255)
-        fan_config["min_pwm"] = clamp(fan_config["min_pwm"], 0, 255)
-        fan_config["max_pwm"] = clamp(fan_config["max_pwm"], fan_config["min_pwm"], 255)
-        fan_config["charging_pwm"] = clamp(
-            parser.getint("fan", "charging_pwm", fallback=0), 0, fan_config["max_pwm"]
-        )
-
         fan_safe_above = clamp(
             parser.getint("suspend", "fan_safe_above", fallback=55),
             0,
@@ -467,13 +454,7 @@ class ArmadaPower:
         return None
 
     def discover_fan_hwmon(self):
-        for path in Path("/sys/class/hwmon").glob("hwmon*"):
-            if read_text(path / "name") == "pwmfan" and (path / "pwm1").exists():
-                return path
-        for path in Path("/sys/class/hwmon").glob("hwmon*"):
-            if (path / "pwm1").exists():
-                return path
-        return None
+        return discover_fan_hwmon()
 
     def irq_mask(self):
         choice = self.system_config.get("irq_cores", "auto")
@@ -673,6 +654,31 @@ class ArmadaPower:
     def profile_settings(self):
         return self.profile_config.get(self.profile, self.profile_config["balanced"])
 
+    def active_fan_curve(self):
+        curve = self.profile_settings()["fan_curve"]
+        return self.fan_curves[curve]["curve"] if isinstance(curve, str) else curve
+
+    def active_fan_settings(self):
+        settings = dict(self.fan_config)
+        curve = self.profile_settings()["fan_curve"]
+        if isinstance(curve, str):
+            named = self.fan_curves[curve]
+            settings.update({key: named[key] for key in FAN_DEFAULTS})
+            if min(named["curve"])[1] == 0:
+                settings["min_pwm"] = 0
+        settings["min_pwm"] = min(settings["min_pwm"], settings["max_pwm"])
+        return settings
+
+    def sync_fan_settings(self):
+        settings = self.active_fan_settings()
+        signature = (tuple(sorted(self.active_fan_curve())), *(settings[key] for key in FAN_DEFAULTS),
+                     settings["max_pwm"], settings["pwm_quantum"])
+        # Restart smoothing, but keep the current PWM for a gradual transition.
+        if signature != getattr(self, "fan_control_signature", None):
+            self.smoothed_temp = 0.0
+            self.fan_control_signature = signature
+        return settings
+
     def available_governors(self):
         for policy in self.cpu_policies:
             available = read_text(policy / "scaling_available_governors").split()
@@ -697,6 +703,7 @@ class ArmadaPower:
             write_text(path / "scaling_governor", "ondemand")
 
     def apply_profile(self):
+        self.sync_fan_settings()
         settings = self.profile_settings()
         for policy in self.cpu_policies:
             freqs = self.cpu_available_freqs(policy)
@@ -858,18 +865,16 @@ class ArmadaPower:
         return config["fan_low_pwm"]
 
     def quantize_pwm(self, pwm):
-        quantum = self.fan_config["pwm_quantum"]
+        settings = self.active_fan_settings()
+        quantum = settings["pwm_quantum"]
         if quantum > 1:
             pwm = round(pwm / quantum) * quantum
-        return clamp(int(pwm), self.fan_config["min_pwm"], self.fan_config["max_pwm"])
+        return clamp(int(pwm), settings["min_pwm"], settings["max_pwm"])
 
     def target_pwm(self, temp):
-        curve = self.profile_settings()["fan_curve"]
-        if isinstance(curve, str):
-            curve = self.fan_curves[curve]
-        curve = sorted(curve)
+        curve = sorted(self.active_fan_curve())
         if not curve:
-            return self.fan_config["min_pwm"]
+            return self.active_fan_settings()["min_pwm"]
         if temp <= curve[0][0]:
             return self.quantize_pwm(curve[0][1])
         if temp >= curve[-1][0]:
@@ -883,7 +888,7 @@ class ArmadaPower:
                     return self.quantize_pwm(high_pwm)
                 pwm = low_pwm + (high_pwm - low_pwm) * (temp - low_temp) / span
                 return self.quantize_pwm(pwm)
-        return self.fan_config["min_pwm"]
+        return self.active_fan_settings()["min_pwm"]
 
     def apply_sleep_charging_pwm(self):
         path = self.fan_hwmon / "pwm1_sleep_charging" if self.fan_hwmon else None
@@ -900,6 +905,7 @@ class ArmadaPower:
             if not self.fan_pwm:
                 sd_notify("WATCHDOG=1")
                 return True
+            settings = self.sync_fan_settings()
             if self.fan_enable and self.fan_enable.exists():
                 write_text(self.fan_enable, fan_enable_mode(self.fan_hwmon))
 
@@ -911,17 +917,17 @@ class ArmadaPower:
             else:
                 temp = self.read_temp()
                 if temp:
-                    weight = self.fan_config["smoothing"]
+                    weight = settings["smoothing"]
                     self.smoothed_temp = temp if not self.smoothed_temp else (self.smoothed_temp * weight + temp * (1.0 - weight))
                     target = self.target_pwm(int(self.smoothed_temp))
                 else:
                     target = FAN_SAFE_PWM
                 target = self.charging_floor(target)
                 if target > self.last_pwm:
-                    next_pwm = min(target, self.last_pwm + self.fan_config["ramp_up"])
+                    next_pwm = min(target, self.last_pwm + settings["ramp_up"])
                 else:
-                    next_pwm = max(target, self.last_pwm - self.fan_config["ramp_down"])
-                self.last_pwm = clamp(next_pwm, self.fan_config["min_pwm"], self.fan_config["max_pwm"])
+                    next_pwm = max(target, self.last_pwm - settings["ramp_down"])
+                self.last_pwm = clamp(next_pwm, settings["min_pwm"], settings["max_pwm"])
 
             write_text(self.fan_pwm, self.last_pwm)
             if self.connection:

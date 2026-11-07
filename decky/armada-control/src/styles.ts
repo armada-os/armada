@@ -1,219 +1,233 @@
-import { gamepadSliderClasses, gamepadTabbedPageClasses } from "@decky/ui";
+import { classMap, gamepadSliderClasses } from "@decky/ui";
+import { theme } from "./theme";
+import { visualStyles } from "./components/visualStyles";
+import { tabNavigationStyles } from "./components/TabNavigation.styles";
+import { disabledButtonStyles } from "./components/buttonStyles";
+
+// Steam has several section styles, so one class module may not match the rendered section.
+const sectionStyles = classMap
+  .filter((classes) => classes.PanelSection && classes.PanelSectionTitle)
+  .map((classes) => `
+      .armada-control-tab-content .${classes.PanelSection} {
+        margin-block-end: 0;
+      }
+      .armada-control-tab-content .${classes.PanelSection} ~ .${classes.PanelSection}:has(> .${classes.PanelSectionTitle}) {
+        border-block-start: ${theme.separatorWidth} solid ${theme.separator};
+        padding-block-start: ${theme.spaceLarge};
+      }
+      .armada-control-tab-content .${classes.PanelSectionTitle}:has(+ .armada-section-description, + * .armada-section-description) {
+        padding-block-end: 0;
+      }
+  `).join("");
+
+const descriptionStyles = classMap
+  .filter((classes) => classes.FieldDescription)
+  .map((classes) => `
+      .armada-control-tabs .${classes.FieldDescription},
+      .armada-control-dialog .${classes.FieldDescription} {
+        color: ${theme.supportingText};
+      }
+      .armada-control-tabs .armada-note-error .${classes.FieldDescription},
+      .armada-control-dialog .armada-note-error .${classes.FieldDescription} {
+        color: ${theme.error};
+      }
+  `).join("");
+
+const nativeSelector = (key: string) => {
+  const names = [...new Set(classMap
+    .filter((classes) => key !== "PanelSection" || classes.PanelSectionTitle)
+    .map((classes) => classes[key]).filter(Boolean))];
+  return names.length ? `:is(${names.map((name) => `.${name}`).join(", ")})` : ":not(*)";
+};
+const nativeField = nativeSelector("Field");
+const nativeRow = nativeSelector("PanelSectionRow");
+const nativeSection = nativeSelector("PanelSection");
+const finalFieldStyles = `
+      .armada-control-tab-content ${nativeSection} > ${nativeRow}:not(:has(~ :not(.armada-supporting-text))) ${nativeField}::after,
+      .armada-control-tab-content ${nativeSection} > ${nativeField}:not(:has(~ :not(.armada-supporting-text)))::after,
+      .armada-control-dialog .DialogControlsSection > ${nativeRow}:not(:has(~ :not(.armada-supporting-text))) ${nativeField}::after,
+      .armada-control-dialog .DialogControlsSection > ${nativeField}:not(:has(~ :not(.armada-supporting-text)))::after {
+        content: none;
+      }
+`;
 
 export const styles = `
-      .armada-control-tabs {
-        width: 100%;
-        height: 95vh;
-        min-width: 0;
-        min-height: 0;
-      }
-      .armada-control-tabs > div {
-        height: 100%;
-        min-height: 0;
-      }
-      .armada-control-tabs > div > div:first-child::before {
-        background: #0D141C;
-        box-shadow: none;
-        backdrop-filter: none;
-      }
-      .armada-control-tabs .${gamepadTabbedPageClasses.TabContents},
-      .armada-control-tabs .${gamepadTabbedPageClasses.TabContentsScroll},
-      .armada-control-tabs .armada-control-tab-content {
-        min-width: 0;
-      }
-      .armada-control-tabs .${gamepadTabbedPageClasses.TabContentsScroll} {
-        padding-left: 0;
-        padding-right: 0;
-      }
-      .armada-control-tabs [role="tablist"] {
+      ${disabledButtonStyles}
+      .armada-loading-state {
         display: flex;
-        flex-wrap: nowrap;
-        justify-content: center;
-      }
-      .armada-control-tabs [role="tab"] {
-        flex: 0 1 auto;
-        min-width: 0;
-        box-sizing: border-box;
-        padding-left: 6px;
-        padding-right: 6px;
-        display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
+        gap: ${theme.spaceMedium};
+        min-block-size: var(--armada-panel-available-height, 100%);
+        min-inline-size: 0;
       }
-      .armada-control-tabs [role="tab"] svg {
-        display: block;
-        margin: 0;
+      .armada-loading-spinner {
+        inline-size: ${theme.loadingIndicatorSize};
+        block-size: ${theme.loadingIndicatorSize};
+        flex: none;
+      }
+      .armada-loading-state .armada-supporting-text {
+        text-align: center;
+      }
+      .armada-control-tabs {
+        box-sizing: border-box;
+        margin-block-start: calc(0px - var(--armada-native-content-padding, 0px));
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      ${tabNavigationStyles}
+      .armada-tab-panels {
+        min-width: 0;
+        padding-block-start: ${theme.spaceLarge};
+      }
+      .armada-tab-panels:has(> .armada-control-tab-content > ${nativeSection}:first-child .armada-notice) {
+        padding-block-start: 0;
+      }
+      ${sectionStyles}
+      ${descriptionStyles}
+      ${finalFieldStyles}
+      .armada-control-tabs .armada-section-description.armada-supporting-text {
+        padding-block-start: 0;
       }
       .armada-control-tabs .armada-control-tab-content {
-        padding-bottom: 24px;
+        padding-block-end: ${theme.spaceMedium};
+      }
+      .armada-icon { display: block; width: 1.125em; height: 1.125em; flex: none; }
+      .armada-truncated-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
+      .armada-label-with-badge {
+        display: flex;
+        align-items: center;
+        gap: ${theme.spaceMedium};
+        inline-size: 100%;
+        min-inline-size: 0;
+      }
+      .armada-label-with-badge-text {
+        flex: 1;
+        min-inline-size: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .armada-label-badge {
+        flex: 0 1 auto;
+        min-inline-size: 0;
+        max-inline-size: 100%;
+        padding: calc(${theme.spaceSmall} / 2) ${theme.spaceSmall};
+        border: 1px solid currentColor;
+        border-radius: ${theme.radius};
+        font-size: ${theme.textCaption};
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .armada-control-tabs .armada-rgb-hue .${gamepadSliderClasses.SliderTrack} {
-        --left-track-color: #0000;
-        --colored-toggles-main-color: #0000;
+        --left-track-color: transparent;
+        --colored-toggles-main-color: transparent;
         background: linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
       }
       .armada-control-tabs .armada-rgb-saturation .${gamepadSliderClasses.SliderTrack} {
-        --left-track-color: #0000;
-        --colored-toggles-main-color: #0000;
+        --left-track-color: transparent;
+        --colored-toggles-main-color: transparent;
         background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 1));
-        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+        box-shadow: inset 0 0 0 1px ${theme.border};
       }
-      .armada-control-tabs .armada-subheader {
+      :is(.armada-control-tabs, .armada-control-dialog) .armada-subheader {
         text-transform: uppercase;
-        font-size: 12px;
+        font-size: ${theme.textSubheading};
         font-weight: 600;
-        letter-spacing: 0.5px;
+        letter-spacing: .03em;
         opacity: 0.7;
         margin: 0;
-        padding: 10px 0 2px;
+        padding: ${theme.spaceMedium} 0 ${theme.spaceSmall};
       }
-      .armada-control-tabs .armada-field-note {
-        box-sizing: border-box;
-        width: 100%;
-        margin-top: -12px;
-        padding: 0 0 6px;
-        font-size: 12px;
-        line-height: 16px;
-        opacity: 0.62;
-      }
-      .armada-control-tabs .armada-note-error {
-        color: #ff6b6b;
+      :is(.armada-control-tabs, .armada-control-dialog) .armada-note-error {
+        color: ${theme.error};
         opacity: 1;
-      }
-      .armada-control-tabs .armada-advanced-group {
-        margin: 0 8px;
-      }
-      .armada-control-tabs .armada-compat-note {
-        box-sizing: border-box;
-        width: 100%;
-        padding: 8px 16px 8px;
-        font-size: 12px;
-        line-height: 16px;
-        opacity: 0.62;
-        text-align: left;
-        justify-content: flex-start;
-        align-self: stretch;
-      }
-
-      .afc-scope .afc-field-note {
-        box-sizing: border-box;
-        width: 100%;
-        margin-top: 4px;
-        padding: 0 0 6px;
-        font-size: 12px;
-        line-height: 16px;
-        opacity: 0.62;
-      }
-      .afc-scope .afc-used-by-note {
-        padding-bottom: 0;
-      }
-      .afc-scope .afc-note {
-        box-sizing: border-box;
-        width: 100%;
-        margin-top: 6px;
-        padding: 0 0 6px;
-        font-size: 12px;
-        line-height: 16px;
-        opacity: 0.62;
-      }
-      .afc-scope .afc-reset-row {
-        padding: 0 14px 8px;
-      }
-      .armada-control-panel-content,
-      .afc-scope .armada-control-panel-content {
-        padding: 0 8px;
       }
       .afc-scope .afc-error {
         box-sizing: border-box;
         width: 100%;
-        padding: 8px 16px;
-        font-size: 12px;
-        line-height: 16px;
-        color: #ff6b6b;
+        padding: ${theme.spaceMedium} ${theme.spaceLarge};
+        font-size: ${theme.textSmall};
+        line-height: 1.4;
+        color: ${theme.error};
       }
       .afc-scope .afc-modal-error {
         box-sizing: border-box;
         width: 100%;
-        padding: 0 0 8px;
-        font-size: 12px;
-        line-height: 16px;
-        color: #ff6b6b;
+        padding: 0 0 ${theme.spaceMedium};
+        font-size: ${theme.textSmall};
+        line-height: 1.4;
+        color: ${theme.error};
+      }
+      .armada-control-dialog-scroll {
+        display: contents;
       }
       .armada-control-dialog-footer {
+        box-sizing: border-box;
+        width: 100%;
+        min-width: 0;
         display: flex;
         flex-direction: row;
-        gap: 8px;
+        flex-wrap: wrap;
+        gap: ${theme.spaceMedium};
       }
-      .armada-control-dialog-footer > button {
-        flex: 1 1 0;
-        min-width: 0;
+      .armada-control-dialog-footer > * {
+        box-sizing: border-box;
+        flex: 1 1 max-content;
+        max-width: 100%;
         width: auto;
         margin: 0;
+      }
+      .afc-scope .afc-graph-focusable[aria-disabled="true"] {
+        opacity: ${theme.disabledOpacity};
+        cursor: not-allowed;
       }
       .afc-scope .afc-graph-focusable {
         display: block;
         width: 100%;
         box-sizing: border-box;
-        border-radius: 6px;
+        border-radius: ${theme.radius};
         border: 2px solid transparent;
       }
       .afc-scope .afc-graph-focusable.afc-graph-focused {
-        border-color: #5cc8ff;
-        box-shadow: 0 0 0 2px rgba(92, 200, 255, 0.35);
+        border-color: ${theme.accent};
+        box-shadow: 0 0 0 2px ${theme.accent};
       }
       .afc-scope .afc-graph-focusable.afc-graph-editing.afc-graph-focused {
-        border-color: #ffd166;
-        box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.45);
+        border-color: ${theme.warning};
+        box-shadow: 0 0 0 2px ${theme.warning};
       }
       .afc-scope .afc-points-drawer {
-        margin: 4px 0 4px 12px;
-        padding: 6px 0 6px 10px;
-        background: rgba(92, 200, 255, 0.06);
-        border-left: 2px solid rgba(92, 200, 255, 0.45);
+        margin: ${theme.spaceSmall} 0 ${theme.spaceSmall} ${theme.spaceLarge};
+        padding: ${theme.spaceSmall} 0 ${theme.spaceSmall} ${theme.spaceMedium};
+        background: ${theme.subtle};
+        border-left: 2px solid ${theme.accent};
       }
       .afc-scope .afc-point-row {
-        padding: 0 14px 0;
+        padding: 0 ${theme.spaceLarge};
       }
       .afc-scope .afc-point-row + .afc-point-row {
-        margin-top: -8px;
-      }
-      .afc-scope .afc-point-row-header {
-        display: flex;
-        align-items: stretch;
-        gap: 6px;
-      }
-      .afc-scope .afc-point-row-header > *:first-child {
-        flex: 1;
-        min-width: 0;
-      }
-      .afc-scope .afc-point-row-header > *:last-child {
-        flex: 0 0 40px;
-        width: 40px;
-      }
-      .afc-scope .afc-point-row-header button {
-        min-width: 0;
-        max-width: 100%;
-      }
-      .afc-scope .afc-point-row-header > *:last-child button {
-        width: 100%;
-        padding-left: 0;
-        padding-right: 0;
+        margin-top: calc(-1 * ${theme.spaceMedium});
       }
       .afc-scope .afc-collapse {
-        overflow: hidden;
-        transition: max-height 200ms ease;
+        animation: armada-reveal ${theme.motion} ease;
       }
-      .afc-scope .afc-point-details-inner {
-        margin: 4px 0 8px 8px;
-        padding: 4px 4px 4px 6px;
-      }
+      @keyframes armada-reveal { from { opacity: 0; } to { opacity: 1; } }
       .afc-scope .afc-controller-hint {
         box-sizing: border-box;
         width: 100%;
-        margin-top: 4px;
-        padding: 0 0 6px;
-        font-size: 11px;
-        line-height: 15px;
-        color: #ffd166;
+        margin-top: ${theme.spaceSmall};
+        padding: 0 0 ${theme.spaceSmall};
+        font-size: ${theme.textCaption};
+        line-height: 1.4;
+        color: ${theme.warning};
       }
+      ${visualStyles}
     `;
