@@ -71,6 +71,15 @@ fi
 restore_powerkey_wakeup ||
     printf 'armada-powerbutton-suspend: failed to restore power-key wake\n' >&2
 
+# Block stale idle-timer suspend requests briefly after resume.
+grace_sec=${ARMADA_RESUME_SUSPEND_GRACE_SEC:-5}
+run_cmd=${ARMADA_SYSTEMD_RUN:-systemd-run}
+if [[ "$grace_sec" =~ ^[0-9]+$ ]] && (( grace_sec > 0 )); then
+    "$run_cmd" --quiet --collect --unit=armada-resume-suspend-grace \
+        systemd-inhibit --what=sleep --who=Armada \
+        --why='post-resume grace period' --mode=block sleep "$grace_sec" || true
+fi
+
 # user.slice is frozen here, so USR1 precedes resumed user input.
 eval "$(/usr/libexec/armada/device-env 2>/dev/null)" || exit 0
 [[ "${ARMADA_SUSPEND_MODE:-fake}" != fake ]] || exit 0

@@ -1,0 +1,77 @@
+#!/bin/sh
+set -u
+
+POWER_SUPPLY_ROOT=${ARMADA_POWER_SUPPLY_ROOT:-/sys/class/power_supply}
+USB=${ARMADA_CHARGE_USB:-$POWER_SUPPLY_ROOT/qcom-battmgr-usb}
+MASTER=${ARMADA_CHARGE_MASTER:-$POWER_SUPPLY_ROOT/hl7139-master}
+SLAVE=${ARMADA_CHARGE_SLAVE:-$POWER_SUPPLY_ROOT/hl7139-slave}
+STATE_DIR=${ARMADA_CHARGE_STATE_DIR:-/run/armada-pocketevo-charge-policy}
+SLEEP_CMD=${ARMADA_CHARGE_SLEEP_CMD:-sleep}
+RETRIES=${ARMADA_CHARGE_CLEANUP_RETRIES:-10}
+TEST_STUCK_PUMP=${ARMADA_CHARGE_TEST_STUCK_PUMP:-}
+
+mkdir -p "$STATE_DIR"
+
+log()
+{
+	printf 'pocketevo-charge-cleanup: %s\n' "$*"
+}
+
+pause()
+{
+	"$SLEEP_CMD" "$1"
+}
+
+fault()
+{
+	printf '%s\n' "$1" > "$STATE_DIR/fault"
+	log "$1"
+	return 1
+}
+
+attempt=1
+pumps_off=0
+while test "$attempt" -le "$RETRIES"; do
+	# Disable the slave first so a partial transition cannot move the whole
+	# direct-charge load onto it while the master is already off.
+	printf '0\n' > "$SLAVE/online" 2>/dev/null || true
+	printf '0\n' > "$MASTER/online" 2>/dev/null || true
+
+	master_online=$(cat "$MASTER/online" 2>/dev/null) || master_online=unknown
+	slave_online=$(cat "$SLAVE/online" 2>/dev/null) || slave_online=unknown
+	if test "$TEST_STUCK_PUMP" = master; then master_online=1; fi
+	if test "$TEST_STUCK_PUMP" = slave; then slave_online=1; fi
+	if test "$master_online" = 0 && test "$slave_online" = 0; then
+		pumps_off=1
+		break
+	fi
+	log "shutdown attempt $attempt/$RETRIES read master=$master_online slave=$slave_online"
+	attempt=$((attempt + 1))
+	pause 0.2
+done
+
+if test "$pumps_off" != 1; then
+	fault 'pump shutdown could not be verified; Qualcomm charging was not restored'
+	exit 1
+fi
+
+rm -f "$STATE_DIR/active"
+
+usb_online=$(cat "$USB/online" 2>/dev/null) || usb_online=unknown
+if test "$usb_online" = 0; then
+	log 'both pumps verified off; USB offline'
+	exit 0
+fi
+
+# Once both CHG_EN bits are confirmed clear, return the PPS request to the
+# normal 9.6 V region and release the Qualcomm charger from the 13 mA handoff.
+# A non-PPS source can reject voltage_now; restoring ICL is safe because the
+# direct path has already been proven off.
+printf '9600000\n' > "$USB/voltage_now" 2>/dev/null || true
+pause 1
+if ! printf '3000000\n' > "$USB/input_current_limit"; then
+	fault 'both pumps are off, but Qualcomm charging could not be restored'
+	exit 1
+fi
+
+log 'both pumps verified off; Qualcomm charger restored'
