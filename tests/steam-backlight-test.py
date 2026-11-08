@@ -19,12 +19,13 @@ for name in ('source', 'target'):
     (conversion_root / name).mkdir()
 
 
-def convert(value, source_max, target_max, gamma=1, input_min=0, output_min=0):
+def convert(value, source_max, target_max, gamma=1, input_min=0, output_min=0, output_max=1):
     for name, maximum in (('source', source_max), ('target', target_max)):
         (conversion_root / name / 'max_brightness').write_text(str(maximum) + '\n')
     result = subprocess.run([str(CONVERTER), str(value), str(conversion_root / 'source'),
                              str(conversion_root / 'target'), str(gamma),
-                             str(input_min), str(output_min)], text=True, capture_output=True)
+                             str(input_min), str(output_min), str(output_max)],
+                            text=True, capture_output=True)
     if result.returncode:
         raise ValueError(result.stderr)
     return int(result.stdout)
@@ -68,6 +69,17 @@ class SteamBacklightTest(unittest.TestCase):
         self.assertEqual(convert(10000, 10000, 1000, 2, .25, .1), 1000)
         self.assertEqual(convert(5625, 10000, 2000, 2, .25, .1), 1100)
         self.assertEqual(convert(60, 100, 1000, 1, .2, .1), 550)
+
+    def test_maximum_ends_the_range_early(self):
+        values = [convert(v, 4095, 4095, 2.4, .01, .01, .84) for v in range(4096)]
+        self.assertEqual(values, sorted(values))
+        self.assertEqual(values[-1], 3439)
+        self.assertEqual(values[0], 41)
+        self.assertEqual(convert(2048, 4096, 4096, 1, 0, 0, .5), 1024)
+        self.assertEqual(convert(4096, 4096, 4096, 1, 0, 0, .5), 2048)
+        for output_min, output_max in ((0, 0), (.5, .4), (0, 1.1), (0, -1)):
+            with self.assertRaises(ValueError):
+                convert(1024, 3445, 3445, 2.4, 0, output_min, output_max)
 
     def test_default_minimum(self):
         for maximum, minimum in ((1, 1), (100, 1), (255, 3), (4095, 41)):
@@ -141,16 +153,17 @@ class SteamBacklightTest(unittest.TestCase):
             brightness = path / "panel/brightness"
             brightness.parent.mkdir()
             brightness.touch()
-            for primary, gamma, input_min, minimum, scale, writable in (
-                ("", "1", "0", "0", "linear", True),
-                ("", "1", "0", "0", "non-linear", True),
-                ("", "2.4", ".01", ".05", "non-linear", False),
-                ("", "2.4", ".01", ".05", "unknown", False),
-                ("", "2.4", ".01", ".05", None, False),
-                ("", "1", ".01", "0", "linear", False),
-                ("", "1", "0", ".05", "linear", False),
-                ("", "1", "0", ".01", "non-linear", False),
-                ("primary", "1", "0", "0", "linear", False),
+            for primary, gamma, input_min, minimum, maximum, scale, writable in (
+                ("", "1", "0", "0", "1", "linear", True),
+                ("", "1", "0", "0", "1", "non-linear", True),
+                ("", "2.4", ".01", ".05", "1", "non-linear", False),
+                ("", "2.4", ".01", ".05", "1", "unknown", False),
+                ("", "2.4", ".01", ".05", "1", None, False),
+                ("", "1", ".01", "0", "1", "linear", False),
+                ("", "1", "0", ".05", "1", "linear", False),
+                ("", "1", "0", ".01", "1", "non-linear", False),
+                ("", "1", "0", "0", ".84", "linear", False),
+                ("primary", "1", "0", "0", "1", "linear", False),
             ):
                 scale_path = brightness.parent / "scale"
                 if scale is None:
@@ -160,7 +173,8 @@ class SteamBacklightTest(unittest.TestCase):
                 brightness.chmod(0o666)
                 script = source.replace('eval "$(/usr/libexec/armada/device-env)"',
                                         f'ARMADA_PRIMARY_BACKLIGHT={primary}\nARMADA_BACKLIGHT_GAMMA={gamma}\n'
-                                        f'ARMADA_BACKLIGHT_INPUT_MIN={input_min}\nARMADA_BACKLIGHT_MIN={minimum}')
+                                        f'ARMADA_BACKLIGHT_INPUT_MIN={input_min}\nARMADA_BACKLIGHT_MIN={minimum}\n'
+                                        f'ARMADA_BACKLIGHT_MAX={maximum}')
                 script = script.replace("/sys/class/backlight", tmp)
                 subprocess.run(["bash", "-s", "--", "panel"], input=script,
                                text=True, check=True)
@@ -242,6 +256,14 @@ class SteamBacklightTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(bus_log.exists())
             self.assertEqual((path / 'primary/brightness').read_text(), '1925\n')
+            capped_source = root_source.replace('ARMADA_BACKLIGHT_MIN=0.05',
+                                                'ARMADA_BACKLIGHT_MIN=0.05\nARMADA_BACKLIGHT_MAX=0.84')
+            result = subprocess.run(['bash', '-s', '--', str(target), '3445'],
+                                    input=capped_source, text=True, capture_output=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(int((path / 'primary/brightness').read_text()),
+                             convert(3445, 3445, 3445, 2.4, .01, .05, .84))
+            self.assertLess(int((path / 'primary/brightness').read_text()), 3445)
             result = subprocess.run(['bash', '-s', '--',
                 '/sys/class/drm/card0/device/power_dpm_force_performance_level', 'auto'],
                 input=source, text=True, capture_output=True, env=env)
