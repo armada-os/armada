@@ -298,16 +298,18 @@ class SteamBacklightTest(unittest.TestCase):
 
     def test_device_profiles(self):
         for model, expected in (("Retroid Pocket Nova", '2.4'), ("AYN Thor", '1'),
-                                ("unrecognised", '1')):
+                                ("AYN Odin 3 Portal", '2.4'), ("unrecognised", '1')):
             env = dict(os.environ, ARMADA_MODEL=model,
                        ARMADA_DEVICE_DIR=str(ROOT / 'system_files/usr/lib/armada/devices'),
                        ARMADA_SLEEP_CONFIG='/dev/null', ARMADA_MEM_SLEEP_PATH='/dev/null')
             output = subprocess.check_output([str(HELPERS / 'device-env')], env=env, text=True)
             self.assertIn(f'ARMADA_BACKLIGHT_GAMMA={expected}\n', output)
-            self.assertIn('ARMADA_BACKLIGHT_INPUT_MIN=' +
-                          ('0.01' if model == 'Retroid Pocket Nova' else '0') + '\n', output)
-            self.assertIn('ARMADA_BACKLIGHT_MIN=' +
-                          ('0.05' if model == 'Retroid Pocket Nova' else '0') + '\n', output)
+            minima = {'Retroid Pocket Nova': ('0.01', '0.05'), 'AYN Odin 3 Portal': ('0.01', '0.01')}
+            input_min, minimum = minima.get(model, ('0', '0'))
+            self.assertIn(f'ARMADA_BACKLIGHT_INPUT_MIN={input_min}\n', output)
+            self.assertIn(f'ARMADA_BACKLIGHT_MIN={minimum}\n', output)
+            self.assertIn('ARMADA_BACKLIGHT_MAX=' +
+                          ('0.84' if model == 'AYN Odin 3 Portal' else '1') + '\n', output)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Sat, 7 Nov 2026 00:40:00 -0500
+Subject: [PATCH] add AYN Odin 3 Portal device quirks
+
+---
+ usr/share/gamescope-session-plus/device-quirks | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/usr/share/gamescope-session-plus/device-quirks b/usr/share/gamescope-session-plus/device-quirks
+--- a/usr/share/gamescope-session-plus/device-quirks
++++ b/usr/share/gamescope-session-plus/device-quirks
+@@ -387,3 +387,11 @@
+ 
+   export STEAM_DISPLAY_REFRESH_LIMITS=60,120
+ fi
++
++if [[ ":AYN Odin 3 Portal:" =~ ":$SYS_ID:" ]]; then
++  CUSTOM_REFRESH_RATES=60,120
++  OUTPUT_CONNECTOR='*,DSI-1'
++  FAKE_OUTPUT_MM=206x116
++
++  export STEAM_DISPLAY_REFRESH_LIMITS=60,120
++fi
+-- 
+2.56.0
