@@ -36,6 +36,9 @@ SPEC="$HOME/rpmbuild/SPECS/NetworkManager.spec"
 sed -i "s/^Release:.*/Release:        ${NM_REL}%{?dist}/" "$SPEC"
 sed -i "/^%autochangelog/d" "$SPEC"
 
+# F45 retired the fortisslvpn/vpnc plugins; F44 still ships them and plasma-nm-vpnc needs vpnc.
+sed -i -E "/^Obsoletes:[[:space:]]+NetworkManager-(fortisslvpn|vpnc)/d" "$SPEC"
+
 cp /work/patches/*.patch "$HOME/rpmbuild/SOURCES/"
 LAST=$(grep -nE "^(Patch|Source)[0-9]*:" "$SPEC" | tail -1 | cut -d: -f1)
 [ -n "$LAST" ] || { echo "ERROR: no Source/Patch line to anchor on"; exit 1; }
