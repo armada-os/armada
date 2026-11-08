@@ -198,6 +198,24 @@ def parse_fan_curve(value):
     return sorted(curve, reverse=True)
 
 
+def parse_governor_tunables(parser):
+    tunables = {}
+    for section in parser.sections():
+        if not section.startswith("governor."):
+            continue
+        governor = section.removeprefix("governor.")
+        if not governor.isidentifier():
+            continue
+        values = {}
+        for key, value in parser.items(section):
+            value = value.strip()
+            if key.isidentifier() and value.isdigit():
+                values[key] = value
+        if values:
+            tunables[governor] = values
+    return tunables
+
+
 def require_section(parser, section):
     if not parser.has_section(section):
         raise ValueError(f"missing config section [{section}]")
@@ -436,6 +454,7 @@ class ArmadaPower:
         }
         system_config = {
             "irq_cores": parser.get("system", "irq_cores", fallback="auto").strip(),
+            "governor_tunables": parse_governor_tunables(parser),
         }
         return (default_profile, underclock_config, fan_curves, profile_config,
                 fan_config, suspend_config, system_config)
@@ -695,6 +714,26 @@ class ArmadaPower:
             write_text(path / "scaling_governor", "schedutil")
         elif "ondemand" in available:
             write_text(path / "scaling_governor", "ondemand")
+        self.apply_governor_tunables(path)
+
+    def apply_governor_tunables(self, path):
+        # The kernel resets a governor's tunables whenever it is switched in,
+        # so these are rewritten after every governor write.
+        governor = read_text(path / "scaling_governor")
+        tunables = getattr(self, "system_config", {}).get("governor_tunables", {}).get(governor)
+        if not tunables:
+            return
+        directory = path / governor
+        if not directory.is_dir():
+            directory = path.parent / governor
+        failed = []
+        for name, value in tunables.items():
+            target = directory / name
+            if target.exists() and read_text(target) != value and not write_text(target, value):
+                failed.append((target, value))
+        # bounds checks against sibling tunables (up_threshold > down_threshold)
+        for target, value in failed:
+            write_text(target, value)
 
     def apply_profile(self):
         settings = self.profile_settings()
