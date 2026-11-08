@@ -1256,3 +1256,8 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1304-drm-panel-vtdr6130-add-odin3portal.patch`
   source: Armada
   upstream: local
+
+- `patches/1305-drm-panel-vtdr6130-allow-calibrating-the-odin3portal-frame-length.patch`
+  source: https://github.com/ROCKNIX/distribution/blob/abfdcfb57ff42180a50fca60a2a150641608d57e/projects/ROCKNIX/devices/SM8550/patches/linux/0508-ROCKNIX-rp6-panel-frame-length-calibration.patch
+  upstream: local
+  notes: Armada reimplements the RP6 interface for the Odin 3 Portal, whose init sequence reaches B1 through offset writes.

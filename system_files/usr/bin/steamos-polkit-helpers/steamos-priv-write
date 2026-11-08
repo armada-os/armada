@@ -20,7 +20,8 @@ apply_backlight() {
   [[ -e "$tgt_dir/brightness" ]] || return 1
   val="$(/usr/libexec/armada/steam-backlight-value "$value" \
     "$src_dir" "$tgt_dir" "${ARMADA_BACKLIGHT_GAMMA:-1}" \
-    "${ARMADA_BACKLIGHT_INPUT_MIN:-0}" "${ARMADA_BACKLIGHT_MIN:-0}")"
+    "${ARMADA_BACKLIGHT_INPUT_MIN:-0}" "${ARMADA_BACKLIGHT_MIN:-0}" \
+    "${ARMADA_BACKLIGHT_MAX:-1}")"
   if [[ $EUID -eq 0 ]]; then
     echo "$val" >"$tgt_dir/brightness"
     return

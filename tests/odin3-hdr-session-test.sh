@@ -55,6 +55,7 @@ for entry in \
     ayaneo-pocket-evo:780:ayn.icna3512.oled.lua:390 \
     ayn-odin-2-portal:780:ayn.icna3512.oled.lua:390 \
     retroid-pocket-6:750:retroid.vtdr6130.oled.lua:375 \
+    ayn-odin-3-portal:750:retroid.vtdr6130.oled.lua:375 \
     retroid-pocket-5:580:retroid.ch13726a.oled.lua:290 \
     retroid-pocket-flip2:580:retroid.ch13726a.oled.lua:290 \
     retroid-pocket-nova:670:retroid.il97680a.oled.lua:335; do
