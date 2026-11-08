@@ -267,6 +267,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 
 # ============== AYN Odin 3 Portal ==============
 1304-drm-panel-vtdr6130-add-odin3portal.patch
+1305-drm-panel-vtdr6130-allow-calibrating-the-odin3portal-frame-length.patch
 
 # ============== LPASS clocks released in s2idle (7.3 backports + force suspend) ==============
 0557-ASoC-codecs-lpass-wsa-macro-switch-to-pm-clock-framework.patch
