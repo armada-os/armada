@@ -72,3 +72,30 @@ Subject: [PATCH] arm64: dts: qcom: thor: hall wake, touch orientation, DPU dithe
  	};
  };
  
+
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: ayn-thor: ignore power key with the lid closed
+
+Point the PON power key at the hall lid switch so presses while
+suspended with the lid closed do not wake the device.
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
+@@ -34,7 +34,7 @@
+ 		pinctrl-0 = <&hall_lid_n>;
+ 		pinctrl-names = "default";
+ 
+-		hall-lid-sensor {
++		lid_switch: hall-lid-sensor {
+ 			label = "Hall Lid Sensor";
+ 			gpios = <&tlmm 17 GPIO_ACTIVE_LOW>;
+ 			linux,input-type = <EV_SW>;
+@@ -479,3 +479,8 @@
+ &spk_amp_r {
+ 	firmware-name = "qcom/sm8550/ayn/thor/aw883xx_acf.bin";
+ };
++
++&pon_pwrkey {
++	/* Ignore presses while suspended with the lid closed. */
++	lid-switch = <&lid_switch>;
++};

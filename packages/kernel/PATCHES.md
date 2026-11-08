@@ -885,7 +885,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada disables the inherited Pocket 6 PWM backlight and removes its panel reference so Nova uses its panel driver’s DSI backlight. Matches Retroid’s Nova panel wiring: L11B/L12B/L13B for vdd/vddio/vci, GPIO 70/143 fixed regulators for vdd18/vdd28, and rotation 0. Removes the inherited avdd supply and retains Armada DPU dithering and Nova's own ADSP firmware. The ROCKNIX Nova → RP6 → AYN common inheritance remains unchanged for other systems.
 - `dts/qcs8550-ayn-thor.dts.patch`
   source: armada
-  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`.
+  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`. It also sets `lid-switch` on the power key so it can't wake the device with the lid closed (patches 1306 and 1307).
 - `dts/sm8650-ayaneo-common.dtsi.patch`
   source: armada
   notes: Armada keeps volume-up from waking the system, wires the upstream SY7758 driver, marks PCIe WAKE# active-low, idles the codec rails in LPM during s2idle, and keeps the RTC offset in an SDAM cell with the alarm enabled after copying `dts/sm8650-ayaneo-common.dtsi`.
@@ -954,6 +954,16 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Adds an optional qcom,rx-dma-len DT property to shorten GENI UART RX DMA transfers. The Duo gamepad MCU streams without idle gaps, so the default 2048-byte transfer delivered input in ~245 ms bursts.
+
+- `patches/1306-input-gpio-keys-let-other-drivers-read-a-button-state.patch`
+  source: armada
+  upstream: local
+  notes: Lets another driver read a gpio-keys button or switch through a DT phandle, including from hard IRQ context. gpio-keys still owns the GPIO. Used by 1307 to read the lid during suspend.
+
+- `patches/1307-input-pm8941-pwrkey-ignore-presses-while-lid-is-closed.patch`
+  source: armada
+  upstream: local
+  notes: Adds an optional lid-switch phandle so the power key can't wake the device while the lid is closed (lid sensors only wake on open). Reads the lid through 1306. Enabled on the Duo and Thor.
 
 - `patches/0624-drm-msm-a6xx-increase-gmu-fw-init-timeout.patch`
   source: https://github.com/RetroidPocket/linux/commit/ba970587a0e1203b6a0934b5b9174886b4c4d24c
