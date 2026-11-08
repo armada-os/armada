@@ -1,0 +1,107 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] input: gpio-keys: let other drivers read a button's state
+
+Add gpio_keys_get_gpiod() so another driver can read a gpio-keys button
+or switch that a DT phandle points at, such as a lid from a wake
+interrupt while suspended. gpio-keys still owns the GPIO. Sleeping GPIOs
+are refused, so the read is safe in hard IRQ context.
+
+--- a/drivers/input/keyboard/gpio_keys.c
++++ b/drivers/input/keyboard/gpio_keys.c
+@@ -32,6 +32,8 @@
+ 
+ struct gpio_button_data {
+ 	const struct gpio_keys_button *button;
++	/* Only compared, not refcounted. */
++	const struct fwnode_handle *fwnode;
+ 	struct input_dev *input;
+ 	struct gpio_desc *gpiod;
+ 
+@@ -511,6 +513,7 @@
+ 
+ 	bdata->input = input;
+ 	bdata->button = button;
++	bdata->fwnode = child;
+ 	spin_lock_init(&bdata->lock);
+ 
+ 	if (child) {
+@@ -1110,6 +1113,50 @@
+ 	}
+ };
+ 
++/**
++ * gpio_keys_get_gpiod - get the GPIO of a gpio-keys button
++ * @fwnode: the button's node, a child of the gpio-keys node
++ *
++ * gpio-keys keeps owning the GPIO; it is valid while gpio-keys stays bound.
++ *
++ * Return: the button's non-sleeping GPIO, or an ERR_PTR.
++ */
++struct gpio_desc *gpio_keys_get_gpiod(struct fwnode_handle *fwnode)
++{
++	struct gpio_desc *gpiod = ERR_PTR(-ENODEV);
++	struct gpio_keys_drvdata *ddata;
++	struct fwnode_handle *parent;
++	struct device *dev;
++	int i;
++
++	parent = fwnode_get_parent(fwnode);
++	if (!parent)
++		return ERR_PTR(-ENODEV);
++	dev = bus_find_device_by_fwnode(&platform_bus_type, parent);
++	fwnode_handle_put(parent);
++	if (!dev)
++		return ERR_PTR(-ENODEV);
++
++	device_lock(dev);
++	if (dev->driver != &gpio_keys_device_driver.driver)
++		goto out;
++
++	ddata = dev_get_drvdata(dev);
++	for (i = 0; i < ddata->pdata->nbuttons; i++) {
++		if (ddata->data[i].fwnode != fwnode)
++			continue;
++		gpiod = ddata->data[i].gpiod;
++		if (!gpiod || gpiod_cansleep(gpiod))
++			gpiod = ERR_PTR(-EOPNOTSUPP);
++		break;
++	}
++out:
++	device_unlock(dev);
++	put_device(dev);
++	return gpiod;
++}
++EXPORT_SYMBOL_GPL(gpio_keys_get_gpiod);
++
+ static int __init gpio_keys_init(void)
+ {
+ 	return platform_driver_register(&gpio_keys_device_driver);
+--- a/include/linux/gpio_keys.h
++++ b/include/linux/gpio_keys.h
+@@ -2,9 +2,12 @@
+ #ifndef _GPIO_KEYS_H
+ #define _GPIO_KEYS_H
+ 
++#include <linux/err.h>
+ #include <linux/types.h>
+ 
+ struct device;
++struct fwnode_handle;
++struct gpio_desc;
+ 
+ /**
+  * struct gpio_keys_button - configuration parameters
+@@ -59,4 +62,13 @@
+ 	const char *name;
+ };
+ 
++#if IS_REACHABLE(CONFIG_KEYBOARD_GPIO)
++struct gpio_desc *gpio_keys_get_gpiod(struct fwnode_handle *fwnode);
++#else
++static inline struct gpio_desc *gpio_keys_get_gpiod(struct fwnode_handle *fwnode)
++{
++	return ERR_PTR(-ENODEV);
++}
++#endif
++
+ #endif
