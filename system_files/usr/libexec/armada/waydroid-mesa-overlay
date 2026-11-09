@@ -3,13 +3,6 @@
 # vendor.img at container mount.
 set -euo pipefail
 
-eval "$(/usr/libexec/armada/device-env)"
-
-case "${ARMADA_SOC_CLASS:-}" in
-    SM8750) ;;
-    *) exit 0 ;;
-esac
-
 source_dir=/usr/share/armada/waydroid/vendor/lib64
 target_dir=/var/lib/waydroid/overlay/vendor/lib64
 
