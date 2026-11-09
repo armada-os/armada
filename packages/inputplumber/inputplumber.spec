@@ -22,6 +22,7 @@ Patch5:         0005-feat-ssc-qualcomm-sensor-core-support.patch
 Patch6:         0006-feat-ssc-gyro-auto-calibration.patch
 Patch7:         0007-feat-ssc-device-enablement.patch
 Patch8:         0008-feat-ssc-suspend-source-devices-across-system-sleep.patch
+Patch9:         0009-feat-ssc-mount-correction-from-the-environment.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust

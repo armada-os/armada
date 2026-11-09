@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Sun, 8 Nov 2026 21:29:42 -0500
+Subject: [PATCH] feat(ssc): mount correction from the environment
+
+Some units of a board report IMU axes rotated from what the board's SSC
+config describes, so the device config's mount_matrix is right only for
+some of them. INPUTPLUMBER_SSC_MOUNT_CORRECTION ("x0, x1, x2; y0, y1, y2;
+z0, z1, z2", the same row layout as mount_matrix) is a rotation applied
+to the SSC axes before mount_matrix. Values that are not a rotation are
+ignored with a warning.
+
+Assisted-by: LLM
+---
+ src/input/source/fastrpc/ssc_imu.rs | 102 ++++++++++++++++++++++++++++
+ 1 file changed, 102 insertions(+)
+
+diff --git a/src/input/source/fastrpc/ssc_imu.rs b/src/input/source/fastrpc/ssc_imu.rs
+index 3eee50c..04884bb 100644
+--- a/src/input/source/fastrpc/ssc_imu.rs
++++ b/src/input/source/fastrpc/ssc_imu.rs
+@@ -31,6 +31,10 @@ impl SscImu {
+                 y: m.y,
+                 z: m.z,
+             });
++        let mount_matrix = match env_mount_correction() {
++            Some(c) => Some(compose(&mount_matrix.unwrap_or_default(), &c)),
++            None => mount_matrix,
++        };
+         let sample_rate = imu.and_then(|c| c.sample_rate);
+         let accel_correction = imu.and_then(|c| c.accel_correction).unwrap_or(1.0);
+         let gyro_correction = imu.and_then(|c| c.gyro_correction).unwrap_or(1.0);
+@@ -100,6 +104,64 @@ impl Debug for SscImu {
+ // a single thread.
+ unsafe impl Send for SscImu {}
+ 
++const MOUNT_CORRECTION_ENV: &str = "INPUTPLUMBER_SSC_MOUNT_CORRECTION";
++
++fn env_mount_correction() -> Option<MountMatrix> {
++    let value = std::env::var(MOUNT_CORRECTION_ENV).ok()?;
++    let matrix = parse_mount_matrix(&value);
++    if matrix.is_none() {
++        log::warn!("Ignoring {MOUNT_CORRECTION_ENV}={value:?}: not a rotation matrix");
++    }
++    matrix
++}
++
++fn compose(then: &MountMatrix, first: &MountMatrix) -> MountMatrix {
++    let row = |r: &[f64; 3]| {
++        let mut out = [0.0; 3];
++        for (j, v) in out.iter_mut().enumerate() {
++            *v = r[0] * first.x[j] + r[1] * first.y[j] + r[2] * first.z[j];
++        }
++        out
++    };
++    MountMatrix {
++        x: row(&then.x),
++        y: row(&then.y),
++        z: row(&then.z),
++    }
++}
++
++fn parse_mount_matrix(value: &str) -> Option<MountMatrix> {
++    let mut rows = [[0.0; 3]; 3];
++    let mut parts = value.split(';');
++    for row in rows.iter_mut() {
++        let mut values = parts.next()?.split(',');
++        for v in row.iter_mut() {
++            *v = values.next()?.trim().parse().ok()?;
++        }
++        if values.next().is_some() {
++            return None;
++        }
++    }
++    if parts.next().is_some() {
++        return None;
++    }
++
++    let dot = |a: &[f64; 3], b: &[f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
++    for i in 0..3 {
++        for j in 0..3 {
++            let expected = if i == j { 1.0 } else { 0.0 };
++            if (dot(&rows[i], &rows[j]) - expected).abs() > 1e-3 {
++                return None;
++            }
++        }
++    }
++    // Reject reflections.
++    let [x, y, z] = rows;
++    let det = x[0] * (y[1] * z[2] - y[2] * z[1]) - x[1] * (y[0] * z[2] - y[2] * z[0])
++        + x[2] * (y[0] * z[1] - y[1] * z[0]);
++    (det > 0.0).then_some(MountMatrix { x, y, z })
++}
++
+ /// Translate the given driver events into native events
+ fn translate_events(events: Vec<Event>) -> Vec<NativeEvent> {
+     events
+@@ -144,3 +206,43 @@ pub const CAPABILITIES: &[Capability] = &[
+     Capability::Accelerometer(Source::Center),
+     Capability::Gyroscope(Source::Center),
+ ];
++
++#[cfg(test)]
++mod tests {
++    use super::{compose, parse_mount_matrix};
++
++    #[test]
++    fn parses_rotations() {
++        let m = parse_mount_matrix("0, -1, 0; 0, 0, -1; 1, 0, 0").unwrap();
++        assert_eq!(m.x, [0.0, -1.0, 0.0]);
++        assert_eq!(m.y, [0.0, 0.0, -1.0]);
++        assert_eq!(m.z, [1.0, 0.0, 0.0]);
++        assert!(parse_mount_matrix("1,0,0;0,1,0;0,0,1").is_some());
++    }
++
++    #[test]
++    fn correction_applies_before_the_mount_matrix() {
++        let mount = parse_mount_matrix("0,-1,0;0,0,1;-1,0,0").unwrap();
++        let correction = parse_mount_matrix("1,0,0;0,-1,0;0,0,-1").unwrap();
++        let m = compose(&mount, &correction);
++        assert_eq!(m.x, [0.0, 1.0, 0.0]);
++        assert_eq!(m.y, [0.0, 0.0, -1.0]);
++        assert_eq!(m.z, [-1.0, 0.0, 0.0]);
++    }
++
++    #[test]
++    fn rejects_everything_else() {
++        for value in [
++            "",
++            "1,0,0;0,1,0",
++            "1,0,0;0,1,0;0,0,1;1,0,0",
++            "1,0,0,0;0,1,0;0,0,1",
++            "1,0,0;0,1,0;0,0,x",
++            "1,0,0;0,1,0;0,0,-1",
++            "2,0,0;0,1,0;0,0,1",
++            "1,0,0;1,0,0;0,0,1",
++        ] {
++            assert!(parse_mount_matrix(value).is_none(), "{value:?}");
++        }
++    }
++}
+-- 
+2.56.0
+
