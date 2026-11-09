@@ -1,0 +1,15 @@
+[Unit]
+Description=Paddles and Quick Access chord for the direct controller mode
+ConditionPathExists=/etc/armada/direct-input
+# Retry every second until the gamepad exists; no start rate limit.
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/libexec/armada/armada-direct-input
+Restart=always
+RestartSec=1
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=50
+
+[Install]
+WantedBy=multi-user.target

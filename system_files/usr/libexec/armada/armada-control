@@ -28,7 +28,7 @@ ABL_PARTITIONS = (
 )
 MAX_REQUEST = 1024 * 1024
 CLIENT_TIMEOUT = 5
-CONTROLLER_TYPES = {"deck-uhid", "xbox-series", "xb360", "ds5"}
+CONTROLLER_TYPES = {"deck-uhid", "xbox-series", "xb360", "ds5", "direct"}
 INTERCEPT_MODES = {"overlay", "reset"}
 SWIPE_GESTURES_CONFIG = Path("/etc/armada/swipe-gestures.conf")
 GYRO_CONFIG = Path("/etc/armada/gyro.conf")
@@ -376,7 +376,8 @@ def action_set_controller_type(request):
     value = str(request.get("value", ""))
     if value not in CONTROLLER_TYPES:
         raise ValueError("invalid controller type")
-    run(["/usr/libexec/armada/controller-type", "set", value])
+    # Leaving direct mode restarts InputPlumber before the type applies.
+    run(["/usr/libexec/armada/controller-type", "set", value], timeout=60)
     result = subprocess.check_output(["/usr/libexec/armada/controller-type", "get"], text=True, timeout=5).strip()
     return {"value": result}
 

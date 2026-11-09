@@ -10,6 +10,7 @@ CONTROLLER_TYPES = {
     "xbox-series": "Xbox Series",
     "xb360": "Xbox 360",
     "ds5": "DualSense",
+    "direct": "Direct (no InputPlumber)",
 }
 
 

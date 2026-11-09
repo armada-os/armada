@@ -46,6 +46,9 @@ pkgs=(
     /packages/armada-rgb/*.rpm
     /packages/armada-ssc/*.rpm
 
+    # Paddles and Quick Access chord for the direct controller mode
+    /packages/armada-direct-input/*.rpm
+
     # Replace Fedora styling with Armada styling
     /packages/armada-logos/*.rpm
 

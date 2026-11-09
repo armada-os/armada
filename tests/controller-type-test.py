@@ -3,6 +3,7 @@
 
 import importlib.machinery
 import importlib.util
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,5 +33,39 @@ assert calls == [[
     "busctl", "--system", "call", ct.SERVICE, "/org/shadowblip/InputPlumber/CompositeDevice0",
     ct.IFACE, "SetTargetDevices", "as", "3", "deck-uhid", "keyboard", "mouse",
 ]], calls
+
+# Direct mode masks InputPlumber, starts the injector and skips the D-Bus apply.
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    ct.DIRECT_FLAG = tmp / "direct-input"
+    ct.CONFIG = tmp / "controller.conf"
+    ct.INPUTPLUMBER_RULES = tmp / "rules.d"
+    ct.INPUTPLUMBER_RULES.mkdir()
+    stale = ct.INPUTPLUMBER_RULES / "50-inputplumber-hide-event5-early.rules"
+    stale.write_text("", encoding="utf-8")
+    ct.available_types = lambda: ["deck-uhid", "xbox-series", "xb360", "ds5", "direct"]
+    ct.direct_nodes = lambda: ["/sys/class/input/event5"]
+    calls.clear()
+    assert ct.main(["controller-type", "set", "direct"]) == 0
+    assert ct.DIRECT_FLAG.exists()
+    assert not stale.exists()
+    assert ["systemctl", "mask", "--now", "inputplumber.service"] in calls, calls
+    assert ["udevadm", "trigger", "--action=add", "/sys/class/input/event5"] in calls, calls
+    assert calls[-1] == ["systemctl", "restart", "armada-direct-input.service"], calls
+    assert not any(c[0] == "busctl" for c in calls), calls
+    assert ct.load_type(ct.available_types()) == "direct"
+
+    calls.clear()
+    assert ct.main(["controller-type", "apply"]) == 0
+    assert calls == [], calls
+
+    calls.clear()
+    assert ct.main(["controller-type", "set", "deck-uhid"]) == 0
+    assert not ct.DIRECT_FLAG.exists()
+    assert calls.index(["systemctl", "stop", "armada-direct-input.service"]) \
+        < calls.index(["systemctl", "unmask", "inputplumber.service"]) \
+        < calls.index(["systemctl", "start", "inputplumber.service"]), calls
+    assert calls[-1][0] == "busctl", calls
+    assert ct.load_type(ct.available_types()) == "deck-uhid"
 
 print("controller-type tests passed")

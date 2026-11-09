@@ -1,7 +1,7 @@
 [Unit]
 Description=Apply Armada controller type
 After=inputplumber.service
-Requires=inputplumber.service
+Wants=inputplumber.service
 Before=display-manager.service
 
 [Service]

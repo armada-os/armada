@@ -1,0 +1,9 @@
+# Direct controller mode (controller-type set direct): the raw rsinput gamepad
+# goes to SDL and Steam with InputPlumber masked. Inactive unless
+# /etc/armada/direct-input exists.
+# Runs after 60-input-id.rules, which sets the ID_INPUT_* classes, and before
+# 70-uaccess.rules. SDL opens only nodes udev marks as joysticks; the driver's
+# BTN_BACK also earns ID_INPUT_MOUSE, which would move the cursor with the stick.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{phys}=="rsinput-gamepad/input0", TEST=="/etc/armada/direct-input", ENV{ID_INPUT_JOYSTICK}="1", ENV{ID_INPUT_MOUSE}="", ENV{INPUTPLUMBER_SHARED_GAMEPAD}="", ENV{LIBINPUT_IGNORE_DEVICE}="1", GROUP="input", MODE="0660", TAG+="uaccess"
+# armada-direct-input writes the paddles into the gamepad, so hide them as a second controller.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="gpio-keys-paddles", TEST=="/etc/armada/direct-input", ENV{ID_INPUT_JOYSTICK}="", ENV{LIBINPUT_IGNORE_DEVICE}="1"

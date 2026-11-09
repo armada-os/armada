@@ -95,6 +95,9 @@ FROM ${OPENABL_UPDATER_REF} AS openabl-updater
 ARG ARMADA_RGB_REF
 FROM ${ARMADA_RGB_REF} AS armada-rgb
 
+ARG ARMADA_DIRECT_INPUT_REF
+FROM ${ARMADA_DIRECT_INPUT_REF} AS armada-direct-input
+
 ARG ARMADA_SSC_REF
 FROM ${ARMADA_SSC_REF} AS armada-ssc
 
@@ -154,6 +157,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=armada-splash,source=/rpms,target=/packages/armada-splash \
     --mount=type=bind,from=armada-logos,source=/rpms,target=/packages/armada-logos \
     --mount=type=bind,from=armada-rgb,source=/rpms,target=/packages/armada-rgb \
+    --mount=type=bind,from=armada-direct-input,source=/rpms,target=/packages/armada-direct-input \
     --mount=type=bind,from=armada-ssc,source=/rpms,target=/packages/armada-ssc \
     --mount=type=bind,from=openabl-updater,source=/rpms,target=/packages/openabl-updater \
     --mount=type=bind,from=dtbloader,source=/rpms,target=/packages/dtbloader \

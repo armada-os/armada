@@ -15,7 +15,18 @@ CONTROLLER_TYPES = {
     "xbox-series": "Xbox Series",
     "xb360": "Xbox 360",
     "ds5": "DualSense",
+    "direct": "Direct (no InputPlumber)",
 }
+# Direct mode: InputPlumber masked, the raw rsinput gamepad goes to SDL and Steam.
+# 65-armada-direct-input.rules and armada-direct-input.service act only while this exists.
+DIRECT = "direct"
+DIRECT_FLAG = Path("/etc/armada/direct-input")
+DIRECT_SERVICE = "armada-direct-input.service"
+INPUTPLUMBER_SERVICE = "inputplumber.service"
+# InputPlumber's hide rules; a stopped InputPlumber can leave them behind until reboot.
+INPUTPLUMBER_RULES = Path("/run/udev/rules.d")
+GAMEPAD_PHYS = "rsinput-gamepad/input0"
+PADDLES_NAME = "gpio-keys-paddles"
 
 
 def available_types():
@@ -133,6 +144,50 @@ def apply_type(value):
     return ok
 
 
+def systemctl(*args):
+    subprocess.run(["systemctl", *args], check=True, stdout=subprocess.DEVNULL, timeout=30)
+
+
+def direct_nodes():
+    """Syspaths of the gamepad and paddle event nodes the direct rules match."""
+    nodes = []
+    for event in Path("/sys/class/input").glob("event*"):
+        device = event / "device"
+        try:
+            phys = (device / "phys").read_text(encoding="utf-8").strip()
+            name = (device / "name").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if phys == GAMEPAD_PHYS or name == PADDLES_NAME:
+            nodes.append(str(event))
+    return nodes
+
+
+def reload_direct_nodes():
+    subprocess.run(["udevadm", "control", "--reload"], check=True, timeout=10)
+    for node in direct_nodes():
+        subprocess.run(["udevadm", "trigger", "--action=add", node], check=True, timeout=10)
+    subprocess.run(["udevadm", "settle"], check=False, timeout=30)
+
+
+def enable_direct():
+    DIRECT_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    DIRECT_FLAG.touch()
+    systemctl("mask", "--now", INPUTPLUMBER_SERVICE)
+    for rule in INPUTPLUMBER_RULES.glob("*-inputplumber-hide-*.rules"):
+        rule.unlink(missing_ok=True)
+    reload_direct_nodes()
+    systemctl("restart", DIRECT_SERVICE)
+
+
+def disable_direct():
+    systemctl("stop", DIRECT_SERVICE)
+    DIRECT_FLAG.unlink(missing_ok=True)
+    reload_direct_nodes()
+    systemctl("unmask", INPUTPLUMBER_SERVICE)
+    systemctl("start", INPUTPLUMBER_SERVICE)
+
+
 def apply_with_retry(value):
     for _ in range(30):
         if apply_type(value):
@@ -154,12 +209,21 @@ def main(argv):
         if argv[2] not in types:
             print(f"invalid controller type: {argv[2]}", file=sys.stderr)
             return 2
+        if argv[2] == DIRECT:
+            enable_direct()
+            save_type(DIRECT)
+            return 0
+        if DIRECT_FLAG.exists():
+            disable_direct()
         if not apply_with_retry(argv[2]):
             return 1
         save_type(argv[2])
         return 0
     if command == "apply":
-        return 0 if apply_with_retry(load_type(available_types())) else 1
+        value = load_type(available_types())
+        if value == DIRECT:
+            return 0
+        return 0 if apply_with_retry(value) else 1
     print("usage: controller-type get|set|apply", file=sys.stderr)
     return 2
 

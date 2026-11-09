@@ -68,6 +68,7 @@ systemctl enable armada-session-default.service
 systemctl enable seatd.service
 systemctl enable armada-input-calibration.service
 systemctl enable armada-controller-type.service
+systemctl enable armada-direct-input.service
 systemctl enable inputplumber.service
 systemctl enable inputplumber-suspend.service
 systemctl enable armada-ssc.service
