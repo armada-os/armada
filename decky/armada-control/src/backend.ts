@@ -1,5 +1,5 @@
 import { call } from "@decky/api";
-import type { CalibrationState, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, InstalledGame, PanelAttr, PanelCalibration, PanelRate, PanelStep, PowerConfig, RgbConfig, Tweaks } from "./types";
+import type { CalibrationState, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, GyroOrientation, InstalledGame, PanelAttr, PanelCalibration, PanelRate, PanelStep, PowerConfig, RgbConfig, Tweaks } from "./types";
 
 export const getConfig = () => call<[], Config>("get_config");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
@@ -19,6 +19,8 @@ export const saveCompatApplied = (appids: string[], protonDefault: string | null
 export const setSwipeGesturesEnabled = (enabled: boolean) => call<[boolean], boolean>("set_swipe_gestures_enabled", enabled);
 export const setSshEnabled = (enabled: boolean) => call<[boolean], boolean>("set_ssh_enabled", enabled);
 export const setGyroEnabled = (enabled: boolean) => call<[boolean], boolean>("set_gyro_enabled", enabled);
+export const setGyroOrientation = (orientation: GyroOrientation) =>
+  call<[GyroOrientation], GyroOrientation>("set_gyro_orientation", orientation);
 export const setMtpEnabled = (enabled: boolean) => call<[boolean], boolean>("set_mtp_enabled", enabled);
 export const getPanelCalibration = () => call<[], PanelCalibration>("get_panel_calibration");
 export const getPanelRate = () => call<[], PanelRate>("get_panel_rate");

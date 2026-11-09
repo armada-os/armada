@@ -120,6 +120,8 @@ export interface CalibrationState {
   progress?: CalibrationProgress;
 }
 
+export type GyroOrientation = "default" | "pitch-roll" | "pitch-yaw" | "roll-yaw" | "custom";
+
 export type StickSide = "left" | "right" | "up" | "down";
 
 export type StickProgress = Record<StickSide, number>;
@@ -178,7 +180,7 @@ export interface Config {
   chargingFanPwm: number;
   sshEnabled: boolean;
   swipeGesturesEnabled: boolean;
-  gyro: { supported: boolean; enabled: boolean };
+  gyro: { supported: boolean; enabled: boolean; orientation: GyroOrientation };
   mtpEnabled: boolean;
   desktopMode: string;
   desktopModes: DropdownChoice[];
