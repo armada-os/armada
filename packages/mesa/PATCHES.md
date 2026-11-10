@@ -10,15 +10,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   disables the graphics/sparse-queue cross-sync introduced by Mesa commit
   `0cc0e786e096dca8cfd88d7088ab7e1a0147d045`; context trimmed to apply to both
   stable and devel
-- `patches/0002-add-a830-chip-id.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/e485495a942daba186d4a8543e18a1ad09c9a5d5/projects/ROCKNIX/packages/graphics/mesa/patches/SM8750/0001-add-a830-chip-id.patch
-  affects: A830
-  notes: new patch header; chip IDs verbatim.
-- `patches/0004-freedreno-add-a722-support.patch`
-  source: https://gitlab.freedesktop.org/mesa/mesa/-/commit/803731f7ed4aa8e8265fe0aff08b85efb3f3c7e9
-  affects: A722
-  notes: `magic_regs` moved beside `num_vsc_pipes` so 0005 also fits the devel pin,
-  and `num_ccu = 2` folded in from upstream 8c589b897b3b.
 - `patches/0005-freedreno-a722-blob-regs.patch`
   source: https://github.com/Vauzi-17/710/blob/5db89bde562d/add_710_720_722.py
   affects: A722
@@ -64,7 +55,7 @@ apply (`BASE_PATCHES`, default all), or takes both from another variant
 
 ### devel
 
-Mesa main with 0001, 0005-0013 and 0015 (0002 and 0004 are upstream).
+Mesa main with 0001, 0005-0013 and 0015.
 
 ### winnative
 
