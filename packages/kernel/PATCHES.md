@@ -6,6 +6,9 @@ commit, or `armada` for original work; a URL source with no `notes` is verbatim.
 A patch entry's `upstream` is `local` for an Armada-authored change, `unknown` when
 no equivalent submission was found, or a permanent URL to the upstream submission.
 
+- `patches/0000-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch`
+  source: https://git.kernel.org/torvalds/c/10a47fb67340bca274276faf855d7d460afd9a7a
+  upstream: https://git.kernel.org/torvalds/c/10a47fb67340bca274276faf855d7d460afd9a7a
 - `patches/0002-qcom-dispcc-sm8550-Fix-disp_cc_mdss_mdp_clk_src.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0002-qcom-dispcc-sm8550-Fix-disp_cc_mdss_mdp_clk_src.patch
   upstream: unknown
