@@ -1,0 +1,69 @@
+From: Ovidijus Vyšniauskas (ovid-io)
+Subject: [PATCH] ASoC: codecs: wcd-clsh: run the v3 class-H start-up only for the first headphone channel
+
+wcd_clsh_v3_state_hph_l() and _hph_r() force the start-up IQ settings
+(FLYBACK_VNEGDAC_CTRL_2[7:5] 0xa0, CLASSH_MODE_3 bit 1, CLASSH_MODE_2
+0x1c), then enable flyback and buck, whose first user restores the
+playback values (0xe0, bit 1 clear, 0x3a). For the second channel
+flyback and buck are already on, so their restore is skipped and the
+start-up values forced again stay: measured on a KONKR Pocket FIT
+(WCD9395) playing in CLS_H_ULP, CLASSH_MODE_2 0x1c, CLASSH_MODE_3 0xf2,
+FLYBACK_VNEGDAC_CTRL_2 0xb8, where stock Android has 0x3a, 0xf0, 0xf8.
+With the supply left in its start-up state, loud passages clip at about
+three quarters of full volume, or drop out briefly with the compander
+on, while Android plays the same track clean and louder.
+
+Qualcomm's downstream state machine calls the stereo state's handler
+when the second channel joins, which does nothing, so the sequence runs
+once. Do the same here: force the start-up settings only when neither
+buck nor flyback is on yet.
+
+The repeated start-up was found by mrdidit on the AYANEO Pocket S2.
+Tested on a KONKR Pocket FIT on Armada 20261109 (this patch built as the
+module against its kernel): the three registers read 0x3a, 0xf0, 0xf8
+while playing, and with the class-H port fix (0082) headphones play
+clean at full volume in ULP with the compander on, as on Android.
+
+This is wcd-clsh-v2's v3 path, shared by WCD937x, WCD938x and WCD939x.
+---
+ sound/soc/codecs/wcd-clsh-v2.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/codecs/wcd-clsh-v2.c b/sound/soc/codecs/wcd-clsh-v2.c
+index 62ca22e..c022a04 100644
+--- a/sound/soc/codecs/wcd-clsh-v2.c
++++ b/sound/soc/codecs/wcd-clsh-v2.c
+@@ -547,7 +547,15 @@ static void wcd_clsh_v3_state_hph_r(struct wcd_clsh_ctrl *ctrl, int req_state,
+ 	if (is_enable) {
+ 		wcd_clsh_v3_set_buck_regulator_mode(component, mode);
+ 		wcd_clsh_v3_set_flyback_mode(component, mode);
+-		wcd_clsh_v3_force_iq_ctl(component, mode, true);
++		/*
++		 * Only the first headphone channel runs the start-up IQ sequence:
++		 * its buck and flyback enables put CLASSH_MODE_2/3 and
++		 * FLYBACK_VNEGDAC_CTRL_2 back to their playback values, but for
++		 * the second channel they are already on and skip that, so forcing
++		 * the start-up values again would leave them in place.
++		 */
++		if (!ctrl->buck_users && !ctrl->flyback_users)
++			wcd_clsh_v3_force_iq_ctl(component, mode, true);
+ 		wcd_clsh_v3_flyback_ctrl(component, ctrl, mode, true);
+ 		wcd_clsh_v3_set_flyback_current(component, mode);
+ 		wcd_clsh_v3_set_buck_mode(component, mode);
+@@ -637,7 +645,15 @@ static void wcd_clsh_v3_state_hph_l(struct wcd_clsh_ctrl *ctrl, int req_state,
+ 	if (is_enable) {
+ 		wcd_clsh_v3_set_buck_regulator_mode(component, mode);
+ 		wcd_clsh_v3_set_flyback_mode(component, mode);
+-		wcd_clsh_v3_force_iq_ctl(component, mode, true);
++		/*
++		 * Only the first headphone channel runs the start-up IQ sequence:
++		 * its buck and flyback enables put CLASSH_MODE_2/3 and
++		 * FLYBACK_VNEGDAC_CTRL_2 back to their playback values, but for
++		 * the second channel they are already on and skip that, so forcing
++		 * the start-up values again would leave them in place.
++		 */
++		if (!ctrl->buck_users && !ctrl->flyback_users)
++			wcd_clsh_v3_force_iq_ctl(component, mode, true);
+ 		wcd_clsh_v3_flyback_ctrl(component, ctrl, mode, true);
+ 		wcd_clsh_v3_set_flyback_current(component, mode);
+ 		wcd_clsh_v3_set_buck_mode(component, mode);

@@ -1,0 +1,50 @@
+From: Ovidijus Vyšniauskas (ovid-io)
+Subject: [PATCH] ASoC: codecs: wcd939x-sdw: program the class-H port's window
+
+The RX data ports are declared SDW_DPN_SIMPLE, and the SoundWire core
+only writes DPN_OffsetCtrl2, DPN_BlockCtrl3, DPN_SampleCtrl2 and
+DPN_HCtrl for non-simple ports. So the codec's class-H port (DP2) keeps
+its reset window, HStart 0 and HStop 15, while the qcom master sends
+class-H in the window the DT gives the port (hstart 3, hstop 6 on
+SM8650): measured on a KONKR Pocket FIT (WCD9395) with the HiFi PCM
+path playing, master HCTRL 0x63, codec DP2 HCtrl 0x0f.
+
+The codec implements those registers. Qualcomm's downstream driver
+programs DP2 from its HPH_CLH port table (pineapple-port-config.h: si
+63, hstart 3, hstop 6, word length 7, block packing 0), and on stock
+Android the same codec reads back HCtrl 0x36 and BlockCtrl3 0 there.
+
+Declare the class-H port SDW_DPN_FULL so both ends agree. The other RX
+ports stay simple: the HPH and compander ports have no hstart/hstop in
+the DT (0xff), and the HiFi PCM port's window (0/15) already equals the
+codec's reset value.
+
+Tested on a KONKR Pocket FIT on Armada 20261109 (this patch built as
+the module against its kernel): codec DP2 HCtrl 0x36 and BlockCtrl3 0
+while playing, as on Android. Together with the class-H start-up fix
+(0083), headphones play clean and loud at full volume.
+---
+ sound/soc/codecs/wcd939x-sdw.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/wcd939x-sdw.c b/sound/soc/codecs/wcd939x-sdw.c
+index 95f4be2..3e05f6c 100644
+--- a/sound/soc/codecs/wcd939x-sdw.c
++++ b/sound/soc/codecs/wcd939x-sdw.c
+@@ -61,7 +61,15 @@ static struct sdw_dpn_prop wcd939x_rx_dpn_prop[WCD939X_MAX_RX_SWR_PORTS] = {
+ 	},
+ 	{
+ 		.num = WCD939X_CLSH_PORT,
+-		.type = SDW_DPN_SIMPLE,
++		/*
++		 * Not SDW_DPN_SIMPLE: the core only programs OffsetCtrl2,
++		 * BlockCtrl3, SampleCtrl2 and HCtrl for non-simple ports, so the
++		 * codec kept its reset window (hstart 0, hstop 15) while the
++		 * master sends class-H in the hstart/hstop the DT gives it.
++		 * The codec implements these registers: Qualcomm's downstream
++		 * driver programs them (HCtrl 0x36 on SM8650).
++		 */
++		.type = SDW_DPN_FULL,
+ 		.min_ch = 1,
+ 		.max_ch = 1,
+ 		.simple_ch_prep_sm = true,
