@@ -1,0 +1,62 @@
+From: Armada <armada@armadaos.dev>
+Subject: [PATCH] freedreno/a8xx: emit an RB_DONE_TS event after each draw
+
+On the A830, DOOM (2016) with the OpenGL renderer still hung the GPU every
+one to six minutes of gameplay with 0016 applied, often during screen
+flashes or particle effects. It only hangs with GMEM rendering: sysmem
+never hangs. Disabling binning, LRZ, UBWC or the GMEM fast paths didn't
+help, and neither did turnip-style resolve groups, a WFI around every
+GMEM load, clear and store, or bigger VPC buffers.
+
+An RB_DONE_TS event that writes memory after each draw stops it: no hang
+in 17 minutes of play across two runs, plus 19 minutes with a debug build
+that also had it. These all still hang: a CP_MEM_WRITE before each draw,
+the event without a write, the event after every 8th draw, and a
+CCU_CLEAN_DEPTH after each draw. The cost is about 1 fps (135 vs 136).
+
+Only A8xx gets the event, so other GPUs see no change.
+---
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_context.h b/src/gallium/drivers/freedreno/a6xx/fd6_context.h
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_context.h
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_context.h
+@@ -161,6 +161,9 @@ struct fd6_control {
+    } flush_base[4];
+ 
+    uint32_t vsc_state[32];
++
++   /* written by the RB_DONE_TS event after each draw on A8xx: */
++   uint32_t draw_done;
+ };
+ 
+ #define control_ptr(fd6_ctx, member)                                           \
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc b/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
+@@ -556,6 +556,27 @@ draw_vbos(struct fd_context *ctx, const struct pipe_draw_info *info,
+ 
+    flush_streamout<CHIP>(ctx, cs, &emit);
+ 
++   /* On A830, GMEM rendering hangs the GPU every few minutes in DOOM (2016),
++    * usually during bursts of small blended draws. An RB_DONE_TS event that
++    * writes memory after each draw prevents it. A CP_MEM_WRITE before each
++    * draw, the event without the write, or the event after every 8th draw
++    * all still hang.
++    */
++   if (CHIP >= A8XX) {
++      fd_pkt7(cs, CP_EVENT_WRITE7, 4)
++         .add(CP_EVENT_WRITE7_0(
++            .event = RB_DONE_TS,
++            .write_src = EV_WRITE_USER_32B,
++            .write_dst = EV_DST_RAM,
++            .write_enabled = true,
++         ))
++         .add(CP_EVENT_WRITE_ADDR(
++            .bo = fd6_ctx->control_mem,
++            .bo_offset = offsetof(struct fd6_control, draw_done),
++         ))
++         .add(ctx->batch->num_draws);
++   }
++
+    fd_context_all_clean(ctx);
+ }
+ 
