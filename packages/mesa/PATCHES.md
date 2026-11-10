@@ -57,6 +57,12 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0019-freedreno-pick-gmem-or-sysmem-by-gpu-time.patch`
   source: armada
   affects: A7xx, A8xx by default, older with FD_AUTOTUNE_ALGO=profiled (freedreno GL only)
+- `patches/0020-dri3-gamescope-limiter-swap-interval-override.patch`
+  source: https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupiter-main/mesa-26.1.2.221562.radeonsi_26.1.2-5.src.tar.gz (steamos-mesa commit `18b3910ac08ebf58e7f43ff1bcf864bee4a077ab`)
+  affects: OpenGL over X11 (GLX/EGL DRI3), all GPUs
+  notes: line offsets refreshed for 26.3.0. While gamescope's frame limiter is on
+  (`GAMESCOPE_LIMITER_FILE` reads 1), GL windows swap with interval 1, so the
+  limiter can pace games that turned vsync off.
 
 ## Variants
 

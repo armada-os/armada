@@ -1,0 +1,95 @@
+From: Samuel Pitoiset <samuel.pitoiset@gmail.com>
+Subject: [PATCH] STEAMOS: Dynamic swapchain override for gamescope limiter for DRI3 only
+
+The original patch (from Bas) contained WSI VK support too but it's
+been removed because the Gamescope WSI layer already handles that.
+
+Signed-off-by: Samuel Pitoiset <samuel.pitoiset@gmail.com>
+diff --git a/src/gallium/frontends/dri/loader_dri3_helper.c b/src/gallium/frontends/dri/loader_dri3_helper.c
+index eb2894c..80c6dfc 100644
+--- a/src/gallium/frontends/dri/loader_dri3_helper.c
++++ b/src/gallium/frontends/dri/loader_dri3_helper.c
+@@ -296,6 +296,30 @@ dri3_update_max_num_back(struct loader_dri3_drawable *draw)
+    }
+ }
+ 
++static unsigned
++gamescope_swapchain_override()
++{
++   const char *path = getenv("GAMESCOPE_LIMITER_FILE");
++   if (!path)
++      return 0;
++
++   static simple_mtx_t mtx = SIMPLE_MTX_INITIALIZER;
++   static int fd = -1;
++
++   simple_mtx_lock(&mtx);
++   if (fd < 0) {
++      fd = open(path, O_RDONLY);
++   }
++   simple_mtx_unlock(&mtx);
++
++   if (fd < 0)
++      return 0;
++
++   uint32_t override_value = 0;
++   pread(fd, &override_value, sizeof(override_value), 0);
++   return override_value;
++}
++
+ void
+ loader_dri3_set_swap_interval(struct loader_dri3_drawable *draw, int interval)
+ {
+@@ -310,10 +334,12 @@ loader_dri3_set_swap_interval(struct loader_dri3_drawable *draw, int interval)
+     * PS. changing from value A to B and A < B won't cause swap out of order but
+     * may still gets wrong target_msc value at the beginning.
+     */
+-   if (draw->swap_interval != interval)
++   if (draw->orig_swap_interval != interval)
+       loader_dri3_swapbuffer_barrier(draw);
+ 
+-   draw->swap_interval = interval;
++   draw->orig_swap_interval = interval;
++   if (gamescope_swapchain_override() != 1)
++      draw->swap_interval = interval;
+ }
+ 
+ static void
+@@ -442,6 +468,12 @@ loader_dri3_drawable_init(xcb_connection_t *conn,
+ 
+    draw->swap_interval = dri_get_initial_swap_interval(draw->dri_screen_render_gpu);
+ 
++   draw->orig_swap_interval = draw->swap_interval;
++
++   unsigned gamescope_override = gamescope_swapchain_override();
++   if (gamescope_override == 1)
++      draw->swap_interval = 1;
++
+    dri3_update_max_num_back(draw);
+ 
+    /* Create a new drawable */
+@@ -1090,6 +1122,12 @@ loader_dri3_swap_buffers_msc(struct loader_dri3_drawable *draw,
+    if (draw->type == LOADER_DRI3_DRAWABLE_WINDOW) {
+       dri3_fence_reset(draw->conn, back);
+ 
++      unsigned gamescope_override = gamescope_swapchain_override();
++      if (gamescope_override == 1)
++         draw->swap_interval = 1;
++      else
++         draw->swap_interval = draw->orig_swap_interval;
++
+       /* Compute when we want the frame shown by taking the last known
+        * successful MSC and adding in a swap interval for each outstanding swap
+        * request. target_msc=divisor=remainder=0 means "Use glXSwapBuffers()
+diff --git a/src/gallium/frontends/dri/loader_dri3_helper.h b/src/gallium/frontends/dri/loader_dri3_helper.h
+index 26f138d..3f0f3f6 100644
+--- a/src/gallium/frontends/dri/loader_dri3_helper.h
++++ b/src/gallium/frontends/dri/loader_dri3_helper.h
+@@ -169,6 +169,7 @@ struct loader_dri3_drawable {
+    bool block_on_depleted_buffers;
+    bool queries_buffer_age;
+    int swap_interval;
++   int orig_swap_interval;
+ 
+    const struct loader_dri3_vtable *vtable;
+ 
