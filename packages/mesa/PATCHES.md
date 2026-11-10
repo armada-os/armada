@@ -45,6 +45,12 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: https://github.com/armada-os/armada/issues/748#issuecomment-6373073950
   affects: all GPUs
   notes: comment shortened
+- `patches/0016-freedreno-a8xx-wait-for-zpass-sample-counts.patch`
+  source: armada
+  affects: A8xx (freedreno GL only)
+- `patches/0017-freedreno-a8xx-rb-done-ts-after-each-draw.patch`
+  source: armada
+  affects: A8xx (freedreno GL only)
 
 ## Variants
 
