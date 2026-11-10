@@ -28,6 +28,10 @@ mkdir -p out
 
 export HOME=/tmp
 dnf -y install rpm-build rpmdevtools koji 'dnf-command(builddep)' ccache curl
+# Mesa 26.3 no longer bundles the Venus protocol headers, and the pinned SRPM's
+# spec predates that, so builddep won't pull them in. On Fedora 44 they're only
+# in updates-testing so far.
+dnf -y install --enablerepo=updates-testing venus-protocol-devel
 export PATH=/usr/lib64/ccache:$PATH CC=gcc CXX=g++
 ccache -z
 rpmdev-setuptree
@@ -44,6 +48,15 @@ SPEC=$HOME/rpmbuild/SPECS/mesa.spec
 sed -i "s/^Version:.*/Version:        ${MESA_VER}/" "$SPEC"
 sed -i 's/^Release:.*%autorelease.*/Release:        1%{?dist}/' "$SPEC"
 sed -i '/^%autochangelog/d' "$SPEC"
+
+# Fit a pre-26.3 spec to Mesa 26.3+: the anti-lag layer moved into RADV (its
+# macro is tested for being defined, so delete it), and RADV installs a second
+# drirc file. Both are no-ops once the spec has them.
+if [ "$(printf '%s\n' 26.3 "${MESA_VER}" | sort -V | head -1)" = 26.3 ]; then
+    sed -i '/^%global with_vulkan_layers_anti_lag /d' "$SPEC"
+    grep -q 'drirc.d/01-radv-performance.conf' "$SPEC" ||
+        sed -i '/drirc.d\/00-radv-defaults.conf/a %{_datadir}/drirc.d/01-radv-performance.conf' "$SPEC"
+fi
 
 if [ -n "${SOURCE_URL}" ]; then
     [ -n "${SOURCE_SHA256}" ] || { echo 'ERROR: SOURCE_SHA256 is required with SOURCE_URL'; exit 1; }
