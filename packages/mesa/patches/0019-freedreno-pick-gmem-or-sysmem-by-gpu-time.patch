@@ -1,0 +1,530 @@
+From: Armada <armada@armadaos.dev>
+Subject: [PATCH] freedreno: pick GMEM or sysmem by measured GPU time
+
+freedreno picks GMEM vs bypass from a samples-passed estimate and never
+measures which is faster. On A7xx and A8xx that is often wrong: DOOM
+(2016) runs at about 135 fps on the A830 with it, and just under 200 with
+every batch forced to sysmem.
+
+Port turnip's profiled autotune (TU_AUTOTUNE_ALGO=profiled):
+- Record the always-on counter (RB_DONE_TS) at the start and end of each
+  batch in both modes, next to the existing sample counts. In GMEM mode
+  the start is before the binning pass, so its cost counts too, as in
+  turnip.
+- Per render target, keep an average time per mode.
+- Move the chance of picking sysmem towards the faster mode, and lock it
+  in once one mode has been 30% and 50 us faster for 30 s.
+
+Changes from turnip's version, all found in DOOM:
+- The average is a mean over the first 10 samples, then a moving
+  average over about the last 10, with samples capped at 4x it.
+  Turnip's mostly follows a 0.5 average, but one render target can
+  carry passes of different sizes in turn, and the mode that runs 1 time
+  in 100 then takes the size of whichever it last caught, so the winner
+  kept flipping.
+- Passes under 1 ms can lock too. Most of DOOM's are that short, and
+  would otherwise keep trying the slower mode 1 time in 100.
+- A clear winner (30% and 50 us) is picked at once instead of in 5%
+  steps, which took seconds on render targets with few timed batches.
+- The winner only changes after the other mode wins 4 updates in a
+  row. With turnip's rule, one slow sample restarts the 30 s, so busy
+  passes never lock (and could jump to the wrong mode).
+- When the mode that runs most has become half or twice as slow since
+  the other was last measured, the other is measured again (50/50 for 3
+  samples). Otherwise passes learned on the loading screen kept their
+  mode for seconds into the level.
+- A locked pass unlocks when its mode keeps coming out slower than the
+  other mode's last average, and stays 95% on its mode until the other
+  is measured again. A GPU clock change often triggers this without the
+  winner changing, so starting over would cost more.
+- History is kept for 256 render targets instead of 40. DOOM uses more
+  than 40, and an evicted pass has to be learned again.
+
+Small batches still take the existing fast path to sysmem, and their
+times are left out of the averages, since mixing them in makes sysmem
+look faster than it is. Reasons that force GMEM (FB_READ, MSAA) are
+unchanged.
+
+In DOOM this gives just under 200 fps on the A830 (from 135) and 140 on
+the A740 (from 100), and keeps the few passes that are faster in GMEM
+there.
+
+FD_AUTOTUNE_ALGO=profiled|samples picks the algorithm (profiled is the
+default on A7xx+, samples on older GPUs). FD_AUTOTUNE_LOG=1 logs
+decisions.
+
+Needs the autotune fence fix before it, or no result is ever read back.
+---
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc b/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc
+@@ -777,6 +777,23 @@ check_vsc_overflow(struct fd_context *ctx)
+    }
+ }
+ 
++/* Start the batch time for the profiled autotune.  In GMEM mode this goes
++ * before the binning pass, so its cost counts towards the GMEM time.
++ */
++template <chip CHIP>
++static void
++emit_autotune_ts_start(fd_cs &cs, struct fd_batch *batch)
++{
++   struct fd_autotune *at = &batch->ctx->autotune;
++   struct fd_batch_result *result = batch->autotune_result;
++
++   if (!result || !at->profiled)
++      return;
++
++   cs.attach_bo(at->results_mem);
++   fd6_record_ts<CHIP>(cs, results_ptr(at, result[result->idx].ts_start));
++}
++
+ template <chip CHIP>
+ static void
+ emit_common_init(fd_cs &cs, struct fd_batch *batch)
+@@ -863,6 +880,9 @@ emit_common_fini(fd_cs &cs, struct fd_batch *batch)
+       }
+    }
+ 
++   if (at->profiled)
++      fd6_record_ts<CHIP>(cs, results_ptr(at, result[result->idx].ts_end));
++
+    fd6_fence_write<CHIP>(cs, result->fence, results_ptr(at, fence));
+ }
+ 
+@@ -1254,6 +1274,8 @@ fd6_emit_tile_init(struct fd_batch *batch) assert_dt
+       fd7_emit_static_binning_regs<CHIP>(cs, true);
+    }
+ 
++   emit_autotune_ts_start<CHIP>(cs, batch);
++
+    if (use_hw_binning(batch)) {
+       /* enable stream-out during binning pass: */
+       with_crb (cs, 18) {
+@@ -2165,6 +2187,7 @@ fd6_emit_sysmem_prep(struct fd_batch *batch) assert_dt
+       emit_msaa<CHIP>(crb, pfb->samples);
+    }
+ 
++   emit_autotune_ts_start<CHIP>(cs, batch);
+    emit_common_init<CHIP>(cs, batch);
+ 
+    patch_fb_read_sysmem<CHIP>(batch);
+diff --git a/src/gallium/drivers/freedreno/freedreno_autotune.c b/src/gallium/drivers/freedreno/freedreno_autotune.c
+--- a/src/gallium/drivers/freedreno/freedreno_autotune.c
++++ b/src/gallium/drivers/freedreno/freedreno_autotune.c
+@@ -3,10 +3,52 @@
+  * SPDX-License-Identifier: MIT
+  */
+ 
++#include <string.h>
++
++#include "util/log.h"
++#include "util/os_misc.h"
++#include "util/os_time.h"
++#include "util/rand_xor.h"
++
+ #include "freedreno_autotune.h"
+ #include "freedreno_batch.h"
++#include "freedreno_screen.h"
+ #include "freedreno_util.h"
+ 
++/**
++ * Average batch GPU time: the mean of the first 10 samples, then a moving
++ * average over about the last 10.
++ *
++ * Turnip's adaptive_average follows the fast (0.5) average most of the
++ * time, which is too jumpy here: one render target can carry several
++ * passes of different sizes (in DOOM, 65/95/120 us in turn), and the mode
++ * that only runs 1 time in 100 then takes the size of whichever pass it
++ * last caught, so the winner keeps flipping. Samples are capped at 4x the
++ * average instead, so one stall can't flip a pass, but a real change gets
++ * through in a few samples.
++ */
++struct fd_autotune_avg {
++   double avg;
++   unsigned count;  /* samples in total */
++   unsigned n;      /* samples since the average was (re)started */
++   bool stale;      /* restart the average on the next sample */
++   double peer;     /* the other mode's average at the last sample */
++};
++
++static void
++avg_add(struct fd_autotune_avg *a, double v)
++{
++   if (a->stale) {
++      a->n = 0;
++      a->stale = false;
++   }
++   if (a->n >= 5)
++      v = MIN2(v, 4.0 * a->avg);
++   a->n++;
++   a->avg += (v - a->avg) * MAX2(1.0 / a->n, 0.1);
++   a->count++;
++}
++
+ /**
+  * Tracks, for a given batch key (which maps to a FBO/framebuffer state),
+  *
+@@ -25,6 +67,18 @@ struct fd_batch_history {
+     */
+    struct list_head results;
+ #define MAX_RESULTS 5
++
++   /*
++    * Profiled algorithm state, ported from turnip's profiled_algo:
++    */
++   uint32_t hash;
++   struct fd_autotune_avg sysmem_avg, gmem_avg;
++   unsigned sysmem_prob; /* 0 (always GMEM) to 100 (always bypass) */
++   bool should_reset, locked, sysmem_winning;
++   int64_t winning_since;
++   uint64_t seed[2];
++   unsigned num_updates;
++   unsigned slower_count; /* updates in a row the winning mode lost */
+ };
+ 
+ static struct fd_batch_history *
+@@ -51,10 +105,19 @@ get_history(struct fd_autotune *at, struct fd_batch *batch)
+    list_inithead(&history->node);
+    list_inithead(&history->results);
+ 
++   history->hash = batch->hash;
++   history->sysmem_prob = 50;
++   history->seed[0] = 0x3bffb83978e24f88ull;
++   history->seed[1] = batch->hash | 1;
++
+    /* Note: We cap # of cached GMEM states at 20.. so assuming double-
+     * buffering, 40 should be a good place to cap cached autotune state
++    *
++    * The profiled algorithm keeps more: relearning a pass runs it in the
++    * slower mode on purpose for a while, and small batches take entries
++    * too (DOOM (2016) uses over 40).
+     */
+-   if (at->ht->entries >= 40) {
++   if (at->ht->entries >= (at->profiled ? 256 : 40)) {
+       struct fd_batch_history *last =
+          list_last_entry(&at->lru, struct fd_batch_history, node);
+       _mesa_hash_table_remove_key(at->ht, last->key);
+@@ -102,6 +165,178 @@ get_result(struct fd_autotune *at, struct fd_batch_history *history)
+    return result;
+ }
+ 
++/* CP_ALWAYS_ON_COUNTER runs at 19.2 MHz: */
++#define TICKS_PER_US 19.2
++
++static void
++profiled_log(struct fd_autotune *at, struct fd_batch_history *h,
++             const char *what)
++{
++   static int64_t start;
++
++   if (!at->log)
++      return;
++   if (!start)
++      start = os_time_get_nano();
++   mesa_logi("fd autotune %.1fs %08x: %s gmem %.0f us (%u) sysmem %.0f us "
++             "(%u) -> %u%% sysmem%s",
++             (os_time_get_nano() - start) / 1e9,
++             h->hash, what, h->gmem_avg.avg / TICKS_PER_US,
++             h->gmem_avg.count, h->sysmem_avg.avg / TICKS_PER_US,
++             h->sysmem_avg.count, h->sysmem_prob, h->locked ? " (locked)" : "");
++}
++
++/**
++ * Move the chance of picking bypass towards whichever mode has been faster
++ * for this render target, like turnip's profiled_algo::update().
++ */
++static void
++profiled_update(struct fd_autotune *at, struct fd_batch_history *h)
++{
++   struct fd_autotune_avg *s = &h->sysmem_avg, *g = &h->gmem_avg;
++   unsigned prob = h->sysmem_prob;
++
++   if (h->locked) {
++      /* Only the locked mode is still measured. If it keeps coming out
++       * slower than the other mode's last average, the pass has changed
++       * (new scene, heavier draws, or a different GPU clock): unlock and
++       * measure the other mode again. Requiring a run of updates skips
++       * one-off spikes.
++       */
++      bool sysmem = h->sysmem_prob == 100;
++      struct fd_autotune_avg *cur = sysmem ? s : g;
++      struct fd_autotune_avg *other = sysmem ? g : s;
++
++      if (cur->avg <= other->avg) {
++         h->slower_count = 0;
++         return;
++      }
++      if (++h->slower_count < 16)
++         return;
++
++      /* Stay mostly on the current mode while the other one is measured
++       * again. Often nothing has really changed (a GPU clock change makes
++       * every pass slower), so starting over would cost more. The current
++       * mode stays the winner until the other one wins 4 updates in a row.
++       */
++      h->locked = false;
++      h->slower_count = 0;
++      h->sysmem_prob = sysmem ? 95 : 5;
++      other->stale = true;
++      profiled_log(at, h, "unlock");
++      return;
++   }
++
++   /* Wait for 3 new samples of a mode marked stale: */
++   if (s->stale || g->stale || s->n < 3 || g->n < 3)
++      return;
++
++   /* The mode that rarely runs was last measured when the other one took
++    * half or twice as long as now: the scene has changed (in DOOM, from
++    * the loading screen to the level), so measure it again, half the time
++    * until it has 3 new samples. Wait until the other mode has settled
++    * into the moving average, or this fires right after a jump.
++    */
++   if (prob != 50) {
++      struct fd_autotune_avg *rare = prob < 50 ? s : g;
++      struct fd_autotune_avg *often = prob < 50 ? g : s;
++      double now_avg = often->avg;
++
++      if (often->n >= 10 && rare->peer > 0.0 &&
++          (now_avg > 2.0 * rare->peer || 2.0 * now_avg < rare->peer)) {
++         rare->stale = true;
++         h->sysmem_prob = 50;
++         profiled_log(at, h, "reprobe");
++         return;
++      }
++   }
++
++   if (s->count < 5 || g->count < 5) {
++      /* Not enough data yet: favour the mode with fewer samples. */
++      prob = s->count < g->count ? 80 : 20;
++      h->should_reset = true;
++   } else {
++      if (h->should_reset) {
++         prob = 50;
++         h->should_reset = false;
++      }
++
++      double avg_sysmem = s->avg;
++      double avg_gmem = g->avg;
++      double min_avg = MIN2(avg_sysmem, avg_gmem);
++      double max_avg = MAX2(avg_sysmem, avg_gmem);
++
++      /* The winner only changes after the other mode wins 4 updates in a
++       * row, so one slow sample (a GPU clock drop) can't restart the 30 s
++       * lock wait below. Passes that run thousands of times a second see
++       * one often enough that it would otherwise never pass.
++       */
++      int64_t now = os_time_get_nano();
++      bool sysmem_winning = avg_sysmem < avg_gmem;
++
++      if (!h->winning_since) {
++         h->winning_since = now;
++         h->sysmem_winning = sysmem_winning;
++         h->slower_count = 0;
++      } else if (sysmem_winning == h->sysmem_winning) {
++         h->slower_count = 0;
++      } else if (++h->slower_count >= 4) {
++         h->winning_since = now;
++         h->sysmem_winning = sysmem_winning;
++         h->slower_count = 0;
++      }
++
++      /* One mode is at least 30% and 50 us faster: */
++      bool clear = sysmem_winning == h->sysmem_winning && min_avg > 0.0 &&
++                   (max_avg - min_avg) >= 50 * TICKS_PER_US &&
++                   (max_avg - min_avg) >= 0.3 * min_avg;
++
++      if (clear) {
++         /* Go straight to the winner instead of in 5% steps. Updates only
++          * come from batches the walk decided, which on some render targets
++          * are few, so stepping took seconds to reach sysmem.
++          */
++         unsigned target = sysmem_winning ? 99 : 1;
++         if (prob != target) {
++            h->sysmem_prob = target;
++            profiled_log(at, h, "jump");
++         }
++         prob = target;
++      } else if (!h->sysmem_winning) {
++         /* Close call: step towards the winner. */
++         if (prob > 5 && prob <= 95)
++            prob = MAX2(prob - 5, 5);
++         else if (prob > 1)
++            prob--;
++      } else {
++         if (prob >= 5 && prob < 95)
++            prob = MIN2(prob + 5, 95);
++         else if (prob < 99)
++            prob++;
++      }
++
++      /* Lock in a clear winner once it has kept winning for 30 s. Locking
++       * stops the 1-in-100 switch to the slower mode. Turnip also requires
++       * a 1 ms pass, but most passes in games like DOOM (2016) are shorter,
++       * and the unlock above handles passes that change.
++       */
++      if (clear && s->count >= 15 && g->count >= 15 &&
++          (now - h->winning_since) >= 30000000000ll) {
++         prob = avg_gmem < avg_sysmem ? 0 : 100;
++         h->locked = true;
++         h->sysmem_prob = prob;
++         profiled_log(at, h, "lock");
++         return;
++      }
++   }
++
++   h->sysmem_prob = prob;
++
++   /* Nothing to compare until both modes have been timed: */
++   if (s->count && g->count && (++h->num_updates % 64) == 0)
++      profiled_log(at, h, "update");
++}
++
+ static void
+ process_results(struct fd_autotune *at)
+ {
+@@ -117,6 +352,24 @@ process_results(struct fd_autotune *at)
+       result->samples_passed = at->results->result[result->idx].samples_end -
+                                at->results->result[result->idx].samples_start;
+ 
++      /* Batches the small-batch fast path sent to bypass are left out, or
++       * they would make bypass look faster than it is for the big ones:
++       */
++      if (result->timed) {
++         uint64_t start = at->results->result[result->idx].ts_start;
++         uint64_t end = at->results->result[result->idx].ts_end;
++
++         if (end > start) {
++            struct fd_autotune_avg *a = result->sysmem ? &history->sysmem_avg
++                                                       : &history->gmem_avg;
++            struct fd_autotune_avg *b = result->sysmem ? &history->gmem_avg
++                                                       : &history->sysmem_avg;
++            avg_add(a, (double)(end - start));
++            a->peer = b->avg;
++            profiled_update(at, history);
++         }
++      }
++
+       list_delinit(&result->node);
+       list_add(&result->node, &history->results);
+ 
+@@ -189,6 +442,11 @@ fd_autotune_use_bypass(struct fd_autotune *at, struct fd_batch *batch)
+    if (use_bypass)
+       return true;
+ 
++   if (at->profiled) {
++      batch->autotune_result->timed = true;
++      return (rand_xorshift128plus(history->seed) % 100) < history->sysmem_prob;
++   }
++
+    if (history->num_results > 0) {
+       uint32_t total_samples = 0;
+ 
+@@ -228,8 +486,21 @@ fd_autotune_use_bypass(struct fd_autotune *at, struct fd_batch *batch)
+ }
+ 
+ void
+-fd_autotune_init(struct fd_autotune *at, struct fd_device *dev)
++fd_autotune_init(struct fd_autotune *at, struct fd_screen *screen)
+ {
++   struct fd_device *dev = screen->dev;
++   const char *algo = os_get_option("FD_AUTOTUNE_ALGO");
++
++   /* On a7xx+, bypass is often much faster than the samples-passed estimate
++    * expects (e.g. 2-tile G-buffer passes), so measure instead:
++    */
++   at->profiled = screen->gen >= 7;
++   if (algo && !strcmp(algo, "profiled"))
++      at->profiled = true;
++   else if (algo && !strcmp(algo, "samples"))
++      at->profiled = false;
++   at->log = debug_get_bool_option("FD_AUTOTUNE_LOG", false);
++
+    at->ht =
+       _mesa_hash_table_create(NULL, fd_batch_key_hash, fd_batch_key_equals);
+    list_inithead(&at->lru);
+diff --git a/src/gallium/drivers/freedreno/freedreno_autotune.h b/src/gallium/drivers/freedreno/freedreno_autotune.h
+--- a/src/gallium/drivers/freedreno/freedreno_autotune.h
++++ b/src/gallium/drivers/freedreno/freedreno_autotune.h
+@@ -12,6 +12,7 @@
+ #include "freedreno_util.h"
+ 
+ struct fd_autotune_results;
++struct fd_screen;
+ 
+ /**
+  * "autotune" our decisions about bypass vs GMEM rendering, based on historical
+@@ -78,6 +79,13 @@ struct fd_autotune {
+ 
+    uint32_t fence_counter;
+    uint32_t idx_counter;
++
++   /**
++    * Pick bypass vs GMEM from measured GPU time instead of samples-passed
++    * (FD_AUTOTUNE_ALGO=profiled|samples, profiled by default on a7xx+).
++    */
++   bool profiled;
++   bool log;
+ };
+ 
+ /**
+@@ -111,6 +119,13 @@ struct fd_autotune_results {
+       uint64_t samples_result;
+       uint64_t samples_end;
+       uint64_t __pad1;
++
++      /* Always-on counter at the batch start/end, for the profiled
++       * algorithm:
++       */
++      uint64_t ts_start;
++      uint64_t ts_end;
++      uint64_t __pad2[2];
+    } result[127];
+ };
+ 
+@@ -148,9 +163,17 @@ struct fd_batch_result {
+    struct list_head node;
+    uint32_t cost;
+    uint64_t samples_passed;
++
++   /* Whether the batch was rendered in bypass (sysmem) mode: */
++   bool sysmem;
++
++   /* Whether the profiled algorithm picked the mode, so the time counts
++    * towards its averages:
++    */
++   bool timed;
+ };
+ 
+-void fd_autotune_init(struct fd_autotune *at, struct fd_device *dev);
++void fd_autotune_init(struct fd_autotune *at, struct fd_screen *screen);
+ void fd_autotune_fini(struct fd_autotune *at);
+ 
+ struct fd_batch;
+diff --git a/src/gallium/drivers/freedreno/freedreno_context.c b/src/gallium/drivers/freedreno/freedreno_context.c
+--- a/src/gallium/drivers/freedreno/freedreno_context.c
++++ b/src/gallium/drivers/freedreno/freedreno_context.c
+@@ -737,7 +737,7 @@ fd_context_init(struct fd_context *ctx, struct pipe_screen *pscreen,
+                              NULL,
+                              fd_trace_delete_flush_data);
+ 
+-   fd_autotune_init(&ctx->autotune, screen->dev);
++   fd_autotune_init(&ctx->autotune, screen);
+ 
+    if (!(ctx->flags & FD_CONTEXT_FLAG_AUX))
+       p_atomic_inc(&pctx->screen->num_contexts);
+diff --git a/src/gallium/drivers/freedreno/freedreno_gmem.c b/src/gallium/drivers/freedreno/freedreno_gmem.c
+--- a/src/gallium/drivers/freedreno/freedreno_gmem.c
++++ b/src/gallium/drivers/freedreno/freedreno_gmem.c
+@@ -751,6 +751,10 @@ fd_gmem_render_tiles(struct fd_batch *batch)
+       sysmem = true;
+    }
+ 
++   /* Tell autotune which mode its timestamps measure: */
++   if (batch->autotune_result)
++      batch->autotune_result->sysmem = sysmem;
++
+    fd_reset_wfi(batch);
+ 
+    ctx->stats.batch_total++;

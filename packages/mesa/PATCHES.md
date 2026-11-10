@@ -51,6 +51,12 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0017-freedreno-a8xx-rb-done-ts-after-each-draw.patch`
   source: armada
   affects: A8xx (freedreno GL only)
+- `patches/0018-freedreno-a7xx-write-the-autotune-fence.patch`
+  source: armada
+  affects: A7xx, A8xx (freedreno GL only)
+- `patches/0019-freedreno-pick-gmem-or-sysmem-by-gpu-time.patch`
+  source: armada
+  affects: A7xx, A8xx by default, older with FD_AUTOTUNE_ALGO=profiled (freedreno GL only)
 
 ## Variants
 

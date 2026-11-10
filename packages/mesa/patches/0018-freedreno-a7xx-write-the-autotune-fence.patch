@@ -1,0 +1,39 @@
+From: Armada <armada@armadaos.dev>
+Subject: [PATCH] freedreno/a7xx+: write the autotune fence
+
+fd6_fence_write() uses FD_CACHE_CLEAN, which is CACHE_FLUSH_TS with a
+write on A6xx but plain CACHE_CLEAN on A7xx and later, which writes
+nothing. So the autotune fence never advances there: no batch result is
+ever read back, the samples-passed heuristic always takes its first-time
+fallback (GMEM for any batch with a clear or more than 5 draws), and
+pending results pile up for as long as the context lives.
+
+Write the fence with CACHE_FLUSH_TS on A7xx+, as turnip does for its
+autotune fence.
+---
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_emit.h b/src/gallium/drivers/freedreno/a6xx/fd6_emit.h
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_emit.h
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_emit.h
+@@ -263,6 +263,22 @@ template <chip CHIP>
+ static inline void
+ fd6_fence_write(fd_cs &cs, uint32_t val, struct fd_bo *bo, uint32_t offset)
+ {
++   /* On a7xx+ FD_CACHE_CLEAN is CACHE_CLEAN, which writes nothing, so use
++    * CACHE_FLUSH_TS like turnip does for its autotune fence:
++    */
++   if (CHIP >= A7XX) {
++      fd_pkt7(cs, CP_EVENT_WRITE7, 4)
++         .add(CP_EVENT_WRITE7_0(
++            .event = CACHE_FLUSH_TS,
++            .write_src = EV_WRITE_USER_32B,
++            .write_dst = EV_DST_RAM,
++            .write_enabled = true,
++         ))
++         .add(CP_EVENT_WRITE_ADDR(.bo = bo, .bo_offset = offset))
++         .add(val);
++      return;
++   }
++
+    __event_write<CHIP>(cs, FD_CACHE_CLEAN, EV_WRITE_USER_32B, EV_DST_RAM, val, bo, offset);
+ }
+ 
