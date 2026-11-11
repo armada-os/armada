@@ -13,6 +13,8 @@ BuildArch:      noarch
 
 Source0:        steam.tar.gz
 
+Requires:       libappindicator
+
 %description
 %{name} carries Steam Frame's launcher layout (bin_steam.sh, the steam symlink,
 steam.desktop and /usr/bin/steam) and the scripts that start, install, repair
