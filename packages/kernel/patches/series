@@ -348,3 +348,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1303-serial-qcom-geni-allow-shorter-rx-dma-transfer.patch
 1306-input-gpio-keys-let-other-drivers-read-a-button-state.patch
 1307-input-pm8941-pwrkey-ignore-presses-while-lid-is-closed.patch
+
+# ============== Build host tools ==============
+0000-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch
