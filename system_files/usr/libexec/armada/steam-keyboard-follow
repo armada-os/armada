@@ -1,0 +1,61 @@
+#!/usr/bin/bash
+# Opens Steam's keyboard while a text field has focus. KWin still reports
+# focus with its own keyboard set to never show.
+set -euo pipefail
+
+steam=${ARMADA_STEAM:-/usr/bin/steam}
+gdbus=${ARMADA_GDBUS:-/usr/bin/gdbus}
+steam_pid=${ARMADA_STEAM_PID:-$HOME/.steam/steam.pid}
+keyboard_mouse=${ARMADA_KEYBOARD_MOUSE:-/usr/libexec/armada/steam-keyboard-mouse}
+# steam-keyboard-outside leaves this when it closes the keyboard itself.
+closed_marker=${ARMADA_STEAM_KEYBOARD_CLOSED:-${XDG_RUNTIME_DIR:-/tmp}/armada-steam-keyboard-closed}
+bus=(--session --dest org.kde.KWin --object-path /VirtualKeyboard)
+
+active() {
+    "$gdbus" call "${bus[@]}" --method org.freedesktop.DBus.Properties.Get \
+        org.kde.kwin.VirtualKeyboard active 2>/dev/null
+}
+
+# Without a running Steam the URL would start a visible client.
+steam_running() {
+    local pid
+    [[ -r "$steam_pid" ]] || return 1
+    pid=$(<"$steam_pid")
+    [[ "$(</proc/"$pid"/comm)" == steam ]] 2>/dev/null
+}
+
+# Steam's keyboard leaves the right stick idle; InputPlumber makes it the mouse meanwhile.
+stick_mouse() {
+    "$keyboard_mouse" "$1" >/dev/null 2>&1 || true
+}
+
+follow() {
+    local shown=0
+    while read -r line; do
+        [[ "$line" == *activeChanged* ]] || continue
+        if [[ -e "$closed_marker" ]]; then
+            rm -f "$closed_marker"
+            shown=0
+        fi
+        if [[ "$(active)" == *true* ]]; then
+            [[ "$shown" == 0 ]] && steam_running || continue
+            "$steam" steam://open/keyboard >/dev/null 2>&1 || true
+            stick_mouse on
+            shown=1
+        elif [[ "$shown" == 1 ]]; then
+            # Moving between fields drops focus for an instant; reopening costs Steam half a second.
+            sleep "${ARMADA_CLOSE_DELAY:-0.15}"
+            [[ "$(active)" != *true* ]] || continue
+            stick_mouse off
+            "$steam" steam://close/keyboard >/dev/null 2>&1 || true
+            shown=0
+        fi
+    done
+}
+
+# Plasma Mobile keeps its own keyboard; only the desktop shell hides it.
+[[ ":${XDG_CONFIG_DIRS:-}:" == *:/usr/share/armada/plasma/desktop:* ]] || exit 0
+
+trap 'stick_mouse off' EXIT
+trap 'exit 0' TERM INT HUP
+"$gdbus" monitor "${bus[@]}" | follow
