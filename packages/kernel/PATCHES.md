@@ -514,7 +514,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0905-power-supply-qcom-battmgr-kpfe-charge-rate.patch`
   source: armada
   upstream: local
-  notes: KPFE charge limiting using the firmware charge-rate command and existing threshold controls.
+  notes: KPFE charge limiting using the firmware charge-rate command and existing threshold controls, with USB-PD renegotiation on eligible awake attachments.
 - `patches/0910-firmware-qcom-scm-allow-QSEECOM-on-OpenABL-s-platforms.patch`
   source: https://github.com/OpenHandheldCollective/OpenABL/blob/8f09253f8f93e7d9ff0b5baf3bda87976f0c54ac/Linux/0001-firmware-qcom-scm-allow-QSEECOM-on-OpenABL-s-platforms.patch
   upstream: unknown
