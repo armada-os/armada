@@ -27,6 +27,45 @@ armada_plasma_activate_config() {
     ln -sfn "plasmashellrc.${shell}" "${config}"
 }
 
+# Applies plasma-localerc on every surface; standalone still delegates to upstream.
+armada_plasma_import_locale() {
+    local reader=${ARMADA_KREADCONFIG:-/usr/bin/kreadconfig6}
+    local helper=${ARMADA_PLASMA_LOCALE_HELPER:-/usr/lib/armada/plasma-locale.py}
+    local config_home=${1:-${XDG_CONFIG_HOME:-$HOME/.config}}
+    local localerc="${config_home}/plasma-localerc"
+    local key value language messages=0
+
+    for key in LANG LC_ADDRESS LC_COLLATE LC_CTYPE LC_IDENTIFICATION LC_MONETARY \
+        LC_MESSAGES LC_MEASUREMENT LC_NAME LC_NUMERIC LC_PAPER LC_TELEPHONE LC_TIME LC_ALL; do
+        value=$("$reader" --file "$localerc" --group Formats --key "$key" 2>/dev/null) || continue
+        [[ -n "$value" ]] || continue
+        [[ "$key" != LC_MESSAGES ]] || messages=1
+        export "$key=$value"
+    done
+
+    # Explicit Plasma translations win; otherwise follow the Steam UI language.
+    # The fallback stays dynamic, so plasma-localerc is never written.
+    language=$("$reader" --file "$localerc" --group Translations --key LANGUAGE 2>/dev/null) || language=
+    if [[ -z "$language" ]]; then
+        language=$(/usr/bin/python3 "$helper" 2>/dev/null) || language=
+    fi
+    [[ -n "$language" ]] || language=en
+    export LANGUAGE="$language"
+
+    (( messages == 0 )) || return 0
+    [[ -z "${LC_ALL:-}" ]] || return 0
+    # A leading C or POSIX entry in LANGUAGE requests untranslated messages.
+    case "${LANGUAGE%%:*}" in
+        C|POSIX) return 0 ;;
+    esac
+    case "${LC_MESSAGES:-${LANG:-}}" in
+        C|POSIX|C.UTF-8|C.utf8)
+            # Only a non-C message locale so gettext can honour LANGUAGE; not a forced English UI.
+            export LC_MESSAGES=en_US.UTF-8
+            ;;
+    esac
+}
+
 armada_plasma_nested_pids() {
     local id=$1 environ pid
 
