@@ -1,0 +1,14 @@
+[Unit]
+Description=AYN Odin 2 microphone route manager
+After=sound.target
+ConditionPathExists=/sys/firmware/devicetree/base/model
+
+[Service]
+Type=simple
+ExecCondition=/usr/bin/grep -a -q "AYN Odin 2" /sys/firmware/devicetree/base/model
+ExecStart=/usr/libexec/armada/odin2-mic-route
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

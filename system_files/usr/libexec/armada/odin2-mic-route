@@ -1,0 +1,46 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+card="${ARMADA_ODIN2_AUDIO_CARD:-0}"
+last_route=""
+
+until grep -q AYN-Odin2 /proc/asound/cards 2>/dev/null; do
+	sleep 1
+done
+
+set_internal() {
+	amixer -q -c "${card}" sset ADC2_MIXER off
+	amixer -q -c "${card}" sset ADC2 off
+	amixer -q -c "${card}" sset "TX SMIC MUX0" SWR_MIC7
+	amixer -q -c "${card}" sset DMIC3 on
+	amixer -q -c "${card}" sset DMIC3_MIXER on
+	amixer -q -c "${card}" sset "TX_AIF1_CAP Mixer DEC0" on
+	amixer -q -c "${card}" sset "DEC0 MODE" ADC_DEFAULT
+	amixer -q -c "${card}" sset TX_DEC0 100
+}
+
+set_headset() {
+	amixer -q -c "${card}" sset DMIC3_MIXER off
+	amixer -q -c "${card}" sset DMIC3 off
+	amixer -q -c "${card}" sset "TX SMIC MUX0" SWR_MIC1
+	amixer -q -c "${card}" sset ADC2_MIXER on
+	amixer -q -c "${card}" sset "ADC2 MUX" INP2
+	amixer -q -c "${card}" sset ADC2 on
+	amixer -q -c "${card}" sset "TX1 MODE" ADC_NORMAL
+	amixer -q -c "${card}" sset "TX_AIF1_CAP Mixer DEC0" on
+	amixer -q -c "${card}" sset "DEC0 MODE" ADC_DEFAULT
+	amixer -q -c "${card}" sset TX_DEC0 110
+}
+
+while sleep 1; do
+	if amixer -c "${card}" cget numid=110 | grep -q 'values=on'; then
+		route="headset"
+	else
+		route="internal"
+	fi
+
+	if [[ "${route}" != "${last_route}" ]]; then
+		"set_${route}"
+		last_route="${route}"
+	fi
+done
