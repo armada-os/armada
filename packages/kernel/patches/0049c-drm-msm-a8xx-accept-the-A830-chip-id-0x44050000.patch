@@ -1,0 +1,19 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] drm/msm/a8xx: accept the A830 chip id 0x44050000
+
+Let the A830 entry match the 0x44050000 id the SM8750 devicetree keeps.
+adreno_is_a830() checks the entry's first id, so A830 handling is unchanged.
+
+---
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -2715,7 +2715,7 @@
+ 
+ static const struct adreno_info a8xx_gpus[] = {
+ 	{
+-		.chip_ids = ADRENO_CHIP_IDS(0x44050001),
++		.chip_ids = ADRENO_CHIP_IDS(0x44050001, 0x44050000),
+ 		.family = ADRENO_8XX_GEN1,
+ 		.fw = {
+ 			[ADRENO_FW_SQE] = "gen80000_sqe.fw",
