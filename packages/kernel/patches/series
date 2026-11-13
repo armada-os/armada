@@ -346,3 +346,4 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 # usb-role-switch, so the TYPE-C/UCSI role flip (after the charger PDR) creates
 # the host controller instead of an early pre-PDR first scan.
 1400-dwc3-ignore-dr-mode-host-with-role-switch.patch
+1401-regmap-debugfs-allow-write.patch

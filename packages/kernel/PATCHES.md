@@ -1253,3 +1253,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: In `linux usb` boot mode the bootloader adds a static `dr_mode = "host"` to the in-RAM device tree, forcing DWC3 into HOST mode from probe so the first root-hub scan fires before the charger_pd PDR; a pre-plugged drive is then never enumerated. When the controller also declares `usb-role-switch`, the forced HOST is demoted to OTG so the UCSI role flip (after the PDR) creates the host controller, matching a normal boot. No-op when there is no `dr_mode` property.
+- `patches/1401-regmap-debugfs-allow-write.patch`
+  source: armada
+  upstream: local
+  notes: Enable the regmap debugfs write path (define REGMAP_ALLOW_WRITE_DEBUGFS where the source leaves the #undef gate). Makes every regmap 'registers' file 0600 with the write format 'echo <reg-hex> <val-hex> > registers' (regmap-debugfs.c:295-336, TAINT_USER on write). Needed for the RP6 'linux usb' USB-boot debugging: the eUSB2 repeater tuning registers (pm8550b 0xfd00-0xfd5b) must be written at runtime from the initramfs to test candidate fix values for the ABL session residue the mainline kernel no longer re-initializes (upstream 31bc94de removed the zero-out). No config option exists for this in 7.2.6: regmap-debugfs.o builds under CONFIG_DEBUG_FS (drivers/base/regmap/Makefile:7), which is =y in the vanilla defconfig; only the write path needs the source modification. Debug branch only.

@@ -1,0 +1,37 @@
+From: keks2293 <rusik2293@gmail.com>
+Subject: [PATCH] regmap: debugfs: enable the 'registers' write path
+
+The 'registers' debugfs file of a regmap is read-only by default:
+both the write handler (regmap_map_write_file) and the 0600 file mode
+are gated by REGMAP_ALLOW_WRITE_DEBUGFS, which the source
+intentionally leaves undefined. Upstream documents the feature as
+dangerous for regmaps of PMIC clients and deliberately provides no
+compile-time option: "people who want to use this will need to modify
+the source code directly".
+
+On the RP6 (QCS8550) the eUSB2 repeater tuning registers of the
+pm8550b (0xfd00-0xfd5b) must be writable at runtime from the
+initramfs: in 'linux usb' boot mode the bootloader leaves its USB
+host session residue in the tuning registers that the mainline
+kernel no longer re-initializes (the zero-out was removed upstream in
+commit 31bc94de), and testing candidate fix values (the pre-31bc94de
+zero-out, or the hardware reset values captured on a working boot)
+requires live regmap writes.
+
+Define the guard at the exact line the source expects the
+modification (the #undef that precedes both the write handler and
+the file-mode selection), so the write handler is compiled in and
+the 'registers' file is created 0600. Every write taints the kernel
+(TAINT_USER) -- acceptable on this debug branch.
+---
+--- a/drivers/base/regmap/regmap-debugfs.c
++++ b/drivers/base/regmap/regmap-debugfs.c
+@@ -291,7 +291,7 @@
+ 				   count, ppos);
+ }
+ 
+-#undef REGMAP_ALLOW_WRITE_DEBUGFS
++#define REGMAP_ALLOW_WRITE_DEBUGFS
+ #ifdef REGMAP_ALLOW_WRITE_DEBUGFS
+ /*
+  * This can be dangerous especially when we have clients such as
