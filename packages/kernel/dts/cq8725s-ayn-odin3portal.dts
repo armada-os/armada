@@ -321,7 +321,10 @@
 };
 
 &remoteproc_cdsp {
-	status = "disabled";
+	firmware-name = "qcom/sm8750/ayn/odin3/cdsp.mbn",
+			"qcom/sm8750/ayn/odin3/cdsp_dtb.mbn";
+
+	status = "okay";
 };
 
 &remoteproc_mpss {
