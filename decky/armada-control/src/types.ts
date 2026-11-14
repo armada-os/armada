@@ -169,6 +169,7 @@ export interface Config {
   perf?: PerfInfo;
   cpuDeviceClass: string;
   rgbSupported: boolean;
+  autoHdrSupported: boolean;
   protonDefaults: string[];
   osVersion: string;
   ablVersion: string;

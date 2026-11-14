@@ -4,6 +4,10 @@ Upstream-derived packages for Armada. Each top-level directory is one
 component: a pinned upstream (`BASE.env`) + `patches/` + a `build.sh`.
 `PATCHES.md` records where each patch came from.
 
+`armada-autohdr/` builds an optional color provider and its development package.
+Gamescope loads the provider through a versioned C interface. Build it with
+`just package armada-autohdr`; `just package gamescope` also builds this dependency.
+
 ## How a package builds
 
 `build.sh` runs **inside** the builder container, not on the host. It sees:
