@@ -750,23 +750,6 @@
 	remote-endpoint = <&redriver_ss_in>;
 };
 
-/* Cycling the four WCN7860 rails at resume can hang the SoC. */
-&vreg_l2f_1p2 {
-	regulator-always-on;
-};
-
-&vreg_l3f_1p8 {
-	regulator-always-on;
-};
-
-&vreg_s4d_0p85 {
-	regulator-always-on;
-};
-
-&vreg_s5f_0p85 {
-	regulator-always-on;
-};
-
 &wcd_usbss {
 	reset-gpios = <&tlmm 152 GPIO_ACTIVE_HIGH>;
 };

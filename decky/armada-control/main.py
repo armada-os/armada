@@ -30,6 +30,7 @@ from armada_control.system import (
     set_mtp_enabled,
     set_desktop_mode,
     set_gyro_enabled,
+    set_gyro_orientation,
     set_sleep_mode,
     set_sleep_logs_enabled,
     set_ssh_enabled,
@@ -73,6 +74,9 @@ class Plugin:
 
     async def set_gyro_enabled(self, enabled):
         return await asyncio.to_thread(set_gyro_enabled, enabled)
+
+    async def set_gyro_orientation(self, orientation):
+        return await asyncio.to_thread(set_gyro_orientation, orientation)
 
     async def set_mtp_enabled(self, enabled):
         return await asyncio.to_thread(set_mtp_enabled, enabled)

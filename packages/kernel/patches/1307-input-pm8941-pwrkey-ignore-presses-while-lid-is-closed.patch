@@ -1,0 +1,128 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] input: pm8941-pwrkey: ignore presses while the lid is closed
+
+Lid sensors wake on open only, so if the lid closes after suspend, a
+power key press still wakes the device.
+
+Add an optional lid-switch phandle to the gpio-keys lid node. With it, the
+key IRQ stays live during suspend instead of being wake-armed. A press
+with the lid closed is dropped; with the lid open it wakes the system as
+before. enable_irq_wake() is still called so the parent SPMI line can
+wake the system.
+
+The lid is looked up at each suspend, since gpio-keys probes after this
+driver. Without a usable lid switch, the key wakes as before.
+
+--- a/drivers/input/misc/pm8941-pwrkey.c
++++ b/drivers/input/misc/pm8941-pwrkey.c
+@@ -6,6 +6,8 @@
+ 
+ #include <linux/delay.h>
+ #include <linux/errno.h>
++#include <linux/gpio/consumer.h>
++#include <linux/gpio_keys.h>
+ #include <linux/input.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
+@@ -15,8 +17,10 @@
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
+ #include <linux/reboot.h>
+ #include <linux/regmap.h>
++#include <linux/suspend.h>
+ 
+ #define PON_REV2			0x01
+ 
+@@ -82,6 +86,10 @@
+ 	ktime_t sw_debounce_end_time;
+ 	bool last_status;
+ 	const struct pm8941_data *data;
++
++	bool lid_gate;
++	/* NULL while awake; ERR_PTR if suspended without a usable lid. */
++	struct gpio_desc *lid;
+ };
+ 
+ static int pm8941_reboot_notify(struct notifier_block *nb,
+@@ -146,6 +154,23 @@
+ 	return NOTIFY_DONE;
+ }
+ 
++/* While suspended, drop presses with the lid closed; otherwise wake. */
++static irqreturn_t pm8941_pwrkey_hardirq(int irq, void *_data)
++{
++	struct pm8941_pwrkey *pwrkey = _data;
++	struct gpio_desc *lid = READ_ONCE(pwrkey->lid);
++
++	if (!lid)
++		return IRQ_WAKE_THREAD;
++
++	if (!device_may_wakeup(pwrkey->dev) ||
++	    (!IS_ERR(lid) && gpiod_get_value(lid) > 0))
++		return IRQ_HANDLED;
++
++	pm_system_irq_wakeup(irq);
++	return IRQ_WAKE_THREAD;
++}
++
+ static irqreturn_t pm8941_pwrkey_irq(int irq, void *_data)
+ {
+ 	struct pm8941_pwrkey *pwrkey = _data;
+@@ -220,10 +245,28 @@
+ 	return 0;
+ }
+ 
++/* gpio-keys probes after this driver, so look the lid up at each suspend. */
++static struct gpio_desc *pm8941_pwrkey_get_lid(struct device *dev)
++{
++	struct fwnode_handle *node;
++	struct gpio_desc *lid;
++
++	node = fwnode_find_reference(dev_fwnode(dev), "lid-switch", 0);
++	lid = IS_ERR(node) ? ERR_CAST(node) : gpio_keys_get_gpiod(node);
++	fwnode_handle_put(node);
++	if (IS_ERR(lid))
++		dev_warn_once(dev, "lid switch unavailable: %pe\n", lid);
++	return lid;
++}
++
+ static int pm8941_pwrkey_suspend(struct device *dev)
+ {
+ 	struct pm8941_pwrkey *pwrkey = dev_get_drvdata(dev);
+ 
++	if (pwrkey->lid_gate)
++		WRITE_ONCE(pwrkey->lid, pm8941_pwrkey_get_lid(dev));
++
++	/* With the lid gate, this only arms the parent SPMI wake line. */
+ 	if (device_may_wakeup(dev))
+ 		enable_irq_wake(pwrkey->irq);
+ 
+@@ -237,6 +280,8 @@
+ 	if (device_may_wakeup(dev))
+ 		disable_irq_wake(pwrkey->irq);
+ 
++	WRITE_ONCE(pwrkey->lid, NULL);
++
+ 	return 0;
+ }
+ 
+@@ -377,9 +422,15 @@
+ 		}
+ 	}
+ 
++	pwrkey->lid_gate = of_property_present(pdev->dev.of_node,
++					       "lid-switch");
++
+ 	error = devm_request_threaded_irq(&pdev->dev, pwrkey->irq,
+-					  NULL, pm8941_pwrkey_irq,
+-					  IRQF_ONESHOT,
++					  pwrkey->lid_gate ?
++						pm8941_pwrkey_hardirq : NULL,
++					  pm8941_pwrkey_irq,
++					  IRQF_ONESHOT |
++					  (pwrkey->lid_gate ? IRQF_NO_SUSPEND : 0),
+ 					  pwrkey->data->name, pwrkey);
+ 	if (error) {
+ 		dev_err(&pdev->dev, "failed requesting IRQ: %d\n", error);

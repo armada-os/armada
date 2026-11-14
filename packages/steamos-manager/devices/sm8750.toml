@@ -8,6 +8,12 @@ variant       = "Odin3"
 friendly_name = "AYN Odin 3"
 
 [[device]]
+dt.compatible = "ayn,odin3portal"
+device        = "ayn_odin_3_portal"
+variant       = "Odin3Portal"
+friendly_name = "AYN Odin 3 Portal"
+
+[[device]]
 dt.compatible = "konkr,pocket-fit-elite"
 device        = "konkr_pocket_fit_elite"
 variant       = "PocketFITElite"

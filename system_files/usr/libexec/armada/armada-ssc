@@ -7,6 +7,8 @@ eval "$(/usr/libexec/armada/device-env)"
 # ARMADA_GYRO=0 in /etc/armada/gyro.conf turns gyro off.
 ARMADA_GYRO=$(sed -n 's/^ARMADA_GYRO=//p' /etc/armada/gyro.conf 2>/dev/null | head -1 || true)
 ARMADA_GYRO=${ARMADA_GYRO:-1}
+# ARMADA_GYRO_CORRECTION rotates the SSC axes before InputPlumber's mount matrix.
+ARMADA_GYRO_CORRECTION=$(sed -n 's/^ARMADA_GYRO_CORRECTION=//p' /etc/armada/gyro.conf 2>/dev/null | head -1 || true)
 
 root="/usr/share/armada/ssc/${ARMADA_DEVICE_ID:-}"
 supported=0
@@ -18,7 +20,13 @@ if [ "${1:-}" = env ]; then
     enabled=0
     [ "$supported" = 1 ] && [ "$ARMADA_GYRO" = 1 ] && enabled=1
     mkdir -p /run/armada
-    echo "INPUTPLUMBER_FASTRPC=$enabled" > /run/armada/gyro.env
+    {
+        echo "INPUTPLUMBER_FASTRPC=$enabled"
+        case "$ARMADA_GYRO_CORRECTION" in
+            "" | *[!0-9.,\;\ -]*) ;;
+            *) echo "INPUTPLUMBER_SSC_MOUNT_CORRECTION=\"$ARMADA_GYRO_CORRECTION\"" ;;
+        esac
+    } > /run/armada/gyro.env
     exit 0
 fi
 

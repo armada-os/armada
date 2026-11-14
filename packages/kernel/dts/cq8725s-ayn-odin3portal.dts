@@ -27,12 +27,6 @@
 		pwms = <&pm8550_pwm 3 50000>;
 	};
 
-	gpio-keys {
-		key-volume-up {
-			wakeup-source;
-		};
-	};
-
 	reserved-memory {
 		reserved@9b09c000 {
 			reg = <0x0 0x9b09c000 0x0 0x4000>;
@@ -287,6 +281,7 @@
 &mdss_dsi0 {
 	panel@0 {
 		compatible = "vtdr6130,o3p";
+		armada,dpu-8bpc-dither;
 		tvdd-supply = <&vreg_l4b_1p8>;
 		rotation = <270>;
 	};
@@ -368,64 +363,4 @@
 
 	/delete-property/ resets;
 	/delete-property/ reset-names;
-};
-
-&{/thermal-zones/cpu-0-0-0-thermal} {
-	polling-delay = <1000>;
-
-	trips {
-		fan_little_on: fan-on {
-			temperature = <55000>;
-			hysteresis = <5000>;
-			type = "active";
-		};
-
-		fan_little_high: fan-high {
-			temperature = <75000>;
-			hysteresis = <5000>;
-			type = "active";
-		};
-	};
-
-	cooling-maps {
-		map-fan-low {
-			trip = <&fan_little_on>;
-			cooling-device = <&pwm_fan 2 4>;
-		};
-
-		map-fan-high {
-			trip = <&fan_little_high>;
-			cooling-device = <&pwm_fan 5 7>;
-		};
-	};
-};
-
-&{/thermal-zones/cpu-1-0-0-thermal} {
-	polling-delay = <1000>;
-
-	trips {
-		fan_big_on: fan-on {
-			temperature = <55000>;
-			hysteresis = <5000>;
-			type = "active";
-		};
-
-		fan_big_high: fan-high {
-			temperature = <75000>;
-			hysteresis = <5000>;
-			type = "active";
-		};
-	};
-
-	cooling-maps {
-		map-fan-low {
-			trip = <&fan_big_on>;
-			cooling-device = <&pwm_fan 2 4>;
-		};
-
-		map-fan-high {
-			trip = <&fan_big_high>;
-			cooling-device = <&pwm_fan 5 7>;
-		};
-	};
 };

@@ -6,6 +6,9 @@ commit, or `armada` for original work; a URL source with no `notes` is verbatim.
 A patch entry's `upstream` is `local` for an Armada-authored change, `unknown` when
 no equivalent submission was found, or a permanent URL to the upstream submission.
 
+- `patches/0000-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch`
+  source: https://git.kernel.org/torvalds/c/10a47fb67340bca274276faf855d7d460afd9a7a
+  upstream: https://git.kernel.org/torvalds/c/10a47fb67340bca274276faf855d7d460afd9a7a
 - `patches/0002-qcom-dispcc-sm8550-Fix-disp_cc_mdss_mdp_clk_src.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0002-qcom-dispcc-sm8550-Fix-disp_cc_mdss_mdp_clk_src.patch
   upstream: unknown
@@ -885,7 +888,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada disables the inherited Pocket 6 PWM backlight and removes its panel reference so Nova uses its panel driver’s DSI backlight. Matches Retroid’s Nova panel wiring: L11B/L12B/L13B for vdd/vddio/vci, GPIO 70/143 fixed regulators for vdd18/vdd28, and rotation 0. Removes the inherited avdd supply and retains Armada DPU dithering and Nova's own ADSP firmware. The ROCKNIX Nova → RP6 → AYN common inheritance remains unchanged for other systems.
 - `dts/qcs8550-ayn-thor.dts.patch`
   source: armada
-  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`.
+  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`. It also sets `lid-switch` on the power key so it can't wake the device with the lid closed (patches 1306 and 1307).
 - `dts/sm8650-ayaneo-common.dtsi.patch`
   source: armada
   notes: Armada keeps volume-up from waking the system, wires the upstream SY7758 driver, marks PCIe WAKE# active-low, idles the codec rails in LPM during s2idle, and keeps the RTC offset in an SDAM cell with the alarm enabled after copying `dts/sm8650-ayaneo-common.dtsi`.
@@ -954,6 +957,16 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Adds an optional qcom,rx-dma-len DT property to shorten GENI UART RX DMA transfers. The Duo gamepad MCU streams without idle gaps, so the default 2048-byte transfer delivered input in ~245 ms bursts.
+
+- `patches/1306-input-gpio-keys-let-other-drivers-read-a-button-state.patch`
+  source: armada
+  upstream: local
+  notes: Lets another driver read a gpio-keys button or switch through a DT phandle, including from hard IRQ context. gpio-keys still owns the GPIO. Used by 1307 to read the lid during suspend.
+
+- `patches/1307-input-pm8941-pwrkey-ignore-presses-while-lid-is-closed.patch`
+  source: armada
+  upstream: local
+  notes: Adds an optional lid-switch phandle so the power key can't wake the device while the lid is closed (lid sensors only wake on open). Reads the lid through 1306. Enabled on the Duo and Thor.
 
 - `patches/0624-drm-msm-a6xx-increase-gmu-fw-init-timeout.patch`
   source: https://github.com/RetroidPocket/linux/commit/ba970587a0e1203b6a0934b5b9174886b4c4d24c
@@ -1234,6 +1247,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: Armada
   upstream: local
 
+- `patches/1183-wifi-ath12k-associate-WCN7750-as-HE-on-6-GHz.patch`
+  source: armada
+  upstream: local
+
 - `patches/0515a-input-rsinput-accept-large-uart-batches.patch`
   source: armada
   upstream: local
@@ -1252,3 +1269,8 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1304-drm-panel-vtdr6130-add-odin3portal.patch`
   source: Armada
   upstream: local
+
+- `patches/1305-drm-panel-vtdr6130-allow-calibrating-the-odin3portal-frame-length.patch`
+  source: https://github.com/ROCKNIX/distribution/blob/abfdcfb57ff42180a50fca60a2a150641608d57e/projects/ROCKNIX/devices/SM8550/patches/linux/0508-ROCKNIX-rp6-panel-frame-length-calibration.patch
+  upstream: local
+  notes: Armada reimplements the RP6 interface for the Odin 3 Portal, whose init sequence reaches B1 through offset writes.

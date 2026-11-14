@@ -13,7 +13,8 @@ set -euo pipefail
 
 eval "$(/usr/libexec/armada/device-env)"
 if [[ -n "${ARMADA_PRIMARY_BACKLIGHT:-}" || "${ARMADA_BACKLIGHT_GAMMA:-1}" != 1 ||
-      "${ARMADA_BACKLIGHT_INPUT_MIN:-0}" != 0 || "${ARMADA_BACKLIGHT_MIN:-0}" != 0 ]]; then
+      "${ARMADA_BACKLIGHT_INPUT_MIN:-0}" != 0 || "${ARMADA_BACKLIGHT_MIN:-0}" != 0 ||
+      "${ARMADA_BACKLIGHT_MAX:-1}" != 1 ]]; then
     chmod go-w "/sys/class/backlight/$1/brightness" 2>/dev/null || true
     exit 0
 fi

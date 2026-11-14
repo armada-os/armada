@@ -13,6 +13,7 @@ import {
   setMtpEnabled as applyMtpEnabled,
   setDesktopMode as applyDesktopMode,
   setGyroEnabled as applyGyroEnabled,
+  setGyroOrientation as applyGyroOrientation,
   setSleepMode as applySleepMode,
   setSleepLogsEnabled as applySleepLogsEnabled,
   setSshEnabled as applySshEnabled,
@@ -29,7 +30,7 @@ import {
   setLowPowerDownloadsEnabled,
   setLowPowerDownloadsOnBattery,
 } from "../lib/lowPowerDownloads";
-import type { Config } from "../types";
+import type { Config, GyroOrientation } from "../types";
 
 const BOTTOM_SCREEN_BRIGHTNESS_DELAY_MS: number = 150;
 // Each apply reloads armada-powerd.
@@ -156,6 +157,18 @@ export function Settings({ config, setConfig }: {
       setGyroSaving(false);
     }
   };
+  const setGyroOrientation = async (orientation: GyroOrientation) => {
+    if (gyroSaving || orientation === config.gyro?.orientation) return;
+    setGyroSaving(true);
+    try {
+      const applied = await applyGyroOrientation(orientation);
+      setConfig((current) => (current ? { ...current, gyro: { ...current.gyro, orientation: applied } } : current));
+    } catch (error) {
+      toaster.toast({ title: t("settings.gyroError"), body: String(error) });
+    } finally {
+      setGyroSaving(false);
+    }
+  };
   const setBottomScreenEnabled = async (enabled: boolean) => {
     if (enabled === !!config.bottomScreenEnabled) {
       return;
@@ -220,6 +233,23 @@ export function Settings({ config, setConfig }: {
             value={config.gyro.enabled}
             disabled={gyroSaving}
             onChange={setGyroEnabled}
+          />
+        )}
+        {config.gyro?.supported && config.gyro.enabled && (
+          <SelectEdit
+            label={t("settings.gyroOrientation")}
+            value={config.gyro.orientation}
+            options={[
+              { data: "default", label: t("settings.gyroOrientationDefault") },
+              { data: "pitch-roll", label: t("settings.gyroOrientationPitchRoll") },
+              { data: "pitch-yaw", label: t("settings.gyroOrientationPitchYaw") },
+              { data: "roll-yaw", label: t("settings.gyroOrientationRollYaw") },
+              ...(config.gyro.orientation === "custom"
+                ? [{ data: "custom", label: t("settings.gyroOrientationCustom") }]
+                : []),
+            ]}
+            disabled={gyroSaving}
+            onChange={setGyroOrientation}
           />
         )}
       </PanelSection>

@@ -47,12 +47,49 @@ class GyroToggleTest(unittest.TestCase):
             raise subprocess.CalledProcessError(1, command)
 
     def test_default_on_and_persisted(self):
-        self.assertEqual(control.action_get_gyro({}), {"supported": True, "enabled": True})
+        self.assertEqual(control.action_get_gyro({}), self.state(True))
         for enabled in (False, True):
             state = control.action_set_gyro_enabled({"enabled": enabled})
-            self.assertEqual(state, {"supported": True, "enabled": enabled})
+            self.assertEqual(state, self.state(enabled))
             self.assertEqual(self.config.read_text(), f"ARMADA_GYRO={int(enabled)}\n")
         self.assertEqual(self.commands, [["/usr/bin/systemctl", "restart", "inputplumber"]] * 2)
+
+    def state(self, enabled, orientation="default"):
+        return {"supported": True, "enabled": enabled, "orientation": orientation}
+
+    def test_orientation_keeps_the_enable_setting(self):
+        self.config.write_text("ARMADA_GYRO=0\n")
+        self.assertEqual(control.action_set_gyro_orientation({"orientation": "pitch-roll"}),
+                         self.state(False, "pitch-roll"))
+        self.assertEqual(control.action_set_gyro_enabled({"enabled": True}), self.state(True, "pitch-roll"))
+        self.assertEqual(self.config.read_text(), "ARMADA_GYRO=1\nARMADA_GYRO_CORRECTION=1,0,0;0,-1,0;0,0,-1\n")
+        self.assertEqual(control.action_set_gyro_orientation({"orientation": "default"}), self.state(True))
+        self.assertEqual(self.config.read_text(), "ARMADA_GYRO=1\n")
+        for bad in ("custom", "", None, 1):
+            with self.assertRaises(ValueError):
+                control.action_set_gyro_orientation({"orientation": bad})
+
+    def test_custom_correction(self):
+        self.config.write_text("ARMADA_GYRO_CORRECTION=0,1,0;-1,0,0;0,0,1\n")
+        self.assertEqual(control.action_get_gyro({})["orientation"], "custom")
+        self.assertEqual(control.action_set_gyro_orientation({"orientation": "roll-yaw"})["orientation"], "roll-yaw")
+
+    def test_orientation_names_match_the_axes_they_reverse(self):
+        # Board mount matrix; Deck x/y/z map to pitch/roll/yaw.
+        mount = [[0, -1, 0], [0, 0, 1], [-1, 0, 0]]
+        axes = ("pitch", "roll", "yaw")
+        for name, value in control.GYRO_ORIENTATIONS.items():
+            if value is None:
+                continue
+            c = [[int(v) for v in row.split(",")] for row in value.split(";")]
+            final = [[sum(mount[i][k] * c[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+            flips = []
+            for i in range(3):
+                j = next(j for j in range(3) if mount[i][j])
+                self.assertEqual(abs(final[i][j]), 1, name)
+                if final[i][j] != mount[i][j]:
+                    flips.append(axes[i])
+            self.assertEqual("-".join(flips), name)
 
     def test_failed_restart_keeps_the_old_setting(self):
         for previous in (None, "ARMADA_GYRO=1\n"):
@@ -72,13 +109,13 @@ class GyroToggleTest(unittest.TestCase):
         for text in ("", "ARMADA_GYRO=0\n", "ARMADA_GYRO=1\n", "ARMADA_GYRO=\n", " ARMADA_GYRO = 0 \n",
                      "ARMADA_GYRO=0\nARMADA_GYRO=1\n", "ARMADA_GYRO=1 \n", "ARMADA_GYRO=1\r\n", "# comment\n"):
             env = self.ssc(None, True, ["env"], text)[2]
-            self.assertEqual(env == "INPUTPLUMBER_FASTRPC=1\n", control.action_get_gyro({})["enabled"], repr(text))
+            self.assertEqual(env.startswith("INPUTPLUMBER_FASTRPC=1\n"), control.action_get_gyro({})["enabled"], repr(text))
         self.config.write_bytes(b"# \xff\nARMADA_GYRO=0\n")
         self.assertFalse(control.action_get_gyro({})["enabled"])
 
     def test_unsupported_device(self):
         self.device = "ayn-odin2"
-        self.assertEqual(control.action_get_gyro({}), {"supported": False, "enabled": False})
+        self.assertEqual(control.action_get_gyro({}), {"supported": False, "enabled": False, "orientation": "default"})
         with self.assertRaises(RuntimeError):
             control.action_set_gyro_enabled({"enabled": True})
         self.assertFalse(self.config.exists())
@@ -87,6 +124,14 @@ class GyroToggleTest(unittest.TestCase):
     def test_rejects_non_bool(self):
         with self.assertRaises(ValueError):
             control.action_set_gyro_enabled({"enabled": "0"})
+
+    def test_correction_passes_through(self):
+        for text, matrix in (("", None), ("ARMADA_GYRO_CORRECTION=1, 0, 0; 0, -1, 0; 0, 0, -1\n", "1, 0, 0; 0, -1, 0; 0, 0, -1"),
+                             ("ARMADA_GYRO_CORRECTION=\n", None), ('ARMADA_GYRO_CORRECTION=1,0,0"\n', None),
+                             ("ARMADA_GYRO_CORRECTION=$(id)\n", None), ('ARMADA_GYRO_CORRECTION=1,0,0\\\n', None),
+                             ("ARMADA_GYRO_CORRECTION=1,0,0;0,1,0;0,0,1\nARMADA_GYRO_CORRECTION=0,0,0\n", "1,0,0;0,1,0;0,0,1")):
+            line = f'INPUTPLUMBER_SSC_MOUNT_CORRECTION="{matrix}"\n' if matrix else ""
+            self.assertEqual(self.ssc(None, True, ["env"], text)[2], "INPUTPLUMBER_FASTRPC=1\n" + line, repr(text))
 
     def ssc(self, gyro, supported, arg, text=None):
         script = SSC_SCRIPT.read_text()

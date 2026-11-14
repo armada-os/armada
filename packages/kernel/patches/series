@@ -267,6 +267,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 
 # ============== AYN Odin 3 Portal ==============
 1304-drm-panel-vtdr6130-add-odin3portal.patch
+1305-drm-panel-vtdr6130-allow-calibrating-the-odin3portal-frame-length.patch
 
 # ============== LPASS clocks released in s2idle (7.3 backports + force suspend) ==============
 0557-ASoC-codecs-lpass-wsa-macro-switch-to-pm-clock-framework.patch
@@ -342,5 +343,11 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1180-ASoC-qcom-q6apm-allow-s32-playback.patch
 1181-cpufreq-dt-platdev-blocklist-eliza.patch
 1182-arm64-dts-qcom-eliza-add-cpu-l3-scaling.patch
+1183-wifi-ath12k-associate-WCN7750-as-HE-on-6-GHz.patch
 1302-input-rsinput-support-retroid-pocket-duo.patch
 1303-serial-qcom-geni-allow-shorter-rx-dma-transfer.patch
+1306-input-gpio-keys-let-other-drivers-read-a-button-state.patch
+1307-input-pm8941-pwrkey-ignore-presses-while-lid-is-closed.patch
+
+# ============== Build host tools ==============
+0000-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch

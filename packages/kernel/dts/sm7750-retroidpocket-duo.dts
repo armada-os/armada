@@ -95,7 +95,7 @@
 		pinctrl-0 = <&hall_lid_default>;
 		pinctrl-names = "default";
 
-		hall-lid-sensor {
+		lid_switch: hall-lid-sensor {
 			label = "Hall Lid Sensor";
 			gpios = <&tlmm 31 GPIO_ACTIVE_LOW>;
 			linux,input-type = <EV_SW>;
@@ -888,6 +888,9 @@
 };
 
 &pon_pwrkey {
+	/* Ignore presses while suspended with the lid closed. */
+	lid-switch = <&lid_switch>;
+
 	status = "okay";
 };
 
