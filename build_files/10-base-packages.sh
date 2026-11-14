@@ -53,6 +53,7 @@ pkgs=(
     rsync
     tailscale
     unzip
+    wireguard-tools
     xz
 
     # Audio
