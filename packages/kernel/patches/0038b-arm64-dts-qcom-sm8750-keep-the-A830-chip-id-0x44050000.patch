@@ -1,0 +1,21 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: sm8750: keep the A830 chip id 0x44050000
+
+The upstream node reports 0x44050001. 0x44050000 keeps the Vulkan device
+id, and so existing shader caches, unchanged. It is also matched by Mesa
+releases before 26.3, which do not know 0x44050001 once the speed-bin
+fuse is in the upper bits (older Flatpak runtimes, bundled Mesa builds).
+
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -3585,7 +3585,7 @@
+ 		};
+ 
+ 		gpu: gpu@3d00000 {
+-			compatible = "qcom,adreno-44050001", "qcom,adreno";
++			compatible = "qcom,adreno-44050000", "qcom,adreno";
+ 			reg = <0x0 0x03d00000 0x0 0x6d000>,
+ 			      <0x0 0x03d9e000 0x0 0x2000>;
+ 			reg-names = "kgsl_3d0_reg_memory",
