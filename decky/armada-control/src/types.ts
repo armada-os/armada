@@ -51,6 +51,7 @@ export interface GameTweak {
   fexConfig?: Record<string, string>;
   turnipDriver?: string;
   thunks?: Record<string, boolean>;
+  powerProfile?: string;
   [key: string]: any;
 }
 

@@ -66,6 +66,7 @@ def status():
     data = result.unpack()[0]
     for key in (
         "profile",
+        "system_profile",
         "default_profile",
         "cpu_underclock",
         "cpu_caps",
@@ -81,6 +82,8 @@ def status():
         "temperature",
         "suspended",
     ):
+        if key not in data:
+            continue  # older daemon
         value = data[key].unpack() if hasattr(data[key], "unpack") else data[key]
         print(f"{key}={value}")
 

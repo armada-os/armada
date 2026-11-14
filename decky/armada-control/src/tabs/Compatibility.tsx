@@ -17,7 +17,7 @@ import { ArmadaModalRoot } from "../components/ArmadaModalRoot";
 import { getCurrentLocale, t, translateLabel } from "../i18n";
 import { findPreset, localized, resolveEnvValues } from "../lib/envPresets";
 import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
-import { clone } from "../lib/util";
+import { clone, titleCase } from "../lib/util";
 import { availableGames, editTargetOptions } from "../lib/games";
 import {
   FOLLOW_STEAM_COMPAT,
@@ -43,7 +43,7 @@ import type { Config, EnvPreset, TurnipDriver } from "../types";
 
 const PERF_KEYS = [
   "cores", "wineTopology", "nice", "gamescopeCores",
-  "gamescopeNice", "scheduler",
+  "gamescopeNice", "scheduler", "powerProfile",
 ];
 
 function cpulistError(text: string, cpuCount: number): string {
@@ -650,6 +650,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     { data: "", label: t("common.default") },
     ...(perf?.schedulers || ["eevdf"]).map((name) => ({ data: name, label: name.toUpperCase() })),
   ];
+  // per-game only: the system profile is picked in Steam's quick menu
+  const powerProfileOptions = [
+    { data: "", label: t("compatibility.powerProfileSystem") },
+    ...Object.entries(config.power?.profiles || {}).map(([name, profile]) => ({
+      data: name,
+      label: translateLabel(profile.label || titleCase(name)),
+    })),
+  ];
   const gamescopeCoreOptions = [
     { data: "", label: t("common.default") },
     ...(perf?.corePresets || [{ data: "all", label: "All Cores" }]).map((option) => ({ ...option, label: translateLabel(option.label) })),
@@ -798,6 +806,14 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
         options={schedulerOptions}
         onChange={(v) => patchSettings({ scheduler: String(v) || undefined })}
       />
+      {!editingDefault ? (
+        <SelectEdit
+          label={t("compatibility.powerProfile")}
+          value={String(gameSettings.powerProfile ?? "")}
+          options={powerProfileOptions}
+          onChange={(v) => patchSettings({ powerProfile: String(v) || undefined })}
+        />
+      ) : null}
       {hasGamePerfOverrides ? (
         <ButtonRow layout="below" onClick={resetGamePerformance}>
           {t("compatibility.resetPerformance")}

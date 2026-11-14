@@ -158,6 +158,8 @@ export const ptBR = {
   "compatibility.customCores": "Núcleos personalizados",
   "compatibility.vulkanRealtimeQueue": "Fila em tempo real do Vulkan",
   "compatibility.cpuScheduler": "Escalonador de CPU",
+  "compatibility.powerProfile": "Perfil de desempenho",
+  "compatibility.powerProfileSystem": "Usar perfil do sistema",
   "compatibility.reapplyRunningGame": "Reaplicar ao jogo em execução",
   "common.status": "Estado",
   "compatibility.defaultVariables": "Variáveis padrão",
