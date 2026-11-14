@@ -1,0 +1,1144 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] input: chipone: follow panel power transitions
+
+Keep Chipone TDDI transfers within the prepared lifetime of a panel
+referenced by the standard panel property. Defer hardware initialization,
+drain IRQ and firmware/recovery work before panel power-down, and resume
+only after panel preparation. Gate debug transfers and reset operations
+while the panel is off, and reject gesture wake on this shared-power path.
+
+Use the upstream DRM panel-follower API, following the lifecycle approach
+in drivers/hid/i2c-hid/i2c-hid-core.c. Keep non-follower devices on modern
+system-sleep PM callbacks and restore them if a suspend attempt fails.
+
+Preserve the pinned ROCKNIX Chipone implementation in patch 0064; this is
+a local lifecycle correction, not a replacement driver.
+---
+ drivers/input/touchscreen/Kconfig                  |   1 +
+ .../input/touchscreen/chipone_tddi/cts_config.h    |  10 +-
+ drivers/input/touchscreen/chipone_tddi/cts_core.c  |  86 ++--
+ drivers/input/touchscreen/chipone_tddi/cts_core.h  |   4 +
+ .../input/touchscreen/chipone_tddi/cts_driver.c    | 464 +++++++++++++--------
+ drivers/input/touchscreen/chipone_tddi/cts_oem.c   |   3 +-
+ .../input/touchscreen/chipone_tddi/cts_platform.c  |  76 +++-
+ .../input/touchscreen/chipone_tddi/cts_platform.h  |   6 +
+ drivers/input/touchscreen/chipone_tddi/cts_sysfs.c |   3 +
+ 9 files changed, 438 insertions(+), 215 deletions(-)
+
+diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
+index 16fa8c27660274702cd7a9a777d238b57b78dc39..0781c7b2e6268187d3a353a4fa242f531ca99660 100644
+--- a/drivers/input/touchscreen/Kconfig
++++ b/drivers/input/touchscreen/Kconfig
+@@ -17,6 +17,7 @@ source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
+ config TOUCHSCREEN_CHIPONE_TDDI
+ 	tristate "ChipOne ICNL9922C TDDI touchscreen"
+ 	depends on I2C
++	depends on DRM || !DRM
+ 	help
+ 	  Say Y here to enable support for the ChipOne ICNL9922C TDDI touch
+ 	  controller, as found on the KONKR Pocket FIT (Qualcomm SM8650).
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_config.h b/drivers/input/touchscreen/chipone_tddi/cts_config.h
+index 25960c2f234587954b088396382724e0908372f7..48887b3aadd79e5dbb0e4fd09c9d1cd17fbf7b76 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_config.h
++++ b/drivers/input/touchscreen/chipone_tddi/cts_config.h
+@@ -187,13 +187,9 @@
+ //#define CFG_CTS_DRM_NOTIFIER
+ #endif /*CONFIG_DRM */
+ #else /*CONFIG_CTS_PM_FB_NOTIFIER */
+-#if defined(CONFIG_PM_SLEEP) && defined(CONFIG_PM_SUSPEND)
+-    /* #define CONFIG_CTS_PM_GENERIC */
+-#endif /* CONFIG_PM_SLEEP */
+-
+-#ifndef CONFIG_CTS_PM_GENERIC
+-#define CONFIG_CTS_PM_LEGACY
+-#endif /*CONFIG_CTS_PM_GENERIC */
++#ifdef CONFIG_PM_SLEEP
++#define CONFIG_CTS_PM_GENERIC
++#endif
+ #endif /*CONFIG_CTS_PM_FB_NOTIFIER */
+ 
+ #define CFG_CTS_MAX_I2C_XFER_SIZE           (48u)
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_core.c b/drivers/input/touchscreen/chipone_tddi/cts_core.c
+index 02aa96a0ef0358d454842f0aecc622f88d4f4916..5c2d4bfe340399faa328df99c510b3696973e12c 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_core.c
++++ b/drivers/input/touchscreen/chipone_tddi/cts_core.c
+@@ -1449,6 +1449,11 @@ int cts_irq_handler(struct cts_device *cts_dev)
+ 
+     cts_dbg("Enter IRQ handler");
+ 
++    if (READ_ONCE(cts_dev->pdata->irq_blocked) ||
++        (cts_dev->rtdata.suspended &&
++         !cts_dev->rtdata.gesture_wakeup_enabled))
++        return 0;
++
+     if (cts_dev->rtdata.program_mode) {
+         cts_err("IRQ triggered in program mode");
+         return -EINVAL;
+@@ -1652,6 +1657,7 @@ int cts_resume_device(struct cts_device *cts_dev)
+                 goto err_set_program_mode;
+             }
+         } else {
++            ret = -ENOENT;
+             cts_err("Request default firmware failed %d, "
+                 "please update manually!!", ret);
+ 
+@@ -1920,19 +1926,26 @@ bool cts_is_device_enabled(const struct cts_device *cts_dev)
+ 
+ int cts_start_device(struct cts_device *cts_dev)
+ {
+-#if defined(CONFIG_CTS_ESD_PROTECTION) || \
+-    defined(CONFIG_CTS_CHARGER_DETECT) || \
+-    defined(CONFIG_CTS_EARJACK_DETECT)
+     struct chipone_ts_data *cts_data =
+-    container_of(cts_dev, struct chipone_ts_data, cts_dev);
+-#endif
+-    int ret;
++        container_of(cts_dev, struct chipone_ts_data, cts_dev);
++    int ret = 0;
+ 
++    mutex_lock(&cts_dev->pdata->start_lock);
++    if (!READ_ONCE(cts_data->initialized)) {
++        ret = -EAGAIN;
++        goto out;
++    }
+     cts_info("Start device...");
+ 
+     if (cts_is_device_enabled(cts_dev)) {
+         cts_warn("Start device while already started");
+-        return 0;
++        goto out;
++    }
++
++    ret = cts_plat_enable_irq(cts_dev->pdata);
++    if (ret < 0) {
++        cts_err("Enable IRQ failed %d", ret);
++        goto out;
+     }
+ 
+ #ifdef CFG_CTS_HEARTBEAT_MECHANISM
+@@ -1951,17 +1964,13 @@ int cts_start_device(struct cts_device *cts_dev)
+     cts_start_earjack_detect(cts_data);
+ #endif
+ 
+-    ret = cts_plat_enable_irq(cts_dev->pdata);
+-    if (ret < 0) {
+-        cts_err("Enable IRQ failed %d", ret);
+-        return ret;
+-    }
+-
+     cts_dev->enabled = true;
+ 
+     cts_info("Start device successfully");
+ 
+-    return 0;
++out:
++    mutex_unlock(&cts_dev->pdata->start_lock);
++    return ret;
+ }
+ 
+ int cts_stop_device(struct cts_device *cts_dev)
+@@ -2036,26 +2045,29 @@ int cts_stop_device(struct cts_device *cts_dev)
+ #ifdef CONFIG_CTS_ESD_PROTECTION
+ int cts_start_device_esdrecover(struct cts_device *cts_dev)
+ {
+-    int ret;
++    int ret = 0;
+ 
++    mutex_lock(&cts_dev->pdata->start_lock);
+     cts_info("Start device...");
+ 
+     if (cts_is_device_enabled(cts_dev)) {
+         cts_warn("Start device while already started");
+-        return 0;
++        goto out;
+     }
+ 
+     ret = cts_plat_enable_irq(cts_dev->pdata);
+     if (ret < 0) {
+         cts_err("Enable IRQ failed %d", ret);
+-        return ret;
++        goto out;
+     }
+ 
+     cts_dev->enabled = true;
+ 
+     cts_info("Start device successfully");
+ 
+-    return 0;
++out:
++    mutex_unlock(&cts_dev->pdata->start_lock);
++    return ret;
+ }
+ 
+ int cts_stop_device_esdrecover(struct cts_device *cts_dev)
+@@ -2229,6 +2241,10 @@ init_hwdata:
+ #ifdef CFG_CTS_GESTURE
+ void cts_enable_gesture_wakeup(struct cts_device *cts_dev)
+ {
++    if (cts_dev->pdata->is_panel_follower) {
++        cts_warn("Gesture wakeup is unavailable while following panel power");
++        return;
++    }
+     cts_info("Enable gesture wakeup");
+     cts_dev->rtdata.gesture_wakeup_enabled = true;
+ }
+@@ -2352,15 +2368,19 @@ static void cts_esd_protection_work(struct work_struct *work)
+ 
+             if (ret)
+                 cts_err("Update default firmware failed %d", ret);
+-        } else
++        } else {
++            ret = -ENOENT;
+             cts_err("Request default firmware failed %d, "
+                 "please update manually!!", ret);
++        }
+ 
+-        cts_start_device_esdrecover(&cts_data->cts_dev);
++        if (!ret)
++            cts_start_device_esdrecover(&cts_data->cts_dev);
+         cts_data->esd_check_fail_cnt = 0;
+     }
+-    queue_delayed_work(cts_data->esd_workqueue, &cts_data->esd_work,
+-        CFG_CTS_ESD_PROTECTION_CHECK_PERIOD);
++    if (READ_ONCE(cts_data->esd_enabled))
++        queue_delayed_work(cts_data->esd_workqueue, &cts_data->esd_work,
++            CFG_CTS_ESD_PROTECTION_CHECK_PERIOD);
+ 
+     cts_unlock_device(&cts_data->cts_dev);
+ }
+@@ -2370,7 +2390,7 @@ void cts_enable_esd_protection(struct chipone_ts_data *cts_data)
+     if (cts_data->esd_workqueue && !cts_data->esd_enabled) {
+         cts_info("ESD protection enable");
+ 
+-        cts_data->esd_enabled = true;
++        WRITE_ONCE(cts_data->esd_enabled, true);
+         cts_data->esd_check_fail_cnt = 0;
+         queue_delayed_work(cts_data->esd_workqueue,
+                 &cts_data->esd_work,
+@@ -2383,9 +2403,8 @@ void cts_disable_esd_protection(struct chipone_ts_data *cts_data)
+     if (cts_data->esd_workqueue && cts_data->esd_enabled) {
+         cts_info("ESD protection disable");
+ 
+-        cts_data->esd_enabled = false;
+-        cancel_delayed_work(&cts_data->esd_work);
+-        flush_workqueue(cts_data->esd_workqueue);
++        WRITE_ONCE(cts_data->esd_enabled, false);
++        cancel_delayed_work_sync(&cts_data->esd_work);
+     }
+ }
+ 
+@@ -2404,7 +2423,7 @@ void cts_deinit_esd_protection(struct chipone_ts_data *cts_data)
+     cts_info("De-Init ESD protection");
+ 
+     if (cts_data->esd_workqueue && cts_data->esd_enabled) {
+-        cts_data->esd_enabled = false;
++        WRITE_ONCE(cts_data->esd_enabled, false);
+         cancel_delayed_work(&cts_data->esd_work);
+     }
+ }
+@@ -2688,13 +2707,18 @@ void cts_firmware_upgrade_work(struct work_struct *work)
+ 
+     cts_lock_device(cts_dev);
+     cts_dev->rtdata.update_work_run = true;
++    if (cts_dev->rtdata.suspended) {
++        ret = cts_resume_device(cts_dev);
++        if (ret)
++            goto end;
++    }
+     firmware = cts_request_firmware(cts_dev, cts_dev->hwdata->hwid,
+             CTS_DEV_FWID_ANY, cts_dev->fwdata.version);
+     if (firmware == NULL) {
+         cts_warn("Request firmware failed");
+         /* With flash, do not update. */
+         cts_set_program_addr(cts_dev);
+-        cts_enter_normal_mode(cts_dev);
++        ret = cts_enter_normal_mode(cts_dev);
+         goto end;
+     }
+ 
+@@ -2712,7 +2736,11 @@ void cts_firmware_upgrade_work(struct work_struct *work)
+ 
+ end:
+     if (ret == 0)
+-        cts_start_device(cts_dev);
++        ret = cts_start_device(cts_dev);
++    if (!ret)
++        WRITE_ONCE(cts_data->firmware_ready, true);
++    else
++        cts_err("Firmware initialization failed %d", ret);
+ 
+     cts_dev->rtdata.update_work_run = false;
+     cts_unlock_device(cts_dev);
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_core.h b/drivers/input/touchscreen/chipone_tddi/cts_core.h
+index e6fe88e06564f7ca2033cd45358ed8a143814df0..171ab5d346bbb6519d4cb8d249bb664036ed97c7 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_core.h
++++ b/drivers/input/touchscreen/chipone_tddi/cts_core.h
+@@ -2,6 +2,7 @@
+ #define CTS_CORE_H
+ 
+ #include "cts_config.h"
++#include <drm/drm_panel.h>
+ 
+ #ifdef CHIPONE_SENSOR_EN
+ #include <linux/mmi_wake_lock.h>
+@@ -425,6 +426,9 @@ struct chipone_ts_data {
+     struct workqueue_struct *workqueue;
+     struct delayed_work fw_upgrade_work;
+     struct work_struct ts_resume_work;
++    struct drm_panel_follower panel_follower;
++    bool initialized;
++    bool firmware_ready;
+ #ifdef CONFIG_CTS_CHARGER_DETECT
+     void *charger_detect_data;
+ #endif
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_driver.c b/drivers/input/touchscreen/chipone_tddi/cts_driver.c
+index 4b56393fcc7241e4c28b22a8c9f3801ee8bb2990..03089a11e28750a085520927f402953185b23d55 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_driver.c
++++ b/drivers/input/touchscreen/chipone_tddi/cts_driver.c
+@@ -11,6 +11,7 @@
+ #include "cts_charger_detect.h"
+ #include "cts_earjack_detect.h"
+ #include "cts_oem.h"
++#include <linux/property.h>
+ 
+ #ifdef CFG_MTK_PANEL_NOTIFIER
+ #include "mtk_panel_ext.h"
+@@ -22,6 +23,7 @@ extern void __attribute__ ((weak)) sensors_classdev_unregister(struct sensors_cl
+ #endif
+ 
+ static void cts_resume_work_func(struct work_struct *work);
++static int cts_init_device(struct chipone_ts_data *cts_data);
+ #ifdef CFG_CTS_DRM_NOTIFIER
+ #include <drm/drm_panel.h>
+ static struct drm_panel *active_panel;
+@@ -41,18 +43,21 @@ int cts_suspend(struct chipone_ts_data *cts_data)
+ {
+     int ret;
+ 
++    if (!READ_ONCE(cts_data->initialized))
++        return -EAGAIN;
++
+     cts_info("Suspend");
+ 
++    ret = cts_stop_device(&cts_data->cts_dev);
++    if (ret)
++        return ret;
++    synchronize_irq(cts_data->pdata->irq);
++
+     cts_lock_device(&cts_data->cts_dev);
+     ret = cts_suspend_device(&cts_data->cts_dev);
+     cts_unlock_device(&cts_data->cts_dev);
+-
+-    if (ret)
+-        cts_err("Suspend device failed %d", ret);
+-
+-    ret = cts_stop_device(&cts_data->cts_dev);
+     if (ret) {
+-        cts_err("Stop device failed %d", ret);
++        cts_err("Suspend device failed %d", ret);
+         return ret;
+     }
+ #ifdef CFG_CTS_GESTURE
+@@ -83,8 +88,14 @@ int cts_resume(struct chipone_ts_data *cts_data)
+ {
+     int ret;
+ 
++    if (!READ_ONCE(cts_data->initialized))
++        return -EAGAIN;
++
+     cts_info("Resume");
+ 
++    if (READ_ONCE(cts_data->pdata->irq_blocked))
++        return -EHOSTDOWN;
++
+ #ifdef CFG_CTS_GESTURE
+     if (cts_is_gesture_wakeup_enabled(&cts_data->cts_dev)) {
+         ret = cts_plat_disable_irq_wake(cts_data->pdata);
+@@ -116,11 +127,77 @@ int cts_resume(struct chipone_ts_data *cts_data)
+ static void cts_resume_work_func(struct work_struct *work)
+ {
+     struct chipone_ts_data *cts_data =
+-    container_of(work, struct chipone_ts_data, ts_resume_work);
+-    cts_info("%s", __func__);
+-    cts_resume(cts_data);
++        container_of(work, struct chipone_ts_data, ts_resume_work);
++    int ret;
++
++    if (!cts_data->initialized) {
++        ret = cts_init_device(cts_data);
++        if (!ret)
++            queue_delayed_work(cts_data->workqueue,
++                &cts_data->fw_upgrade_work, msecs_to_jiffies(15000));
++    } else if (!READ_ONCE(cts_data->firmware_ready)) {
++        queue_delayed_work(cts_data->workqueue, &cts_data->fw_upgrade_work, 0);
++        ret = 0;
++    } else {
++        ret = cts_resume(cts_data);
++    }
++    if (ret)
++        dev_err(cts_data->device, "Panel preparation failed: %d\n", ret);
+ }
+ 
++static int cts_panel_prepared(struct drm_panel_follower *follower)
++{
++    struct chipone_ts_data *cts_data =
++        container_of(follower, struct chipone_ts_data, panel_follower);
++    struct cts_platform_data *pdata = cts_data->pdata;
++    unsigned long flags;
++
++    down_write(&pdata->panel_io_lock);
++    pdata->panel_powered = true;
++    up_write(&pdata->panel_io_lock);
++    spin_lock_irqsave(&pdata->irq_lock, flags);
++    pdata->irq_blocked = false;
++    spin_unlock_irqrestore(&pdata->irq_lock, flags);
++    queue_work(cts_data->workqueue, &cts_data->ts_resume_work);
++    return 0;
++}
++
++static int cts_panel_unpreparing(struct drm_panel_follower *follower)
++{
++    struct chipone_ts_data *cts_data =
++        container_of(follower, struct chipone_ts_data, panel_follower);
++    struct cts_platform_data *pdata = cts_data->pdata;
++    unsigned long flags;
++    int ret = 0;
++
++    mutex_lock(&pdata->start_lock);
++    spin_lock_irqsave(&pdata->irq_lock, flags);
++    pdata->irq_blocked = true;
++    spin_unlock_irqrestore(&pdata->irq_lock, flags);
++    mutex_unlock(&pdata->start_lock);
++
++    cancel_work_sync(&cts_data->ts_resume_work);
++    cancel_delayed_work_sync(&cts_data->fw_upgrade_work);
++    if (cts_data->initialized) {
++        cts_plat_disable_irq(pdata);
++        synchronize_irq(pdata->irq);
++        ret = cts_suspend(cts_data);
++        /* A failed sleep command must not leave recovery work running. */
++        cts_disable_esd_protection(cts_data);
++        cts_plat_release_all_touch(pdata);
++    }
++
++    down_write(&pdata->panel_io_lock);
++    pdata->panel_powered = false;
++    up_write(&pdata->panel_io_lock);
++    return ret;
++}
++
++static const struct drm_panel_follower_funcs cts_panel_follower_funcs = {
++    .panel_prepared = cts_panel_prepared,
++    .panel_unpreparing = cts_panel_unpreparing,
++};
++
+ #ifdef CFG_MTK_PANEL_NOTIFIER
+ static int disp_notifier_callback(struct notifier_block *nb,
+ 				unsigned long value, void *v)
+@@ -608,6 +685,150 @@ static bool is_charger_mode(void)
+ }
+ #endif
+ 
++static int cts_init_device(struct chipone_ts_data *cts_data)
++{
++#ifdef CONFIG_CTS_I2C_HOST
++    struct i2c_client *client = cts_data->i2c_client;
++#else
++    struct spi_device *client = cts_data->spi_client;
++#endif
++    int ret;
++
++    ret = cts_reset_device(&cts_data->cts_dev);
++    if (ret < 0) {
++        cts_err("Reset device failed %d", ret);
++        goto err_out;
++    }
++
++    ret = cts_probe_device(&cts_data->cts_dev);
++    if (ret) {
++        cts_err("Probe device failed %d", ret);
++        goto err_out;
++    }
++
++    ret = cts_plat_init_touch_device(cts_data->pdata);
++    if (ret < 0) {
++        cts_err("Init touch device failed %d", ret);
++        goto err_out;
++    }
++
++    ret = cts_plat_init_vkey_device(cts_data->pdata);
++    if (ret < 0) {
++        cts_err("Init vkey device failed %d", ret);
++        goto err_deinit_touch_device;
++    }
++
++    ret = cts_plat_init_gesture(cts_data->pdata);
++    if (ret < 0) {
++        cts_err("Init gesture failed %d", ret);
++        goto err_deinit_vkey_device;
++    }
++
++    cts_init_esd_protection(cts_data);
++
++    ret = cts_tool_init(cts_data);
++    if (ret < 0)
++        cts_warn("Init tool node failed %d", ret);
++
++    ret = cts_sysfs_add_device(&client->dev);
++    if (ret < 0)
++        cts_warn("Add sysfs entry for device failed %d", ret);
++
++#ifdef CFG_MTK_PANEL_NOTIFIER
++	ret = cts_init_pm_disp_notifier(cts_data);
++	if (ret) {
++		cts_err("Init disp notifier failed %d", ret);
++		goto err_disp_deinit_sysfs;
++	}
++#endif /* CFG_MTK_PANEL_NOTIFIER */
++
++#ifdef CONFIG_CTS_PM_FB_NOTIFIER
++    ret = cts_init_pm_fb_notifier(cts_data);
++    if (ret) {
++        cts_err("Init FB notifier failed %d", ret);
++        goto err_deinit_sysfs;
++    }
++#endif
++
++    ret = cts_plat_request_irq(cts_data->pdata);
++    if (ret < 0) {
++        cts_err("Request IRQ failed %d", ret);
++        goto err_register_fb;
++    }
++
++#ifdef CONFIG_CTS_CHARGER_DETECT
++    ret = cts_charger_detect_init(cts_data);
++    if (ret)
++        cts_err("Init charger detect failed %d", ret);
++        /* Ignore this error */
++#endif
++
++#ifdef CONFIG_CTS_EARJACK_DETECT
++    ret = cts_earjack_detect_init(cts_data);
++    if (ret) {
++        cts_err("Init earjack detect failed %d", ret);
++        // Ignore this error
++    }
++#endif
++
++    ret = cts_oem_init(cts_data);
++    if (ret < 0) {
++        cts_warn("Init oem specific faild %d", ret);
++        goto err_deinit_oem;
++    }
++
++#ifdef CFG_CTS_HEARTBEAT_MECHANISM
++    INIT_DELAYED_WORK(&cts_data->heart_work, cts_heartbeat_mechanism_work);
++#endif
++
++    WRITE_ONCE(cts_data->initialized, true);
++    return 0;
++
++err_deinit_oem:
++    cts_oem_deinit(cts_data);
++
++#ifdef CONFIG_CTS_EARJACK_DETECT
++    cts_earjack_detect_deinit(cts_data);
++#endif
++#ifdef CONFIG_CTS_CHARGER_DETECT
++    cts_charger_detect_deinit(cts_data);
++#endif
++    cts_plat_free_irq(cts_data->pdata);
++
++err_register_fb:
++#ifdef CFG_MTK_PANEL_NOTIFIER
++	cts_deinit_pm_disp_notifier(cts_data);
++err_disp_deinit_sysfs:
++#endif // CFG_MTK_PANEL_NOTIFIER
++#ifdef CONFIG_CTS_PM_FB_NOTIFIER
++    cts_deinit_pm_fb_notifier(cts_data);
++err_deinit_sysfs:
++#endif
++    cts_sysfs_remove_device(&client->dev);
++#ifdef CONFIG_CTS_LEGACY_TOOL
++    cts_tool_deinit(cts_data);
++#endif
++
++#ifdef CONFIG_CTS_ESD_PROTECTION
++    cts_deinit_esd_protection(cts_data);
++#endif
++
++#ifdef CFG_CTS_GESTURE
++    cts_plat_deinit_gesture(cts_data->pdata);
++#endif
++
++err_deinit_vkey_device:
++#ifdef CONFIG_CTS_VIRTUALKEY
++    cts_plat_deinit_vkey_device(cts_data->pdata);
++#endif
++
++err_deinit_touch_device:
++    cts_plat_deinit_touch_device(cts_data->pdata);
++
++err_out:
++    return ret;
++}
++
+ #ifdef CONFIG_CTS_I2C_HOST
+ static int cts_driver_probe(struct i2c_client *client)
+ #else
+@@ -696,7 +917,13 @@ static int cts_driver_probe(struct spi_device *client)
+     cts_data->device = &client->dev;
+ #endif
+ 
+-    cts_init_platform_data(cts_data->pdata, client);
++    ret = cts_init_platform_data(cts_data->pdata, client);
++    if (ret)
++        goto err_free_pdata;
++
++    cts_data->pdata->is_panel_follower =
++        device_property_present(cts_data->device, "panel");
++    cts_data->pdata->irq_blocked = cts_data->pdata->is_panel_follower;
+ 
+     cts_data->cts_dev.pdata = cts_data->pdata;
+     cts_data->pdata->cts_dev = &cts_data->cts_dev;
+@@ -736,98 +963,7 @@ static int cts_driver_probe(struct spi_device *client)
+         goto err_destroy_heart_workqueue;
+     }
+ 
+-    ret = cts_reset_device(&cts_data->cts_dev);
+-    if (ret < 0) {
+-        cts_err("Reset device failed %d", ret);
+-        goto err_free_resource;
+-    }
+-
+-    ret = cts_probe_device(&cts_data->cts_dev);
+-    if (ret) {
+-        cts_err("Probe device failed %d", ret);
+-        goto err_free_resource;
+-    }
+-
+-    ret = cts_plat_init_touch_device(cts_data->pdata);
+-    if (ret < 0) {
+-        cts_err("Init touch device failed %d", ret);
+-        goto err_free_resource;
+-    }
+-
+-    ret = cts_plat_init_vkey_device(cts_data->pdata);
+-    if (ret < 0) {
+-        cts_err("Init vkey device failed %d", ret);
+-        goto err_deinit_touch_device;
+-    }
+-
+-    ret = cts_plat_init_gesture(cts_data->pdata);
+-    if (ret < 0) {
+-        cts_err("Init gesture failed %d", ret);
+-        goto err_deinit_vkey_device;
+-    }
+-
+-    cts_init_esd_protection(cts_data);
+-
+-    ret = cts_tool_init(cts_data);
+-    if (ret < 0)
+-        cts_warn("Init tool node failed %d", ret);
+-
+-    ret = cts_sysfs_add_device(&client->dev);
+-    if (ret < 0)
+-        cts_warn("Add sysfs entry for device failed %d", ret);
+-
+-#ifdef CFG_MTK_PANEL_NOTIFIER
+-	ret = cts_init_pm_disp_notifier(cts_data);
+-	if (ret) {
+-		cts_err("Init disp notifier failed %d", ret);
+-		goto err_disp_deinit_sysfs;
+-	}
+-#endif /* CFG_MTK_PANEL_NOTIFIER */
+-
+-#ifdef CONFIG_CTS_PM_FB_NOTIFIER
+-    ret = cts_init_pm_fb_notifier(cts_data);
+-    if (ret) {
+-        cts_err("Init FB notifier failed %d", ret);
+-        goto err_deinit_sysfs;
+-    }
+-#endif
+-
+-    ret = cts_plat_request_irq(cts_data->pdata);
+-    if (ret < 0) {
+-        cts_err("Request IRQ failed %d", ret);
+-        goto err_register_fb;
+-    }
+-
+-#ifdef CONFIG_CTS_CHARGER_DETECT
+-    ret = cts_charger_detect_init(cts_data);
+-    if (ret)
+-        cts_err("Init charger detect failed %d", ret);
+-        /* Ignore this error */
+-#endif
+-
+-#ifdef CONFIG_CTS_EARJACK_DETECT
+-    ret = cts_earjack_detect_init(cts_data);
+-    if (ret) {
+-        cts_err("Init earjack detect failed %d", ret);
+-        // Ignore this error
+-    }
+-#endif
+-
+-    ret = cts_oem_init(cts_data);
+-    if (ret < 0) {
+-        cts_warn("Init oem specific faild %d", ret);
+-        goto err_deinit_oem;
+-    }
+-
+-#ifdef CFG_CTS_HEARTBEAT_MECHANISM
+-    INIT_DELAYED_WORK(&cts_data->heart_work, cts_heartbeat_mechanism_work);
+-#endif
+-
+-    /* Init firmware upgrade work and schedule */
+     INIT_DELAYED_WORK(&cts_data->fw_upgrade_work, cts_firmware_upgrade_work);
+-    queue_delayed_work(cts_data->workqueue, &cts_data->fw_upgrade_work,
+-        msecs_to_jiffies(15 * 1000));
+-
+     INIT_WORK(&cts_data->ts_resume_work, cts_resume_work_func);
+ 
+ #ifdef CHIPONE_SENSOR_EN
+@@ -850,48 +986,22 @@ static int cts_driver_probe(struct spi_device *client)
+ 	}
+ #endif
+ 
+-    return 0;
+-
+-err_deinit_oem:
+-    cts_oem_deinit(cts_data);
+-
+-#ifdef CONFIG_CTS_EARJACK_DETECT
+-    cts_earjack_detect_deinit(cts_data);
+-#endif
+-#ifdef CONFIG_CTS_CHARGER_DETECT
+-    cts_charger_detect_deinit(cts_data);
+-#endif
+-    cts_plat_free_irq(cts_data->pdata);
+-
+-err_register_fb:
+-#ifdef CFG_MTK_PANEL_NOTIFIER
+-	cts_deinit_pm_disp_notifier(cts_data);
+-err_disp_deinit_sysfs:
+-#endif // CFG_MTK_PANEL_NOTIFIER
+-#ifdef CONFIG_CTS_PM_FB_NOTIFIER
+-    cts_deinit_pm_fb_notifier(cts_data);
+-err_deinit_sysfs:
+-#endif
+-    cts_sysfs_remove_device(&client->dev);
+-#ifdef CONFIG_CTS_LEGACY_TOOL
+-    cts_tool_deinit(cts_data);
+-#endif
+-
+-#ifdef CONFIG_CTS_ESD_PROTECTION
+-    cts_deinit_esd_protection(cts_data);
+-#endif
+-
+-#ifdef CFG_CTS_GESTURE
+-    cts_plat_deinit_gesture(cts_data->pdata);
+-#endif
++    if (cts_data->pdata->is_panel_follower) {
++        cts_data->panel_follower.funcs = &cts_panel_follower_funcs;
++        ret = drm_panel_add_follower(cts_data->device,
++                &cts_data->panel_follower);
++        if (ret)
++            goto err_free_resource;
++    } else {
++        ret = cts_init_device(cts_data);
++        if (ret)
++            goto err_free_resource;
++        queue_delayed_work(cts_data->workqueue, &cts_data->fw_upgrade_work,
++            msecs_to_jiffies(15000));
++    }
+ 
+-err_deinit_vkey_device:
+-#ifdef CONFIG_CTS_VIRTUALKEY
+-    cts_plat_deinit_vkey_device(cts_data->pdata);
+-#endif
+ 
+-err_deinit_touch_device:
+-    cts_plat_deinit_touch_device(cts_data->pdata);
++    return 0;
+ 
+ err_free_resource:
+     cts_plat_free_resource(cts_data->pdata);
+@@ -909,6 +1019,8 @@ err_destroy_workqueue:
+     destroy_workqueue(cts_data->workqueue);
+ err_deinit_platform_data:
+     cts_deinit_platform_data(cts_data->pdata);
++    g_cts_data = NULL;
++err_free_pdata:
+     kfree(cts_data->pdata);
+ err_free_cts_data:
+     kfree(cts_data);
+@@ -935,9 +1047,25 @@ static void cts_driver_remove(struct spi_device *client)
+     cts_data = (struct chipone_ts_data *)spi_get_drvdata(client);
+ #endif
+     if (cts_data) {
++        unsigned long flags;
++
++        mutex_lock(&cts_data->pdata->start_lock);
++        spin_lock_irqsave(&cts_data->pdata->irq_lock, flags);
++        cts_data->pdata->irq_blocked = true;
++        spin_unlock_irqrestore(&cts_data->pdata->irq_lock, flags);
++        mutex_unlock(&cts_data->pdata->start_lock);
++        if (cts_data->pdata->is_panel_follower)
++            drm_panel_remove_follower(&cts_data->panel_follower);
++        cancel_work_sync(&cts_data->ts_resume_work);
++        cancel_delayed_work_sync(&cts_data->fw_upgrade_work);
++        if (!cts_data->initialized)
++            goto free_resource;
++
+         ret = cts_stop_device(&cts_data->cts_dev);
+         if (ret)
+             cts_warn("Stop device failed %d", ret);
++        cts_disable_esd_protection(cts_data);
++        WRITE_ONCE(cts_data->initialized, false);
+ 
+ #ifdef CONFIG_CTS_CHARGER_DETECT
+         cts_charger_detect_deinit(cts_data);
+@@ -969,10 +1097,11 @@ static void cts_driver_remove(struct spi_device *client)
+ 
+         cts_plat_deinit_gesture(cts_data->pdata);
+ 
+-        cts_plat_free_resource(cts_data->pdata);
+-
+         cts_oem_deinit(cts_data);
+ 
++free_resource:
++        cts_plat_free_resource(cts_data->pdata);
++
+ #ifdef CFG_CTS_HEARTBEAT_MECHANISM
+         if (cts_data->heart_workqueue)
+             destroy_workqueue(cts_data->heart_workqueue);
+@@ -990,6 +1119,7 @@ static void cts_driver_remove(struct spi_device *client)
+ 
+         if (cts_data->pdata)
+             kfree(cts_data->pdata);
++        g_cts_data = NULL;
+         kfree(cts_data);
+     } else {
+         cts_warn("Chipone i2c driver remove while NULL chipone_ts_data");
+@@ -999,37 +1129,41 @@ static void cts_driver_remove(struct spi_device *client)
+     (void)ret;
+ }
+ 
+-#ifdef CONFIG_CTS_PM_LEGACY
+-static int cts_i2c_driver_suspend(struct device *dev, pm_message_t state)
++#ifdef CONFIG_CTS_PM_GENERIC
++static int cts_i2c_driver_pm_resume(struct device *dev)
+ {
+-    cts_info("Suspend by legacy power management");
+-    return cts_suspend(dev_get_drvdata(dev));
+-}
++    struct chipone_ts_data *cts_data = dev_get_drvdata(dev);
+ 
+-static int cts_i2c_driver_resume(struct device *dev)
+-{
+-    cts_info("Resume by legacy power management");
+-    return cts_resume(dev_get_drvdata(dev));
++    if (cts_data->pdata->is_panel_follower)
++        return 0;
++    if (!READ_ONCE(cts_data->firmware_ready)) {
++        queue_delayed_work(cts_data->workqueue, &cts_data->fw_upgrade_work, 0);
++        return 0;
++    }
++    return cts_resume(cts_data);
+ }
+-#endif /* CONFIG_CTS_PM_LEGACY */
+ 
+-#ifdef CONFIG_CTS_PM_GENERIC
+ static int cts_i2c_driver_pm_suspend(struct device *dev)
+ {
+-    cts_info("Suspend by bus power management");
+-    return cts_suspend(dev_get_drvdata(dev));
+-}
++    struct chipone_ts_data *cts_data = dev_get_drvdata(dev);
++    int ret, restore_ret;
+ 
+-static int cts_i2c_driver_pm_resume(struct device *dev)
+-{
+-    cts_info("Resume by bus power management");
+-    return cts_resume(dev_get_drvdata(dev));
++    if (cts_data->pdata->is_panel_follower)
++        return 0;
++    cancel_work_sync(&cts_data->ts_resume_work);
++    cancel_delayed_work_sync(&cts_data->fw_upgrade_work);
++    ret = cts_suspend(cts_data);
++    if (ret) {
++        restore_ret = cts_i2c_driver_pm_resume(dev);
++        if (restore_ret)
++            dev_warn(dev, "Suspend rollback failed: %d\n", restore_ret);
++    }
++    return ret;
+ }
+ 
+ /* bus control the suspend/resume procedure */
+ static const struct dev_pm_ops cts_i2c_driver_pm_ops = {
+-    .suspend = cts_i2c_driver_pm_suspend,
+-    .resume = cts_i2c_driver_pm_resume,
++    SYSTEM_SLEEP_PM_OPS(cts_i2c_driver_pm_suspend, cts_i2c_driver_pm_resume)
+ };
+ #endif /* CONFIG_CTS_PM_GENERIC */
+ 
+@@ -1292,10 +1426,6 @@ static struct spi_driver cts_spi_driver = {
+ #ifdef CONFIG_CTS_SYSFS
+         .groups = cts_i2c_driver_config_groups,
+ #endif /* CONFIG_CTS_SYSFS */
+-#ifdef CONFIG_CTS_PM_LEGACY
+-        .suspend = cts_i2c_driver_suspend,
+-        .resume = cts_i2c_driver_resume,
+-#endif /* CONFIG_CTS_PM_LEGACY */
+ #ifdef CONFIG_CTS_PM_GENERIC
+         .pm = &cts_i2c_driver_pm_ops,
+ #endif /* CONFIG_CTS_PM_GENERIC */
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_oem.c b/drivers/input/touchscreen/chipone_tddi/cts_oem.c
+index 20fe40051e58e3a7feeea1b2bd51921e2bb0b9a2..0083c3d839242f777145518fedb924a18b3935ca 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_oem.c
++++ b/drivers/input/touchscreen/chipone_tddi/cts_oem.c
+@@ -1576,6 +1576,7 @@ int cts_oem_init(struct chipone_ts_data *cts_data)
+         return -ENOMEM;
+     }
+ 
++    cts_data->oem_data = oem_data;
+     cts_info(" - Create '/proc/"OEM_SELFTEST_PROC_FILENAME"'");
+     oem_data->selftest_proc_entry =
+         proc_create_data(OEM_SELFTEST_PROC_FILENAME,
+@@ -1633,7 +1634,7 @@ int cts_oem_init(struct chipone_ts_data *cts_data)
+     return 0;
+ 
+ free_oem_data:
+-    kfree(oem_data);
++    cts_oem_deinit(cts_data);
+     return ret;
+ }
+ 
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_platform.c b/drivers/input/touchscreen/chipone_tddi/cts_platform.c
+index 6e1f3235379eff9afca1b61822e74b190dcc8754..321e68389e04fa857034aebecaf3d7da4f4f4d63 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_platform.c
++++ b/drivers/input/touchscreen/chipone_tddi/cts_platform.c
+@@ -28,6 +28,22 @@ u8 *cts_plat_get_fw_log_buf(struct cts_platform_data *pdata, size_t size)
+ }
+ #endif
+ 
++/* Keep debug and recovery transfers away from a powered-down panel. */
++static bool cts_plat_begin_io(struct cts_platform_data *pdata)
++{
++    down_read(&pdata->panel_io_lock);
++    if (pdata->is_panel_follower && !pdata->panel_powered) {
++        up_read(&pdata->panel_io_lock);
++        return false;
++    }
++    return true;
++}
++
++static void cts_plat_end_io(struct cts_platform_data *pdata)
++{
++    up_read(&pdata->panel_io_lock);
++}
++
+ size_t cts_plat_get_max_i2c_xfer_size(struct cts_platform_data *pdata)
+ {
+     return CFG_CTS_MAX_I2C_XFER_SIZE;
+@@ -51,6 +67,9 @@ int cts_plat_i2c_write(struct cts_platform_data *pdata, u8 i2c_addr,
+         .len = len,
+     };
+ 
++    if (!cts_plat_begin_io(pdata))
++        return -EHOSTDOWN;
++
+     do {
+         ret = i2c_transfer(pdata->i2c_client->adapter, &msg, 1);
+         if (ret != 1) {
+@@ -60,10 +79,13 @@ int cts_plat_i2c_write(struct cts_platform_data *pdata, u8 i2c_addr,
+             if (delay)
+                 mdelay(delay);
+             continue;
+-        } else
+-            return 0;
++        } else {
++            ret = 0;
++            break;
++        }
+     } while (++retries < retry);
+ 
++    cts_plat_end_io(pdata);
+     return ret;
+ }
+ 
+@@ -93,6 +115,9 @@ int cts_plat_i2c_read(struct cts_platform_data *pdata, u8 i2c_addr,
+     else
+         num_msg = 2;
+ 
++    if (!cts_plat_begin_io(pdata))
++        return -EHOSTDOWN;
++
+     do {
+         ret = i2c_transfer(pdata->i2c_client->adapter,
+                 msgs + ARRAY_SIZE(msgs) - num_msg, num_msg);
+@@ -104,10 +129,13 @@ int cts_plat_i2c_read(struct cts_platform_data *pdata, u8 i2c_addr,
+             if (delay)
+                 mdelay(delay);
+             continue;
+-        } else
+-            return 0;
++        } else {
++            ret = 0;
++            break;
++        }
+     } while (++retries < retry);
+ 
++    cts_plat_end_io(pdata);
+     return ret;
+ }
+ #else
+@@ -728,6 +756,8 @@ int cts_init_platform_data(struct cts_platform_data *pdata,
+     pdata->spi_client->irq = pdata->irq;
+ #endif /* CONFIG_CTS_I2C_HOST */
+ 
++    init_rwsem(&pdata->panel_io_lock);
++    mutex_init(&pdata->start_lock);
+     mutex_init(&pdata->dev_lock);
+     spin_lock_init(&pdata->irq_lock);
+ 
+@@ -776,6 +806,7 @@ int cts_init_platform_data(struct cts_platform_data *pdata,
+     ret = input_register_device(input_dev);
+     if (ret) {
+         cts_err("Failed to register input device");
++        input_free_device(input_dev);
+         return ret;
+     }
+ 
+@@ -835,8 +866,11 @@ int cts_plat_request_resource(struct cts_platform_data *pdata)
+         goto err_out;
+     }
+ #ifdef CFG_CTS_HAS_RESET_PIN
+-    ret = gpio_request_one(pdata->rst_gpio, GPIOF_OUT_INIT_HIGH,
+-            CFG_CTS_DEVICE_NAME "-rst");
++    if (pdata->is_panel_follower)
++        ret = gpio_request(pdata->rst_gpio, CFG_CTS_DEVICE_NAME "-rst");
++    else
++        ret = gpio_request_one(pdata->rst_gpio, GPIOF_OUT_INIT_HIGH,
++                CFG_CTS_DEVICE_NAME "-rst");
+     if (ret) {
+         cts_err("Request RST gpio (%d) failed %d", pdata->rst_gpio, ret);
+         goto err_free_int;
+@@ -897,17 +931,19 @@ int cts_plat_request_irq(struct cts_platform_data *pdata)
+ 
+ #ifdef CONFIG_GENERIC_HARDIRQS
+     ret = request_threaded_irq(pdata->irq, NULL, cts_plat_irq_handler,
+-            IRQF_TRIGGER_FALLING | IRQF_ONESHOT, CFG_CTS_DRIVER_NAME, pdata);
++            IRQF_TRIGGER_FALLING | IRQF_ONESHOT | IRQF_NO_AUTOEN,
++            CFG_CTS_DRIVER_NAME, pdata);
+ #else /* CONFIG_GENERIC_HARDIRQS */
+     ret = request_irq(pdata->irq, cts_plat_irq_handler,
+-            IRQF_TRIGGER_FALLING | IRQF_ONESHOT, CFG_CTS_DRIVER_NAME, pdata);
++            IRQF_TRIGGER_FALLING | IRQF_ONESHOT | IRQF_NO_AUTOEN,
++            CFG_CTS_DRIVER_NAME, pdata);
+ #endif /* CONFIG_GENERIC_HARDIRQS */
+     if (ret) {
+         cts_err("Request IRQ failed %d", ret);
+         return ret;
+     }
+ 
+-    cts_plat_disable_irq(pdata);
++    pdata->irq_is_disable = true;
+ 
+     return 0;
+ }
+@@ -925,7 +961,11 @@ int cts_plat_enable_irq(struct cts_platform_data *pdata)
+ 
+     if (pdata->irq > 0) {
+         spin_lock_irqsave(&pdata->irq_lock, irqflags);
+-        if (pdata->irq_is_disable) {/* && !cts_is_device_suspended(pdata->chip)) */
++        if (pdata->irq_blocked) {
++            spin_unlock_irqrestore(&pdata->irq_lock, irqflags);
++            return -EHOSTDOWN;
++        }
++        if (pdata->irq_is_disable) {
+             cts_dbg("Real enable IRQ");
+             enable_irq(pdata->irq);
+             pdata->irq_is_disable = false;
+@@ -962,28 +1002,42 @@ int cts_plat_disable_irq(struct cts_platform_data *pdata)
+ #ifdef CFG_CTS_HAS_RESET_PIN
+ int cts_plat_reset_device(struct cts_platform_data *pdata)
+ {
++    int ret;
++
+     /* !!!can not be modified */
+     /* !!!can not be modified */
+     /* !!!can not be modified */
+     cts_info("Reset device");
+ 
+-    gpio_set_value(pdata->rst_gpio, 1);
++    if (!cts_plat_begin_io(pdata))
++        return -EHOSTDOWN;
++
++    ret = gpio_direction_output(pdata->rst_gpio, 1);
++    if (ret) {
++        cts_plat_end_io(pdata);
++        return ret;
++    }
+     mdelay(1);
+     gpio_set_value(pdata->rst_gpio, 0);
+     mdelay(10);
+     gpio_set_value(pdata->rst_gpio, 1);
+     mdelay(40);
++    cts_plat_end_io(pdata);
+ 
+     return 0;
+ }
+ 
+ int cts_plat_set_reset(struct cts_platform_data *pdata, int val)
+ {
++    if (!cts_plat_begin_io(pdata))
++        return -EHOSTDOWN;
++
+     cts_info("Set Reset to %s", val ? "HIGH" : "LOW");
+     if (val)
+         gpio_set_value(pdata->rst_gpio, 1);
+     else
+         gpio_set_value(pdata->rst_gpio, 0);
++    cts_plat_end_io(pdata);
+ 
+     return 0;
+ }
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_platform.h b/drivers/input/touchscreen/chipone_tddi/cts_platform.h
+index 8170143becae581c13344dc19088950304850c30..62a3ebd2bf58691b8081aff9c7e33567ab4ed562 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_platform.h
++++ b/drivers/input/touchscreen/chipone_tddi/cts_platform.h
+@@ -20,6 +20,7 @@
+ #include <linux/input/mt.h>
+ #include <linux/spinlock.h>
+ #include <linux/rtmutex.h>
++#include <linux/rwsem.h>
+ #include <linux/byteorder/generic.h>
+ #include <linux/proc_fs.h>
+ #include <linux/delay.h>
+@@ -126,6 +127,11 @@ struct cts_platform_data {
+     struct mutex dev_lock;
+     struct spinlock irq_lock;
+     bool irq_is_disable;
++    bool irq_blocked;
++    bool is_panel_follower;
++    bool panel_powered;
++    struct rw_semaphore panel_io_lock;
++    struct mutex start_lock;
+ 
+ #ifdef CFG_CTS_GESTURE
+     u8 gesture_num;
+diff --git a/drivers/input/touchscreen/chipone_tddi/cts_sysfs.c b/drivers/input/touchscreen/chipone_tddi/cts_sysfs.c
+index 5b83103d9ca017fa3b606edd5423b11ab5f5db96..97ba03153853f611d5443b681635434d82bd5a67 100644
+--- a/drivers/input/touchscreen/chipone_tddi/cts_sysfs.c
++++ b/drivers/input/touchscreen/chipone_tddi/cts_sysfs.c
+@@ -2516,6 +2516,9 @@ static ssize_t gesture_en_store(struct device *dev,
+     if (buf[0] == 'Y' || buf[0] == 'y' || buf[0] == '1')
+         enable = 1;
+ 
++    if (enable && cts_data->pdata->is_panel_follower)
++        return -EOPNOTSUPP;
++
+     if (enable)
+         cts_enable_gesture_wakeup(cts_dev);
+     else
