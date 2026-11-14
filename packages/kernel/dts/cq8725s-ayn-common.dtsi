@@ -921,6 +921,13 @@
 	status = "okay";
 };
 
+&remoteproc_cdsp {
+	firmware-name = "qcom/sm8750/ayn/odin3/cdsp.mbn",
+			"qcom/sm8750/ayn/odin3/cdsp_dtb.mbn";
+
+	status = "okay";
+};
+
 &sdhc_2 {
 	cd-gpios = <&tlmm 55 GPIO_ACTIVE_LOW>;
 
