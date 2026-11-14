@@ -1,0 +1,12 @@
+[[device]]
+dt.compatible = "ayn,thor"
+device        = "ayn_thor"
+variant       = "Thor"
+friendly_name = "AYN Thor"
+
+[cpu_scaling]
+driver = "none"
+
+[battery_charge_limit]
+suggested_minimum_limit = 55
+method = "host_power_supply"

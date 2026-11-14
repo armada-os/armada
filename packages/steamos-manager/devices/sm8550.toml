@@ -52,12 +52,6 @@ variant       = "Odin2Portal"
 friendly_name = "AYN Odin 2 Portal"
 
 [[device]]
-dt.compatible = "ayn,thor"
-device        = "ayn_thor"
-variant       = "Thor"
-friendly_name = "AYN Thor"
-
-[[device]]
 dt.compatible = "retroidpocket,rp6"
 device        = "retroid_pocket_6"
 variant       = "RP6"
