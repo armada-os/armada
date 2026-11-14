@@ -1,28 +1,20 @@
 import { toaster } from "@decky/api";
-import { ConfirmModal, DialogButton, Focusable, showModal } from "@decky/ui";
+import { DialogBody, DialogButton, DialogButtonPrimary, DialogControlsSection, Focusable } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { calibratePanel, getPanelCalibration, getPanelRate, savePanel, setPanel, stepPanel } from "../backend";
 import { t } from "../i18n";
 import type { PanelAttr, PanelCalibration as PanelState, PanelRate } from "../types";
-import { ButtonRow } from "./widgets";
+import { ArmadaDialogFooter, ArmadaDialogHeader, ArmadaModalRoot } from "./ArmadaModalRoot";
+import { showArmadaModal } from "./modalFocusView";
+import { ButtonRow, CompactButton, ReadOnlyRow } from "./widgets";
 
 const formatHz = (hz: number) => `${hz.toFixed(2)} Hz`;
 
-export function PanelCalibration() {
-  const [supported, setSupported] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    getPanelCalibration()
-      .then((next) => { if (!cancelled) setSupported(next.supported); })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, []);
-
+export function PanelCalibration({ supported }: { supported: boolean }) {
   if (!supported) return null;
 
   return (
-    <ButtonRow layout="below" label={t("display.label")} onClick={() => showModal(<PanelCalibrationModal />)}>
+    <ButtonRow layout="below" label={t("display.label")} onClick={() => showArmadaModal(<PanelCalibrationModal />)}>
       {t("calibration.launch")}
     </ButtonRow>
   );
@@ -147,33 +139,29 @@ function PanelCalibrationModal({ closeModal }: { closeModal?: () => void }) {
       : t("display.unavailable");
 
   const controlsDisabled = busy != null || !attr;
-  const columnWidth = "192px";
-  const stepButton = { width: "2em", minWidth: "2em", height: "2em", flex: "none", fontSize: "20px", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" };
+  const saveDisabled = controlsDisabled || live == null;
 
   return (
-    <ConfirmModal
-      strOKButtonText={t("common.save")}
-      strMiddleButtonText={t("display.reset")}
-      strCancelButtonText={t("common.cancel")}
-      bOKDisabled={controlsDisabled || live == null}
-      bMiddleDisabled={controlsDisabled || fallback == null || live === fallback}
-      onOK={save}
-      onMiddleButton={reset}
-      onCancel={cancel}
-    >
-      <div style={{ textAlign: "center", fontSize: "40px", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-        {measured}
-      </div>
-      <div style={{ display: "flex", justifyContent: "center", margin: "36px 0 0" }}>
-        <DialogButton style={{ width: columnWidth }} onClick={auto} disabled={controlsDisabled}>
-          {t(busy === "calibrating" ? "display.calibrating" : "display.autoCalibrate")}
-        </DialogButton>
-      </div>
-      <Focusable flow-children="row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: columnWidth, margin: "16px auto 10px" }}>
-        <DialogButton style={stepButton} onClick={() => step("slower")} disabled={controlsDisabled || rangeEnd === "slower"}>−</DialogButton>
-        <div style={{ width: "3em", textAlign: "center", fontSize: "20px", fontVariantNumeric: "tabular-nums" }}>{headline}</div>
-        <DialogButton style={stepButton} onClick={() => step("faster")} disabled={controlsDisabled || rangeEnd === "faster"}>+</DialogButton>
-      </Focusable>
-    </ConfirmModal>
+    <ArmadaModalRoot onOK={save} onCancel={() => { void cancel(); }} bOKDisabled={saveDisabled} bCancelDisabled={busy === "saving"} bDisableBackgroundDismiss={busy === "saving"}>
+      <ArmadaDialogHeader>{t("display.label")}</ArmadaDialogHeader>
+      <DialogBody>
+        <DialogControlsSection>
+          <ReadOnlyRow label={measured} />
+          <ButtonRow layout="below" onClick={auto} disabled={controlsDisabled}>
+            {t(busy === "calibrating" ? "display.calibrating" : "display.autoCalibrate")}
+          </ButtonRow>
+          <Focusable className="armada-calibration-label" flow-children="row" tabIndex={-1} noFocusRing>
+            <CompactButton onClick={() => step("slower")} disabled={controlsDisabled || rangeEnd === "slower"}>−</CompactButton>
+            <span>{headline}</span>
+            <CompactButton onClick={() => step("faster")} disabled={controlsDisabled || rangeEnd === "faster"}>+</CompactButton>
+          </Focusable>
+        </DialogControlsSection>
+      </DialogBody>
+      <ArmadaDialogFooter>
+        <DialogButtonPrimary onClick={save} disabled={saveDisabled}>{t("common.save")}</DialogButtonPrimary>
+        <DialogButton onClick={() => { void cancel(); }} disabled={busy === "saving"}>{t("common.cancel")}</DialogButton>
+        <DialogButton onClick={reset} disabled={controlsDisabled || fallback == null || live === fallback}>{t("display.reset")}</DialogButton>
+      </ArmadaDialogFooter>
+    </ArmadaModalRoot>
   );
 }

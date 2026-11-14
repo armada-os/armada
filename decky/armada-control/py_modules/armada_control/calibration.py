@@ -4,6 +4,7 @@ import json
 import struct
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .privileged import call
@@ -475,6 +476,7 @@ def reset_calibration_params():
         params[f"{trigger}_antideadzone"] = 0
     params["backend"] = backend
     params["version"] = CALIBRATION_VERSION
+    params["calibrated"] = False
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     _ranges_stale = True
     return calibration_status()
@@ -655,9 +657,31 @@ def calibration_from_capture(capture, current=None, stick_deadzone=0, inverted=(
     return params
 
 
+def calibration_metadata():
+    try:
+        params = json.loads(INPUT_CALIBRATION_CONFIG.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"hasCalibration": False, "calibratedAt": None}
+    except (OSError, ValueError):
+        return {"hasCalibration": True, "calibratedAt": None}
+    # Legacy files have no date or marker; reset files explicitly clear calibration.
+    present = not isinstance(params, dict) or params.get("calibrated") is not False
+    value = params.get("calibratedAt") if isinstance(params, dict) and present else None
+    timestamp = None
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                timestamp = parsed.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        except (OverflowError, ValueError):
+            pass
+    return {"hasCalibration": present, "calibratedAt": timestamp}
+
+
 def calibration_status():
     state = controller_state()
     state["saved"] = INPUT_CALIBRATION_CONFIG.exists()
+    state.update(calibration_metadata())
     backend = state.get("backend") if state.get("canApply") else None
     state["params"] = read_calibration_params(backend) if backend else {}
     if state.get("supported") and not state.get("canApply"):
@@ -694,6 +718,8 @@ def save_calibration():
     params = calibration_from_capture(capture, current, stick_deadzone, inverted_axes(event, backend))
     params["backend"] = backend
     params["version"] = CALIBRATION_VERSION
+    params["calibrated"] = True
+    params["calibratedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     call("write_config", name="calibration", text=json.dumps(params, indent=2, sort_keys=True) + "\n")
     _ranges_stale = True
     _recording = None
