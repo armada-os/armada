@@ -713,6 +713,14 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0081-ASoC-wcd939x-fix-headphone-analog-volume-controls.patch`
   source: armada
   upstream: local
+- `patches/0082-ASoC-wcd939x-sdw-program-the-class-H-port-window.patch`
+  source: armada
+  upstream: local
+  notes: Declares only the class-H port SDW_DPN_FULL; the SM8550, SM8650 and SM8750 RX masters all give port 2 hstart 3 and hstop 6. Hardware-confirmed on the KONKR Pocket FIT.
+- `patches/0083-ASoC-wcd-clsh-run-the-class-H-start-up-only-once.patch`
+  source: armada
+  upstream: local
+  notes: Matches Qualcomm's downstream wcd-clsh.c, whose stereo state does nothing when the second headphone channel joins. Hardware-confirmed on the KONKR Pocket FIT.
 - `patches/0074-soundwire-qcom-PCM-data-port-format-enable.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0074-soundwire-qcom-PCM-data-port-format-enable.patch
   upstream: unknown
