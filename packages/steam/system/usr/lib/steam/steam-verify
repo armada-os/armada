@@ -1,0 +1,62 @@
+#!/usr/bin/python3
+"""Checks a Steam root against the .bootstrap-manifest it shipped with.
+
+steam-verify [--crc] ROOT   sizes by default; --crc also reads every file
+"""
+import pathlib
+import re
+import stat
+import sys
+import zlib
+
+MANIFEST = ".bootstrap-manifest"
+
+
+def main():
+    arguments = sys.argv[1:]
+    crc = "--crc" in arguments
+    roots = [a for a in arguments if a != "--crc"]
+    if len(roots) != 1:
+        raise SystemExit(__doc__)
+    root = pathlib.Path(roots[0])
+    manifest = root / MANIFEST
+    if not manifest.is_file():
+        raise SystemExit(f"{manifest} is missing")
+
+    problems = []
+    checked = 0
+    for line in manifest.read_text(errors="ignore").splitlines():
+        match = re.fullmatch(r"(.+),(-?\d+);\d+;(\d+)", line)
+        if not match:
+            continue
+        name, size, checksum = match[1], int(match[2]), int(match[3])
+        path = root / name
+        try:
+            info = path.lstat() if size < 0 else path.stat()
+        except OSError as error:
+            problems.append(f"missing: {name}: {error.strerror}")
+            continue
+        checked += 1
+        if size == -1 and not stat.S_ISDIR(info.st_mode):
+            problems.append(f"not a directory: {name}")
+        elif size == -2 and not stat.S_ISLNK(info.st_mode):
+            problems.append(f"not a symlink: {name}")
+        elif size >= 0 and info.st_size != size:
+            problems.append(f"size mismatch: {name}: expected {size}, got {info.st_size}")
+        elif size >= 0 and crc:
+            value = 0
+            with path.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    value = zlib.crc32(chunk, value)
+            if value != checksum:
+                problems.append(f"checksum mismatch: {name}")
+    if not checked:
+        problems.append("manifest has no entries")
+    for problem in problems[:20]:
+        print(problem, file=sys.stderr)
+    if problems:
+        raise SystemExit(f"Steam check failed: {len(problems)} problems in {checked} entries")
+
+
+if __name__ == "__main__":
+    main()

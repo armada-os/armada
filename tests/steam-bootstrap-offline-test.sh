@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-PKG="$ROOT/packages/steam-bootstrap"
+PKG="$ROOT/packages/steam"
 
 assert_contains() {
     local file="$1" needle="$2"
@@ -31,13 +31,13 @@ PYEOF
 assert_contains "$ROOT/packages/build-local.sh" 'phase2_args=(--network none)'
 
 # Both paths must install the same builder dependencies.
-assert_contains "$ROOT/packages/Containerfile" 'steam-bootstrap/install-builder-deps.sh'
+assert_contains "$ROOT/packages/Containerfile" 'steam/install-builder-deps.sh'
 assert_contains "$PKG/Containerfile" 'install-builder-deps.sh'
 
 # build.sh runs test.py, so a test that executes build.sh recurses forever.
 if grep -q 'python3 test.py' "$PKG/build.sh"; then
     if grep -Eq '(subprocess|os\.system|check_call|run)\([^)]*build\.sh' "$PKG/test.py"; then
-        printf 'packages/steam-bootstrap/test.py executes build.sh, which runs test.py: infinite recursion\n' >&2
+        printf 'packages/steam/test.py executes build.sh, which runs test.py: infinite recursion\n' >&2
         exit 1
     fi
 fi

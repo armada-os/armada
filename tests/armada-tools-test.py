@@ -164,8 +164,8 @@ class ToolsTests(unittest.TestCase):
     def test_client_version_reads_installed_manifest_and_ignores_pending_and_log(self):
         package = self.home / ".local/share/Steam/package"
         package.mkdir(parents=True)
-        installed = package / "steam_client_steamdeck_publicbeta_linuxarm64.manifest"
-        pending = package / "steam_client_steamdeck_publicbeta_linuxarm64"
+        installed = package / "steam_client_steamdeck_stable_linuxarm64.manifest"
+        pending = package / "steam_client_steamdeck_stable_linuxarm64"
         log = package.parent / "logs/bootstrap_log.txt"
         log.parent.mkdir()
         log.write_text("installed version 1788989629,\n")
@@ -185,7 +185,7 @@ class ToolsTests(unittest.TestCase):
         package = self.home / ".local/share/Steam/package"
         package.mkdir(parents=True)
         (package / "steam_client_linuxarm64.manifest").write_text('"linuxarm64" { "version" "1788652215" }')
-        (package / "steam_client_steamdeck_publicbeta_linuxarm64.manifest").write_text('"linuxarm64" { "version" "1790036264" }')
+        (package / "steam_client_steamdeck_stable_linuxarm64.manifest").write_text('"linuxarm64" { "version" "1790036264" }')
         with patch.object(backend.Path, "home", return_value=self.home):
             self.assertEqual(backend.steam_client_version(), "Unknown")
 
@@ -208,6 +208,14 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(job.status()["code"], 0)
         self.assertIn("Finished", job.status()["message"])
         self.assertEqual(job.log.stat().st_mode & 0o777, 0o600)
+
+    def test_reset_job_runs_the_reset_command_with_its_own_log(self):
+        with patch.object(backend.Path, "home", return_value=self.home), \
+                patch.object(backend, "TOOLS", "/bin/true"), patch.object(backend.subprocess, "Popen") as popen:
+            job = backend.SteamJob()
+            job.start(reset=True)
+        self.assertEqual(popen.call_args.args[0], ["/bin/true", "steam", "reset", "--yes"])
+        self.assertEqual(job.log.name, "steam-reset.log")
 
     def test_failed_repair_retains_diagnostic_details(self):
         job = self.run_repair(1)
