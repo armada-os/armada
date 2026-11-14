@@ -1,0 +1,58 @@
+From: Armada <armada@armadaos.dev>
+Subject: [PATCH] freedreno/a8xx: wait for ZPASS_DONE sample count writes
+
+On A830, the GPU can hang when it moves on after a ZPASS_DONE end event
+before the sample count write has landed. It only happens at high GPU
+clocks.
+
+Turnip waits for the sample count write after an occlusion query ends
+(emit_counter_barrier(): WFI, plus CP_BARRIER on A8xx). Freedreno has the
+same helper but only uses it for pipeline statistics queries. Use it after
+every ZPASS_DONE end event: in occlusion_pause(), in occlusion_resume()
+(which also writes one), and after the autotune end event.
+
+Only A8xx gets the barrier, so other GPUs see no change.
+---
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc b/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_gmem.cc
+@@ -855,6 +855,12 @@
+          .add(EV_DST_RAM_CP_EVENT_WRITE7_1(
+             results_ptr(at, result[result->idx].samples_start)
+          ));
++
++      /* See occlusion_pause(): wait for the sample count write on A8xx. */
++      if (CHIP >= A8XX) {
++         fd_pkt7(cs, CP_WAIT_FOR_IDLE, 0);
++         fd_pkt7(cs, CP_BARRIER, 1).add(1);
++      }
+    }
+
+    fd6_fence_write<CHIP>(cs, result->fence, results_ptr(at, fence));
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_query.cc b/src/gallium/drivers/freedreno/a6xx/fd6_query.cc
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_query.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_query.cc
+@@ -101,6 +101,10 @@
+             .write_accum_sample_count_diff = true,
+          ))
+          .add(EV_DST_RAM_CP_EVENT_WRITE7_1(query_sample(aq, start)));
++
++      /* See occlusion_pause(). */
++      if (CHIP >= A8XX)
++         emit_counter_barrier<CHIP>(cs);
+    }
+
+    ctx->occlusion_queries_active++;
+@@ -180,6 +184,12 @@
+           * So we just give the start address in all cases.
+           */
+          .add(EV_DST_RAM_CP_EVENT_WRITE7_1(query_sample(aq, start)));
++
++      /* Like turnip, wait for the sample count write before going on. On
++       * A830 the CP hangs without it once the GPU clock is high enough.
++       */
++      if (CHIP >= A8XX)
++         emit_counter_barrier<CHIP>(cs);
+    }
+
+    assert(ctx->occlusion_queries_active > 0);

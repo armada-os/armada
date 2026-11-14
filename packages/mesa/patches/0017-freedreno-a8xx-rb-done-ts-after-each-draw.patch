@@ -1,0 +1,55 @@
+From: Armada <armada@armadaos.dev>
+Subject: [PATCH] freedreno/a8xx: emit an RB_DONE_TS event after each draw
+
+On A830, GMEM rendering can hang the GPU, usually during bursts of small
+blended draws. Sysmem rendering doesn't hang.
+
+An RB_DONE_TS event that writes memory after each draw prevents it. A
+CP_MEM_WRITE before each draw, the event without the write, the event
+after every 8th draw, and a CCU_CLEAN_DEPTH after each draw don't.
+
+Only A8xx gets the event, so other GPUs see no change.
+---
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_context.h b/src/gallium/drivers/freedreno/a6xx/fd6_context.h
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_context.h
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_context.h
+@@ -161,6 +161,9 @@ struct fd6_control {
+    } flush_base[4];
+ 
+    uint32_t vsc_state[32];
++
++   /* written by the RB_DONE_TS event after each draw on A8xx: */
++   uint32_t draw_done;
+ };
+ 
+ #define control_ptr(fd6_ctx, member)                                           \
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc b/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_draw.cc
+@@ -556,6 +556,26 @@ draw_vbos(struct fd_context *ctx, const struct pipe_draw_info *info,
+
+    flush_streamout<CHIP>(ctx, cs, &emit);
+
++   /* On A830, GMEM rendering can hang the GPU, usually during bursts of
++    * small blended draws. An RB_DONE_TS event with a memory write after
++    * every draw prevents it; the write and the per-draw frequency are
++    * both needed.
++    */
++   if (CHIP >= A8XX) {
++      fd_pkt7(cs, CP_EVENT_WRITE7, 4)
++         .add(CP_EVENT_WRITE7_0(
++            .event = RB_DONE_TS,
++            .write_src = EV_WRITE_USER_32B,
++            .write_dst = EV_DST_RAM,
++            .write_enabled = true,
++         ))
++         .add(CP_EVENT_WRITE_ADDR(
++            .bo = fd6_ctx->control_mem,
++            .bo_offset = offsetof(struct fd6_control, draw_done),
++         ))
++         .add(ctx->batch->num_draws);
++   }
++
+    fd_context_all_clean(ctx);
+ }
+ 
