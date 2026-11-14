@@ -192,7 +192,7 @@
       }
     },
     {
-      "models": ["AYN Odin 3"],
+      "models": ["AYN Odin 3", "AYN Odin 3 Portal"],
       "backend": {
         "type": "channels",
         "targets": [

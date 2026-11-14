@@ -19,3 +19,5 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0008-feat-ssc-suspend-source-devices-across-system-sleep.patch`
   source: armada
+- `patches/0009-feat-ssc-mount-correction-from-the-environment.patch`
+  source: armada

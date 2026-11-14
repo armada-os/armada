@@ -26,8 +26,8 @@ function read_max(directory,    path, value) {
 }
 
 BEGIN {
-    if (ARGC < 4 || ARGC > 7)
-        fail("expected value, source directory, target directory, optional gamma and minima")
+    if (ARGC < 4 || ARGC > 8)
+        fail("expected value, source directory, target directory, optional gamma, minima and maximum")
     if (ARGV[1] !~ /^[0-9]+$/)
         fail("invalid backlight value")
     value = number(ARGV[1])
@@ -36,14 +36,18 @@ BEGIN {
     gamma = ARGC >= 5 ? number(ARGV[4]) : 1
     input_min = ARGC >= 6 ? number(ARGV[5]) : 0
     output_min = ARGC >= 7 ? number(ARGV[6]) : 0
+    output_max = ARGC >= 8 ? number(ARGV[7]) : 1
     if (value > source_max || gamma <= 0 || input_min < 0 || input_min >= 1 ||
-        output_min < 0 || output_min > 1)
-        fail("invalid backlight value, gamma or minimum")
+        output_min < 0 || output_max <= 0 || output_max > 1 || output_min > output_max)
+        fail("invalid backlight value, gamma, minimum or maximum")
     minimum = int(output_min * target_max)
     if (minimum < output_min * target_max) minimum++
+    # Panels whose light stops rising below their raw maximum end the range early.
+    top = int(output_max * target_max)
+    if (top < minimum) top = minimum
     if (gamma == 1 && input_min == 0) {
         # Preserve linear light requests above the minimum.
-        result = int(value * target_max / source_max)
+        result = int(value * top / source_max)
         print (result < minimum ? minimum : result)
         exit
     }
@@ -55,7 +59,7 @@ BEGIN {
         exit
     }
     if (value == source_max) {
-        print target_max
+        print top
         exit
     }
 
@@ -65,7 +69,7 @@ BEGIN {
         fail("backlight gamma leaves no usable range")
     setting = (value / source_max) ^ (1 / gamma)
     position = (setting - lower) / (1 - lower)
-    result = minimum + int(position * (target_max - minimum) + 0.5)
-    print (result > target_max ? target_max : result)
+    result = minimum + int(position * (top - minimum) + 0.5)
+    print (result > top ? top : result)
     exit
 }

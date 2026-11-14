@@ -1,0 +1,52 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] wifi: ath12k: associate WCN7750 as HE on 6 GHz
+
+On WCN7750, an EHT association on 6 GHz stops transmitting soon after
+it is established: frames expire in the firmware queue without being
+sent. The same AP does not stall when WCN7750 associates as HE. Do not
+advertise EHT capabilities on 6 GHz for this chip so mac80211 associates
+as HE there. 2.4 and 5 GHz keep EHT.
+
+---
+diff --git a/drivers/net/wireless/ath/ath12k/hw.h b/drivers/net/wireless/ath/ath12k/hw.h
+index 2d3568e0d..bc1915586 100644
+--- a/drivers/net/wireless/ath/ath12k/hw.h
++++ b/drivers/net/wireless/ath/ath12k/hw.h
+@@ -202,6 +202,9 @@ struct ath12k_hw_params {
+ 	/* fixed MSA region: no request_mem/fw_mem_ready, host_cap -> BDF directly */
+ 	bool fixed_fw_mem:1;
+ 
++	/* fw stalls TX on 6 GHz EHT links; drop once the cause is fixed */
++	bool no_eht_6ghz:1;
++
+ 	/* 0x8fc on PCIe parts, 0x504 on WPSS-hosted WCN parts */
+ 	u32 hal_shadow_base_addr;
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/mac.c b/drivers/net/wireless/ath/ath12k/mac.c
+index 8b926b91d..a1a0d51d9 100644
+--- a/drivers/net/wireless/ath/ath12k/mac.c
++++ b/drivers/net/wireless/ath/ath12k/mac.c
+@@ -9408,8 +9408,9 @@ static int ath12k_mac_copy_sband_iftype_data(struct ath12k *ar,
+ 			data[idx].he_6ghz_capa.capa =
+ 				ath12k_mac_setup_he_6ghz_cap(cap, band_cap);
+ 		}
+-		ath12k_mac_copy_eht_cap(ar, band_cap, &he_cap->he_cap_elem, i,
+-					&data[idx].eht_cap);
++		if (band != NL80211_BAND_6GHZ || !ar->ab->hw_params->no_eht_6ghz)
++			ath12k_mac_copy_eht_cap(ar, band_cap, &he_cap->he_cap_elem, i,
++						&data[idx].eht_cap);
+ 		idx++;
+ 	}
+ 
+diff --git a/drivers/net/wireless/ath/ath12k/wifi7/hw.c b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+index 69aec7f69..dcc469690 100644
+--- a/drivers/net/wireless/ath/ath12k/wifi7/hw.c
++++ b/drivers/net/wireless/ath/ath12k/wifi7/hw.c
+@@ -1034,6 +1034,7 @@ static const struct ath12k_hw_params ath12k_wifi7_hw_params[] = {
+ 		.hal_shadow_base_addr = HAL_SHADOW_BASE_ADDR_WCN7750,
+ 
+ 		.supports_coldboot_cal = true,
++		.no_eht_6ghz = true,
+ 
+ 		.num_tcl_banks = 7,
+ 		.max_tx_ring = 3,

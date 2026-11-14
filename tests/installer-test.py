@@ -381,8 +381,8 @@ class ExecutionTests(unittest.TestCase):
                 elif args[0] == i.EFIUPDATE:
                     esp = Path(kwargs["env"]["ESP"])
                     self.assertTrue((esp / "KERNEL").is_file())
-                    (esp / "EFI/BOOT").mkdir(parents=True)
-                    (esp / "EFI/BOOT/BOOTAA64.EFI").write_bytes(b"loader")
+                    (esp / "loader").mkdir(parents=True)
+                    (esp / "loader/loader.conf").write_bytes(b"default armada-*\n")
             with patch.dict(i.os.environ, TMPDIR="/sd/slow"), patch.object(i.tempfile, "mkdtemp", side_effect=temporary), patch.object(i, "output", return_value="valid-uuid"), patch.object(i, "run", side_effect=command) as run, patch.object(i, "configure_deployment"):
                 job.deploy(source, [])
                 self.assertTrue(any(call.args[0] == i.BOOTIMG for call in run.call_args_list))

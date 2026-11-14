@@ -49,10 +49,12 @@ sudo mount -o ro,subvol=root "${LOOP}p3" "${WORK}/root"
 deploy=$(sudo find "${WORK}/root/ostree/deploy/default/deploy" -mindepth 1 -maxdepth 1 -type d | head -1)
 usr=${deploy}/usr
 sudo test -s "${WORK}/mnt/KERNEL"
+# ROCKNIX ABL would start bootc-image-builder's shim ahead of /KERNEL.
+sudo rm -rf "${WORK}/mnt/EFI"
 sudo env ESP="${WORK}/mnt" BOOTROOT="${WORK}/boot" SYSROOT="${WORK}/root" \
     ARGS_FILE="${usr}/lib/armada/bootimg-args" \
     "${usr}/libexec/armada/armada-efi-update"
-sudo test -s "${WORK}/mnt/EFI/BOOT/BOOTAA64.EFI"
+sudo test -s "${WORK}/mnt/loader/loader.conf"
 
 sudo mkdir -p "${WORK}/mnt/openabl"
 # One image serves all devices, so stage a self-contained folder per SoC.

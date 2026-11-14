@@ -501,36 +501,53 @@ def action_get_device_env(request):
     return {"env": device_env()}
 
 
-def gyro_setting():
-    # Must agree with armada-ssc's parsing.
+GYRO_KEYS = ("ARMADA_GYRO", "ARMADA_GYRO_CORRECTION")
+# SSC-axis corrections that reverse the named Steam gyro axes.
+GYRO_ORIENTATIONS = {
+    "default": None,
+    "pitch-roll": "1,0,0;0,-1,0;0,0,-1",
+    "pitch-yaw": "-1,0,0;0,-1,0;0,0,1",
+    "roll-yaw": "-1,0,0;0,1,0;0,0,-1",
+}
+
+
+def gyro_conf():
+    # Must agree with armada-ssc's parsing: the first line for each key wins.
     try:
         lines = GYRO_CONFIG.read_bytes().decode("utf-8", "replace").split("\n")
     except (OSError, UnicodeDecodeError):
-        return True
+        lines = []
+    values = {}
     for line in lines:
-        if line.startswith("ARMADA_GYRO="):
-            return line[len("ARMADA_GYRO="):] in ("", "1")
-    return True
+        for key in GYRO_KEYS:
+            if line.startswith(f"{key}="):
+                values.setdefault(key, line[len(key) + 1:])
+    return values
 
 
 def action_get_gyro(request):
     device_id = device_env().get("ARMADA_DEVICE_ID", "")
     supported = bool(device_id) and (SSC_DATA / device_id).is_dir()
-    return {"supported": supported, "enabled": supported and gyro_setting()}
+    conf = gyro_conf()
+    correction = conf.get("ARMADA_GYRO_CORRECTION") or None
+    orientation = next((k for k, v in GYRO_ORIENTATIONS.items() if v == correction), "custom")
+    return {
+        "supported": supported,
+        "enabled": supported and conf.get("ARMADA_GYRO", "") in ("", "1"),
+        "orientation": orientation,
+    }
 
 
-def action_set_gyro_enabled(request):
-    enabled = request.get("enabled")
-    if not isinstance(enabled, bool):
-        raise ValueError("invalid gyro enabled state")
+def write_gyro_conf(**changes):
     if not action_get_gyro({})["supported"]:
         raise RuntimeError("this device has no gyro support")
     try:
         previous = GYRO_CONFIG.read_bytes().decode("utf-8", "replace")
     except FileNotFoundError:
         previous = None
-    atomic_write(GYRO_CONFIG, f"ARMADA_GYRO={int(enabled)}\n")
-    # InputPlumber reads the opt-in when it starts.
+    values = {**gyro_conf(), **changes}
+    atomic_write(GYRO_CONFIG, "".join(f"{key}={values[key]}\n" for key in GYRO_KEYS if values.get(key) is not None))
+    # InputPlumber reads the gyro settings when it starts.
     try:
         run(["/usr/bin/systemctl", "restart", "inputplumber"])
     except Exception:
@@ -540,6 +557,20 @@ def action_set_gyro_enabled(request):
             atomic_write(GYRO_CONFIG, previous)
         raise
     return action_get_gyro({})
+
+
+def action_set_gyro_enabled(request):
+    enabled = request.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ValueError("invalid gyro enabled state")
+    return write_gyro_conf(ARMADA_GYRO=int(enabled))
+
+
+def action_set_gyro_orientation(request):
+    orientation = request.get("orientation")
+    if orientation not in GYRO_ORIENTATIONS:
+        raise ValueError("invalid gyro orientation")
+    return write_gyro_conf(ARMADA_GYRO_CORRECTION=GYRO_ORIENTATIONS[orientation])
 
 
 def action_get_bottom_screen_enabled(request):
@@ -956,6 +987,7 @@ ACTIONS = {
     "set_swipe_gestures_enabled": action_set_swipe_gestures_enabled,
     "get_gyro": action_get_gyro,
     "set_gyro_enabled": action_set_gyro_enabled,
+    "set_gyro_orientation": action_set_gyro_orientation,
     "set_controller_type": action_set_controller_type,
     "get_controller_type": action_get_controller_type,
     "get_device_env": action_get_device_env,

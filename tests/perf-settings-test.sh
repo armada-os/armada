@@ -437,6 +437,110 @@ try:
                   "user:../turnip/Banners.Turnip-1", "user:"):
         check(f"turnip {value!r} falls back to the system driver",
               turnip_env({"turnipDriver": value}) == dict.fromkeys(vk_keys))
+    # --- Flatpak launches: the driver goes in as `flatpak run` options
+    check("flatpak run options go after flatpak's own options and run",
+          [launch.flatpak_run_at(cmd) for cmd in (
+              ["/usr/bin/flatpak", "run", "org.App"], ["flatpak", "--verbose", "run", "org.App"],
+              ["/usr/bin/flatpak", "info", "run"], ["/usr/bin/game", "run"], [])]
+          == [(0, 2), (0, 3), None, None, None])
+    steam_wrappers = ["/steam/pw-audio-namespace", "--", "/steam/reaper", "SteamLaunch",
+                      "AppId=1", "--"]
+    check("flatpak run options are found behind Steam's wrappers",
+          [launch.flatpak_run_at(steam_wrappers + cmd) for cmd in (
+              ["/usr/bin/flatpak", "run", "org.App"], ["/usr/bin/game", "flatpak", "run"])]
+          == [(len(steam_wrappers), len(steam_wrappers) + 2), None])
+    # A fake flatpak answers the launcher's ldd probe from markers in the library.
+    flatpak = pathlib.Path(WORK) / "bin" / "flatpak"
+    flatpak_calls = pathlib.Path(WORK) / "flatpak-calls"
+    flatpak.parent.mkdir()
+    flatpak.write_text(f"""#!/usr/bin/bash
+printf '%s\\n' "$*" >>{flatpak_calls}
+lib="${{@: -1}}"
+grep -q libdisplay-info "$lib" && printf '\\tlibdisplay-info.so.3 => not found\\n'
+grep -q GLIBC_2.43 "$lib" && echo "$lib: libc.so.6: version \\`GLIBC_2.43' not found (required by $lib)"
+grep -q wl_fixes "$lib" && printf 'undefined symbol: wl_fixes_interface\\t(%s)\\n' "$lib"
+grep -q not-dynamic "$lib" && {{ printf '\\tnot a dynamic executable\\n' >&2; exit 1; }}
+exit 0
+""")
+    flatpak.chmod(0o755)
+    app = [str(flatpak), "run", "org.App", "--fullscreen"]
+
+    def flatpak_env(settings, preset={}):
+        # flatpak_turnip's command for app with only preset's VK keys set, or None if it
+        # changed the launcher's own environment
+        for key in vk_keys:
+            os.environ.pop(key, None)
+        os.environ.update(preset)
+        try:
+            result = launch.flatpak_turnip(settings, app, 0, 2)
+            return result if all(os.environ.get(key) == preset.get(key) for key in vk_keys) else None
+        finally:
+            for key in vk_keys:
+                os.environ.pop(key, None)
+
+    def last_flatpak_call():
+        return flatpak_calls.read_text().splitlines()[-1]
+
+    # the fake flatpak's sandbox sees the host's files
+    at.FLATPAK_SYSTEM_DIR = turnip_root
+    (good / at.FLATPAK_MANIFEST).write_text("{}")
+    sandbox_manifest = str(at.FLATPAK_SYSTEM_DIR / "devel" / at.FLATPAK_MANIFEST)
+    check("a flatpak gets a system variant from the GL.host extension",
+          flatpak_env({"turnipDriver": "devel"})
+          == [str(flatpak), "run",
+              *(f"--env={key}={sandbox_manifest}" for key in vk_keys), "org.App", "--fullscreen"])
+    sandbox_library = at.FLATPAK_SYSTEM_DIR / "devel" / "aarch64" / at.LIBRARY
+    check("a system variant is checked with ldd in the app's own sandbox",
+          last_flatpak_call() == f"run --command=ldd org.App -r {sandbox_library}")
+    sandbox_library.write_bytes(b"libdisplay-info.so.3\0")
+    check("a system variant that can't load in the app's runtime keeps the Flatpak default",
+          flatpak_env({"turnipDriver": "devel"}) == app)
+    sandbox_library.write_bytes(b"")
+    for value in (None, "", "stable", "no-lib", "missing", "user:missing"):
+        check(f"flatpak turnip {value!r} keeps the Flatpak default",
+              flatpak_env({"turnipDriver": value}) == app)
+    check("a flatpak gets a user driver with its folders exposed read-only",
+          flatpak_env({"turnipDriver": "user:Banners.Turnip-1"})
+          == [str(flatpak), "run",
+              f"--filesystem={user_manifest.parent}:ro",
+              f"--filesystem={user_root / 'Banners.Turnip-1'}:ro",
+              *(f"--env={key}={user_manifest}" for key in vk_keys),
+              "org.App", "--fullscreen"])
+    library = user_root / "Banners.Turnip-1" / at.LIBRARY
+    check("a user driver is checked with ldd in the app's own sandbox",
+          last_flatpak_call() == f"run --filesystem={user_manifest.parent}:ro "
+          f"--filesystem={library.parent}:ro --command=ldd org.App -r {library}")
+    check("the ldd probe keeps the app's run options",
+          flatpak_env({"turnipDriver": "user:Banners.Turnip-1"}) is not None
+          and launch.flatpak_turnip({"turnipDriver": "user:Banners.Turnip-1"},
+                                    [str(flatpak), "run", "--branch=beta", "org.App"], 0, 2)
+          and last_flatpak_call().startswith("run --branch=beta --filesystem="))
+    host_only = {
+        "display-info": (b"libdisplay-info.so.3\0", "libdisplay-info.so.3 => not found"),
+        "new-glibc": (b"GLIBC_2.43\0", "version `GLIBC_2.43' not found"),
+        "new-wayland": (b"wl_fixes\0", "undefined symbol: wl_fixes_interface"),
+        "not-dynamic": (b"not-dynamic\0", "not a dynamic executable"),
+    }
+    for folder, (content, problem) in host_only.items():
+        (user_root / folder).mkdir()
+        (user_root / folder / at.LIBRARY).write_bytes(arm64_glibc + content)
+        check(f"user driver {folder!r} reports why it can't load in Flatpaks",
+              problem in (at.flatpak_problem(app[:2], "org.App", [user_root / folder / at.LIBRARY],
+                                             []) or ""))
+        check(f"user driver {folder!r} still works for native games",
+              turnip_env({"turnipDriver": "user:" + folder}) != dict.fromkeys(vk_keys))
+        check(f"user driver {folder!r} keeps the Flatpak default",
+              flatpak_env({"turnipDriver": "user:" + folder}) == app)
+        shutil.rmtree(user_root / folder)
+    check("a driver override in the env settings is passed into the flatpak",
+          flatpak_env({"turnipDriver": "devel"}, {"VK_DRIVER_FILES": "/from-settings.json"})
+          == [str(flatpak), "run", "--env=VK_DRIVER_FILES=/from-settings.json",
+              "org.App", "--fullscreen"])
+    check("a driver override naming host /usr files isn't passed into the flatpak",
+          flatpak_env({}, {"VK_DRIVER_FILES": "/usr/share/vulkan/icd.d/x.json"}) == app)
+    (good / at.FLATPAK_MANIFEST).unlink()
+    check("a variant without a Flatpak build keeps the Flatpak default",
+          flatpak_env({"turnipDriver": "devel"}) == app)
     os.environ["STEAM_COMPAT_SHADER_PATH"] = str(shader_path)
     vkd3d_dirs = set()
     for folder in ("has space (1)", "Banners.Turnip-1"):
@@ -623,6 +727,58 @@ with open(etc, "w") as f:
     f.write("[system]\nirq_cores=0-2\n")
 powerd.CONFIG_FILE = powerd.Path(etc)
 check("[system] override parsed", power.parse_config()[6]["irq_cores"] == "0-2")
+
+# --- armada-powerd: governor tunables ---------------------------------------
+tunables = system_config["governor_tunables"]
+check("factory conservative tunables",
+      tunables.get("conservative") == {"freq_step": "10", "sampling_down_factor": "10",
+                                       "up_threshold": "80"})
+check("factory ondemand tunables",
+      tunables.get("ondemand") == {"up_threshold": "60", "sampling_down_factor": "10"})
+gov_etc = os.path.join(WORK, "etc-governor.conf")
+with open(gov_etc, "w") as f:
+    f.write("[governor.conservative]\nfreq_step=25\nup_threshold=../x\n"
+            "[governor.../evil]\nfoo=1\n[governor.ondemand]\nbad-key=5\n")
+powerd.CONFIG_FILE = powerd.Path(gov_etc)
+gov_override = power.parse_config()[6]["governor_tunables"]
+powerd.CONFIG_FILE = powerd.Path(etc)
+# a bad /etc value replaces the factory one in the merge, so it's skipped
+# and the kernel keeps its own default for that tunable
+check("/etc governor tunables merge over factory",
+      gov_override["conservative"] == {"freq_step": "25", "sampling_down_factor": "10"})
+check("unsafe governor names dropped", not any("/" in g or "." in g for g in gov_override))
+check("unsafe tunable names dropped", "bad-key" not in gov_override["ondemand"])
+
+gov_tree = os.path.join(WORK, "gov-sys")
+gov_policy = powerd.Path(gov_tree, "policy3")
+os.makedirs(gov_policy / "conservative")
+(gov_policy / "scaling_available_governors").write_text("conservative ondemand performance\n")
+(gov_policy / "scaling_governor").write_text("performance\n")
+for name, value in (("freq_step", "5"), ("sampling_down_factor", "1"), ("up_threshold", "80"),
+                    ("down_threshold", "20")):
+    (gov_policy / "conservative" / name).write_text(value + "\n")
+gov_power = powerd.ArmadaPower.__new__(powerd.ArmadaPower)
+gov_power.system_config = {"governor_tunables": tunables}
+gov_power.write_governor(gov_policy, "conservative")
+check("conservative tunables written after governor switch",
+      [(gov_policy / "conservative" / n).read_text().strip()
+       for n in ("freq_step", "sampling_down_factor", "up_threshold", "down_threshold")]
+      == ["10", "10", "80", "20"])
+# no per-policy dir: tunables live in the shared cpufreq/<governor> dir
+os.makedirs(os.path.join(gov_tree, "ondemand"))
+for name in ("up_threshold", "sampling_down_factor"):
+    powerd.Path(gov_tree, "ondemand", name).write_text("95\n")
+gov_power.write_governor(gov_policy, "ondemand")
+check("ondemand tunables written to the global dir",
+      powerd.Path(gov_tree, "ondemand", "up_threshold").read_text().strip() == "60"
+      and powerd.Path(gov_tree, "ondemand", "sampling_down_factor").read_text().strip() == "10")
+gov_power.write_governor(gov_policy, "performance")
+check("governors without tunables are left alone",
+      (gov_policy / "scaling_governor").read_text().strip() == "performance")
+no_config = powerd.ArmadaPower.__new__(powerd.ArmadaPower)
+no_config.write_governor(gov_policy, "conservative")
+check("write_governor works before config is loaded",
+      (gov_policy / "scaling_governor").read_text().strip() == "conservative")
 
 power.system_config = {"irq_cores": "auto"}
 power.env = {"ARMADA_IRQ_CORES": "0-2"}
