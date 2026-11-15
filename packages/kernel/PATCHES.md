@@ -641,14 +641,20 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   upstream: https://lore.kernel.org/r/20260605-sm8750-uart15-v1-1-93e660722e61@gmail.com
 - `patches/0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch
-  upstream: https://lore.kernel.org/r/20260714-gpucc_dt_v6-v6-1-16bf5289572d@oss.qualcomm.com
-- `patches/0038-arm64-dts-qcom-sm8750-add-GPU-nodes.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0038-arm64-dts-qcom-sm8750-add-GPU-nodes.patch
-  upstream: unknown
-- `patches/0038a-arm64-dts-qcom-sm8750-map-A8xx-RSCC-registers.patch`
+  upstream: https://git.kernel.org/torvalds/c/f695831a7af1f8d39203357572683981ebe4de77
+- `patches/0038-arm64-dts-qcom-sm8750-Add-GPU-and-GMU-nodes.patch`
+  source: https://git.kernel.org/torvalds/c/9e39531ce39a98a77ddcf58f838a50dbf164092c
+  upstream: https://git.kernel.org/torvalds/c/9e39531ce39a98a77ddcf58f838a50dbf164092c
+  notes: Context of the GPU node hunk refreshed to apply on 7.2.6 (after camcc instead of tcsr_mutex).
+- `patches/0038a-arm64-dts-qcom-sm8750-Add-GPU-cooling.patch`
+  source: https://git.kernel.org/torvalds/c/c4dc1775c7723e9ed1ff74b649fe72d8aa741eb1
+  upstream: https://git.kernel.org/torvalds/c/c4dc1775c7723e9ed1ff74b649fe72d8aa741eb1
+- `patches/0038b-arm64-dts-qcom-sm8750-keep-the-A830-chip-id-0x44050000.patch`
   source: armada
   upstream: local
-  notes: Armada expands the SM8750 GPU register mapping to `0x6c000` so Linux 7.1's A8xx recovery path can access RSCC at GPU offset `0x50000` without faulting.
+- `patches/0038c-arm64-dts-qcom-sm8750-poll-the-GPU-thermal-zones-while-throttling.patch`
+  source: armada
+  upstream: local
 - `patches/0035-arm64-dts-qcom-sm8750-set-CPU-capacity-dmips-mhz.patch`
   source: https://github.com/ROCKNIX/distribution/blob/f3e2b6187cd2ae2dc5122edfebe84228a314f2c5/projects/ROCKNIX/devices/SM8750/patches/linux/0076-arm64-dts-qcom-sm8750-set-CPU-capacity-dmips-mhz.patch
   upstream: unknown
@@ -659,9 +665,15 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0556a-arm64-dts-qcom-sm8750-add-the-soccp.patch`
   source: armada
   upstream: local
-- `patches/0049-drm-msm-a8xx-add-adreno-830-catalog.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0049-drm-msm-a8xx-add-adreno-830-catalog.patch
-  upstream: unknown
+- `patches/0049-drm-msm-a8xx-Add-support-for-Adreno-830-GPU.patch`
+  source: https://git.kernel.org/torvalds/c/2c94d177a927a25d3eb111fe83694b5f84239069
+  upstream: https://git.kernel.org/torvalds/c/2c94d177a927a25d3eb111fe83694b5f84239069
+- `patches/0049b-drm-msm-a6xx-Honor-perfmode_bw-threshold-on-A8x.patch`
+  source: https://git.kernel.org/torvalds/c/db6a2e4a7ebd4378d03a97f4bef22f8c157240ad
+  upstream: https://git.kernel.org/torvalds/c/db6a2e4a7ebd4378d03a97f4bef22f8c157240ad
+- `patches/0049c-drm-msm-a8xx-accept-the-A830-chip-id-0x44050000.patch`
+  source: armada
+  upstream: local
 - `patches/0039-wifi-ath12k-add-initial-hardware-definition-for-WCN7.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0039-wifi-ath12k-add-initial-hardware-definition-for-WCN7.patch
   upstream: unknown

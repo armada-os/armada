@@ -1,0 +1,248 @@
+From c4dc1775c7723e9ed1ff74b649fe72d8aa741eb1 Mon Sep 17 00:00:00 2001
+From: Gaurav Kohli <gaurav.kohli@oss.qualcomm.com>
+Date: Sun, 9 Aug 2026 01:53:11 +0530
+Subject: arm64: dts: qcom: sm8750: Add GPU cooling
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Unlike the CPU, the GPU does not throttle its speed automatically
+when it reaches high temperatures.
+
+Set up GPU cooling by throttling the GPU speed
+when reaching 105°C.
+
+Signed-off-by: Gaurav Kohli <gaurav.kohli@oss.qualcomm.com>
+Signed-off-by: Akhil P Oommen <akhilpo@oss.qualcomm.com>
+Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Reviewed-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Link: https://patch.msgid.link/20260809-pakala-gpu-v1-4-207ad1fac1c7@oss.qualcomm.com
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+---
+ arch/arm64/boot/dts/qcom/sm8750.dtsi | 104 +++++++++++++++++++++++++++--------
+ 1 file changed, 80 insertions(+), 24 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+index dd59c4bcfa279..8ed5fa4d24fcd 100644
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -6944,10 +6944,10 @@
+ 			thermal-sensors = <&tsens2 1>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss0_alert0: gpuss0-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss0-critical {
+@@ -6956,16 +6956,23 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss0_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		gpuss1-thermal {
+ 			thermal-sensors = <&tsens2 2>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss1_alert0: gpuss1-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss1-critical {
+@@ -6974,16 +6981,23 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss1_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		gpuss2-thermal {
+ 			thermal-sensors = <&tsens2 3>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss2_alert0: gpuss2-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss2-critical {
+@@ -6992,16 +7006,23 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss2_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		gpuss3-thermal {
+ 			thermal-sensors = <&tsens2 4>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss3_alert0: gpuss3-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss3-critical {
+@@ -7010,16 +7031,23 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss3_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		gpuss4-thermal {
+ 			thermal-sensors = <&tsens2 5>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss4_alert0: gpuss4-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss4-critical {
+@@ -7028,16 +7056,23 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss4_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		gpuss5-thermal {
+ 			thermal-sensors = <&tsens2 6>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss5_alert0: gpuss5-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss5-critical {
+@@ -7046,16 +7081,23 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss5_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		gpuss6-thermal {
+ 			thermal-sensors = <&tsens2 7>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss6_alert0: gpuss6-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss6-critical {
+@@ -7064,16 +7106,23 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss6_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		gpuss7-thermal {
+ 			thermal-sensors = <&tsens2 8>;
+ 
+ 			trips {
+-				trip-point0 {
+-					temperature = <120000>;
++				gpuss7_alert0: gpuss7-alert0 {
++					temperature = <105000>;
+ 					hysteresis = <5000>;
+-					type = "hot";
++					type = "passive";
+ 				};
+ 
+ 				gpuss7-critical {
+@@ -7082,6 +7131,13 @@
+ 					type = "critical";
+ 				};
+ 			};
++
++			cooling-maps {
++				map0 {
++					trip = <&gpuss7_alert0>;
++					cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
+ 		};
+ 
+ 		modem0-thermal {
+-- 
+cgit 1.3.1-korg
+
