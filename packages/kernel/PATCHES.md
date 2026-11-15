@@ -733,6 +733,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Matches Qualcomm's downstream wcd-clsh.c, whose stereo state does nothing when the second headphone channel joins. Hardware-confirmed on the KONKR Pocket FIT.
+- `patches/0084-ASoC-wcd-common-skip-the-interrupt-loop-without-a-regmap.patch`
+  source: armada
+  upstream: not submitted
+  notes: The WCD937x/8x/9x RX SoundWire device has no regmap, but shares wcd_interrupt_callback(); an interrupt from it NULL-derefs in regmap_read() and kills the SoundWire IRQ thread. Return early without a regmap.
 - `patches/0074-soundwire-qcom-PCM-data-port-format-enable.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0074-soundwire-qcom-PCM-data-port-format-enable.patch
   upstream: unknown
@@ -1254,6 +1258,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1179-ASoC-qcom-fix-duo-speaker-slot-width.patch`
   source: armada; register definitions from https://github.com/awinic-driver/aw883xx/blob/main/aw883xx_pid_2066_reg.h
   upstream: local
+- `patches/0085-ASoC-qcom-sc8280xp-restart-SoundWire-streams-across-system-suspend.patch`
+  source: armada
+  upstream: local
+  notes: qcom_snd_sdw_prepare() skips a stream still marked prepared, so a SoundWire stream open across s2idle is never re-enabled and headphones come back thin and distorted. Tear the streams down in suspend_post and re-enable them in resume_pre. Needs 0528 and 0530.
 
 - `patches/1180-ASoC-qcom-q6apm-allow-s32-playback.patch`
   source: armada

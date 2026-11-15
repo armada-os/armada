@@ -258,6 +258,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0081-ASoC-wcd939x-fix-headphone-analog-volume-controls.patch
 0082-ASoC-wcd939x-sdw-program-the-class-H-port-window.patch
 0083-ASoC-wcd-clsh-run-the-class-H-start-up-only-once.patch
+0084-ASoC-wcd-common-skip-the-interrupt-loop-without-a-regmap.patch
 0074-soundwire-qcom-PCM-data-port-format-enable.patch
 0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch
 0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
@@ -346,6 +347,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1177-dt-bindings-describe-eliza-audio-resources.patch
 1178-ASoC-qcom-q6prm-add-missing-mclk-ids.patch
 1179-ASoC-qcom-fix-duo-speaker-slot-width.patch
+0085-ASoC-qcom-sc8280xp-restart-SoundWire-streams-across-system-suspend.patch
 1180-ASoC-qcom-q6apm-allow-s32-playback.patch
 1181-cpufreq-dt-platdev-blocklist-eliza.patch
 1182-arm64-dts-qcom-eliza-add-cpu-l3-scaling.patch
