@@ -22,6 +22,13 @@ type SettingFiber = {
 type DropdownInstance = {
   props: DropdownProps;
   _reactInternals?: SettingFiber;
+  forceUpdate?: () => void;
+};
+
+export type ProfileLock = {
+  // the running game's own profile id while it is in force, else ""
+  profile: () => string;
+  subscribe: (listener: () => void) => () => void;
 };
 
 type DropdownMethod = (this: DropdownInstance, ...args: unknown[]) => unknown;
@@ -85,7 +92,7 @@ function localizeButtonValue(
   };
 }
 
-export function registerSteamProfileLocalization(): () => void {
+export function registerSteamProfileLocalization(lock?: ProfileLock): () => void {
   const prototype = (Dropdown as unknown as {
     prototype?: ReplaceableDropdownPrototype;
   }).prototype;
@@ -95,26 +102,42 @@ export function registerSteamProfileLocalization(): () => void {
 
   let locale: Locale = detectLocaleFromEnvironment();
   let alive = true;
+  let shown: DropdownInstance | undefined;
 
   const patchMethod = (name: "render" | "BuildMenu"): MethodPatch => {
     let patch: MethodPatch;
     const handler = function (this: DropdownInstance, args: unknown[]) {
-      if (locale === "en" || !isPerformanceProfileDropdown(this)) {
+      if ((locale === "en" && !lock) || !isPerformanceProfileDropdown(this)) {
         return patch.original.apply(this, args);
       }
+      shown = this;
+      const gameProfile = lock?.profile() ?? "";
       const props = this.props;
       const options = props?.rgOptions;
       const localized = localizePerformanceProfileOptions(options, locale);
-      if (!props || !options || !localized || localized === options) {
+      const translate = !!options && !!localized && localized !== options;
+      if (!props || (!translate && !gameProfile)) {
         return patch.original.apply(this, args);
       }
-      this.props = name === "render"
-        ? {
-            ...props,
-            rgOptions: localized,
-            renderButtonValue: localizeButtonValue(options, localized, props.renderButtonValue),
-          }
-        : { ...props, rgOptions: localized };
+      const next: DropdownProps = { ...props };
+      if (translate) {
+        next.rgOptions = localized;
+        if (name === "render") {
+          next.renderButtonValue = localizeButtonValue(options!, localized!, props.renderButtonValue);
+        }
+      }
+      // Changing it while a game runs on its own profile hangs Steam's UI.
+      if (gameProfile) {
+        next.disabled = true;
+        if (name === "render") {
+          const option = (next.rgOptions ?? []).find(
+            (entry) => typeof entry.data === "string" && entry.data.toLowerCase() === gameProfile,
+          );
+          const label = `${option?.label ?? gameProfile} · Armada Control`;
+          next.renderButtonValue = () => (props.renderButtonValue ? props.renderButtonValue(label) : label);
+        }
+      }
+      this.props = next;
       try {
         return patch.original.apply(this, args);
       } finally {
@@ -126,6 +149,9 @@ export function registerSteamProfileLocalization(): () => void {
   };
 
   const patches = [patchMethod("render"), patchMethod("BuildMenu")];
+  // Steam keeps the dropdown mounted across quick-menu tabs, so a lock change
+  // must repaint it or it shows the stale state.
+  const unsubscribe = lock?.subscribe(() => shown?.forceUpdate?.()) ?? (() => {});
 
   readSteamLanguage()
     .then((language) => {
@@ -137,6 +163,7 @@ export function registerSteamProfileLocalization(): () => void {
   return () => {
     if (!alive) return;
     alive = false;
+    unsubscribe();
     for (const patch of patches.reverse()) patch.unpatch();
   };
 }
