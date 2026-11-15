@@ -952,6 +952,9 @@
 	status = "okay";
 
 	qcom,pcm-ports-mask = <0x200>;
+	/* The class-H port's sample interval (64) does not divide the 50x16
+	 * frame, so master and codec only line up on a multi-frame SSP. */
+	qcom,ssp-period = <6>;
 
 	wcd_rx: codec@0,4 {
 		compatible = "sdw20217010e00";
