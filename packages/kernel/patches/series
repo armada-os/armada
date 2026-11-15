@@ -114,6 +114,7 @@
 0622-drm-msm-a6xx-mask-the-hfi-interrupt-before-booting-the-gmu.patch
 0624-drm-msm-a6xx-increase-gmu-fw-init-timeout.patch
 0623-arm64-dts-qcom-sm8550-sm8650-add-the-ADSP-FastRPC-remote-heap.patch
+0625-arm64-dts-qcom-sm8250-add-the-SLPI-FastRPC-remote-heap.patch
 
 # ============== LED / RGB ==============
 0030-leds-Add-driver-for-HEROIC-HTR3212.patch

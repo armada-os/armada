@@ -1,0 +1,41 @@
+From: Armada <noreply@armada.local>
+Date: Sat, 14 Nov 2026 12:00:00 +0000
+Subject: [PATCH] arm64: dts: qcom: sm8250: add the SLPI FastRPC remote heap
+
+The Pocket 5 IMU is an ICM-4x6xx behind the SLPI sensor core, not an
+ADSP static PD. That PD asks the host for a remote heap when it attaches
+and does not start without one. Assign the heap to SSC_Q6 (VMID 5), which
+is the VM the SLPI sensor firmware expects. The FastRPC driver only
+hands the region over when a static PD attaches, so a board whose SLPI
+never starts leaves it an idle, reusable pool.
+
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm8250.dtsi b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8250.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8250.dtsi
+@@ -863,6 +863,15 @@
+ 			reg = <0x0 0x8bf00000 0x0 0x4600000>;
+ 			no-map;
+ 		};
++
++		/* Remote heap for the SLPI sensors PD; reusable while idle */
++		slpi_rpc_remote_heap_mem: slpi-rpc-remote-heap {
++			compatible = "shared-dma-pool";
++			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
++			alignment = <0x0 0x400000>;
++			size = <0x0 0xc00000>;
++			reusable;
++		};
+ 	};
+ 
+ 	smem {
+@@ -3121,6 +3130,9 @@
+ 					compatible = "qcom,fastrpc";
+ 					qcom,glink-channels = "fastrpcglink-apps-dsp";
+ 					label = "sdsp";
++					memory-region = <&slpi_rpc_remote_heap_mem>;
++					/* SSC_Q6 */
++					qcom,vmids = <0x5>;
+ 					qcom,non-secure-domain;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;

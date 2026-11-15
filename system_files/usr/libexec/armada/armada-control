@@ -521,7 +521,8 @@ def gyro_conf():
 
 
 def action_get_gyro(request):
-    device_id = device_env().get("ARMADA_DEVICE_ID", "")
+    env = device_env()
+    device_id = env.get("ARMADA_SSC_ID") or env.get("ARMADA_DEVICE_ID", "")
     supported = bool(device_id) and (SSC_DATA / device_id).is_dir()
     conf = gyro_conf()
     correction = conf.get("ARMADA_GYRO_CORRECTION") or None

@@ -144,6 +144,8 @@ vars=(
     ARMADA_PRIME_CORES
     ARMADA_IRQ_CORES
     ARMADA_GPU_STOCK_MAX_MHZ
+    ARMADA_SSC_ID
+    ARMADA_SSC_FASTRPC
 )
 
 for var in "${vars[@]}"; do
