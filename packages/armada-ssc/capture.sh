@@ -128,16 +128,31 @@ for name in $files; do
             fi
         done
     done
-    if [ ! -f "$fw/$name" ]; then
+    file=$fw/$name
+    # linux-firmware ships some of these compressed. The kernel loads either.
+    if [ ! -f "$file" ] && [ -f "$file.xz" ]; then
+        file=$file.xz
+        name=$name.xz
+    fi
+    if [ ! -f "$file" ]; then
         echo "missing $fw/$name" >&2
         exit 1
     fi
-    [ -n "$adsp" ] || adsp=$fw/$name
-    adsp_sha256="$adsp_sha256 $name:$(sha256sum "$fw/$name" | cut -d' ' -f1)"
+    [ -n "$adsp" ] || adsp=$file
+    adsp_sha256="$adsp_sha256 $name:$(sha256sum "$file" | cut -d' ' -f1)"
 done
 # A split image keeps the string in one of its segments.
+if [ "${adsp%.xz}" != "$adsp" ]; then
+    version_src=$(mktemp)
+    xzcat "$adsp" > "$version_src"
+else
+    version_src=$adsp
+fi
 adsp_version=$(grep -a -h -s -o -m1 'QC_IMAGE_VERSION_STRING=[A-Za-z0-9._-]*' \
-    "$adsp" "${adsp%.mdt}".b[0-9][0-9] | head -1 | cut -d= -f2 || true)
+    "$version_src" "${adsp%.xz}" "${adsp%.mdt}".b[0-9][0-9] | head -1 | cut -d= -f2 || true)
+if [ "$version_src" != "$adsp" ]; then
+    rm -f "$version_src"
+fi
 if [ -z "$adsp_version" ]; then
     echo "no QC_IMAGE_VERSION_STRING in $adsp" >&2
     exit 1

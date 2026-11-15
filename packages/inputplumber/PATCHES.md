@@ -23,4 +23,4 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0010-feat-ssc-retroid-pocket-5.patch`
   source: armada
-  notes: The Pocket 5 IMU is an ICM-4x6xx on fastrpc-sdsp. The mount matrix matches the other ICM-4x6xx boards and still has to be checked flat, with gravity on +Z.
+  notes: The Pocket 5 IMU is an ICM-4x6xx on fastrpc-sdsp. The mount matrix matches the other ICM-4x6xx boards. Lying flat, screen up, the DualSense motion device reads about +1g on Y, and Steam Input shows the axes in the expected directions, so the matrix is unchanged.
