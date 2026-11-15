@@ -1258,6 +1258,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1179-ASoC-qcom-fix-duo-speaker-slot-width.patch`
   source: armada; register definitions from https://github.com/awinic-driver/aw883xx/blob/main/aw883xx_pid_2066_reg.h
   upstream: local
+- `patches/0085-ASoC-qcom-sc8280xp-restart-SoundWire-streams-across-system-suspend.patch`
+  source: armada
+  upstream: local
+  notes: qcom_snd_sdw_prepare() skips a stream still marked prepared, so a SoundWire stream open across s2idle is never re-enabled and headphones come back thin and distorted. Tear the streams down in suspend_post and re-enable them in resume_pre. Needs 0528 and 0530.
 
 - `patches/1180-ASoC-qcom-q6apm-allow-s32-playback.patch`
   source: armada
