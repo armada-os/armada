@@ -1,0 +1,33 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: codecs: wcd-common: skip the interrupt loop without a regmap
+
+The WCD937x/8x/9x RX SoundWire device has no regmap: the codec registers,
+including the interrupt status, belong to the TX device. Both devices use
+wcd_interrupt_callback(), so an implementation-defined interrupt from the
+RX device passes a NULL regmap to regmap_read() and oopses in the
+SoundWire IRQ thread, which leaves the bus unserviced until reboot:
+
+  wcd9390-codec sdw:2:0:0217:010e:00:4: Reached MAX_RETRY on port read
+  Unable to handle kernel NULL pointer dereference at virtual address 00000000000001f4
+  pc : regmap_read+0x18/0x80
+  lr : wcd_interrupt_callback+0x90/0x108 [snd_soc_wcd_common]
+
+Return early without a regmap; the TX device handles the codec's
+interrupts. Seen once on an AYN Odin 3 (WCD9395) resuming from s2idle.
+---
+ sound/soc/codecs/wcd-common.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sound/soc/codecs/wcd-common.c b/sound/soc/codecs/wcd-common.c
+--- a/sound/soc/codecs/wcd-common.c
++++ b/sound/soc/codecs/wcd-common.c
+@@ -128,6 +128,9 @@ int wcd_interrupt_callback(struct sdw_slave *slave, struct irq_domain *slave_irq,
+ 	struct regmap *regmap = dev_get_regmap(&slave->dev, NULL);
+ 	u32 sts1, sts2, sts3;
+ 
++	if (!regmap)
++		return 0;
++
+ 	do {
+ 		handle_nested_irq(irq_find_mapping(slave_irq, 0));
+ 		regmap_read(regmap, wcd_intr_status0, &sts1);

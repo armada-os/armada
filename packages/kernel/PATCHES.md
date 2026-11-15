@@ -733,6 +733,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Matches Qualcomm's downstream wcd-clsh.c, whose stereo state does nothing when the second headphone channel joins. Hardware-confirmed on the KONKR Pocket FIT.
+- `patches/0084-ASoC-wcd-common-skip-the-interrupt-loop-without-a-regmap.patch`
+  source: armada
+  upstream: not submitted
+  notes: The WCD937x/8x/9x RX SoundWire device has no regmap, but shares wcd_interrupt_callback(); an interrupt from it NULL-derefs in regmap_read() and kills the SoundWire IRQ thread. Return early without a regmap.
 - `patches/0074-soundwire-qcom-PCM-data-port-format-enable.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0074-soundwire-qcom-PCM-data-port-format-enable.patch
   upstream: unknown
