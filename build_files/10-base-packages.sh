@@ -62,6 +62,7 @@ pkgs=(
     pipewire
     pipewire-alsa
     pipewire-pulseaudio
+    pipewire-utils
     pulseaudio-utils
     wireplumber
 
