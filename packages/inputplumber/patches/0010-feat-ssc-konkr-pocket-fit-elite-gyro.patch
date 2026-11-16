@@ -1,0 +1,37 @@
+From: Armada contributors
+Subject: [PATCH] feat(Hardware Support): enable SSC gyro and accel on the KONKR
+ Pocket FIT Elite
+
+Add the FastRPC IMU source to the KONKR Pocket FIT Elite (SM8750). The
+board fits the same TDK ICM-4x6xx as the SM8650 Pocket FIT, in the same
+orientation; its ADSP exposes the secure FastRPC node, as on the Odin 3.
+---
+ .../inputplumber/devices/50-konkr_pocket_fit_elite.yaml  | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml
+index 8833024..fefcc57 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-konkr_pocket_fit_elite.yaml
+@@ -25,6 +25,18 @@ source_devices:
+           name: KONKR System Buttons
+           handler: event*
+ 
++    - group: imu
++      fastrpc:
++          name: fastrpc-adsp-secure
++      config:
++          imu:
++              # ICM-4x6xx orientation
++              mount_matrix:
++                  x: [0, -1, 0]
++                  y: [0, 0, 1]
++                  z: [-1, 0, 0]
++              gyro_auto_calibration: true
++
+ target_devices:
+     - xbox-elite
+     - keyboard
+-- 
+2.56.0
+
