@@ -744,6 +744,14 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Optional qcom,ssp-period for the master FRAME_CTRL. The WCD939x class-H port (interval 64) does not divide the 50x16 RX frame; without an SSP its stream starts at a random phase and about half of the Odin 3's headphone streams are fuzzy.
+- `patches/0081c-soundwire-qcom-configure-Class-H-master-transport.patch`
+  source: armada
+  upstream: local
+  notes: Remaining SoundWire changes from PR #817, applied after 0086's existing SSP support. Add optional master channel masks without changing codec masks; retain the PCM/PDM32 formatter until both banks stop, track programmed ports and propagate register errors. Based on ovid-io's transport analysis in https://github.com/armada-os/armada/pull/803#issuecomment-6481609416 and Qualcomm's master mapping and formatter lifecycle in https://api.github.com/repos/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8650/git/blobs/a42eca8f2ea2c3692decabf48930a12e83d2c426.
+- `patches/0081d-dt-bindings-soundwire-qcom-describe-master-transport.patch`
+  source: armada
+  upstream: local
+  notes: Document optional master channel masks, the existing SSP period and the PCM/PDM32 formatter mask. Board selection is separate from these shared controller changes.
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local
