@@ -4,9 +4,11 @@ Subject: [PATCH] arm64: dts: qcom: sm8550, sm8650: add the ADSP FastRPC remote
  heap
 
 The ADSP's sensors process (static PD) asks the host for a remote heap
-when it starts, and cannot start without one. The FastRPC driver only
-allocates the heap and assigns it to the DSP when a static PD attaches,
-so on a board that never starts one it stays an idle, reusable pool.
+when it starts, and cannot start without one. The region is no-map:
+from Linux 7.3.4 and 7.4 the FastRPC driver assigns the whole region to
+the DSP at probe, so Linux must never use its pages. A reusable pool
+lets the page allocator hand them out under memory pressure, and the
+board takes a synchronous external abort or resets.
 
 qcs8550.dtsi replaces the SM8550 reserved-memory block, so it carries the
 heap node too.
@@ -22,13 +24,13 @@ index f0acdd0..be2096e 100644
  		#size-cells = <2>;
  		ranges;
  
-+		/* Remote heap for the ADSP static (sensors) PD; reusable while idle */
++		/* Remote heap for the ADSP static (sensors) PD; the DSP owns it, no-map */
 +		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
 +			compatible = "shared-dma-pool";
 +			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
 +			alignment = <0x0 0x400000>;
 +			size = <0x0 0xc00000>;
-+			reusable;
++			no-map;
 +		};
 +
  
@@ -42,13 +44,13 @@ index 0974e00..56bcdb4 100644
  		#size-cells = <2>;
  		ranges;
  
-+		/* Remote heap for the ADSP static (sensors) PD; reusable while idle */
++		/* Remote heap for the ADSP static (sensors) PD; the DSP owns it, no-map */
 +		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
 +			compatible = "shared-dma-pool";
 +			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
 +			alignment = <0x0 0x400000>;
 +			size = <0x0 0xc00000>;
-+			reusable;
++			no-map;
 +		};
 +
  		hyp_mem: hyp-region@80000000 {
@@ -72,13 +74,13 @@ index 3a12455..7a35e6f 100644
  		#size-cells = <2>;
  		ranges;
  
-+		/* Remote heap for the ADSP static (sensors) PD; reusable while idle */
++		/* Remote heap for the ADSP static (sensors) PD; the DSP owns it, no-map */
 +		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap {
 +			compatible = "shared-dma-pool";
 +			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
 +			alignment = <0x0 0x400000>;
 +			size = <0x0 0xc00000>;
-+			reusable;
++			no-map;
 +		};
 +
  		hyp_mem: hyp@80000000 {
