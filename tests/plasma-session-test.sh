@@ -29,6 +29,10 @@ grep -qx 'Exec=/usr/libexec/armada/armada-plasma-session standalone mobile' "$SE
 grep -qx 'exec /usr/libexec/armada/armada-plasma-session nested' "$ROOT/system_files/usr/bin/armada-nested-desktop"
 [[ -x "$ROOT/system_files/usr/bin/armada-nested-desktop" && -x "$SESSION" ]]
 [[ "$(<"$ROOT/system_files/usr/share/armada/plasma/nested/kwinrc")" == $'[Wayland]\nVirtualKeyboardMode=2' ]]
+grep -qx 'XwaylandEisNoPromptApps=steam' "$ROOT/system_files/etc/xdg/kwinrc"
+grep -qx 'VirtualKeyboardMode=0' "$ROOT/system_files/usr/share/armada/plasma/desktop/kwinrc"
+grep -qx 'Exec=/usr/bin/steam -silent' "$ROOT/system_files/etc/xdg/autostart/armada-steam-desktop.desktop"
+grep -qx 'OnlyShowIn=KDE;' "$ROOT/system_files/etc/xdg/autostart/armada-steam-desktop.desktop"
 
 mkdir "$tmp/bin" "$tmp/run"
 log="$tmp/log"
@@ -113,8 +117,10 @@ if session "$tmp/none" bottom tablet 2>/dev/null; then fail 'accepted an unknown
 home="$tmp/standalone"
 session "$home" standalone
 [[ "$(<"$tmp/args")" == $'plasmashellrc.desktop\nplasma\nwayland\n1' ]]
+[[ "$(envval XDG_CONFIG_DIRS)" == /usr/share/armada/plasma/desktop:/steam/xdg ]]
 session "$home" standalone mobile
 [[ "$(<"$tmp/args")" == $'plasmashellrc.mobile\nplasma-mobile\nwayland\n1' ]]
+[[ "$(envval XDG_CONFIG_DIRS)" == /steam/xdg ]]
 session "$home" standalone desktop
 [[ "$(<"$tmp/args")" == $'plasmashellrc.desktop\nplasma\nwayland\n1' ]]
 [[ ! -e "$home/armada" ]]
