@@ -100,6 +100,8 @@ if [[ "$surface" == standalone ]]; then
         export DESKTOP_SESSION=plasma-mobile
         exec "${ARMADA_STARTPLASMA:-/usr/bin/startplasmamobile}"
     fi
+    # Steam's keyboard serves touch and controller alike; Plasma's would pop up over it.
+    export XDG_CONFIG_DIRS="/usr/share/armada/plasma/desktop:${XDG_CONFIG_DIRS:-/etc/xdg:/usr/share/kde-settings/kde-profile/default/xdg}"
     export DESKTOP_SESSION=plasma
     exec "${ARMADA_STARTPLASMA:-/usr/bin/startplasma-wayland}"
 fi
