@@ -311,6 +311,7 @@ class ArmadaPower:
             self.last_pwm = int(current) if current.isdigit() else self.fan_config["min_pwm"]
         self.apply_profile()
         self.apply_irq_affinity()
+        self.apply_gpu_worker_affinity()
         self.apply_sleep_charging_pwm()
         self.fan_tick()
         GLib.timeout_add_seconds(3, self.fan_tick)
@@ -530,6 +531,42 @@ class ArmadaPower:
             except OSError:
                 continue
         print(f"armada-powerd: irq affinity {mask} ({moved} irqs)", file=sys.stderr)
+
+    def gpu_worker_cpus(self):
+        # ARMADA_GPU_WORKER_CORES minus the IRQ cores; empty leaves the thread alone
+        cpulist = self.env.get("ARMADA_GPU_WORKER_CORES", "")
+        if not cpulist:
+            return set()
+        try:
+            cpus = set(armada_perf.parse_cpulist(cpulist))
+        except ValueError as exc:
+            print(f"armada-powerd: bad ARMADA_GPU_WORKER_CORES {cpulist!r}: {exc}", file=sys.stderr)
+            return set()
+        irq = self.irq_mask()
+        return {c for c in cpus if not (irq >> c) & 1}
+
+    def apply_gpu_worker_affinity(self, tries=12):
+        # msm's gpu-worker kthread is SCHED_FIFO; on a CPU that also runs the
+        # Wi-Fi receive softirq it waits behind it and a game stream misses
+        # frames. It appears when msm binds the GPU, possibly after us.
+        cpus = self.gpu_worker_cpus()
+        if not cpus:
+            return False
+        for comm in Path("/proc").glob("[0-9]*/comm"):
+            if read_text(comm) != "gpu-worker":
+                continue
+            pid = int(comm.parent.name)
+            try:
+                if os.sched_getaffinity(pid) != cpus:
+                    os.sched_setaffinity(pid, cpus)
+                    print(f"armada-powerd: gpu-worker {pid} on cpus "
+                          f"{armada_perf.format_cpulist(cpus)}", file=sys.stderr)
+            except OSError:
+                pass
+            return False
+        if tries > 0:
+            GLib.timeout_add_seconds(5, self.apply_gpu_worker_affinity, tries - 1)
+        return False
 
     def stop_scx(self):
         if not self.scx_child:
@@ -1158,6 +1195,7 @@ class ArmadaPower:
                 self.apply_underclock_refs()
                 self.apply_profile()
                 self.apply_irq_affinity()
+                self.apply_gpu_worker_affinity(tries=0)
                 self.apply_sleep_charging_pwm()
             except Exception as exc:
                 print(f"armada-powerd: reload failed: {exc}", file=sys.stderr)
