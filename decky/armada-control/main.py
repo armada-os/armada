@@ -35,6 +35,7 @@ from armada_control.system import (
     set_sleep_logs_enabled,
     set_ssh_enabled,
     set_swipe_gestures_enabled,
+    update_status,
 )
 from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
 from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves, save_charging_pwm
@@ -45,6 +46,9 @@ class Plugin:
     # Offload blocking work to a thread so a slow call can't stall Decky's asyncio loop.
     async def get_config(self):
         return await asyncio.to_thread(build_config, False)
+
+    async def get_update_status(self):
+        return await asyncio.to_thread(update_status)
 
     async def get_installed_games(self):
         return await asyncio.to_thread(installed_games)
