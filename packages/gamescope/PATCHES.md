@@ -69,3 +69,10 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 
 - `patches/0034-vulkan-allow-linear-composition-output.patch`
   source: armada
+
+- `patches/0035-pipewire-rework-buffer-sharing-to-be-thread-safe.patch`
+  source: https://github.com/OpenGamingCollective/gamescope/commit/fcee365797177dac3f14749eccfd29e38df6170c
+
+- `patches/0036-pipewire-skip-rendering-while-inactive.patch`
+  source: armada
+  notes: Stop rendering capture frames while a stream is paused, disconnected or in error, while retaining stale-buffer cleanup and the upstream buffer-ownership fix. Read removal ownership before publishing a buffer as stale so the callback does not access a shared buffer after compositor cleanup can free it.
