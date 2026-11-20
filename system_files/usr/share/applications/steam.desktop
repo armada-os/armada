@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Steam
-Exec=/usr/libexec/armada/launch-steam --desktop %U
-Icon=steam
-Terminal=false
-Categories=Game;
-MimeType=x-scheme-handler/steam;
-StartupWMClass=steam

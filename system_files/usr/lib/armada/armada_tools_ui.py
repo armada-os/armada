@@ -276,11 +276,17 @@ class ToolsWindow(Adw.ApplicationWindow):
         self.steam_version.set_subtitle_selectable(True)
         self.steam_version.set_tooltip_text("Installed client version from Steam’s package manifest")
         repair_group.add(self.steam_version)
+        self.reset_button = Gtk.Button(label="Reset", valign=Gtk.Align.CENTER,
+                                        tooltip_text="Delete and reinstall the client. Games and settings are kept; you are signed out.")
+        self.reset_button.add_css_class("destructive-action")
+        self.reset_button.connect("clicked", lambda *_: self.confirm_reset())
         self.repair_button = Gtk.Button(label="Repair", valign=Gtk.Align.CENTER,
-                                         tooltip_text="Reinstall the factory client; keep games and accounts")
+                                         tooltip_text="Re-apply the client files. Nothing is deleted and you stay signed in.")
         self.repair_button.connect("clicked", lambda *_: self.confirm_repair())
+        self.steam_version.add_suffix(self.reset_button)
         self.steam_version.add_suffix(self.repair_button)
         self.repair_dialog = None
+        self.steam_reset = False
 
         ssh_group = Adw.PreferencesGroup(title="Remote Access")
         self.ssh_row = Adw.ActionRow(title="Enable SSH", subtitle="Checking SSH status…")
@@ -424,35 +430,51 @@ class ToolsWindow(Adw.ApplicationWindow):
         self.background(lambda: backend.ssh_request(action), completed)
 
     def confirm_repair(self):
+        self.confirm_steam(False)
+
+    def confirm_reset(self):
+        self.confirm_steam(True)
+
+    def confirm_steam(self, reset):
         if self.repair_running:
             return
         if self.confirmation is not None:
             self.confirmation.present(self)
             return
-        self.confirmation = Adw.AlertDialog(prefer_wide_layout=True, heading="Repair Steam?", body=
-            "Reinstall the factory Steam client and clear its web cache.\n\n"
-            "Your games, saves, accounts, and settings will be kept.")
+        if reset:
+            heading, label, body = "Reset Steam?", "Reset", (
+                "Delete Steam's client files and install a fresh copy.\n\n"
+                "Your games, saves, controller profiles, music, settings, and custom Proton are kept, "
+                "but you will be signed out of Steam.")
+        else:
+            heading, label, body = "Repair Steam?", "Repair", (
+                "Re-apply the packaged Steam client files over the current ones.\n\n"
+                "Nothing is deleted and you stay signed in.")
+        self.confirmation = Adw.AlertDialog(prefer_wide_layout=True, heading=heading, body=body)
         self.confirmation.add_response("cancel", "Cancel")
-        self.confirmation.add_response("repair", "Repair")
+        self.confirmation.add_response("confirm", label)
         self.confirmation.set_default_response("cancel")
         self.confirmation.set_close_response("cancel")
-        self.confirmation.set_response_appearance("repair", Adw.ResponseAppearance.SUGGESTED)
+        self.confirmation.set_response_appearance(
+            "confirm", Adw.ResponseAppearance.DESTRUCTIVE if reset else Adw.ResponseAppearance.SUGGESTED)
 
         def responded(dialog, response):
             self.confirmation = None
-            if response == "repair":
-                self.start_repair()
+            if response == "confirm":
+                self.start_repair(reset)
         self.confirmation.connect("response", responded)
         self.confirmation.present(self)
 
     def set_steam_sensitive(self, enabled):
         self.repair_button.set_sensitive(enabled)
+        self.reset_button.set_sensitive(enabled)
 
-    def start_repair(self):
-        self.repair_dialog = OperationDialog(self, "Steam Repair")
+    def start_repair(self, reset=False):
+        self.steam_reset = reset
+        self.repair_dialog = OperationDialog(self, "Steam Reset" if reset else "Steam Repair")
         self.repair_dialog.present()
         try:
-            self.job.start()
+            self.job.start(reset)
         except Exception as error:
             self.repair_dialog.finish(f"Could not start: {error}")
             return
@@ -470,10 +492,11 @@ class ToolsWindow(Adw.ApplicationWindow):
         self.steam_version.set_subtitle(backend.steam_client_version())
         self.updates.set_sensitive(True)
         self.set_steam_sensitive(True)
+        noun = "reset" if self.steam_reset else "repair"
         if status["code"] == 0:
-            self.repair_dialog.finish("Steam repair complete.")
+            self.repair_dialog.finish(f"Steam {noun} complete.")
         else:
-            self.repair_dialog.finish("Steam repair failed.\n\n" + status["message"])
+            self.repair_dialog.finish(f"Steam {noun} failed.\n\n" + status["message"])
         return GLib.SOURCE_REMOVE
 
     def close_requested(self, *_):
