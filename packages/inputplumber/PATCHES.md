@@ -21,3 +21,5 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0009-feat-ssc-mount-correction-from-the-environment.patch`
   source: armada
+- `patches/0010-feat-ssc-konkr-pocket-fit-elite-gyro.patch`
+  source: armada
