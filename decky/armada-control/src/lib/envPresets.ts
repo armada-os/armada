@@ -12,6 +12,10 @@ export function localized(text: LocalizedText | undefined, locale: Locale): stri
 export const findPreset = (presets: EnvPreset[], name: string): EnvPreset | undefined =>
   presets.find((preset) => preset.name === name);
 
+export function acceptsPresetValue(preset: EnvPreset | undefined, value: string): boolean {
+  return !!preset && (preset.options ? preset.options.some((option) => option.data === value) : value.length > 0);
+}
+
 // What a variable is currently set to, for prefilling the picker. A null in own
 // is a tombstone that switches off an inherited variable, so it falls through to
 // the global value rather than reading as "set to nothing".
