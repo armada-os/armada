@@ -62,9 +62,9 @@ local externals = {
   { name="drm-headers",     ref="3e49836",   owner="FEX-Emu",        package="kernel",                      version="6.17",     license="GPL-2.0-only"},
   { name="jemalloc",        ref="8436195",   owner="FEX-Emu",        path="jemalloc_glibc",                 version="5.3.0",    license="MIT"},
   { name="range-v3",        ref="ca1388fb9", owner="ericniebler",                                           version="0.12.0",   license="BSL-1.0 AND BSD-3-Clause AND MIT"},
-  { name="rpmalloc",        ref="09142d7",   owner="FEX-Emu",                                               version="1.3.0",    license="MIT"},
+  { name="rpmalloc",        ref="ed22744",   owner="FEX-Emu",                                               version="1.3.0",    license="MIT"},
   { name="Vulkan-Headers",  ref="ee2ec5f",   owner="KhronosGroup",   package="vulkan-headers",              version="1.4.362",  license="Apache-2.0"},
-  { name="vixl",            ref="585d860",   owner="FEX-Emu",                                                                   license="MIT"},
+  { name="vixl",            ref="6561d40",   owner="FEX-Emu",                                                                   license="MIT"},
   { name="unordered_dense", ref="3234af2",   owner="martinus",                                                                  license="MIT"},
   { name="zydis",           ref="9bfadd6",   owner="zyantific",                                                                 license="MIT"},
 }
