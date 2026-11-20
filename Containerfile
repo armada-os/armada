@@ -23,6 +23,9 @@ FROM ${MANGOHUD_REF} AS mangohud
 ARG GAMESCOPE_REF
 FROM ${GAMESCOPE_REF} AS gamescope
 
+ARG ARMADA_AUTOHDR_REF
+FROM ${ARMADA_AUTOHDR_REF} AS armada-autohdr
+
 ARG GAMESCOPE_SESSION_REF
 FROM ${GAMESCOPE_SESSION_REF} AS gamescope-session
 
@@ -132,6 +135,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=mesa,source=/rpms,target=/packages/mesa \
     --mount=type=bind,from=mangohud,source=/rpms,target=/packages/mangohud \
     --mount=type=bind,from=gamescope,source=/rpms,target=/packages/gamescope \
+    --mount=type=bind,from=armada-autohdr,source=/rpms,target=/packages/armada-autohdr \
     --mount=type=bind,from=gamescope-session,source=/rpms,target=/packages/gamescope-session \
     --mount=type=bind,from=gamescope-session-steam,source=/rpms,target=/packages/gamescope-session-steam \
     --mount=type=bind,from=kwin,source=/rpms,target=/packages/kwin \
