@@ -96,6 +96,8 @@ if [[ "$surface" == standalone ]]; then
         set +a
     fi
 
+    armada_plasma_import_locale "$config_home"
+
     if [[ "$shell" == mobile ]]; then
         export DESKTOP_SESSION=plasma-mobile
         exec "${ARMADA_STARTPLASMA:-/usr/bin/startplasmamobile}"
@@ -105,6 +107,9 @@ if [[ "$surface" == standalone ]]; then
 fi
 
 [[ -n "${DISPLAY:-}" ]] || fail "nested Gamescope did not provide an X11 display"
+
+# Both surfaces launch KWin directly, so import the shell's locale first.
+armada_plasma_import_locale "$config_home"
 
 if [[ "$surface" == nested ]]; then
     export ARMADA_PLASMA_NESTED=$$
