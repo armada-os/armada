@@ -1,0 +1,33 @@
+# Vela NPU: the cDSP guest-OS listener (quic/fastrpc cdsprpcd) that fsr4npud needs.
+# It attaches to the cDSP root PD, which the kernel allows only through
+# /dev/fastrpc-cdsp-secure (root:root 0600), so it runs as root, with a reduced capability
+# set and a read-only system. Pulled in by vela-npu@.service (Wants=), stopped when unneeded.
+[Unit]
+Description=Vela NPU: cDSP guest-OS listener (cdsprpcd) for fsr4npud
+ConditionFirmware=|device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8750)
+# The cDSP shell is not part of this package (see packages/vela-npu/README.md).
+ConditionPathExists=/usr/lib/rfsa/adsp/fastrpc_shell_unsigned_3
+Requires=vela-npu-setup.service
+After=vela-npu-setup.service
+StopWhenUnneeded=yes
+
+[Service]
+Type=exec
+ExecStart=/usr/lib64/vela-npu/cdsprpcd
+WorkingDirectory=/usr/lib/rfsa/adsp
+Environment=LD_LIBRARY_PATH=/usr/lib64/vela-npu
+Environment=ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp
+Restart=on-failure
+RestartSec=3
+# AEE_EITEMBUSY: another cdsprpcd already holds the root PD (as in upstream fastrpc cdsprpcd.service)
+RestartPreventExitStatus=32
+TimeoutStopSec=10
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_NICE CAP_IPC_LOCK
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
