@@ -1,0 +1,12 @@
+[Unit]
+Description=Armada battery charge limit
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/armada/armada-charge-limit
+Restart=OnFailure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

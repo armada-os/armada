@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# This is a stopgap solution until kernel patches allow us to set charge
+# limits. Currently it uses the lowest possible limit I've found for charging
+# when above the charge threshhold set in the config file.
+
+set -u
+
+# This config file is currently user-editable since the daemon cannot be
+# used otherwise. This should be handled in the standard configs
+# if this is implemented into Decky.
+CONFIG_FILE="/var/home/armada/.config/armada/charge-limit.conf"
+
+# Create the config file if it doesn't exist, set it to 100 for default.
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "100" > "$CONFIG_FILE"
+fi
+
+POWER_SUPPLY_PATH="/sys/class/power_supply/"
+CHARGE_EXTENSION_NUM=$(ls "$POWER_SUPPLY_PATH" | grep -v "qcom" | grep -i "bat" | wc -l | tr -d ' ')
+CHARGE_EXTENSION=$(ls "$POWER_SUPPLY_PATH" | grep -v "qcom" | grep -i "bat" | head -n 1)
+LOWER_LIMIT=100000
+
+# Error handling first
+if  [[ $CHARGE_EXTENSION_NUM == 0 ]] ; then
+    printf 'Error: no battery found under %s\n' "$POWER_SUPPLY_PATH" >&2
+	# Exit 0 needs to be used here in order to prevent the service from
+	# restarting should these failures be met.
+    exit 0
+elif [[ $CHARGE_EXTENSION_NUM > 1 ]]; then
+    printf 'Error: found %d batteries under %s; refusing to choose one\n' "$CHARGE_EXTENSION_NUM" "$POWER_SUPPLY_PATH" >&2
+    exit 0
+fi
+
+BAT_PATH="$POWER_SUPPLY_PATH$CHARGE_EXTENSION"
+BATTERY_CHARGE="$BAT_PATH/capacity"
+CHARGE_CURRENT_MAX="$BAT_PATH/constant_charge_current_max"
+POLL_INTERVAL="5"
+CURRENT_LIMIT=$(cat "$CONFIG_FILE")
+
+# Error handling second
+if [[ ! -f "$BAT_PATH/capacity" || ! -f "$BAT_PATH/constant_charge_current" || ! -f "$BAT_PATH/constant_charge_current_max" ]]; then
+    printf "Error: the battery doesn't have the expected configuration under %s\n" "$BAT_PATH" >&2
+    exit 0
+fi
+
+# This should stay alive forever, unless we don't have permissions 
+limited=0
+current=""
+while true; do
+    limit=$(cat "$CONFIG_FILE") || true
+    battery=$(cat "$BATTERY_CHARGE") || true
+
+    if [[ "$limit" =~ ^[0-9]+$ && "$battery" =~ ^[0-9]+$ ]]; then
+        resume=$(( limit - 10 )) # Setting the charge at the limit minus 10.
+        if (( limited && battery <= resume  )); then
+            cat $BAT_PATH/constant_charge_current_max | tee $BAT_PATH/constant_charge_current
+            limited=0
+        elif (( battery >= limit )); then
+            # 100000 is the safest lower limit I can find, this will need per device testing and possible device quirks if others need higher.
+            echo 100000 | tee $BAT_PATH/constant_charge_current
+            limited=1
+        fi
+    fi
+    sleep "$POLL_INTERVAL"
+done
