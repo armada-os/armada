@@ -1,0 +1,326 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Armada <armada@thucommix.dev>
+Date: Tue, 17 Nov 2026 00:00:00 +0100
+Subject: [PATCH] msm: report GPU memory and RAM usage
+
+msm shares the system RAM with the CPU, so drm-memory-vram never exists
+and the VRAM row always read 0.0. Since Linux 6.5 the DRM fdinfo
+interface exposes drm-resident-memory, so use that for the VRAM row and
+PVRAM on msm_dpu. The value is per-client (the focused game), which is
+the only GPU-memory counter the driver exposes.
+
+Show the RAM usage percentage next to the used amount instead of a
+smaller "/total" appended to it, which crowded the number, and move
+swap to a labelled SWAP row.
+
+Hide the VRAM memory-temp, GPU temp and memory-clock cells when no
+sensor backs them. msm has no vram sensor or memory clock, and these
+handhelds have no RAM spd5118, so those cells rendered a constant
+0 degC / 0 MHz.
+
+Pick gpuss_0_thermal deterministically for the GPU temperature instead
+of whichever hwmon device containing "gpu" is enumerated first, and
+fall back to the gpuss-* thermal zones when no GPU hwmon exists.
+---
+ src/gpu_fdinfo.cpp   | 108 ++++++++++++++++++++++++++++++++++++++++++++++++++-
+ src/gpu_fdinfo.h     |  10 ++++-
+ src/hud_elements.cpp |  42 +++++++++++++++-----
+ src/memory.cpp       |   8 +++-
+ 4 files changed, 155 insertions(+), 13 deletions(-)
+diff --git a/src/gpu_fdinfo.cpp b/src/gpu_fdinfo.cpp
+index 53cab4f..786f288 100644
+--- a/src/gpu_fdinfo.cpp
++++ b/src/gpu_fdinfo.cpp
+@@ -184,12 +184,16 @@ float GPU_fdinfo::get_memory_used()
+     return static_cast<float>(total) / 1024 / 1024 / 1024;
+ }
+ 
++static std::string find_msm_hwmon_dir();
++
+ void GPU_fdinfo::find_hwmon_sensors()
+ {
+     std::string hwmon;
+ 
+-    if (module == "msm_drm" || module == "msm_dpu" )
++    if (module == "msm_drm")
+         hwmon = find_hwmon_sensor_dir("gpu");
++    else if (module == "msm_dpu")
++        hwmon = find_msm_hwmon_dir();
+     else if (module == "panfrost" || module == "panthor")
+         hwmon = find_hwmon_sensor_dir("gpu_thermal");
+     else
+@@ -197,6 +201,9 @@ void GPU_fdinfo::find_hwmon_sensors()
+ 
+     if (hwmon.empty()) {
+         SPDLOG_DEBUG("hwmon: failed to find hwmon directory");
++        // Without hwmon, fall back to the SoC thermal zones (gpuss-*).
++        if (module == "msm_dpu")
++            open_msm_thermal_zone();
+         return;
+     }
+ 
+@@ -246,6 +253,10 @@ void GPU_fdinfo::find_hwmon_sensors()
+             continue;
+         }
+     }
++
++    // Some msm revisions expose hwmon devices without a temperature channel.
++    if (module == "msm_dpu" && hwmon_sensors["temp"].filename.empty())
++        open_msm_thermal_zone();
+ }
+ 
+ std::string GPU_fdinfo::find_hwmon_dir() {
+@@ -295,6 +306,87 @@ std::string GPU_fdinfo::find_hwmon_sensor_dir(std::string name) {
+     return "";
+ }
+ 
++// Qualcomm registers one hwmon device per GPU thermal sensor (gpuss_0_thermal,
++// gpuss_1_thermal, ...). Directory order is arbitrary, so a "name contains
++// gpu" lookup can return any of them; prefer the primary (gpuss_0) sensor.
++static std::string find_msm_hwmon_dir()
++{
++    const std::string base = "/sys/class/hwmon/";
++
++    if (!fs::exists(base))
++        return "";
++
++    std::string fallback;
++
++    for (const auto &entry : fs::directory_iterator(base)) {
++        std::ifstream name_stream((entry.path() / "name").string());
++        std::string name;
++
++        if (!name_stream.is_open() || !std::getline(name_stream, name))
++            continue;
++
++        if (name == "gpuss_0_thermal" || name == "gpuss-0-thermal")
++            return entry.path().string();
++
++        if (fallback.empty() && name.find("gpu") != std::string::npos)
++            fallback = entry.path().string();
++    }
++
++    return fallback;
++}
++
++void GPU_fdinfo::open_msm_thermal_zone()
++{
++    const std::string base = "/sys/class/thermal/";
++
++    if (!fs::exists(base))
++        return;
++
++    std::string fallback;
++
++    for (const auto &entry : fs::directory_iterator(base)) {
++        auto name = entry.path().filename().string();
++
++        if (name.rfind("thermal_zone", 0) != 0)
++            continue;
++
++        std::ifstream type_stream((entry.path() / "type").string());
++        std::string type;
++
++        if (!type_stream.is_open() || !std::getline(type_stream, type))
++            continue;
++
++        auto temp = (entry.path() / "temp").string();
++
++        if (type == "gpuss-0-thermal" || type == "gpu-thermal") {
++            thermal_zone_stream.open(temp);
++            if (thermal_zone_stream.good())
++                return;
++        } else if (fallback.empty() && type.rfind("gpuss", 0) == 0) {
++            fallback = temp;
++        }
++    }
++
++    if (!fallback.empty())
++        thermal_zone_stream.open(fallback);
++}
++
++int GPU_fdinfo::get_thermal_zone_temp()
++{
++    if (!thermal_zone_stream.is_open())
++        return 0;
++
++    thermal_zone_stream.clear();
++    thermal_zone_stream.seekg(0);
++
++    int milli = 0;
++
++    if (!(thermal_zone_stream >> milli))
++        return 0;
++
++    return std::round(milli / 1000.f);
++}
++
+ void GPU_fdinfo::get_current_hwmon_readings()
+ {
+     for (auto& hs : hwmon_sensors) {
+@@ -772,6 +864,12 @@ void GPU_fdinfo::main_thread()
+         metrics.load = get_gpu_load();
+         metrics.proc_vram_used = get_memory_used();
+ 
++        // msm does not expose a system-wide VRAM counter because the GPU
++        // shares the system RAM. Report the client's allocated GPU memory
++        // instead of always showing 0.
++        if (module == "msm_dpu")
++            metrics.sys_vram_used = metrics.proc_vram_used;
++
+         metrics.powerUsage = get_power_usage();
+         metrics.powerLimit = static_cast<float>(hwmon_sensors["power_limit"].val) / 1'000'000;
+ 
+@@ -780,10 +878,16 @@ void GPU_fdinfo::main_thread()
+ 
+         if (module == "msm_drm")
+             metrics.temp = get_kgsl_temp();
++        else if (module == "msm_dpu" && hwmon_sensors["temp"].filename.empty())
++            metrics.temp = get_thermal_zone_temp();
+         else
+             metrics.temp = hwmon_sensors["temp"].val / 1000.f;
+ 
+-        metrics.memory_temp = hwmon_sensors["vram_temp"].val / 1000.f;
++        // -1 hides the cell in the VRAM row; 0 would be drawn as a real 0°C.
++        if (hwmon_sensors["vram_temp"].filename.empty())
++            metrics.memory_temp = -1;
++        else
++            metrics.memory_temp = hwmon_sensors["vram_temp"].val / 1000.f;
+ 
+         metrics.fan_speed = hwmon_sensors["fan_speed"].val;
+         metrics.fan_rpm = true; // Fan data is pulled from hwmon
+diff --git a/src/gpu_fdinfo.h b/src/gpu_fdinfo.h
+index a5b1d9e..16bcb03 100644
+--- a/src/gpu_fdinfo.h
++++ b/src/gpu_fdinfo.h
+@@ -88,6 +88,12 @@ private:
+     std::string find_hwmon_sensor_dir(std::string name);
+     void get_current_hwmon_readings();
+ 
++    // msm exposes GPU temperature through thermal zones when the driver does
++    // not register hwmon sensors for the GPU.
++    std::ifstream thermal_zone_stream;
++    void open_msm_thermal_zone();
++    int get_thermal_zone_temp();
++
+     float get_power_usage();
+     float last_power = 0;
+ 
+@@ -145,8 +151,10 @@ public:
+             drm_engine_type = "drm-engine-gfx";
+             drm_memory_type = "drm-memory-vram";
+         } else if (module == "msm_dpu") {
+-            // msm driver does not report vram usage
+             drm_engine_type = "drm-engine-gpu";
++            // msm is unified memory: there is no system-wide VRAM counter,
++            // but newer kernels report the client's resident GPU memory.
++            drm_memory_type = "drm-resident-memory";
+             init_kgsl();
+         } else if (module == "msm_drm") {
+             init_kgsl();
+diff --git a/src/hud_elements.cpp b/src/hud_elements.cpp
+index ea19b66..fe8e4ef 100644
+--- a/src/hud_elements.cpp
++++ b/src/hud_elements.cpp
+@@ -312,7 +312,9 @@ void HudElements::gpu_stats(){
+                 // ImGui::Text("%s", "%");
+             }
+ 
+-            if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_temp]){
++            // temp is 0 when no sensor is available, which would render a
++            // bogus "0°C" instead of hiding the cell.
++            if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_temp] && gpu->metrics.temp > 0){
+                 ImguiNextColumnOrNewRow();
+                 if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_temp_fahrenheit])
+                     right_aligned_text(text_color, HUDElements.ralign_width, "%i", HUDElements.convert_to_fahrenheit(gpu->metrics.temp));
+@@ -673,7 +675,10 @@ void HudElements::vram(){
+                         HUDElements.TextColored(HUDElements.colors.text, "°C");
+                 }
+ 
+-                if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_mem_clock]){
++                // Unified-memory drivers (msm) have no memory clock; hide the
++                // cell instead of printing a permanent 0 MHz.
++                if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_mem_clock] &&
++                    gpu->metrics.MemClock > 0){
+                     ImguiNextColumnOrNewRow();
+                     right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", gpu->metrics.MemClock);
+                     ImGui::SameLine(0, 1.0f);
+@@ -754,7 +759,7 @@ void HudElements::proc_vram() {
+ void HudElements::ram(){
+ #ifdef __linux__
+     if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_ram] ||
+-        HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_ram_temp]) {
++        (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_ram_temp] && mem_temp > -1)) {
+         ImguiNextColumnFirstItem();
+         HUDElements.TextColored(HUDElements.colors.ram, "RAM");
+     }
+@@ -768,18 +773,37 @@ void HudElements::ram(){
+             HUDElements.TextColored(HUDElements.colors.text, "GiB");
+             ImGui::PopFont();
+         }
++
++        // Used percentage in the column next to the used value: comparable at
++        // a glance without repeating the total.
++        if (memmax > 0) {
++            ImguiNextColumnOrNewRow();
++            right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i",
++                               int(std::round(memused / memmax * 100.0f)));
++            ImGui::SameLine(0, 1.0f);
++            HUDElements.TextColored(HUDElements.colors.text, "%%");
++        }
+     }
+ 
+-    if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_ram] && HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_swap]){
++    // Swap used to live in the third column of the RAM row. That column now
++    // holds the used percentage, so give swap a labelled row of its own.
++    if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_ram] &&
++        HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_swap]){
++        if (!HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_horizontal])
++            ImGui::TableNextRow();
++        ImguiNextColumnFirstItem();
++        HUDElements.TextColored(HUDElements.colors.ram, "SWAP");
+         ImguiNextColumnOrNewRow();
+         right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%.1f", swapused);
+-        ImGui::SameLine(0, 1.0f);
+-        ImGui::PushFont(HUDElements.sw_stats->font_small);
+-        HUDElements.TextColored(HUDElements.colors.text, "GiB");
+-        ImGui::PopFont();
++        if (!HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_hud_compact]){
++            ImGui::SameLine(0, 1.0f);
++            ImGui::PushFont(HUDElements.sw_stats->font_small);
++            HUDElements.TextColored(HUDElements.colors.text, "GiB");
++            ImGui::PopFont();
++        }
+     }
+ 
+-    if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_ram_temp]) {
++    if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_ram_temp] && mem_temp > -1) {
+         ImguiNextColumnOrNewRow();
+         if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_temp_fahrenheit])
+             right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", HUDElements.convert_to_fahrenheit(mem_temp));
+diff --git a/src/memory.cpp b/src/memory.cpp
+index fc117f5..4d97193 100644
+--- a/src/memory.cpp
++++ b/src/memory.cpp
+@@ -11,7 +11,7 @@
+ #include "hud_elements.h"
+ 
+ float memused, memmax, swapused;
+-int mem_temp;
++int mem_temp = -1;
+ uint64_t proc_mem_resident, proc_mem_shared, proc_mem_virt;
+ 
+ void update_meminfo() {
+@@ -50,6 +50,12 @@ void update_mem_temp() {
+             SPDLOG_ERROR("failed to find known ram temp sensors");
+     }
+ 
++    // No sensor: hide the row instead of reporting a bogus 0°C.
++    if (mem_temp_files.empty()) {
++        mem_temp = -1;
++        return;
++    }
++
+     int temp = 0;
+     for (auto &file : mem_temp_files) {
+         int _temp;
