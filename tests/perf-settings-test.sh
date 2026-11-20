@@ -1345,6 +1345,190 @@ finally:
     ap.apply_gamescope = real_apply
 check("perf_tick contains exceptions", True)
 
+# --- per-game power profile --------------------------------------------------
+check("powerProfile sanitized",
+      ap.sanitize_perf({"powerProfile": "eco"}) == {"powerProfile": "eco"})
+for bad in ("turbo", "Eco", "", None, 1, ["eco"]):
+    check(f"powerProfile {bad!r} dropped", ap.sanitize_perf({"powerProfile": bad}) == {})
+check("powerProfile stays out of the gamescope/scheduler values",
+      "powerProfile" not in ap.effective_state(
+          {"global": {"powerProfile": "eco"}, "override": {"powerProfile": "eco"}}))
+gone = subprocess.Popen(["true"])
+gone.wait()
+me = os.getpid()
+check("game profile read from the override",
+      ap.game_power_profile({"override": {"pid": me, "powerProfile": "eco"}}) == (me, "eco"))
+check("global layer never carries a game profile",
+      ap.game_power_profile({"global": {"pid": me, "powerProfile": "eco"}}) is None)
+check("override without powerProfile is no game profile",
+      ap.game_power_profile({"override": {"pid": me}}) is None)
+check("invalid override profile ignored",
+      ap.game_power_profile({"override": {"pid": me, "powerProfile": "turbo"}}) is None)
+check("stale override pid ignored",
+      ap.game_power_profile({"override": {"pid": gone.pid, "powerProfile": "eco"}}) is None)
+for bad_pid in (None, True, str(me)):
+    check(f"override pid {bad_pid!r} ignored",
+          ap.game_power_profile({"override": {"pid": bad_pid, "powerProfile": "eco"}}) is None)
+check("non-dict override ignored", ap.game_power_profile({"override": "eco"}) is None)
+
+
+def write_tweaks(games):
+    # the hand-written global value must never reach any layer
+    with gt.OVERRIDES_CONFIG.open("w") as f:
+        json.dump({"global": {"powerProfile": "performance"}, "games": games}, f)
+
+
+def saved_profile():
+    for line in powerd.STATE_FILE.read_text().splitlines():
+        if line.startswith("profile="):
+            return line.split("=", 1)[1]
+    return None
+
+
+def applied_caps():
+    return {policy.name: int((policy / "scaling_max_freq").read_text())
+            for policy in power.cpu_policies}
+
+
+def shown_profile():
+    return power.get_property("Profile").unpack()
+
+
+gt.OVERRIDES_CONFIG = pathlib.Path(os.path.join(WORK, "game-tweaks.json"))
+profile_caps = {name: cpu_caps(name) for name in powerd.PROFILES}
+check("fake tree tells the profiles apart",
+      len({tuple(sorted(caps.items())) for caps in profile_caps.values()}) == 3)
+labels = {name: power.label_for(name) for name in powerd.PROFILES}
+power.suspended = False
+power.game_profile = None
+power.manual_profile = None
+power.connection = object()
+switch_profile("eco")
+power.save_state()
+
+write_tweaks({"620": {"powerProfile": "performance"},
+              "730": {"nice": 0},
+              "740": {"enabled": False, "powerProfile": "performance"}})
+pp_manager = control.PerfManager(selectors.DefaultSelector())
+check("global layer drops powerProfile", "powerProfile" not in ap.read_state()["global"])
+game = subprocess.Popen(["sleep", "30"])
+try:
+    for appid, why in (("730", "game without its own profile"),
+                       ("740", "disabled game"), (None, "launch without appid")):
+        pp_manager.game_launched(appid, game.pid)
+        override = ap.read_state().get("override", {})
+        check(f"{why} is tracked", override.get("pid") == game.pid)
+        check(f"{why} gets no powerProfile", "powerProfile" not in override)
+        power.sync_game_profile()
+        check(f"{why} keeps the system profile",
+              power.effective_profile() == "eco" and applied_caps() == profile_caps["eco"])
+
+    # no game profile: the quick menu still changes the system profile
+    power.set_property("Profile", FakeVariant("s", labels["balanced"]))
+    check("set without game profile changes the system profile",
+          power.profile == "balanced" and saved_profile() == "balanced")
+    power.set_property("Profile", FakeVariant("s", labels["eco"]))
+    check("system profile set back", power.profile == "eco" and saved_profile() == "eco")
+
+    emitted.clear()
+    pp_manager.game_launched("620", game.pid)
+    check("override carries the game's own profile",
+          ap.read_state()["override"].get("powerProfile") == "performance")
+    power.sync_game_profile()
+    check("game profile applied",
+          power.effective_profile() == "performance"
+          and applied_caps() == profile_caps["performance"])
+    check("game profile shown and emitted",
+          shown_profile() == labels["performance"]
+          and emitted == [{"Profile": labels["performance"]}])
+    check("game profile is not the system profile", power.profile == "eco")
+    check("game profile is never persisted", saved_profile() == "eco")
+    emitted.clear()
+    power.sync_game_profile()
+    check("unchanged override neither re-applies nor re-emits", emitted == [])
+
+    # live edit from the plugin reaches the running game
+    write_tweaks({"620": {"powerProfile": "balanced"}})
+    pp_manager.refresh(keep_override=True)
+    check("live edit rebuilds the override profile",
+          ap.read_state()["override"].get("powerProfile") == "balanced")
+    power.sync_game_profile()
+    check("live edit applied",
+          power.effective_profile() == "balanced" and applied_caps() == profile_caps["balanced"])
+
+    # quick-menu change during a game with its own profile: session only
+    power.set_property("Profile", FakeVariant("s", labels["performance"]))
+    check("manual set applies during the game",
+          shown_profile() == labels["performance"]
+          and applied_caps() == profile_caps["performance"])
+    check("manual set leaves the system profile alone",
+          power.profile == "eco" and saved_profile() == "eco")
+    power.sync_game_profile()
+    check("manual set survives ticks", power.effective_profile() == "performance")
+
+    # removing the game's profile drops the manual choice with it
+    write_tweaks({"620": {"nice": 0}})
+    pp_manager.refresh(keep_override=True)
+    check("removed profile leaves the override",
+          "powerProfile" not in ap.read_state()["override"])
+    power.sync_game_profile()
+    check("removed profile returns to the system profile",
+          power.effective_profile() == "eco" and power.manual_profile is None
+          and applied_caps() == profile_caps["eco"])
+
+    # suspended: clocks are pinned low, resume re-applies the profile
+    write_tweaks({"620": {"powerProfile": "performance"}})
+    pp_manager.refresh(keep_override=True)
+    power.suspended = True
+    emitted.clear()
+    power.sync_game_profile()
+    check("suspended sync does not touch the clocks", applied_caps() == profile_caps["eco"])
+    check("suspended sync still reports the profile",
+          emitted == [{"Profile": labels["performance"]}])
+    power.suspended = False
+    power.apply_profile()
+    check("resume path applies the game profile", applied_caps() == profile_caps["performance"])
+
+    # a set before the next tick still sees the game's profile
+    power.game_profile = None
+    switch_profile("eco")
+    power.set_property("Profile", FakeVariant("s", labels["balanced"]))
+    check("set right after launch stays session-only",
+          power.profile == "eco" and saved_profile() == "eco"
+          and power.effective_profile() == "balanced")
+
+    # the sync runs inside the fan loop: no bus yet, enforcement failing
+    power.connection = None
+    power.game_profile = None
+    power.manual_profile = None
+    real_apply = ap.apply_gamescope
+    ap.apply_gamescope = lambda values: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        power.perf_tick()
+    finally:
+        ap.apply_gamescope = real_apply
+    check("perf_tick syncs the profile without a bus",
+          power.effective_profile() == "performance"
+          and applied_caps() == profile_caps["performance"])
+    power.connection = object()
+    power.set_property("Profile", FakeVariant("s", labels["balanced"]))
+finally:
+    game.terminate()
+    game.wait()
+
+pp_manager.game_exited()
+check("game exit clears the override", "override" not in ap.read_state())
+emitted.clear()
+power.sync_game_profile()
+check("game exit restores the system profile",
+      power.effective_profile() == "eco" and applied_caps() == profile_caps["eco"]
+      and emitted == [{"Profile": labels["eco"]}])
+check("game exit ends the manual choice",
+      power.manual_profile is None and power.game_profile is None)
+check("system profile untouched by the whole session",
+      power.profile == "eco" and saved_profile() == "eco")
+power.connection = None
+
 # --- plugin: tweaks sanitize keeps the flat perf keys -----------------------
 sys.path.insert(0, os.path.join(ROOT, "decky/armada-control/py_modules"))
 from armada_control import tweaks as plugin_tweaks

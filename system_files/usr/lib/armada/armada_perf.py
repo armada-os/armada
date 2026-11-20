@@ -12,6 +12,7 @@ DEVICE_ENV_HELPER = "/usr/libexec/armada/device-env"
 
 CORE_PRESETS = ("all", "big", "prime", "little")
 SCHEDULERS = ("eevdf", "cosmos", "lavd")
+POWER_PROFILES = ("eco", "balanced", "performance")
 GAMESCOPE_COMMS = ("gamescope", "gamescope-wl")
 NICE_MIN, NICE_MAX = -20, 19
 GAMESCOPE_NICE_MIN, GAMESCOPE_NICE_MAX = -20, 19
@@ -130,6 +131,8 @@ def sanitize_perf(settings, env=None):
             pass
     if settings.get("scheduler") in SCHEDULERS:
         clean["scheduler"] = settings["scheduler"]
+    if settings.get("powerProfile") in POWER_PROFILES:
+        clean["powerProfile"] = settings["powerProfile"]
     return clean
 
 
@@ -172,6 +175,21 @@ def effective_state(state):
             if key in layer and layer[key] is not None:
                 values[key] = layer[key]
     return values
+
+
+def game_power_profile(state):
+    # (session pid, profile) of the running game's own power profile, else
+    # None. Only the override layer counts: the system profile is powerd's.
+    override = state.get("override")
+    if not isinstance(override, dict):
+        return None
+    pid, profile = override.get("pid"), override.get("powerProfile")
+    if type(pid) is not int or profile not in POWER_PROFILES:
+        return None
+    # armada-control drops the override on exit; this covers it dying first
+    if not os.path.isdir(f"/proc/{pid}"):
+        return None
+    return (pid, profile)
 
 
 def gamescope_pids():

@@ -38,6 +38,7 @@ export const setSleepMode = (value: string) => call<[string], string>("set_sleep
 export const getSleepLogsEnabled = () => call<[], boolean>("get_sleep_logs_enabled");
 export const setSleepLogsEnabled = (enabled: boolean) => call<[boolean], boolean>("set_sleep_logs_enabled", enabled);
 export const reapplyPerf = () => call<[], { pids?: number }>("reapply_perf");
+export const getGamePowerProfile = () => call<[], string>("get_game_power_profile");
 export const restartGameMode = () => call<[], boolean>("restart_game_mode");
 export const setControllerType = (value: string) => call<[string], string>("set_controller_type", value);
 export const getRgb = () => call<[], RgbConfig | null>("get_rgb");

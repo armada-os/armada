@@ -807,6 +807,13 @@ class PerfManager:
             layer["schedulerDomain"] = clean.get("cores")
         return layer
 
+    def power_profile_layer(self, tweaks, appid):
+        # Per-game only (the system profile is picked in Steam's quick menu),
+        # so it comes from the game's own entry: the merged settings would
+        # let a hand-written global value reach every game.
+        own = armada_game_tweaks.merged_settings({"games": tweaks.get("games")}, appid)
+        return armada_perf.sanitize_perf({"powerProfile": own.get("powerProfile")})
+
     def refresh(self, keep_override=False):
         # recomputed from game-tweaks.json; powerd applies on its next tick
         tweaks = armada_game_tweaks.load()
@@ -816,6 +823,7 @@ class PerfManager:
             if isinstance(old, dict) and self.pid_alive(old.get("pid")):
                 merged = armada_game_tweaks.merged_settings(tweaks, old.get("appid"))
                 override = self.gamescope_layer(merged)
+                override.update(self.power_profile_layer(tweaks, old.get("appid")))
                 override.update({"appid": old.get("appid"), "pid": old["pid"]})
                 state["override"] = override
         armada_perf.write_state(state)
@@ -895,6 +903,7 @@ class PerfManager:
         # displace a stale override
         session_pid = self.steam_session_pid(pid, appid)
         override = self.gamescope_layer(merged)
+        override.update(self.power_profile_layer(tweaks, appid))
         override.update({"appid": appid, "pid": session_pid})
         state = armada_perf.read_state()
         if self.arm_pidfd(session_pid):

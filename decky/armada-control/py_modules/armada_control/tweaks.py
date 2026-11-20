@@ -7,6 +7,7 @@ from .privileged import call
 
 sys.path.insert(0, os.environ.get("ARMADA_GAME_TWEAKS_LIB", "/usr/lib/armada"))
 import armada_game_tweaks
+import armada_perf
 import armada_turnip
 
 COMPAT_APPLIED_STATE = Path("/var/lib/armada/compat-applied.json")
@@ -85,6 +86,12 @@ def tweak_overrides(data):
 
 def save_tweaks(data):
     call("write_config", name="tweaks", text=json.dumps(tweak_overrides(data), indent=2, sort_keys=True) + "\n")
+
+
+def game_power_profile():
+    # armada-powerd's own check, so the UI agrees with what is being applied
+    game = armada_perf.game_power_profile(armada_perf.read_state())
+    return game[1] if game else ""
 
 
 def load_compat_applied():

@@ -156,6 +156,8 @@ export const en = {
   "compatibility.customCores": "Custom cores",
   "compatibility.vulkanRealtimeQueue": "Vulkan Realtime Queue",
   "compatibility.cpuScheduler": "CPU Scheduler",
+  "compatibility.powerProfile": "Power Profile",
+  "compatibility.powerProfileSystem": "Use System Profile",
   "compatibility.reapplyRunningGame": "Re-apply to Running Game",
   "common.status": "Status",
   "compatibility.defaultVariables": "Default Variables",
