@@ -29,6 +29,11 @@ grep -qx 'Exec=/usr/libexec/armada/armada-plasma-session standalone mobile' "$SE
 grep -qx 'exec /usr/libexec/armada/armada-plasma-session nested' "$ROOT/system_files/usr/bin/armada-nested-desktop"
 [[ -x "$ROOT/system_files/usr/bin/armada-nested-desktop" && -x "$SESSION" ]]
 [[ "$(<"$ROOT/system_files/usr/share/armada/plasma/nested/kwinrc")" == $'[Wayland]\nVirtualKeyboardMode=2' ]]
+grep -qx 'XwaylandEisNoPromptApps=steam' "$ROOT/system_files/etc/xdg/kwinrc"
+grep -qx 'VirtualKeyboardMode=0' "$ROOT/system_files/usr/share/armada/plasma/desktop/kwinrc"
+grep -qx 'touchpointsEnabled=true' "$ROOT/system_files/usr/share/armada/plasma/desktop/kwinrc"
+grep -qx 'Exec=/usr/bin/steam -silent' "$ROOT/system_files/etc/xdg/autostart/armada-steam-desktop.desktop"
+grep -qx 'OnlyShowIn=KDE;' "$ROOT/system_files/etc/xdg/autostart/armada-steam-desktop.desktop"
 
 mkdir "$tmp/bin" "$tmp/run"
 log="$tmp/log"
@@ -113,8 +118,10 @@ if session "$tmp/none" bottom tablet 2>/dev/null; then fail 'accepted an unknown
 home="$tmp/standalone"
 session "$home" standalone
 [[ "$(<"$tmp/args")" == $'plasmashellrc.desktop\nplasma\nwayland\n1' ]]
+[[ "$(envval XDG_CONFIG_DIRS)" == /usr/share/armada/plasma/desktop:/steam/xdg ]]
 session "$home" standalone mobile
 [[ "$(<"$tmp/args")" == $'plasmashellrc.mobile\nplasma-mobile\nwayland\n1' ]]
+[[ "$(envval XDG_CONFIG_DIRS)" == /steam/xdg ]]
 session "$home" standalone desktop
 [[ "$(<"$tmp/args")" == $'plasmashellrc.desktop\nplasma\nwayland\n1' ]]
 [[ ! -e "$home/armada" ]]
@@ -198,13 +205,16 @@ expect_args \
     --inputmethod /usr/bin/plasma-keyboard \
     --exit-with-session "$child_env /usr/bin/plasmashell" \
     "$child_env /usr/libexec/kf6/polkit-kde-authentication-agent-1" \
+    "$child_env /usr/libexec/armada/steam-keyboard-follow" \
+    "$child_env ARMADA_HOST_DISPLAY=':7' ARMADA_HOST_XAUTHORITY='' /usr/libexec/armada/steam-keyboard-outside" \
     '/usr/bin/kscreen-doctor output.X11-0.scale.1.5'
 nested_id="$(envval ARMADA_PLASMA_NESTED)"
 [[ "$nested_id" =~ ^[0-9]+$ ]]
 [[ "$(<"$log")" == "systemctl --user is-active --quiet armada-plasma-nested-*.service
 systemd-run --user --quiet --collect --unit=armada-plasma-nested-$nested_id $SESSION --restore-bottom $nested_id
 systemctl --user stop armada-bottom-screen.service" ]] || fail "unexpected handoff: $(<"$log")"
-[[ "$(envval XDG_CONFIG_DIRS)" == /usr/share/armada/plasma/nested:/etc/xdg ]]
+# Game Mode's Steam keyboard replaces Plasma's in the nested desktop shell, as in the standalone one.
+[[ "$(envval XDG_CONFIG_DIRS)" == /usr/share/armada/plasma/desktop:/usr/share/armada/plasma/nested:/etc/xdg ]]
 ! grep -q '^QT_QPA_PLATFORM=\|^SteamAppId=' "$tmp/env"
 for file in kwinrc kwinrulesrc kdeglobals kxkbrc kcminputrc kglobalshortcutsrc; do
     [[ "$(readlink "$kwin/$file")" == "../../../$file" ]]
@@ -222,7 +232,8 @@ expect_args \
 printf 'saved layout\n' >"$kwin/kwinoutputconfig.json"
 session "$home" nested desktop
 args
-[[ "${#actual[@]}" == 16 && "${actual[14]}" == "$child_env /usr/bin/plasmashell" ]]
+[[ "${#actual[@]}" == 18 && "${actual[14]}" == "$child_env /usr/bin/plasmashell" ]]
+[[ "${actual[16]}" == "$child_env /usr/libexec/armada/steam-keyboard-follow" ]]
 
 home="$tmp/default-cache-config"
 cache=()

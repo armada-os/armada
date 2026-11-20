@@ -1,0 +1,7 @@
+[Plugins]
+armadasteamkeyboardEnabled=true
+# Without a mouse KWin shows no cursor, so touches get rings instead.
+touchpointsEnabled=true
+
+[Wayland]
+VirtualKeyboardMode=0
