@@ -25,6 +25,7 @@ import { ButtonRow, SelectEdit, SliderEdit, ToggleRow } from "../components/widg
 import { useDebouncedApply } from "../hooks/useDebouncedApply";
 import { t, translateLabel } from "../i18n";
 import { percentToPwm, pwmToPercent } from "../lib/fanCurve";
+import { updateNotice } from "../lib/updateStatus";
 import {
   getLowPowerDownloadSettings,
   setLowPowerDownloadsEnabled,
@@ -217,6 +218,7 @@ export function Settings({ config, setConfig }: {
       setSleepLogsSaving(false);
     }
   };
+  const updateBlocked = updateNotice(config.updateStatus);
   return (
     <>
       <PanelSection title={t("settings.controller")}>
@@ -284,6 +286,9 @@ export function Settings({ config, setConfig }: {
           />
         )}
         <Field label={t("settings.osVersion")} description={config.osVersion || t("common.unknown")} />
+        {updateBlocked && (
+          <Field label={t("update.blocked")} description={t(updateBlocked.key, { size: updateBlocked.size })} />
+        )}
         <Field label={t("settings.ablVersion")} description={config.ablVersion || t("common.unknown")} />
       </PanelSection>
       <PanelSection title={t("settings.experimental")}>

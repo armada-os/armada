@@ -18,6 +18,7 @@ from .system import (
     sleep_modes,
     ssh_enabled,
     swipe_gestures_enabled,
+    update_status,
 )
 from .tweaks import (
     fex_profile_labels,
@@ -54,6 +55,7 @@ def build_config(include_games=True):
         ],
         "osVersion": os_version(),
         "ablVersion": abl_version(),
+        "updateStatus": update_status(),
         "bottomScreenSupported": bool(
             env.get("ARMADA_SECONDARY_CONNECTOR") and env.get("ARMADA_SECONDARY_TOUCHSCREEN")
         ),

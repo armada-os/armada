@@ -9,6 +9,7 @@ from .proc import clean_env
 
 
 OS_VERSION_PATH = Path("/usr/lib/armada/version")
+UPDATE_STATUS_PATH = Path("/var/lib/armada/update-status.json")
 MEM_SLEEP_PATH = Path("/sys/power/mem_sleep")
 SLEEP_DEBUG_COMMAND = Path("/usr/bin/armada-sleep-debug")
 SLEEP_DEBUG_MODULE = Path("/usr/lib/armada/armada_sleep_debug.py")
@@ -85,6 +86,18 @@ def mtp_enabled():
 
 def os_version():
     return read_text(OS_VERSION_PATH) or "unknown"
+
+
+# Written by armada-update on every run; Steam only hears "no update" for failures.
+def update_status():
+    try:
+        status = json.loads(UPDATE_STATUS_PATH.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(status, dict) or not isinstance(status.get("result"), str):
+        return None
+    return {key: value for key, value in status.items()
+            if not key.endswith("_bytes") or (type(value) is int and value >= 0)}
 
 
 def abl_version():

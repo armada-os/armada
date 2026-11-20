@@ -1,7 +1,9 @@
 import { call } from "@decky/api";
 import type { CalibrationState, CompatAppliedState, Config, CurvesState, FanCurve, FanSettings, GyroOrientation, InstalledGame, PanelAttr, PanelCalibration, PanelRate, PanelStep, PowerConfig, RgbConfig, Tweaks } from "./types";
+import type { UpdateStatus } from "./lib/updateStatus";
 
 export const getConfig = () => call<[], Config>("get_config");
+export const getUpdateStatus = () => call<[], UpdateStatus | null>("get_update_status");
 export const getInstalledGames = () => call<[], InstalledGame[]>("get_installed_games");
 export const getCompatMappedAppids = (tool: string) => call<[string], string[]>("get_compat_mapped_appids", tool);
 export const savePowerConfig = (data: PowerConfig) => call<[PowerConfig], Config>("save_power_config", data);
