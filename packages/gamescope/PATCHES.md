@@ -69,3 +69,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 
 - `patches/0034-vulkan-allow-linear-composition-output.patch`
   source: armada
+
+- `patches/0035-mangoapp-restore-visible-frametimes.patch`
+  source: https://github.com/OpenGamingCollective/gamescope/commit/661bd16a25fcd3df1b89b11ed0c9c37e70d27191
