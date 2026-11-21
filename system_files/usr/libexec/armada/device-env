@@ -76,7 +76,8 @@ fi
 # CPU topology by SoC (device conf may override). Cpulists are ordered:
 # presets expand in host order, WINE_CPU_TOPOLOGY consumers keep the order.
 # BIG includes the prime cores; PRIME is the strict subset. Empty
-# ARMADA_IRQ_CORES means no IRQ restriction.
+# ARMADA_IRQ_CORES means no IRQ restriction. ARMADA_GPU_WORKER_CORES keeps
+# msm's gpu-worker kthread on those cores (minus the IRQ cores); empty leaves it.
 case "${ARMADA_SOC_CLASS:-}" in
     SM7750)
         : "${ARMADA_LITTLE_CORES=0-2}"
@@ -97,6 +98,7 @@ case "${ARMADA_SOC_CLASS:-}" in
         : "${ARMADA_BIG_CORES=3-7}"
         : "${ARMADA_PRIME_CORES=7}"
         : "${ARMADA_IRQ_CORES=0-2}"
+        : "${ARMADA_GPU_WORKER_CORES=3-6}"
         ;;
     SM8650)
         : "${ARMADA_LITTLE_CORES=0-1}"
@@ -143,6 +145,7 @@ vars=(
     ARMADA_BIG_CORES
     ARMADA_PRIME_CORES
     ARMADA_IRQ_CORES
+    ARMADA_GPU_WORKER_CORES
     ARMADA_GPU_STOCK_MAX_MHZ
 )
 
