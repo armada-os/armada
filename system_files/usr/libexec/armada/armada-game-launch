@@ -29,6 +29,9 @@ GUEST_TURNIP_MANIFESTS = (
     "/usr/share/vulkan/icd.d/freedreno_icd.i686.json",
 )
 VK_DRIVER_ENV = ("VK_DRIVER_FILES", "VK_ICD_FILENAMES")
+DECKY_PLUGINS = pathlib.Path.home() / "homebrew" / "plugins"
+# set while the plugin wrappers run, so the pass they exec back into skips them
+WRAPPED_ENV = "ARMADA_LAUNCH_WRAPPED"
 
 def is_appimage(command):
     try:
@@ -62,6 +65,42 @@ def prepare_appimage_path(args):
         paths.append(existing)
 
     os.environ["PATH"] = os.pathsep.join(paths)
+
+def plugin_wrappers(plugins_dir=DECKY_PLUGINS):
+    # read per launch so an uninstalled plugin's wrapper stops running
+    wrappers = []
+    for manifest in sorted(plugins_dir.glob("*/plugin.json")):
+        try:
+            with manifest.open(encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        armada = data.get("armada") if isinstance(data, dict) else None
+        launch = armada.get("launch") if isinstance(armada, dict) else None
+        wrapper = launch.get("wrapper") if isinstance(launch, dict) else None
+        if not isinstance(wrapper, str) or not wrapper:
+            continue
+        path = manifest.parent / os.path.expanduser(wrapper)
+        if not path.is_file() or not os.access(path, os.X_OK):
+            print(f"armada-game-launch: skipping wrapper {wrapper!r} from "
+                  f"{manifest.parent.name}: not an executable file", file=sys.stderr)
+            continue
+        wrappers.append(str(path))
+    return wrappers
+
+
+def exec_plugin_wrappers(args):
+    # wrappers run first, as if typed before this script, so Armada's settings apply last
+    wrappers = plugin_wrappers()
+    if not wrappers:
+        return
+    os.environ[WRAPPED_ENV] = "1"
+    try:
+        os.execv(wrappers[0], [*wrappers, os.path.abspath(sys.argv[0]), *args])
+    except OSError as exc:
+        os.environ.pop(WRAPPED_ENV, None)
+        print(f"armada-game-launch: plugin wrappers skipped: {exc}", file=sys.stderr)
+
 
 def appid():
     for key in ("STEAM_COMPAT_APP_ID", "SteamAppId", "SteamGameId"):
@@ -413,6 +452,12 @@ def main():
     args = sys.argv[1:]
     if not args:
         raise SystemExit("usage: armada-game-launch COMMAND [ARGS...]")
+
+    if os.environ.pop(WRAPPED_ENV, None) is None:
+        try:
+            exec_plugin_wrappers(args)
+        except Exception as exc:
+            print(f"armada-game-launch: plugin wrappers skipped: {exc}", file=sys.stderr)
 
     # Proton-CachyOS enables its shader compiler HUD unless DXVK_HUD is already
     # set. Keep Armada's default clean while preserving an explicit user HUD.
