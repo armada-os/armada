@@ -1,0 +1,272 @@
+Subject: [PATCH] power: Persist host-owned battery charge limits
+
+Save the selected cap in root daemon state. Restore it during startup,
+waiting briefly for sysfs to appear before publishing the D-Bus API.
+Report the live change even if persisting it fails.
+---
+
+diff --git a/steamos-manager/src/power.rs b/steamos-manager/src/power.rs
+index 4d5ee9e..163db9b 100644
+--- a/steamos-manager/src/power.rs
++++ b/steamos-manager/src/power.rs
+@@ -19,6 +19,7 @@ use std::os::fd::OwnedFd;
+ use std::path::{Path, PathBuf};
+ use std::str::FromStr;
+ use std::sync::Arc;
++use std::time::Duration;
+ use strum::{Display, EnumIter, EnumString, VariantNames};
+ use tokio::fs::{self, File, read_dir, read_to_string, try_exists};
+ use tokio::io::{AsyncWriteExt, ErrorKind, Interest};
+@@ -295,6 +296,7 @@ pub(crate) enum BatteryChargeLimitMethod {
+     #[default]
+     AcpiSb,
+     PowerSupply,
++    HostPowerSupply,
+     HwmonAttribute {
+         hwmon: String,
+         attribute: String,
+@@ -755,7 +757,9 @@ async fn find_battery_charge_path() -> Result<PathBuf> {
+ 
+     let bases = match &config.method {
+         BatteryChargeLimitMethod::AcpiSb => SB_PATHS,
+-        BatteryChargeLimitMethod::PowerSupply => POWER_SUPPLY_PATHS,
++        BatteryChargeLimitMethod::PowerSupply | BatteryChargeLimitMethod::HostPowerSupply => {
++            POWER_SUPPLY_PATHS
++        }
+         BatteryChargeLimitMethod::HwmonAttribute { hwmon, attribute } => {
+             let base = find_hwmon(hwmon.as_str()).await?;
+             let path = base.join(attribute);
+@@ -789,7 +793,7 @@ async fn find_battery_charge_path() -> Result<PathBuf> {
+             }
+         }
+     }
+-    bail!("Battery not found");
++    Err(std::io::Error::new(ErrorKind::NotFound, "Battery not found").into())
+ }
+ 
+ fn parse_max_charge_level(result: std::io::Result<String>) -> Result<i32> {
+@@ -804,6 +808,45 @@ fn parse_max_charge_level(result: std::io::Result<String>) -> Result<i32> {
+     }
+ }
+ 
++pub(crate) async fn host_charge_limit_configured() -> Result<bool> {
++    let config = device_config().await?;
++    Ok(config
++        .as_ref()
++        .and_then(|config| config.battery_charge_limit.as_ref())
++        .is_some_and(|config| matches!(config.method, BatteryChargeLimitMethod::HostPowerSupply)))
++}
++
++pub(crate) async fn restore_host_charge_limit(limit: i32) -> Result<()> {
++    if !host_charge_limit_configured().await? {
++        return Ok(());
++    }
++    ensure!((1..=100).contains(&limit), "Invalid saved charge limit");
++    let path = tokio::time::timeout(Duration::from_secs(5), async {
++        loop {
++            match find_battery_charge_path().await {
++                Err(err)
++                    if err
++                        .downcast_ref::<std::io::Error>()
++                        .is_some_and(|err| err.kind() == ErrorKind::NotFound) =>
++                {
++                    tokio::time::sleep(Duration::from_millis(100)).await;
++                }
++                result => return result,
++            }
++        }
++    })
++    .await
++    .map_err(|_| anyhow!("Battery charge limit did not become available during startup"))??;
++    let mut file = fs::OpenOptions::new()
++        .write(true)
++        .truncate(true)
++        .open(path)
++        .await?;
++    file.write_all(limit.to_string().as_bytes()).await?;
++    file.sync_data().await?;
++    Ok(())
++}
++
+ pub(crate) async fn get_max_charge_level() -> Result<i32> {
+     let path = find_battery_charge_path().await?;
+     parse_max_charge_level(read_to_string(path).await)
+@@ -1712,6 +1755,66 @@ pub(crate) mod test {
+         assert_eq!(get_max_charge_level().await.unwrap(), 80);
+     }
+ 
++    #[tokio::test]
++    async fn restore_host_charge_limit_power_supply() {
++        let handle = testing::start();
++        let battery = path(POWER_SUPPLY_PATHS[0]).join("battery");
++        create_dir_all(&battery).await.unwrap();
++        write(battery.join("type"), "Battery\n").await.unwrap();
++        write(battery.join(SB_LIMIT_PATH), "100\n").await.unwrap();
++
++        for (method, expected) in [
++            (BatteryChargeLimitMethod::PowerSupply, 100),
++            (BatteryChargeLimitMethod::HostPowerSupply, 80),
++        ] {
++            handle
++                .test
++                .set_device_config(DeviceConfig {
++                    battery_charge_limit: Some(BatteryChargeLimitConfig {
++                        suggested_minimum_limit: 55,
++                        method,
++                    }),
++                    ..DeviceConfig::default()
++                })
++                .await;
++
++            restore_host_charge_limit(80).await.unwrap();
++            assert_eq!(get_max_charge_level().await.unwrap(), expected);
++        }
++    }
++
++    #[tokio::test]
++    async fn restore_host_charge_limit_waits_for_sysfs() {
++        let handle = testing::start();
++        handle
++            .test
++            .set_device_config(DeviceConfig {
++                battery_charge_limit: Some(BatteryChargeLimitConfig {
++                    suggested_minimum_limit: 55,
++                    method: BatteryChargeLimitMethod::HostPowerSupply,
++                }),
++                ..DeviceConfig::default()
++            })
++            .await;
++        let battery = path(POWER_SUPPLY_PATHS[0]).join("battery");
++        assert!(!try_exists(&battery).await.unwrap());
++        let appear = async {
++            sleep(Duration::from_millis(200)).await;
++            create_dir_all(&battery).await.unwrap();
++            write(battery.join("type"), "Battery\n").await.unwrap();
++            write(battery.join(SB_LIMIT_PATH), "100\n").await.unwrap();
++        };
++        let (restored, ()) = tokio::join!(restore_host_charge_limit(80), appear);
++        restored.unwrap();
++        assert_eq!(get_max_charge_level().await.unwrap(), 80);
++
++        let threshold = battery.join(SB_LIMIT_PATH);
++        fs::remove_file(&threshold).await.unwrap();
++        let err = restore_host_charge_limit(80).await.unwrap_err();
++        assert!(err.to_string().contains("did not become available"));
++        assert!(!try_exists(&threshold).await.unwrap());
++    }
++
+     #[tokio::test]
+     async fn read_max_charge_level_acpi_sb_legacy_path() {
+         let handle = testing::start();
+diff --git a/steamos-manager/src/daemon/root.rs b/steamos-manager/src/daemon/root.rs
+index 82b2aaf..30983ef 100644
+--- a/steamos-manager/src/daemon/root.rs
++++ b/steamos-manager/src/daemon/root.rs
+@@ -21,6 +21,7 @@ use crate::ds_inhibit::Inhibitor;
+ use crate::inputplumber::DeckService;
+ use crate::manager::root::SteamOSManager;
+ use crate::path;
++use crate::power::restore_host_charge_limit;
+ use crate::sls::ftrace::Ftrace;
+ use crate::sls::{LogLayer, LogReceiver};
+ use crate::sysfs::SysfsWriterService;
+@@ -38,6 +39,7 @@ pub(crate) struct RootServicesConfig {}
+ #[serde(default)]
+ pub(crate) struct RootState {
+     pub services: RootServicesState,
++    pub battery_charge_limit: Option<i32>,
+ }
+ 
+ #[derive(Copy, Clone, Default, Deserialize, Serialize, Debug)]
+@@ -49,6 +51,7 @@ pub(crate) struct RootServicesState {
+ pub(crate) enum RootCommand {
+     SetDsInhibit(bool),
+     GetDsInhibit(oneshot::Sender<bool>),
++    SaveBatteryChargeLimit(i32, oneshot::Sender<Result<()>>),
+ }
+ 
+ #[derive(Copy, Clone, Deserialize, Serialize, Debug)]
+@@ -121,6 +124,12 @@ impl DaemonContext for RootContext {
+         daemon: &mut Daemon<RootContext>,
+     ) -> Result<()> {
+         self.state = state;
++        // Startup completes before the daemon claims its D-Bus name.
++        if let Some(limit) = state.battery_charge_limit
++            && let Err(err) = restore_host_charge_limit(limit).await
++        {
++            error!("Could not restore battery charge limit: {err}");
++        }
+ 
+         let ftrace = Ftrace::init().await?;
+         daemon.add_service(ftrace);
+@@ -159,6 +168,15 @@ impl DaemonContext for RootContext {
+             RootCommand::GetDsInhibit(sender) => {
+                 let _ = sender.send(self.ds_inhibit.is_some());
+             }
++            RootCommand::SaveBatteryChargeLimit(limit, tx) => {
++                let previous = self.state.battery_charge_limit;
++                self.state.battery_charge_limit = Some(limit);
++                let result = super::config::write_state::<Self>(&self.state).await;
++                if result.is_err() {
++                    self.state.battery_charge_limit = previous;
++                }
++                let _ = tx.send(result);
++            }
+         }
+         Ok(())
+     }
+diff --git a/steamos-manager/src/manager/root.rs b/steamos-manager/src/manager/root.rs
+index 6af7fa2..e99b351 100644
+--- a/steamos-manager/src/manager/root.rs
++++ b/steamos-manager/src/manager/root.rs
+@@ -34,8 +34,8 @@ use crate::job::JobManager;
+ use crate::platform::{ServiceConfig, platform_config};
+ use crate::power::{
+     CPUBoostState, CPUScalingGovernor, CpuScheduler, CpuSchedulerManager, PlatformProfileDriver,
+-    TdpLimitManager, platform_profile_driver, set_cpu_boost_state, set_cpu_scaling_governor,
+-    set_max_charge_level, tdp_limit_manager,
++    TdpLimitManager, get_max_charge_level, host_charge_limit_configured, platform_profile_driver,
++    set_cpu_boost_state, set_cpu_scaling_governor, set_max_charge_level, tdp_limit_manager,
+ };
+ use crate::process::{run_script, script_exit_code, script_output};
+ use crate::session::root::{clean_temporary_sessions, set_default_session, set_temporary_session};
+@@ -722,15 +722,39 @@ impl SteamOSManager {
+         level: i32,
+         #[zbus(connection)] connection: &Connection,
+         #[zbus(header)] header: Header<'_>,
++        #[zbus(signal_emitter)] ctx: SignalEmitter<'_>,
+     ) -> fdo::Result<()> {
+         if !self.order.check_header(header) {
+             debug!("SetMaxChargeLevel: discarding out of order serial");
+             return Ok(());
+         }
++        let persist_charge_limit = host_charge_limit_configured()
++            .await
++            .map_err(to_zbus_fdo_error)?;
+         let written = set_max_charge_level(if level == -1 { 0 } else { level })
+             .await
+             .map_err(to_zbus_fdo_error)?;
+         let connection = connection.clone();
++        if persist_charge_limit {
++            if let SysfsWritten::Written(result) = written.await.map_err(to_zbus_fdo_error)? {
++                result.map_err(to_zbus_fdo_error)?;
++                // The live cap changed even if saving it later fails.
++                let changed = Self::max_charge_level_changed(&ctx).await;
++                let limit = get_max_charge_level().await.map_err(to_zbus_fdo_error)?;
++                let (tx, rx) = oneshot::channel();
++                self.channel
++                    .send(DaemonCommand::ContextCommand(
++                        RootCommand::SaveBatteryChargeLimit(limit, tx),
++                    ))
++                    .await
++                    .map_err(to_zbus_fdo_error)?;
++                rx.await
++                    .map_err(to_zbus_fdo_error)?
++                    .map_err(to_zbus_fdo_error)?;
++                changed?;
++            }
++            return Ok(());
++        }
+         spawn(async move {
+             if let Ok(SysfsWritten::Written(res)) = written.await {
+                 if let Ok(interface) = connection

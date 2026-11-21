@@ -20,12 +20,14 @@ Source2:        sm8250.toml
 Source3:        sm8550.toml
 Source4:        sm8650.toml
 Source5:        sm8750.toml
+Source6:        ayn-thor.toml
 Patch1:         0001-Allow-CpuScaling1-to-be-served-by-a-remote-interface.patch
 Patch2:         0002-inputplumber-Only-manage-target-devices-when-configu.patch
 Patch3:         0003-wifi-Always-write-wpa_supplicant-as-the-backend.patch
 Patch4:         0004-session-Track-gamescope-session-plus-steam.service-a.patch
 Patch5:         0005-power-Add-a-power_supply-battery-charge-limit-method.patch
 Patch6:         0006-Allow-LowPowerMode1-to-be-served-by-a-remote-interfa.patch
+Patch7:         0007-power-Persist-host-owned-battery-charge-limits.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust
@@ -63,7 +65,7 @@ rm -f %{buildroot}%{_datadir}/steamos-manager/devices/*.toml
 install -Dpm0644 %{SOURCE1} %{buildroot}%{_datadir}/steamos-manager/platform.toml
 install -dm0755 %{buildroot}%{_datadir}/steamos-manager/devices
 install -pm0644 -t %{buildroot}%{_datadir}/steamos-manager/devices \
-    %{SOURCE2} %{SOURCE3} %{SOURCE4} %{SOURCE5}
+    %{SOURCE2} %{SOURCE3} %{SOURCE4} %{SOURCE5} %{SOURCE6}
 
 # SteamOS-only: we run SDDM
 rm -f %{buildroot}%{_unitdir}/sddm.service.d/reset-oneshot-boot.conf
