@@ -1,0 +1,45 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] dt-bindings: soundwire: qcom: describe master transport
+
+Describe independent master channel masks and the synchronization period
+used by the Pocket S2 Android reference. Document the existing formatter
+mask for PCM and PDM32 ports.
+
+---
+diff --git a/Documentation/devicetree/bindings/soundwire/qcom,soundwire.yaml b/Documentation/devicetree/bindings/soundwire/qcom,soundwire.yaml
+--- a/Documentation/devicetree/bindings/soundwire/qcom,soundwire.yaml
++++ b/Documentation/devicetree/bindings/soundwire/qcom,soundwire.yaml
+@@ -82,6 +82,33 @@
+     description: count of data out ports
+     deprecated: true
+ 
++  qcom,pcm-ports-mask:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description:
++      Bitmask of physical master ports requiring the PCM/PDM32 formatter.
++      Bit N selects port N; port 0 is reserved.
++    maximum: 65534
++    multipleOf: 2
++
++  qcom,ports-master-channel-mask:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    description:
++      Master channel-enable masks, one entry per physical data port,
++      starting with port 1. Out ports are followed by in ports. A zero
++      entry retains the connected slave's channel mask. Nonzero entries
++      configure only the master; slave channel masks remain unchanged.
++    minItems: 3
++    maxItems: 16
++
++  qcom,ssp-period:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description:
++      Number of SoundWire frames between stream synchronization points.
++      The controller register encodes this count minus one.
++    minimum: 1
++    maximum: 256
++    default: 1
++
+   qcom,ports-word-length:
+     $ref: /schemas/types.yaml#/definitions/uint8-array
+     description:
