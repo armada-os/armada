@@ -16,10 +16,11 @@ INSTALL_DATA    := $(INSTALL) -Dm644
 
 all: $(TARGET)
 
-$(TARGET): src/armada-splash.c src/stb_impl.c
+$(TARGET): src/armada-splash.c src/splash-i18n.c src/stb_impl.c \
+           src/splash-i18n.h src/locales/en.h src/locales/zh-CN.h
 	@mkdir -p build
 	$(CC) -O2 -w -c src/stb_impl.c -o build/stb_impl.o
-	$(CC) $(CFLAGS) -o $@ $< build/stb_impl.o $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $< src/splash-i18n.c build/stb_impl.o $(LDFLAGS)
 	strip $@
 	rm -f build/stb_impl.o
 
@@ -48,6 +49,8 @@ install: all
 		$(DESTDIR)$(PREFIX)/lib/systemd/system/
 	$(INSTALL_DATA) system/usr/lib/systemd/system/armada-splash-stall.service \
 		$(DESTDIR)$(PREFIX)/lib/systemd/system/
+	$(INSTALL_DATA) system/usr/lib/systemd/system/armada-splash-language.service \
+		$(DESTDIR)$(PREFIX)/lib/systemd/system/
 
 	# sddm drop-in
 	$(INSTALL_DIR) $(DESTDIR)$(PREFIX)/lib/systemd/system/sddm.service.d
@@ -65,6 +68,8 @@ install: all
 		$(DESTDIR)$(PREFIX)/libexec/armada/
 	$(INSTALL_PROGRAM) system/usr/libexec/armada/armada-splash-stall \
 		$(DESTDIR)$(PREFIX)/libexec/armada/
+	$(INSTALL_PROGRAM) system/usr/libexec/armada/armada-splash-language \
+		$(DESTDIR)$(PREFIX)/libexec/armada/
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/libexec/armada-splash
@@ -73,9 +78,11 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/system/armada-splash-poweroff-screen.service
 	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/system/armada-splash-reboot-screen.service
 	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/system/armada-splash-stall.service
+	rm -f $(DESTDIR)$(PREFIX)/lib/systemd/system/armada-splash-language.service
 	rm -rf $(DESTDIR)$(PREFIX)/lib/systemd/system/sddm.service.d
 	rm -f $(DESTDIR)$(PREFIX)/libexec/armada/armada-splash-launcher
 	rm -f $(DESTDIR)$(PREFIX)/libexec/armada/armada-splash-progress
 	rm -f $(DESTDIR)$(PREFIX)/libexec/armada/armada-splash-run
 	rm -f $(DESTDIR)$(PREFIX)/libexec/armada/armada-splash-shutdown-msg
 	rm -f $(DESTDIR)$(PREFIX)/libexec/armada/armada-splash-stall
+	rm -f $(DESTDIR)$(PREFIX)/libexec/armada/armada-splash-language
