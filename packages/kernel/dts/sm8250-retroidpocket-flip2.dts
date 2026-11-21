@@ -29,6 +29,10 @@
 	};
 };
 
+&slpi {
+	firmware-name = "qcom/sm8250/slpi.mbn";
+};
+
 &apps_rsc {
 	regulators-1 {
 		vreg_l8c_1p8: ldo8 {

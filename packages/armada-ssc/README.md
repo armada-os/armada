@@ -34,9 +34,11 @@ and the sha256 of each ADSP firmware file the board was running at capture.
 The registry is only valid for that firmware, so the image build fails if the
 board's files under `system_files/usr/lib/firmware/qcom/` differ, even with the
 same version string; recapture on an image that runs the new firmware. Split
-images (`.mdt`) are hashed with every `.bNN` segment. The capture refuses to
-run when the ADSP may be running other firmware: `firmware_class.path` set, a
-runtime firmware override, or a copy in a directory the kernel searches first.
+images (`.mdt`) are hashed with every `.bNN` segment. When the board has an
+SLPI remoteproc, its firmware is hashed the same way: the Pocket 5 gyro runs
+there, not in the audio ADSP image. The capture refuses to run when the ADSP
+may be running other firmware: `firmware_class.path` set, a runtime firmware
+override, or a copy in a directory the kernel searches first.
 
 ## Capture
 
@@ -64,7 +66,15 @@ the same on every unit; anything else belongs to one unit only.
    InputPlumber device config. Lying flat, the deck-uhid target must read
    gravity on +Z. The matrix depends on the IMU chip, and a board's configs
    can list more than one (`ssccli --sensor accelerometer -v` names the one
-   fitted); note the chip beside the matrix.
+   fitted); note the chip beside the matrix. The source name is `fastrpc-adsp`
+   on the ADSP boards. The Pocket 5 IMU is an ICM-4x6xx on the SLPI, so its
+   source is `fastrpc-sdsp` and the device conf sets
+   `ARMADA_SSC_FASTRPC=fastrpc-sdsp`. Its SLPI image is
+   `qcom/sm8250/retroidpocket/rp5/slpi.mdt` plus its `slpi.bNN` segments,
+   taken from that board's Android modem partition. The shared
+   `qcom/sm8250/slpi.mbn` name is a different image and is not in
+   linux-firmware. Boot that image before capturing, so `SOURCE` hashes the
+   firmware the registry belongs to.
 3. Boot and check `journalctl -b -u armada-ssc -u inputplumber`. InputPlumber
    logs `SSC sensors opened` once the SSC is up. `hexagonrpcd` logs
    `Could not open` for each file the ADSP asks for and does not find; every

@@ -133,27 +133,40 @@ class GyroToggleTest(unittest.TestCase):
             line = f'INPUTPLUMBER_SSC_MOUNT_CORRECTION="{matrix}"\n' if matrix else ""
             self.assertEqual(self.ssc(None, True, ["env"], text)[2], "INPUTPLUMBER_FASTRPC=1\n" + line, repr(text))
 
-    def ssc(self, gyro, supported, arg, text=None):
+    def test_ssc_id_selects_the_archive(self):
+        (self.data / "retroid-pocket-5").mkdir()
+        with patch.object(control, "device_env", lambda: {
+            "ARMADA_DEVICE_ID": "retroid-pocket-5-visionox",
+            "ARMADA_SSC_ID": "retroid-pocket-5",
+        }):
+            self.assertTrue(control.action_get_gyro({})["supported"])
+
+    def ssc(self, gyro, supported, arg, text=None, fastrpc=None):
         script = SSC_SCRIPT.read_text()
         bindir = self.dir / "bin"
         bindir.mkdir(exist_ok=True)
-        (bindir / "device-env").write_text("#!/bin/sh\necho ARMADA_DEVICE_ID=ayn-odin3\n")
+        env_lines = ["#!/bin/sh", "echo ARMADA_DEVICE_ID=ayn-odin3"]
+        if fastrpc:
+            env_lines.append(f"echo ARMADA_SSC_FASTRPC={fastrpc}")
+        (bindir / "device-env").write_text("\n".join(env_lines) + "\n")
         (bindir / "device-env").chmod(0o755)
         (bindir / "hexagonrpcd").write_text("#!/bin/sh\necho listener \"$@\"\n")
         (bindir / "hexagonrpcd").chmod(0o755)
         node = self.dir / "fastrpc-adsp"
         node.touch()
+        (self.dir / "fastrpc-sdsp").touch()
         data = self.data if supported else self.dir / "none"
         script = (script.replace("/usr/libexec/armada/device-env", str(bindir / "device-env"))
                   .replace("/etc/armada/gyro.conf", str(self.config))
                   .replace("/usr/share/armada/ssc", str(data))
                   .replace("/run/armada", str(self.dir / "run"))
-                  .replace("/dev/fastrpc-adsp ", f"{node} "))
+                  .replace("/dev/fastrpc-adsp ", f"{node} ")
+                  .replace("/dev/fastrpc-sdsp ", f"{self.dir / 'fastrpc-sdsp'} "))
         self.config.write_text(text if text is not None else f"ARMADA_GYRO={gyro}\n")
         result = subprocess.run(["bash", "-c", script, "armada-ssc", *arg], text=True, capture_output=True,
                                 env={"PATH": f"{bindir}:/usr/bin:/bin"})
         env = self.dir / "run/gyro.env"
-        return result.returncode, result.stdout, env.read_text() if env.exists() else None
+        return result.returncode, result.stdout + result.stderr, env.read_text() if env.exists() else None
 
     def test_listener_ignores_the_setting(self):
         for gyro in (0, 1):
@@ -162,6 +175,18 @@ class GyroToggleTest(unittest.TestCase):
             self.assertIn("listener", out)
         code, out, _ = self.ssc(1, False, [])
         self.assertEqual((code, out), (0, ""))
+
+    def test_pocket5_listens_on_the_slpi_node(self):
+        sdsp = self.dir / "fastrpc-sdsp"
+        code, out, _ = self.ssc(1, True, [], fastrpc="fastrpc-sdsp")
+        self.assertEqual(code, 0)
+        self.assertIn(str(sdsp), out)
+        self.assertNotIn("fastrpc-adsp", out)
+
+    def test_unknown_fastrpc_node_is_rejected(self):
+        code, out, _ = self.ssc(1, True, [], fastrpc="fastrpc-cdsp")
+        self.assertEqual(code, 1)
+        self.assertIn("unsupported FastRPC node", out)
 
     def test_env_follows_the_setting(self):
         self.assertEqual(self.ssc(1, True, ["env"])[2], "INPUTPLUMBER_FASTRPC=1\n")

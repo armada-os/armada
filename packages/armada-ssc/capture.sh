@@ -79,27 +79,35 @@ if [ -n "$fw_path" ]; then
     echo "firmware_class.path is set; the ADSP may not run this image's firmware" >&2
     exit 1
 fi
+# The Pocket 5 serves the gyro from the SLPI. Hash that firmware too when
+# the remoteproc is present, so a later SLPI image cannot reuse this registry.
 adsp_names=""
-running=""
+extra_names=""
 for rproc in /sys/class/remoteproc/remoteproc*; do
-    case "$(cat "$rproc/name" 2>/dev/null)" in
-        adsp)
-            adsp_names=$(tr '\0' ' ' < "$rproc/device/of_node/firmware-name")
-            running=$(cat "$rproc/firmware")
-            ;;
+    rname=$(cat "$rproc/name" 2>/dev/null || true)
+    case "$rname" in
+        adsp|slpi) ;;
+        *) continue ;;
     esac
+    names=$(tr '\0' ' ' < "$rproc/device/of_node/firmware-name")
+    running=$(cat "$rproc/firmware")
+    if [ "$running" != "${names%% *}" ]; then
+        echo "$rname firmware set to $running, not the DT's ${names%% *}" >&2
+        exit 1
+    fi
+    if [ "$rname" = adsp ]; then
+        adsp_names=$names
+    else
+        extra_names="$extra_names $names"
+    fi
 done
 if [ -z "$adsp_names" ]; then
     echo "no ADSP remoteproc found" >&2
     exit 1
 fi
-if [ "$running" != "${adsp_names%% *}" ]; then
-    echo "ADSP firmware set to $running, not the DT's ${adsp_names%% *}" >&2
-    exit 1
-fi
 fw=/usr/lib/firmware
 files=""
-for name in $adsp_names; do
+for name in $adsp_names $extra_names; do
     files="$files $name"
     # Split images load their segments as <name>.bNN.
     if [ "${name%.mdt}" != "$name" ]; then
@@ -120,16 +128,31 @@ for name in $files; do
             fi
         done
     done
-    if [ ! -f "$fw/$name" ]; then
+    file=$fw/$name
+    # linux-firmware ships some of these compressed. The kernel loads either.
+    if [ ! -f "$file" ] && [ -f "$file.xz" ]; then
+        file=$file.xz
+        name=$name.xz
+    fi
+    if [ ! -f "$file" ]; then
         echo "missing $fw/$name" >&2
         exit 1
     fi
-    [ -n "$adsp" ] || adsp=$fw/$name
-    adsp_sha256="$adsp_sha256 $name:$(sha256sum "$fw/$name" | cut -d' ' -f1)"
+    [ -n "$adsp" ] || adsp=$file
+    adsp_sha256="$adsp_sha256 $name:$(sha256sum "$file" | cut -d' ' -f1)"
 done
 # A split image keeps the string in one of its segments.
+if [ "${adsp%.xz}" != "$adsp" ]; then
+    version_src=$(mktemp)
+    xzcat "$adsp" > "$version_src"
+else
+    version_src=$adsp
+fi
 adsp_version=$(grep -a -h -s -o -m1 'QC_IMAGE_VERSION_STRING=[A-Za-z0-9._-]*' \
-    "$adsp" "${adsp%.mdt}".b[0-9][0-9] | head -1 | cut -d= -f2 || true)
+    "$version_src" "${adsp%.xz}" "${adsp%.mdt}".b[0-9][0-9] | head -1 | cut -d= -f2 || true)
+if [ "$version_src" != "$adsp" ]; then
+    rm -f "$version_src"
+fi
 if [ -z "$adsp_version" ]; then
     echo "no QC_IMAGE_VERSION_STRING in $adsp" >&2
     exit 1

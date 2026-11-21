@@ -693,6 +693,11 @@ check("device-env AYANEO Pocket MICRO 2 profile",
       pocket_micro2.get("ARMADA_GAMESCOPE_FAKE_OUTPUT_MM") == "177x118")
 check("device-env PM2 stock GPU max", pocket_micro2.get("ARMADA_GPU_STOCK_MAX_MHZ") == "587")
 check("device-env RP5 stock GPU max", pocket5.get("ARMADA_GPU_STOCK_MAX_MHZ") == "587")
+check("device-env RP5 sensor DSP", pocket5.get("ARMADA_SSC_FASTRPC") == "fastrpc-sdsp")
+pocket5_visionox = run_device_env("Retroid Pocket 5 Visionox")
+check("device-env RP5 Visionox shares the Pocket 5 SSC archive",
+      pocket5_visionox.get("ARMADA_SSC_ID") == "retroid-pocket-5" and
+      pocket5_visionox.get("ARMADA_SSC_FASTRPC") == "fastrpc-sdsp")
 check("device-env SM8750 stock GPU max empty", odin3.get("ARMADA_GPU_STOCK_MAX_MHZ") == "''")
 override_devices = os.path.join(WORK, "devices")
 shutil.copytree(devices_dir, override_devices)

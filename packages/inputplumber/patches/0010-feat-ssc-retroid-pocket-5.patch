@@ -1,0 +1,30 @@
+From: Armada <noreply@armada.local>
+Date: Sat, 14 Nov 2026 12:00:00 +0000
+Subject: [PATCH] feat(Hardware Support): enable SSC gyro on the Retroid Pocket 5
+
+The Pocket 5 IMU is an ICM-4x6xx on the SLPI FastRPC node, so the source
+is fastrpc-sdsp rather than the ADSP node the Pocket 6 uses. The mount
+matrix is the ICM-4x6xx orientation already used on the Pocket DS.
+
+diff --git a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml
+index f6a53b5..2d51222 100644
+--- a/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml
++++ b/rootfs/usr/share/inputplumber/devices/50-retroid_pocket5.yaml
+@@ -23,5 +23,17 @@ source_devices:
+       product_id: "3001"
+       handler: event*
+ 
++  - group: imu
++    fastrpc:
++      name: fastrpc-sdsp
++    config:
++      imu:
++        # ICM-4x6xx orientation
++        mount_matrix:
++          x: [0, -1, 0]
++          y: [0, 0, 1]
++          z: [-1, 0, 0]
++        gyro_auto_calibration: true
++
+ target_devices:
+   - xbox-elite

@@ -98,3 +98,7 @@
 		rotation = <270>;
 	};
 };
+
+&slpi {
+	firmware-name = "qcom/sm8250/retroidpocket/rp5/slpi.mdt";
+};
