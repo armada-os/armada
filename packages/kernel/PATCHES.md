@@ -815,6 +815,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/linux/dts/qcom/qcs8550-ayn-odin2mini.dts
 - `dts/qcs8550-ayn-odin2portal.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/linux/dts/qcom/qcs8550-ayn-odin2portal.dts
+- `dts/qcs8550-ayn-odin2portal-vtdr6130.dts`
+  source: https://github.com/jsmith13/armada/blob/experiment/odin2portal-vtdr6130/packages/kernel/dts/qcs8550-ayn-odin2portal-vtdr6130.dts
+  upstream: local
+  notes: Odin 2 Portal units with the Visionox VTDR6130 panel (armada-os/armada#845). Selects `vtdr6130,o2p` and moves `vdd` to the 2.8 V display rail. Not in `supported-dtbs` yet.
 - `dts/qcs8550-ayn-thor.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/linux/dts/qcom/qcs8550-ayn-thor.dts
 - `dts/qcs8550-retroidpocket-rp6.dts`
@@ -1306,3 +1310,8 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/abfdcfb57ff42180a50fca60a2a150641608d57e/projects/ROCKNIX/devices/SM8550/patches/linux/0508-ROCKNIX-rp6-panel-frame-length-calibration.patch
   upstream: local
   notes: Armada reimplements the RP6 interface for the Odin 3 Portal, whose init sequence reaches B1 through offset writes.
+
+- `patches/1308-drm-panel-vtdr6130-add-odin2portal.patch`
+  source: https://github.com/jsmith13/armada/blob/experiment/odin2portal-vtdr6130/packages/kernel/patches/0104b-drm-panel-vtdr6130-add-odin2portal-experiment.patch
+  upstream: local
+  notes: Rebased onto 1304/1305. The Odin 2 Portal VTDR6130 panel shares the Odin 3 Portal init sequence, timings and DSC; this adds the Odin 2 Portal supplies, Android frame lengths (0x12/0x7b6), 60 Hz as the preferred mode and a maximum brightness of 3413.
