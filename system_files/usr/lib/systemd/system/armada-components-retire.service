@@ -1,0 +1,11 @@
+[Unit]
+Description=Drop Armada components the booted image is too old for
+After=local-fs.target
+Before=armada-decky-sync.service display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/armada/armada-components retire
+
+[Install]
+WantedBy=multi-user.target

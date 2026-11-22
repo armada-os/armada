@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for Armada component updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=6h
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

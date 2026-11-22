@@ -1,0 +1,3 @@
+# Keys allowed to sign component manifests (ssh-keygen ALLOWED SIGNERS format):
+#   armada-components namespaces="armada-components" ssh-ed25519 AAAA...
+# Empty means every manifest is rejected.

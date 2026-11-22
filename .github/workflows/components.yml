@@ -1,0 +1,117 @@
+---
+# Remote components (armada-components on the device): publish every main build to the
+# testing manifest, promote by hand. Blobs are uploaded before the manifest that names them.
+name: Components
+on:
+  workflow_run:
+    workflows: [Build images]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Promote from channel"
+        type: choice
+        options: [testing, beta]
+      to:
+        description: "Promote to channel"
+        type: choice
+        options: [beta, stable]
+      component:
+        description: "Component to promote"
+        type: choice
+        options: [turnip, armada-control, armada-store]
+
+# Every run rewrites a manifest: one at a time.
+concurrency:
+  group: components
+  cancel-in-progress: false
+
+env:
+  R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+  R2_BUCKET: ${{ vars.R2_BUCKET }}
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Fetch manifests and signing key
+        env:
+          SIGNING_KEY: ${{ secrets.COMPONENTS_SIGNING_KEY }}
+        run: |
+          install -m 0600 /dev/null "${RUNNER_TEMP}/key"
+          printf '%s\n' "${SIGNING_KEY}" >"${RUNNER_TEMP}/key"
+          mkdir -p out
+          for ch in testing beta stable; do
+            for f in "${ch}.json" "${ch}.json.sig"; do
+              aws s3 cp "s3://${R2_BUCKET}/components/${f}" "out/${f}" \
+                --endpoint-url "${R2_ENDPOINT_URL}" --only-show-errors || true
+            done
+          done
+
+      - name: Promote
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python3 components/publish.py promote --out out --key "${RUNNER_TEMP}/key" \
+            --from "${{ inputs.from }}" --to "${{ inputs.to }}" --name "${{ inputs.component }}"
+
+      - uses: actions/setup-node@v4
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          node-version: 22
+
+      - name: Build and publish to testing
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends zstd skopeo jq
+          commit=$(git rev-parse --short HEAD)
+          add() { python3 components/publish.py add --out out --key "${RUNNER_TEMP}/key" --channel testing "$@"; }
+
+          for plugin in armada-control armada-store; do
+            (cd "decky/${plugin}" && npm ci && npm run build)
+            bash decky/install-plugin.sh "${plugin}" "decky/${plugin}/dist" "payload/${plugin}"
+            version=$(jq -r .version "decky/${plugin}/package.json")
+            add --name "${plugin}" --version "${version}+${commit}" --payload "payload/${plugin}"
+          done
+
+          # Turnip from the mesa package image this commit's OS image was built with.
+          ref="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/armada/pkg/mesa:$(packages/package-hash.sh mesa)"
+          skopeo copy -q --override-arch arm64 "docker://${ref}" dir:mesa-image
+          mkdir mesa
+          for layer in $(jq -r '.layers[].digest | sub("sha256:"; "")' mesa-image/manifest.json); do
+            tar -xf "mesa-image/${layer}" -C mesa
+          done
+          bash components/turnip/package.sh mesa/rpms/turnip payload/turnip devel winnative
+          version=$(jq -r .version payload/turnip/devel/variant.json)
+          add --name turnip --version "${version}+${commit}" --payload payload/turnip
+
+      - name: Upload
+        env:
+          CHANNEL: ${{ inputs.to || 'testing' }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          s3() { aws s3 "$@" --endpoint-url "${R2_ENDPOINT_URL}" --only-show-errors; }
+          # Content-addressed and immutable: never overwrite, never delete.
+          for blob in out/*/*.tar.zst; do
+            key="components/${blob#out/}"
+            aws s3api head-object --bucket "${R2_BUCKET}" --key "${key}" \
+              --endpoint-url "${R2_ENDPOINT_URL}" >/dev/null 2>&1 ||
+              s3 cp "${blob}" "s3://${R2_BUCKET}/${key}" --cache-control "public, max-age=31536000, immutable"
+          done
+          # Only the channel this run wrote.
+          s3 cp "out/${CHANNEL}.json.sig" "s3://${R2_BUCKET}/components/${CHANNEL}.json.sig" --cache-control no-store
+          s3 cp "out/${CHANNEL}.json" "s3://${R2_BUCKET}/components/${CHANNEL}.json" --cache-control no-store

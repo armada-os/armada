@@ -1,0 +1,10 @@
+[Unit]
+Description=Update Armada components shipped outside the image
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/armada/armada-components update
+Nice=10
+IOSchedulingClass=idle

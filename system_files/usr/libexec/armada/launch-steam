@@ -34,6 +34,8 @@ export FUSERMOUNT_PROG=/run/host/usr/bin/fusermount3
 export SYSTEM_PATH="${PATH}"
 export SYSTEM_LD_LIBRARY_PATH="${LD_LIBRARY_PATH-}"
 export STEAMLINK_V4L2_RESET_AFTER_LAST_BUF=1
+# Proton builds installed by armada-components
+export STEAM_EXTRA_COMPAT_TOOLS_PATHS=/var/lib/armada/components/proton/current${STEAM_EXTRA_COMPAT_TOOLS_PATHS:+:${STEAM_EXTRA_COMPAT_TOOLS_PATHS}}
 
 # prune the Proton 11 registration earlier releases wrote; the internal-name
 # match keeps user-created tool dirs safe

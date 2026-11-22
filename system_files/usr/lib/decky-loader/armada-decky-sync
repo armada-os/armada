@@ -6,6 +6,8 @@ homebrew="/var/home/${user_name}/homebrew"
 loader_src=/usr/share/decky-loader/PluginLoader
 loader_version_src=/usr/share/decky-loader/.loader.version
 src=/usr/share/decky-plugins
+# armada-components installs newer builds of the same plugins here.
+remote=/var/lib/armada/components
 
 loader_needs_seed() {
     [[ ! -x "${homebrew}/services/PluginLoader" ]] && return 0
@@ -49,6 +51,7 @@ if [[ -d "$src" ]]; then
     for plugin in "$src"/*/; do
         [[ -d "$plugin" ]] || continue
         name=$(basename "$plugin")
+        [[ ! -d "${remote}/${name}/current" ]] || plugin=${remote}/${name}/current/
         rm -rf "${homebrew}/plugins/${name}"
         cp -a "$plugin" "${homebrew}/plugins/${name}"
     done

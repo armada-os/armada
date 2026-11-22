@@ -21,6 +21,7 @@ sed \
     -e "s|loader_src=/usr/share/decky-loader/PluginLoader|loader_src=$WORK/bundled/PluginLoader|" \
     -e "s|loader_version_src=/usr/share/decky-loader/.loader.version|loader_version_src=$WORK/bundled/.loader.version|" \
     -e "s|src=/usr/share/decky-plugins|src=$WORK/plugins|" \
+    -e "s|remote=/var/lib/armada/components|remote=$WORK/components|" \
     "$SYNC" > "$WORK/sync"
 chmod +x "$WORK/sync"
 
@@ -56,5 +57,18 @@ run_case newer-prerelease-replaces-older v3.2.8-pre1 b7 v3.2.8-pre2 bundled
 run_case equal-version-preserves-loader v3.2.8 b7 v3.2.8 installed
 run_case arm64-replaces-equal-x86 v3.3.1 3e v3.3.1 bundled
 run_case arm64-replaces-newer-x86 v3.3.2 3e v3.3.1 bundled
+
+# A remote build of a bundled plugin wins; a remote plugin the image does not ship is ignored.
+mkdir -p "$WORK/plugins/armada-store" "$WORK/plugins/armada-control" \
+    "$WORK/components/armada-store/abc" "$WORK/components/stray/abc"
+echo image > "$WORK/plugins/armada-store/main.py"
+echo image > "$WORK/plugins/armada-control/main.py"
+echo remote > "$WORK/components/armada-store/abc/main.py"
+ln -s abc "$WORK/components/armada-store/current"
+ln -s abc "$WORK/components/stray/current"
+PATH="$WORK/bin:$PATH" "$WORK/sync"
+[[ $(<"$WORK/homebrew/plugins/armada-store/main.py") == remote ]] || fail "remote plugin build not used"
+[[ $(<"$WORK/homebrew/plugins/armada-control/main.py") == image ]] || fail "image plugin not used"
+[[ ! -e "$WORK/homebrew/plugins/stray" ]] || fail "unshipped remote plugin installed"
 
 printf 'decky sync tests passed\n'

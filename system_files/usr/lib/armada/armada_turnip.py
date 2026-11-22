@@ -7,6 +7,9 @@ import subprocess
 
 
 SYSTEM_DIR = pathlib.Path("/usr/share/armada/turnip")
+# Installed by armada-components; wins over the image's variant of the same name, which
+# stays as the fallback. Stable is always the image's.
+COMPONENT_DIR = pathlib.Path("/var/lib/armada/components/turnip/current")
 DEFAULT_DRIVER = "stable"
 USER_PREFIX = "user:"
 LIBRARY = "libvulkan_freedreno.so"
@@ -45,22 +48,30 @@ def is_arm64_glibc(path):
             and data[18:20] == b"\xb7\x00" and b"libc.so.6\0" in data)
 
 
-def _has_variant(name, manifest):
-    variant = SYSTEM_DIR / name
-    return bool(SAFE_FOLDER_NAME.fullmatch(name) and (variant / manifest).is_file()
-                and (variant / "aarch64" / LIBRARY).is_file())
+def _variant(name, manifest, image_only=False):
+    if not SAFE_FOLDER_NAME.fullmatch(name):
+        return None
+    for root in (SYSTEM_DIR,) if image_only else (COMPONENT_DIR, SYSTEM_DIR):
+        variant = root / name
+        if (root == SYSTEM_DIR or name != DEFAULT_DRIVER) and (variant / manifest).is_file() \
+                and (variant / "aarch64" / LIBRARY).is_file():
+            return variant
+    return None
 
 
 def system_manifests(name):
-    if not _has_variant(name, "icd.aarch64.json"):
+    variant = _variant(name, "icd.aarch64.json")
+    if not variant:
         return None
-    # one list for every loader: each skips the manifests it cannot open or load
-    return [str(SYSTEM_DIR / name / f"icd.{arch}.json") for arch in ("aarch64", "x86_64", "i686")]
+    # one list for every loader: each skips the manifests it cannot open or load. x86 builds
+    # sit at the image's path inside the FEX guest, so a remote variant uses the image's x86.
+    return [str(variant / "icd.aarch64.json"),
+            *(str(SYSTEM_DIR / name / f"icd.{arch}.json") for arch in ("x86_64", "i686"))]
 
 
 def flatpak_manifest(name):
-    # the manifest's path inside the sandbox
-    if not _has_variant(name, FLATPAK_MANIFEST):
+    # the manifest's path inside the sandbox; only the image's tree is exposed there
+    if not _variant(name, FLATPAK_MANIFEST, image_only=True):
         return None
     return str(FLATPAK_SYSTEM_DIR / name / FLATPAK_MANIFEST)
 
@@ -95,15 +106,18 @@ def user_library(home, name):
 
 def list_drivers(home):
     drivers = []
-    for path in sorted(SYSTEM_DIR.glob("*/variant.json"),
-                       key=lambda path: (path.parent.name != DEFAULT_DRIVER, path)):
+    paths = [*SYSTEM_DIR.glob("*/variant.json"), *COMPONENT_DIR.glob("*/variant.json")]
+    for path in sorted(paths, key=lambda path: (path.parent.name != DEFAULT_DRIVER, path.parent.name)):
         name = path.parent.name
+        owner = SYSTEM_DIR / name if name == DEFAULT_DRIVER else _variant(name, "icd.aarch64.json")
+        if path.parent != owner:
+            continue
         try:
             with path.open(encoding="utf-8") as f:
                 info = json.load(f)
         except (OSError, ValueError):
             info = None
-        if not isinstance(info, dict) or not (name == DEFAULT_DRIVER or system_manifests(name)):
+        if not isinstance(info, dict):
             continue
         drivers.append({
             "id": path.parent.name,

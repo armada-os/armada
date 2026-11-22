@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+# Installs the parts Armada ships outside the image.
+# usage: armada-components update | retire | status [--json]
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(os.environ.get("ARMADA_COMPONENTS_ROOT", "/var/lib/armada/components"))
+BASE_URL = os.environ.get("ARMADA_COMPONENTS_URL", "https://downloads.armadaos.dev/components")
+SIGNERS = os.environ.get("ARMADA_COMPONENTS_SIGNERS", "/usr/share/armada/components/allowed_signers")
+NAMESPACE = "armada-components"
+# Raised when the image gains an interface a component may depend on.
+OS_API = 1
+# What this image can use; anything else in a manifest is ignored. Plugins apply at the
+# next boot, when armada-decky-sync copies them into ~/homebrew.
+KNOWN = ("turnip", "armada-control", "armada-store", "proton")
+CHANNELS = ("stable", "beta", "testing")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+MAX_MANIFEST = 1 << 20
+TIMEOUT = 60
+
+
+def channel():
+    if os.environ.get("ARMADA_COMPONENTS_CHANNEL"):
+        return os.environ["ARMADA_COMPONENTS_CHANNEL"]
+    out = subprocess.run(
+        ["bash", "-c", '. /usr/lib/armada/update-lib && armada_token_to_channel "$(armada_desired_channel)"'],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.strip()
+    # a version-pinned image has no channel of its own: follow stable
+    return out if out in CHANNELS else "stable"
+
+
+def fetch(url, limit):
+    with urllib.request.urlopen(url, timeout=TIMEOUT) as response:
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"{url} is larger than {limit} bytes")
+    return data
+
+
+def verify(data, signature):
+    with tempfile.TemporaryDirectory() as tmp:
+        sig = Path(tmp) / "manifest.sig"
+        sig.write_bytes(signature)
+        result = subprocess.run(
+            ["ssh-keygen", "-Y", "verify", "-f", SIGNERS, "-I", NAMESPACE, "-n", NAMESPACE, "-s", str(sig)],
+            input=data, capture_output=True)
+    if result.returncode:
+        raise ValueError("manifest signature does not verify: " + result.stderr.decode(errors="replace").strip())
+
+
+def load_manifest(ch):
+    data = fetch(f"{BASE_URL}/{ch}.json", MAX_MANIFEST)
+    verify(data, fetch(f"{BASE_URL}/{ch}.json.sig", 65536))
+    manifest = json.loads(data)
+    if manifest.get("schema") != 1 or manifest.get("channel") != ch:
+        raise ValueError(f"manifest is not a schema 1 manifest for {ch}")
+    return manifest["components"]
+
+
+def valid(entry):
+    return (isinstance(entry, dict) and isinstance(entry.get("version"), str)
+            and isinstance(entry.get("sha256"), str)
+            and SHA256.fullmatch(entry["sha256"]) and type(entry.get("size")) is int
+            and entry["size"] > 0 and type(entry.get("min_os_api")) is int)
+
+
+def installed(name):
+    # each build's entry sits beside it, so flipping `current` is the one activation step
+    try:
+        return json.loads((ROOT / name / f"{os.readlink(ROOT / name / 'current')}.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def retire_incompatible(name):
+    # /var outlives an OS rollback: drop a build the booted image is too old for
+    entry = installed(name)
+    if entry and entry.get("min_os_api", 0) > OS_API:
+        (ROOT / name / "current").unlink()
+        print(f"{name} {entry.get('version')}: needs OS API {entry['min_os_api']}, removed")
+
+
+def point(link, name):
+    tmp = link.with_name(f".{link.name}.new")
+    tmp.unlink(missing_ok=True)
+    tmp.symlink_to(name)
+    os.replace(tmp, link)
+
+
+def download(url, dest, entry):
+    digest = hashlib.sha256()
+    size = 0
+    with urllib.request.urlopen(url, timeout=TIMEOUT) as response, dest.open("wb") as out:
+        while chunk := response.read(1 << 20):
+            size += len(chunk)
+            if size > entry["size"]:
+                raise ValueError(f"{url} is larger than the manifest says")
+            digest.update(chunk)
+            out.write(chunk)
+    if size != entry["size"] or digest.hexdigest() != entry["sha256"]:
+        raise ValueError(f"{url} does not match the manifest's size and sha256")
+
+
+def unpack(archive, dest):
+    with archive.open("rb") as raw:
+        zstd = subprocess.Popen(["zstd", "-dcq"], stdin=raw, stdout=subprocess.PIPE)
+        with tarfile.open(fileobj=zstd.stdout, mode="r|") as tar:
+            tar.extractall(dest, filter="data")
+        zstd.stdout.close()
+        if zstd.wait():
+            raise ValueError(f"{archive} is not a valid zstd archive")
+
+
+def game_running():
+    # Steam starts every game under its reaper, tagged SteamLaunch
+    for proc in Path("/proc").iterdir():
+        try:
+            if proc.name.isdigit() and b"SteamLaunch" in (proc / "cmdline").read_bytes().split(b"\0"):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def install(name, entry):
+    home = ROOT / name
+    home.mkdir(parents=True, exist_ok=True)
+    new = entry["sha256"]
+    old = os.readlink(home / "current") if (home / "current").is_symlink() else None
+    # same bytes republished with new metadata still rewrite the entry
+    if old == new and installed(name) == entry:
+        return False
+    if not (home / new).is_dir():
+        archive, staging = home / ".download", home / ".staging"
+        try:
+            download(f"{BASE_URL}/{name}/{new}.tar.zst", archive, entry)
+            shutil.rmtree(staging, ignore_errors=True)
+            unpack(archive, staging)
+            os.rename(staging, home / new)
+        finally:
+            archive.unlink(missing_ok=True)
+            shutil.rmtree(staging, ignore_errors=True)
+    # never swap files under a running game; the next run activates what is unpacked
+    if game_running():
+        print(f"{name}: {entry['version']} waits for the running game to exit")
+        return False
+    tmp = home / f".{new}.json"
+    tmp.write_text(json.dumps(entry))
+    os.replace(tmp, home / f"{new}.json")
+    point(home / "current", new)
+    for path in home.iterdir():
+        if path.is_symlink() or path.name in (new, f"{new}.json"):
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.suffix == ".json":
+            path.unlink()
+    return True
+
+
+def retire():
+    for name in KNOWN:
+        retire_incompatible(name)
+    return 0
+
+
+def update():
+    retire()
+    ch = channel()
+    failed = False
+    for name, entry in load_manifest(ch).items():
+        if name not in KNOWN:
+            continue
+        if not valid(entry):
+            print(f"{name}: malformed manifest entry, skipped", file=sys.stderr)
+            failed = True
+        elif entry["min_os_api"] > OS_API:
+            print(f"{name} {entry['version']}: needs OS API {entry['min_os_api']}, this image has {OS_API}")
+        else:
+            try:
+                if install(name, entry):
+                    print(f"{name}: installed {entry['version']} from {ch}")
+            except (OSError, ValueError, tarfile.TarError) as exc:
+                print(f"{name}: {exc}", file=sys.stderr)
+                failed = True
+    return 1 if failed else 0
+
+
+def status(as_json):
+    report = {name: installed(name) for name in KNOWN}
+    if as_json:
+        print(json.dumps(report, indent=2))
+    else:
+        for name, entry in report.items():
+            print(f"{name}: {entry['version'] if entry else 'image only'}")
+    return 0
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else ""
+    if command == "status":
+        return status("--json" in argv[2:])
+    if command not in ("update", "retire"):
+        print("usage: armada-components update | retire | status [--json]", file=sys.stderr)
+        return 2
+    ROOT.mkdir(parents=True, exist_ok=True)
+    with (ROOT / ".lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            return update() if command == "update" else retire()
+        except (OSError, ValueError) as exc:
+            print(f"armada-components: {exc}", file=sys.stderr)
+            return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

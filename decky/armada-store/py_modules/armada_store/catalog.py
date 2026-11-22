@@ -26,9 +26,13 @@ def bundled_apps():
     try:
         with open(plugin_dir() / "catalog.json", encoding="utf-8") as fh:
             apps = json.load(fh).get("apps", [])
-            return apps if isinstance(apps, list) else []
     except (OSError, ValueError):
         return []
+    if not isinstance(apps, list):
+        return []
+    # The plugin can update ahead of the image: hide image programs this one lacks.
+    return [app for app in apps if (app.get("install") or {}).get("type") != "system"
+            or os.path.exists(app["install"].get("exec", ""))]
 
 
 def all_apps():
