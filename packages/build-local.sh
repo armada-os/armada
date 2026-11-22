@@ -27,6 +27,12 @@ case "${pkg}" in
         platform=linux/amd64
         source "${pkg}/BASE.env"
         image="${GUEST_BUILDER_IMAGE}" ;;
+    proton-armada)
+        source "${pkg}/BASE.env"
+        image="${PROTON_SDK_IMAGE}"
+        ccache_dir="${CCACHE_DIR:-${PKGROOT}/${pkg}/.ccache}"
+        mkdir -p "${ccache_dir}"
+        run_args+=(--volume "${ccache_dir}:/ccache:Z") ;;
     # ccache opt-in: CI persists it in a cache mount, dev builds keep it
     # package-local.
     kernel|mesa)

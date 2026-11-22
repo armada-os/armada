@@ -133,8 +133,10 @@ jobs:
           set -euo pipefail
           source packages/toolchain.env
           source packages/mesa-x86/BASE.env
+          source packages/proton-armada/BASE.env
           echo "BUILDER_IMAGE=${BUILDER_IMAGE}" >> "${GITHUB_ENV}"
           echo "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" >> "${GITHUB_ENV}"
+          echo "PROTON_SDK_IMAGE=${PROTON_SDK_IMAGE}" >> "${GITHUB_ENV}"
 
       - name: Build package
         env:
@@ -150,6 +152,7 @@ jobs:
             --cache-from "${UPSTREAM_CACHE}/${PACKAGE}" \
             --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
             --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+            --build-arg "PROTON_SDK_IMAGE=${PROTON_SDK_IMAGE}" \
             -t "localhost/armada/pkg/${PACKAGE}:${HASH}" \
             packages/
 
@@ -254,6 +257,7 @@ jobs:
           set -euxo pipefail
           source packages/toolchain.env
           source packages/mesa-x86/BASE.env
+          source packages/proton-armada/BASE.env
           while read -r pkg hash; do
             echo "::group::${pkg}"
             buildah build \
@@ -263,6 +267,7 @@ jobs:
               --cache-from "${UPSTREAM_CACHE}/${pkg}" \
               --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
               --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+              --build-arg "PROTON_SDK_IMAGE=${PROTON_SDK_IMAGE}" \
               -t "localhost/armada/pkg/${pkg}:${hash}" \
               packages/
             echo "::endgroup::"

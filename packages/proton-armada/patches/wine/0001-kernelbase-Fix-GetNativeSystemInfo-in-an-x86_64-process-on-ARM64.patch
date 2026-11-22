@@ -1,0 +1,40 @@
+From c5a96a0b6c635995718602ca0d0792833de1f46f Mon Sep 17 00:00:00 2001
+From: Brendan Shanks <bshanks@codeweavers.com>
+Date: Fri, 27 Feb 2026 12:15:33 -0800
+Subject: [PATCH] kernelbase: Fix GetNativeSystemInfo() in an x86_64 process on
+ ARM64.
+
+---
+ dlls/kernelbase/memory.c | 16 +++++++---------
+ 1 file changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/dlls/kernelbase/memory.c b/dlls/kernelbase/memory.c
+index 9e3b5a40edd5..1dd029169f55 100644
+--- a/dlls/kernelbase/memory.c
++++ b/dlls/kernelbase/memory.c
+@@ -208,18 +208,16 @@ void WINAPI DECLSPEC_HOTPATCH GetNativeSystemInfo( SYSTEM_INFO *si )
+ {
+     SYSTEM_BASIC_INFORMATION basic_info;
+     SYSTEM_CPU_INFORMATION cpu_info;
++    USHORT current_machine, native_machine;
+ 
+-    if (is_wow64)
+-    {
+-        USHORT current_machine, native_machine;
++    RtlWow64GetProcessMachines( 0, &current_machine, &native_machine );
+ 
+-        RtlWow64GetProcessMachines( 0, &current_machine, &native_machine );
+-        if (native_machine != IMAGE_FILE_MACHINE_AMD64)
+-        {
+-            GetSystemInfo( si );
++    if (!is_wow64 || native_machine != IMAGE_FILE_MACHINE_AMD64)
++    {
++        GetSystemInfo( si );
++        if (is_wow64 && native_machine != IMAGE_FILE_MACHINE_AMD64)
+             si->wProcessorArchitecture = PROCESSOR_ARCHITECTURE_AMD64;
+-            return;
+-        }
++        return;
+     }
+ 
+     if (!set_ntstatus( RtlGetNativeSystemInformation( SystemBasicInformation,

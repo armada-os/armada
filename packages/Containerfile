@@ -8,6 +8,7 @@
 
 ARG BUILDER_IMAGE
 ARG GUEST_BUILDER_IMAGE
+ARG PROTON_SDK_IMAGE
 
 FROM ${BUILDER_IMAGE} AS builder-base
 COPY toolchain.env scrub-scratch.sh /src/
@@ -196,6 +197,16 @@ RUN ./build.sh && /src/scrub-scratch.sh
 
 FROM scratch AS out-proton-cachyos
 COPY --from=pkg-proton-cachyos /work/out/ /
+
+# Built in Valve's Proton SDK, not builder-base; see proton-armada/build.sh.
+FROM ${PROTON_SDK_IMAGE} AS pkg-proton-armada
+COPY toolchain.env scrub-scratch.sh /src/
+COPY proton-armada/ /work/
+WORKDIR /work
+RUN --mount=type=cache,id=armada-ccache-proton,target=/ccache ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-proton-armada
+COPY --from=pkg-proton-armada /work/out/ /
 
 FROM builder-base AS pkg-protontricks
 COPY protontricks/ /work/

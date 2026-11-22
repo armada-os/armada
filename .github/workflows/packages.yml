@@ -114,8 +114,10 @@ jobs:
           # sources toolchain.env itself from /src inside the stage.
           source packages/toolchain.env
           source packages/mesa-x86/BASE.env
+          source packages/proton-armada/BASE.env
           echo "BUILDER_IMAGE=${BUILDER_IMAGE}" >> "${GITHUB_ENV}"
           echo "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" >> "${GITHUB_ENV}"
+          echo "PROTON_SDK_IMAGE=${PROTON_SDK_IMAGE}" >> "${GITHUB_ENV}"
           owner="${{ github.repository_owner }}"
           echo "CACHE_REPO=ghcr.io/${owner,,}/armada/buildcache/${{ matrix.package }}" >> "${GITHUB_ENV}"
 
@@ -126,7 +128,7 @@ jobs:
       - name: ccache
         # Buildah's cache mounts live outside the layer store, so they start
         # empty on a fresh runner unless restored here.
-        if: matrix.package == 'kernel' || matrix.package == 'mesa'
+        if: matrix.package == 'kernel' || matrix.package == 'mesa' || matrix.package == 'proton-armada'
         uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca # v4.2.3
         with:
           path: ${{ steps.cachedir.outputs.dir }}
@@ -155,6 +157,7 @@ jobs:
             --cache-to "${CACHE_REPO}" \
             --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
             --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+            --build-arg "PROTON_SDK_IMAGE=${PROTON_SDK_IMAGE}" \
             -t "${REF}" \
             packages/
 

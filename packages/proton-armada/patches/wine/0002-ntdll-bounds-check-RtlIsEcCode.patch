@@ -1,0 +1,37 @@
+From 5330d49066e4b7fa8e2b96d935d5d76a38ea491e Mon Sep 17 00:00:00 2001
+From: The412Banner <205237651+The412Banner@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 22:00:01 -0400
+Subject: [PATCH] ntdll: bounds-check RtlIsEcCode (fix nested AV loop unwinding
+ Denuvo frames, NFS Heat)
+
+Return FALSE for any pointer outside the 47-bit user address space before indexing the EC code bitmap. The bitmap only covers address_space_limit; unwinding a corrupt frame (Denuvo, Need for Speed Heat) handed RtlIsEcCode a garbage pc, the map read faulted, and the nested access violation at the same pc repeated until the stack overflowed. Windows returns FALSE for such addresses.
+
+[Banner-Proton: Wine source change only; the Bannerlator CI hunk is dropped.]
+(cherry picked from commit 38369113542)
+---
+ dlls/ntdll/signal_arm64ec.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index 712d7f417790..6a455c0919e1 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -1410,8 +1410,16 @@ __ASM_GLOBAL_FUNC( "#KiUserCallbackDispatcher",
+  */
+ BOOLEAN WINAPI RtlIsEcCode( ULONG_PTR ptr )
+ {
+-    const UINT64 *map = (const UINT64 *)NtCurrentTeb()->Peb->EcCodeBitMap;
+-    ULONG_PTR page = ptr / page_size;
++    const UINT64 *map;
++    ULONG_PTR page;
++
++    /* Anything outside the user address space cannot be EC code; the bitmap only covers
++     * address_space_limit (47 bits), and unwinding a corrupt frame (Denuvo, NFS Heat) can
++     * hand us garbage pointers -- Windows returns FALSE here instead of faulting. */
++    if (ptr >> 47) return FALSE;
++
++    map = (const UINT64 *)NtCurrentTeb()->Peb->EcCodeBitMap;
++    page = ptr / page_size;
+     return (map[page / 64] >> (page & 63)) & 1;
+ }
+ 

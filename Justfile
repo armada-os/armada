@@ -91,6 +91,7 @@ package name:
     set -euo pipefail
     source packages/toolchain.env
     source packages/mesa-x86/BASE.env
+    source packages/proton-armada/BASE.env
     [ -d "packages/{{ name }}" ] || { echo "unknown package: {{ name }}" >&2; exit 1; }
     hash="$(packages/package-hash.sh {{ name }})"
     buildah build \
@@ -99,6 +100,7 @@ package name:
         --layers \
         --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
         --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
+        --build-arg "PROTON_SDK_IMAGE=${PROTON_SDK_IMAGE}" \
         -t "localhost/armada/pkg/{{ name }}:${hash}" \
         packages/
     echo "==> localhost/armada/pkg/{{ name }}:${hash}"

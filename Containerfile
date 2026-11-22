@@ -38,6 +38,10 @@ FROM ${POWERDEVIL_REF} AS powerdevil
 ARG PROTON_CACHYOS_REF
 FROM ${PROTON_CACHYOS_REF} AS proton-cachyos
 
+# Published for opt-in install; nothing mounts it into the image yet.
+ARG PROTON_ARMADA_REF
+FROM ${PROTON_ARMADA_REF} AS proton-armada
+
 ARG PROTONTRICKS_REF
 FROM ${PROTONTRICKS_REF} AS protontricks
 
