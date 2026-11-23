@@ -10,7 +10,7 @@ GAMESCOPE_SERVICE="$ROOT/system_files/usr/lib/systemd/user/armada-bottom-gamesco
 SESSION_DROPIN="$ROOT/system_files/usr/lib/systemd/user/gamescope-session-plus@steam.service.d/30-armada-gamescope.conf"
 WAYDROID_INPUT_SETUP="$ROOT/system_files/usr/libexec/armada/waydroid-input-setup"
 FAKE_SUSPEND="$ROOT/system_files/usr/libexec/armada/fake-suspend"
-LAUNCH_STEAM="$ROOT/system_files/usr/libexec/armada/launch-steam"
+LAUNCH_STEAM="$ROOT/packages/steam/system/usr/lib/steam/armada-steam-run"
 tmp="$(mktemp -d)"
 socket_pid=
 
@@ -212,21 +212,31 @@ fi
 grep -q 'no command specified' "$tmp/no-command"
 
 # The main gamescope's socket gets its fixed name from the Steam launcher.
-mkdir -p "$tmp/steam/steamrtarm64"
+mkdir -p "$tmp/steam/steamrtarm64" "$tmp/home"
 printf '#!/usr/bin/env bash\n' >"$tmp/steam/steamrtarm64/steam"
 chmod +x "$tmp/steam/steamrtarm64/steam"
+printf '#!/usr/bin/env bash\n' >"$tmp/bin_steam.sh"
+chmod +x "$tmp/bin_steam.sh"
+printf '#!/usr/bin/env bash\n' >"$tmp/steam-install"
+chmod +x "$tmp/steam-install"
+sed "s#/usr/lib/steam/bin_steam.sh#$tmp/bin_steam.sh#; s#/usr/lib/steam/steam-install#$tmp/steam-install#" "$LAUNCH_STEAM" >"$tmp/launch-steam"
+chmod +x "$tmp/launch-steam"
+LAUNCH_STEAM="$tmp/launch-steam"
 env \
+    HOME="$tmp/home" \
     STEAM_ROOT="$tmp/steam" \
     XDG_RUNTIME_DIR="$tmp/runtime" \
     GAMESCOPE_WAYLAND_DISPLAY=gamescope-0 \
     "$LAUNCH_STEAM"
 [[ "$(readlink "$tmp/runtime/gamescope-primary")" == gamescope-0 ]]
+[[ "$(readlink "$tmp/home/.steam/steam")" == "$tmp/steam" ]]
 # Steam started from a client of another gamescope must not repoint it.
 env \
+    HOME="$tmp/home" \
     STEAM_ROOT="$tmp/steam" \
     XDG_RUNTIME_DIR="$tmp/runtime" \
     GAMESCOPE_WAYLAND_DISPLAY=gamescope-secondary \
-    "$LAUNCH_STEAM" --desktop
+    "$LAUNCH_STEAM"
 [[ "$(readlink "$tmp/runtime/gamescope-primary")" == gamescope-0 ]]
 
 grep -Fxq 'Wants=armada-bottom-gamescope.service' "$SESSION_DROPIN"

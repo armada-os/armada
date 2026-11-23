@@ -5,8 +5,8 @@ ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:44
 # as ghcr.io/<owner>/armada/pkg/<name>:<tag>, tagged by packages/package-hash.sh
 # from that package's sources, and passes the refs in as build args.
 
-ARG STEAM_BOOTSTRAP_REF
-FROM ${STEAM_BOOTSTRAP_REF} AS steam-bootstrap
+ARG STEAM_REF
+FROM ${STEAM_REF} AS steam
 
 ARG FEX_REF
 FROM ${FEX_REF} AS fex
@@ -126,7 +126,7 @@ ARG ARMADA_VERSION=unknown
 LABEL org.opencontainers.image.version="${ARMADA_VERSION}"
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
-    --mount=type=bind,from=steam-bootstrap,source=/steam-bootstrap,target=/packages/steam-bootstrap \
+    --mount=type=bind,from=steam,source=/steam,target=/packages/steam \
     --mount=type=bind,from=fex,source=/rpms,target=/packages/fex \
     --mount=type=bind,from=fex-rootfs-archlinux,source=/rpms,target=/packages/fex-rootfs-archlinux \
     --mount=type=bind,from=mesa,source=/rpms,target=/packages/mesa \

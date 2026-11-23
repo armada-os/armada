@@ -58,7 +58,15 @@ except SystemExit as error:
         import armada_steam
         with patch.object(tools.os, "geteuid", return_value=1000), patch.object(armada_steam, "SteamMaintenance") as factory:
             self.assertEqual(self.invoke("steam", "repair", "--yes"), 0)
-            factory.return_value.restore.assert_called_once_with()
+            factory.return_value.restore.assert_called_once_with(reset=False)
+
+    def test_reset_confirms_sign_out_and_uses_reset_mode(self):
+        import armada_steam
+        with patch.object(tools.os, "geteuid", return_value=1000), patch.object(armada_steam, "SteamMaintenance") as factory, \
+                patch.object(tools, "confirm") as confirm:
+            self.assertEqual(self.invoke("steam", "reset", "--yes"), 0)
+            self.assertIn("signed out", confirm.call_args.args[0])
+            factory.return_value.restore.assert_called_once_with(reset=True)
 
     def test_rollback_confirms_named_target_and_passes_its_checksum(self):
         state = {"rollback": {"version": "previous", "checksum": "b" * 64, "incompatible": False}}
