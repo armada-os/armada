@@ -117,6 +117,14 @@ RUN ./build.sh && /src/scrub-scratch.sh
 FROM scratch AS out-hexagonrpc
 COPY --from=pkg-hexagonrpc /work/out/ /rpms/
 
+FROM builder-base AS pkg-vela-npu
+COPY vela-npu/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-vela-npu
+COPY --from=pkg-vela-npu /work/out/ /rpms/
+
 
 FROM builder-base AS pkg-jupiter-hw-support
 COPY jupiter-hw-support/ /work/

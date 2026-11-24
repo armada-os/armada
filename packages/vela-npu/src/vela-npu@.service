@@ -1,0 +1,63 @@
+# Vela NPU: one fsr4npud per FSR 4 graph; the instance is the graph name
+# (vela-npu@nf4_exact = full FSR 4.1.1, abstract socket @fsr4npud_nf4_exact).
+# Idle cost: one QNN context per daemon, no HTP work until a game connects.
+[Unit]
+Description=Vela NPU: FSR 4 graph %i helper daemon (QNN HTP on the cDSP)
+# The graphs are compiled for the SM8550 HTP (v73) and the SM8750 HTP (v79, selected by
+# vela-npu@.service.d/50-vela-npu-chip.conf); nothing to do on other chips.
+ConditionFirmware=|device-tree-compatible(qcom,sm8550)
+ConditionFirmware=|device-tree-compatible(qcom,sm8750)
+# The cDSP shell is not part of this package (see packages/vela-npu/README.md).
+ConditionPathExists=/usr/lib/rfsa/adsp/fastrpc_shell_unsigned_3
+# vela-npu-setup.service waits for the device nodes (a ConditionPathExists on them raced
+# their creation at boot).
+Requires=vela-npu-setup.service
+Wants=vela-npu-listener.service
+After=vela-npu-setup.service vela-npu-listener.service
+StartLimitIntervalSec=120
+StartLimitBurst=6
+
+[Service]
+Type=notify
+NotifyAccess=main
+# The listener must have attached to the cDSP root PD before the first session is opened.
+ExecStartPre=/usr/bin/sleep 2
+ExecStart=/usr/lib64/vela-npu/fsr4npud --name fsr4npud_%i --backend qnn --ctx /usr/lib64/vela-npu/%i.bin --allow-uid 1000 --max-clients 4 --alloc auto --exec-timeout-ms 2000 --exec-hard-timeout-ms 10000 --power-grace-ms 2000
+# --alloc auto: rpcmem on /dev/dma_heap/system when it can be opened, else a Turnip-exported
+# buffer; the journal line 'allocator:' says which. With the Vulkan path the daemon creates a
+# Vulkan device, and a dynamic user has no writable home for a shader cache.
+Environment=MESA_SHADER_CACHE_DISABLE=true
+# The daemon only wakes on an eventfd/fence and then blocks in the fastrpc ioctl. Two mid cores
+# (SM8550 cpu5-6), away from the IRQ cores (cpu0-2) and the prime core (cpu7) where games put
+# their main thread; Nice=-10 instead of real-time scheduling.
+CPUAffinity=5 6
+Nice=-10
+DynamicUser=yes
+User=vela-npu
+SupplementaryGroups=render
+WorkingDirectory=/usr/lib/rfsa/adsp
+Environment=LD_LIBRARY_PATH=/usr/lib64/vela-npu
+Environment=ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp
+# Exit 75 = an execute stuck > 10 s (wedged HTP) or 3 slow (> 2 s) executes in 120 s: the
+# restart gives a fresh DSP session. A single slow execute only drops that client (Vela falls
+# back to the GPU and reconnects). 6 failed starts in 120 s -> the unit stays failed and games
+# run without the NPU (no restart loop).
+Restart=on-failure
+RestartSec=3
+# 2 = bad options, 4 = the socket name is held by another daemon: a restart cannot help.
+RestartPreventExitStatus=2 4
+TimeoutStartSec=40
+TimeoutStopSec=10
+KillMode=mixed
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
+DefaultInstance=nf4_exact
