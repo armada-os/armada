@@ -1,12 +1,12 @@
 [Unit]
-Description=Reset session autologin to gamemode each boot
+Description=Reset session autologin to the default login mode each boot
 Before=display-manager.service
 After=systemd-tmpfiles-setup.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/libexec/armada/session-control default-gamemode
+ExecStart=/usr/libexec/armada/session-control default-boot
 StandardOutput=journal
 StandardError=journal
 

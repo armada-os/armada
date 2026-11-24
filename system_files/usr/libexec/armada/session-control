@@ -5,7 +5,8 @@
 
 set -euo pipefail
 
-STEAMOS_MANAGER_STATE=/var/home/armada/.config/steamos-manager/state.toml
+STEAMOS_MANAGER_STATE=${ARMADA_STEAMOS_MANAGER_STATE:-/var/home/armada/.config/steamos-manager/state.toml}
+SDDM_CONF_DIR=${ARMADA_SDDM_CONF_DIR:-/etc/sddm.conf.d}
 
 logout_plasma() {
     local user=armada
@@ -43,11 +44,19 @@ fi
 case "${1:-}" in
     switch-desktop|default-desktop)   session=$desktop_session ;;
     switch-gamemode|default-gamemode) session=gamescope-session-steam.desktop ;;
-    *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode|default-desktop}" >&2; exit 1 ;;
+    # Per-boot reset: honour Steam's "Switch to Desktop Mode on startup"
+    # (steamos-manager default_login_mode) instead of always forcing gamemode.
+    default-boot)
+        session=gamescope-session-steam.desktop
+        if grep -Eqs '^default_login_mode[[:space:]]*=[[:space:]]*"Desktop"' "${STEAMOS_MANAGER_STATE}"; then
+            session=$desktop_session
+        fi
+        ;;
+    *) echo "usage: $0 {switch-desktop|switch-gamemode|default-gamemode|default-desktop|default-boot}" >&2; exit 1 ;;
 esac
 
-printf '[Autologin]\nSession=%s\n' "${session}" > /etc/sddm.conf.d/zz-holo-autologin.conf
-rm -f /etc/sddm.conf.d/zz-steamos-autologin.conf
+printf '[Autologin]\nSession=%s\n' "${session}" > "${SDDM_CONF_DIR}/zz-holo-autologin.conf"
+rm -f "${SDDM_CONF_DIR}/zz-steamos-autologin.conf"
 systemctl reset-failed sddm.service 2>/dev/null || true
 
 if [[ "${1}" == default-* ]]; then
