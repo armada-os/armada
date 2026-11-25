@@ -20,6 +20,7 @@ LIBRARIES = (
     / armada_turnip.LIBRARY,
     GL_HOST / "lib/libGLX_armada.so.0",
     GL_HOST / "lib/libEGL_armada.so.0",
+    GL_HOST / "lib/dri/qcom_drv_video.so",
 )
 # the probes need no session services
 RUN = ["flatpak", "run", "--no-session-bus", "--no-a11y-bus", "--no-documents-portal"]

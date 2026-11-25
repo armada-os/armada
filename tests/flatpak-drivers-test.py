@@ -54,6 +54,7 @@ class FlatpakDriversTest(unittest.TestCase):
 
     def fake_problem(self, run, app, libraries, exposed):
         self.probed.append(app)
+        self.libraries = libraries
         return self.problems.get(app)
 
     def run_main(self, apps=()):
@@ -78,6 +79,10 @@ class FlatpakDriversTest(unittest.TestCase):
 
     def test_all_ok(self):
         self.assertEqual(self.run_main(), (0, ["org.New: ok", "org.Old: ok"]))
+
+    def test_probes_the_va_driver(self):
+        self.run_main(["org.New"])
+        self.assertIn(drivers.GL_HOST / "lib/dri/qcom_drv_video.so", self.libraries)
 
     def test_checks_only_the_named_apps(self):
         self.run_main(["org.Named"])
