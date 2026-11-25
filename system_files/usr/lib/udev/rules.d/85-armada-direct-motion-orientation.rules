@@ -1,0 +1,13 @@
+# Direct-mode motion node (rsinput motion_sensors=1, filled by armada-direct-motion).
+# iio-sensor-proxy takes it as the accelerometer for desktop screen rotation. It reports
+# in the gamepad's frame (X right, Y top, Z toward the player), while KWin wants the
+# reading in the panel's native frame, so ACCEL_MOUNT_MATRIX turns it by the panel
+# orientation. Only the two orientations tested on hardware get a matrix: left on the
+# Odin 3 Portal and right on the Odin 3. Dual-screen devices keep a fixed rotation,
+# because the hinge holds their screens to each other. Runs after
+# 80-iio-sensor-proxy.rules, which marks the node as an accelerometer.
+SUBSYSTEM=="input", ATTRS{phys}=="rsinput-gamepad/input1", IMPORT{program}="/usr/libexec/armada/device-env"
+SUBSYSTEM=="input", ATTRS{phys}=="rsinput-gamepad/input1", ENV{ARMADA_SECONDARY_CONNECTOR}=="", ENV{ARMADA_PANEL_ORIENTATION}=="left", ENV{ACCEL_MOUNT_MATRIX}="0, 1, 0; -1, 0, 0; 0, 0, 1", GOTO="armada_direct_motion_end"
+SUBSYSTEM=="input", ATTRS{phys}=="rsinput-gamepad/input1", ENV{ARMADA_SECONDARY_CONNECTOR}=="", ENV{ARMADA_PANEL_ORIENTATION}=="right", ENV{ACCEL_MOUNT_MATRIX}="0, -1, 0; 1, 0, 0; 0, 0, 1", GOTO="armada_direct_motion_end"
+SUBSYSTEM=="input", ATTRS{phys}=="rsinput-gamepad/input1", ENV{IIO_SENSOR_PROXY_TYPE}=""
+LABEL="armada_direct_motion_end"
