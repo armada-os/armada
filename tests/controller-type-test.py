@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     ct.DIRECT_FLAG = tmp / "direct-input"
     ct.DIRECT_MODPROBE = tmp / "modprobe.d" / "armada-direct.conf"
+    ct.PADDLES_CONFIG = tmp / "direct-paddles.conf"
     ct.device_env_value = lambda name: "0,-1,0,1,0,0,0,0,1" if name == "ARMADA_DIRECT_IMU_MATRIX" else ""
     ct.CONFIG = tmp / "controller.conf"
     ct.INPUTPLUMBER_RULES = tmp / "rules.d"
@@ -53,7 +54,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not stale.exists()
     assert ["systemctl", "mask", "--now", "inputplumber.service"] in calls, calls
     assert ["udevadm", "trigger", "--action=add", "/sys/class/input/event5"] in calls, calls
-    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 motion_sensors=1\n"
+    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 paddle_left=304 paddle_right=305 motion_sensors=1\n"
     # rsinput reloads with the motion node before udev re-adds the gamepad.
     assert calls.index(["modprobe", "-r", "rsinput"]) < calls.index(["modprobe", "rsinput"]) \
         < calls.index(["udevadm", "trigger", "--action=add", "/sys/class/input/event5"]), calls
@@ -65,6 +66,15 @@ with tempfile.TemporaryDirectory() as tmp:
     calls.clear()
     assert ct.main(["controller-type", "apply"]) == 0
     assert calls == [], calls
+
+    # Rebinding the paddles in direct mode rewrites the options and reloads rsinput once.
+    calls.clear()
+    assert ct.main(["controller-type", "paddles", "lb", "rb"]) == 0
+    assert ct.PADDLES_CONFIG.read_text(encoding="utf-8") == "left=lb\nright=rb\n"
+    assert "paddle_left=310 paddle_right=311" in ct.DIRECT_MODPROBE.read_text(encoding="utf-8")
+    assert calls.count(["modprobe", "rsinput"]) == 1, calls
+    assert ct.main(["controller-type", "paddles", "lb", "nope"]) == 2
+    assert ct.main(["controller-type", "paddles", "a", "b"]) == 0
 
     calls.clear()
     assert ct.main(["controller-type", "set", "deck-uhid"]) == 0
@@ -86,10 +96,11 @@ with tempfile.TemporaryDirectory() as tmp:
     ct.INPUTPLUMBER_RULES = tmp / "rules.d"
     ct.INPUTPLUMBER_RULES.mkdir()
     ct.DIRECT_MODPROBE = tmp / "modprobe.d" / "armada-direct.conf"
+    ct.PADDLES_CONFIG = tmp / "direct-paddles.conf"
     ct.device_env_value = lambda name: ""
     calls.clear()
     assert ct.main(["controller-type", "set", "direct"]) == 0
-    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1\n"
+    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 paddle_left=304 paddle_right=305\n"
     assert ["modprobe", "rsinput"] in calls, calls
     calls.clear()
     assert ct.main(["controller-type", "set", "deck-uhid"]) == 0

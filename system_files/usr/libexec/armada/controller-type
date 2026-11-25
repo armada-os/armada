@@ -28,6 +28,16 @@ DIRECT_SERVICE = "armada-direct-input.service"
 # the Snapdragon Sensor Core.
 MOTION_SERVICE = "armada-direct-motion.service"
 DIRECT_MODPROBE = Path("/etc/modprobe.d/armada-direct.conf")
+# What the back paddles send in direct mode ("left=a", "right=b"). They are real
+# gamepad buttons, so they work in every game and app, with or without Steam Input.
+PADDLES_CONFIG = Path("/etc/armada/direct-paddles.conf")
+DEFAULT_PADDLES = {"left": "a", "right": "b"}
+# Button names to evdev codes, as SDL reads them with xbox_face_codes=1.
+PADDLE_BUTTONS = {
+    "a": 0x130, "b": 0x131, "x": 0x133, "y": 0x134, "lb": 0x136, "rb": 0x137,
+    "select": 0x13A, "start": 0x13B, "guide": 0x13C, "l3": 0x13D, "r3": 0x13E,
+    "up": 0x220, "down": 0x221, "left": 0x222, "right": 0x223,
+}
 INPUTPLUMBER_SERVICE = "inputplumber.service"
 # InputPlumber's hide rules; a stopped InputPlumber can leave them behind until reboot.
 INPUTPLUMBER_RULES = Path("/run/udev/rules.d")
@@ -187,16 +197,37 @@ def reload_rsinput():
     subprocess.run(["modprobe", "rsinput"], check=True, timeout=30)
 
 
+def load_paddles():
+    paddles = dict(DEFAULT_PADDLES)
+    try:
+        lines = PADDLES_CONFIG.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return paddles
+    for line in lines:
+        side, sep, button = line.partition("=")
+        if sep and side.strip() in paddles and button.strip() in PADDLE_BUTTONS:
+            paddles[side.strip()] = button.strip()
+    return paddles
+
+
+def direct_options():
+    paddles = load_paddles()
+    options = (
+        "options rsinput xbox_face_codes=1 forward_paddles=1"
+        f" paddle_left={PADDLE_BUTTONS[paddles['left']]} paddle_right={PADDLE_BUTTONS[paddles['right']]}"
+    )
+    if device_env_value("ARMADA_DIRECT_IMU_MATRIX"):
+        options += " motion_sensors=1"
+    return options + "\n"
+
+
 def enable_direct():
     DIRECT_FLAG.parent.mkdir(parents=True, exist_ok=True)
     DIRECT_FLAG.touch()
     systemctl("mask", "--now", INPUTPLUMBER_SERVICE)
     for rule in INPUTPLUMBER_RULES.glob("*-inputplumber-hide-*.rules"):
         rule.unlink(missing_ok=True)
-    options = "options rsinput xbox_face_codes=1 forward_paddles=1"
-    if device_env_value("ARMADA_DIRECT_IMU_MATRIX"):
-        options += " motion_sensors=1"
-    options += "\n"
+    options = direct_options()
     if not DIRECT_MODPROBE.exists() or DIRECT_MODPROBE.read_text(encoding="utf-8") != options:
         DIRECT_MODPROBE.parent.mkdir(parents=True, exist_ok=True)
         DIRECT_MODPROBE.write_text(options, encoding="utf-8")
@@ -254,7 +285,21 @@ def main(argv):
         if value == DIRECT:
             return 0
         return 0 if apply_with_retry(value) else 1
-    print("usage: controller-type get|set|apply", file=sys.stderr)
+    if command == "paddles":
+        if len(argv) == 2:
+            paddles = load_paddles()
+            print(f"{paddles['left']} {paddles['right']}")
+            return 0
+        if len(argv) != 4 or argv[2] not in PADDLE_BUTTONS or argv[3] not in PADDLE_BUTTONS:
+            print(f"usage: controller-type paddles [<left> <right>], buttons: {' '.join(PADDLE_BUTTONS)}", file=sys.stderr)
+            return 2
+        PADDLES_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        PADDLES_CONFIG.write_text(f"left={argv[2]}\nright={argv[3]}\n", encoding="utf-8")
+        # In direct mode the new codes take effect with one rsinput reload.
+        if DIRECT_FLAG.exists():
+            enable_direct()
+        return 0
+    print("usage: controller-type get|set|apply|paddles", file=sys.stderr)
     return 2
 
 

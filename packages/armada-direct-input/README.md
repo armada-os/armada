@@ -36,7 +36,12 @@ both report the same uniq.
 reloads rsinput. It always sets `xbox_face_codes=1` (kernel patch 1311; without
 InputPlumber SDL would otherwise swap X and Y) and `forward_paddles=1` (patch
 1312; the paddles reach the gamepad inside the kernel, and armada-direct-input
-then only does the Quick Access chord). It adds `motion_sensors=1` on devices
+then only does the Quick Access chord), with the paddle buttons from
+`/etc/armada/direct-paddles.conf`. `controller-type paddles <left> <right>`
+sets them by name (a, b, x, y, lb, rb, select, start, guide, l3, r3, up, down,
+left, right; default a and b) and reloads rsinput when direct mode is on. The
+paddles stay real gamepad buttons, so they work in every game and app, with or
+without Steam Input. It adds `motion_sensors=1` on devices
 whose profile sets `ARMADA_DIRECT_IMU_MATRIX`. That row-major matrix rotates the sensor axes into SDL's (X right, Y top, Z
 toward the player). Run `armada-direct-motion --raw` with the device flat,
 upright and on its left edge to measure it for a new board.
