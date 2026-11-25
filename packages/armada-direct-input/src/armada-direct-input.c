@@ -7,7 +7,8 @@
  *   bottom right button (BTN_BACK on the gamepad)  -> Guide + A, which Steam
  *   opens as the Quick Access Menu. SDL maps no gamepad button to BTN_BACK.
  * The paddles are optional; boards without gpio-keys-paddles only get the
- * Quick Access chord.
+ * Quick Access chord. When rsinput forwards the paddles itself
+ * (forward_paddles=1, kernel patch 1312), only the chord is done here.
  * Ported from odin3-paddles in odin3-direct. The Guide + A chord and its 80 ms
  * steps follow InputPlumber's xpad target (src/input/target/xpad.rs,
  * write_event, MIN_CHORD_TIME), https://github.com/ShadowBlip/InputPlumber
@@ -153,6 +154,18 @@ static int handle_gamepad(int gamepad)
     return 0;
 }
 
+/* rsinput reports the paddles on the gamepad itself when loaded with forward_paddles=1. */
+static int kernel_forwards_paddles(void)
+{
+    FILE *f = fopen("/sys/module/rsinput/parameters/forward_paddles", "r");
+    int forwarded = 0;
+    if (f) {
+        forwarded = fgetc(f) == 'Y';
+        fclose(f);
+    }
+    return forwarded;
+}
+
 int main(void)
 {
     int gamepad = find("phys", GAMEPAD_PHYS, O_RDWR);
@@ -160,7 +173,7 @@ int main(void)
         fprintf(stderr, "no gamepad with phys %s\n", GAMEPAD_PHYS);
         return 1;
     }
-    int paddles = find("name", PADDLES_NAME, O_RDONLY);
+    int paddles = kernel_forwards_paddles() ? -1 : find("name", PADDLES_NAME, O_RDONLY);
     struct pollfd fds[2] = {
         { .fd = gamepad, .events = POLLIN },
         { .fd = paddles, .events = POLLIN }, /* poll ignores a negative fd */

@@ -22,6 +22,12 @@ CONTROLLER_TYPES = {
 DIRECT = "direct"
 DIRECT_FLAG = Path("/etc/armada/direct-input")
 DIRECT_SERVICE = "armada-direct-input.service"
+# rsinput options for direct mode: Xbox face codes (SDL would swap X and Y without
+# InputPlumber), back paddles forwarded in the kernel, and on devices whose profile
+# sets ARMADA_DIRECT_IMU_MATRIX a motion node that armada-direct-motion fills from
+# the Snapdragon Sensor Core.
+MOTION_SERVICE = "armada-direct-motion.service"
+DIRECT_MODPROBE = Path("/etc/modprobe.d/armada-direct.conf")
 INPUTPLUMBER_SERVICE = "inputplumber.service"
 # InputPlumber's hide rules; a stopped InputPlumber can leave them behind until reboot.
 INPUTPLUMBER_RULES = Path("/run/udev/rules.d")
@@ -29,7 +35,8 @@ GAMEPAD_PHYS = "rsinput-gamepad/input0"
 PADDLES_NAME = "gpio-keys-paddles"
 
 
-def available_types():
+def device_env_value(name):
+    """Value of one device-env setting, "" when unset, None when device-env fails."""
     try:
         result = subprocess.run(
             [DEVICE_ENV],
@@ -39,16 +46,21 @@ def available_types():
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
-        return list(CONTROLLER_TYPES)
-    raw = ""
+        return None
     for line in result.stdout.splitlines():
         key, sep, value = line.partition("=")
-        if sep and key.strip() == "ARMADA_IP_TARGETS":
+        if sep and key.strip() == name:
             try:
-                raw = shlex.split(value)[0] if value.strip() else ""
+                return shlex.split(value)[0] if value.strip() else ""
             except ValueError:
-                raw = value.strip()
-            break
+                return value.strip()
+    return ""
+
+
+def available_types():
+    raw = device_env_value("ARMADA_IP_TARGETS")
+    if raw is None:
+        return list(CONTROLLER_TYPES)
     types = []
     for item in raw.split(","):
         item = item.strip()
@@ -170,19 +182,37 @@ def reload_direct_nodes():
     subprocess.run(["udevadm", "settle"], check=False, timeout=30)
 
 
+def reload_rsinput():
+    subprocess.run(["modprobe", "-r", "rsinput"], check=True, timeout=30)
+    subprocess.run(["modprobe", "rsinput"], check=True, timeout=30)
+
+
 def enable_direct():
     DIRECT_FLAG.parent.mkdir(parents=True, exist_ok=True)
     DIRECT_FLAG.touch()
     systemctl("mask", "--now", INPUTPLUMBER_SERVICE)
     for rule in INPUTPLUMBER_RULES.glob("*-inputplumber-hide-*.rules"):
         rule.unlink(missing_ok=True)
+    options = "options rsinput xbox_face_codes=1 forward_paddles=1"
+    if device_env_value("ARMADA_DIRECT_IMU_MATRIX"):
+        options += " motion_sensors=1"
+    options += "\n"
+    if not DIRECT_MODPROBE.exists() or DIRECT_MODPROBE.read_text(encoding="utf-8") != options:
+        DIRECT_MODPROBE.parent.mkdir(parents=True, exist_ok=True)
+        DIRECT_MODPROBE.write_text(options, encoding="utf-8")
+        reload_rsinput()
     reload_direct_nodes()
     systemctl("restart", DIRECT_SERVICE)
+    systemctl("restart", MOTION_SERVICE)
 
 
 def disable_direct():
+    systemctl("stop", MOTION_SERVICE)
     systemctl("stop", DIRECT_SERVICE)
     DIRECT_FLAG.unlink(missing_ok=True)
+    if DIRECT_MODPROBE.exists():
+        DIRECT_MODPROBE.unlink()
+        reload_rsinput()
     reload_direct_nodes()
     systemctl("unmask", INPUTPLUMBER_SERVICE)
     systemctl("start", INPUTPLUMBER_SERVICE)

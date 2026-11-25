@@ -38,6 +38,8 @@ assert calls == [[
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     ct.DIRECT_FLAG = tmp / "direct-input"
+    ct.DIRECT_MODPROBE = tmp / "modprobe.d" / "armada-direct.conf"
+    ct.device_env_value = lambda name: "0,-1,0,1,0,0,0,0,1" if name == "ARMADA_DIRECT_IMU_MATRIX" else ""
     ct.CONFIG = tmp / "controller.conf"
     ct.INPUTPLUMBER_RULES = tmp / "rules.d"
     ct.INPUTPLUMBER_RULES.mkdir()
@@ -51,7 +53,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not stale.exists()
     assert ["systemctl", "mask", "--now", "inputplumber.service"] in calls, calls
     assert ["udevadm", "trigger", "--action=add", "/sys/class/input/event5"] in calls, calls
-    assert calls[-1] == ["systemctl", "restart", "armada-direct-input.service"], calls
+    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 motion_sensors=1\n"
+    # rsinput reloads with the motion node before udev re-adds the gamepad.
+    assert calls.index(["modprobe", "-r", "rsinput"]) < calls.index(["modprobe", "rsinput"]) \
+        < calls.index(["udevadm", "trigger", "--action=add", "/sys/class/input/event5"]), calls
+    assert calls[-2:] == [["systemctl", "restart", "armada-direct-input.service"],
+                          ["systemctl", "restart", "armada-direct-motion.service"]], calls
     assert not any(c[0] == "busctl" for c in calls), calls
     assert ct.load_type(ct.available_types()) == "direct"
 
@@ -62,10 +69,31 @@ with tempfile.TemporaryDirectory() as tmp:
     calls.clear()
     assert ct.main(["controller-type", "set", "deck-uhid"]) == 0
     assert not ct.DIRECT_FLAG.exists()
-    assert calls.index(["systemctl", "stop", "armada-direct-input.service"]) \
+    assert not ct.DIRECT_MODPROBE.exists()
+    assert ["modprobe", "rsinput"] in calls, calls
+    assert calls.index(["systemctl", "stop", "armada-direct-motion.service"]) \
+        < calls.index(["systemctl", "stop", "armada-direct-input.service"]) \
         < calls.index(["systemctl", "unmask", "inputplumber.service"]) \
         < calls.index(["systemctl", "start", "inputplumber.service"]), calls
     assert calls[-1][0] == "busctl", calls
     assert ct.load_type(ct.available_types()) == "deck-uhid"
+
+# A device without ARMADA_DIRECT_IMU_MATRIX gets the face codes and paddles but no motion node.
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    ct.DIRECT_FLAG = tmp / "direct-input"
+    ct.CONFIG = tmp / "controller.conf"
+    ct.INPUTPLUMBER_RULES = tmp / "rules.d"
+    ct.INPUTPLUMBER_RULES.mkdir()
+    ct.DIRECT_MODPROBE = tmp / "modprobe.d" / "armada-direct.conf"
+    ct.device_env_value = lambda name: ""
+    calls.clear()
+    assert ct.main(["controller-type", "set", "direct"]) == 0
+    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1\n"
+    assert ["modprobe", "rsinput"] in calls, calls
+    calls.clear()
+    assert ct.main(["controller-type", "set", "deck-uhid"]) == 0
+    assert not ct.DIRECT_MODPROBE.exists()
+    assert ["modprobe", "rsinput"] in calls, calls
 
 print("controller-type tests passed")

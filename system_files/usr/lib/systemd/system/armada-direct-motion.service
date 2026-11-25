@@ -1,0 +1,17 @@
+[Unit]
+Description=Gyro for the direct controller mode (Snapdragon Sensor Core into the rsinput motion node)
+ConditionPathExists=/etc/armada/direct-input
+After=armada-ssc.service
+Wants=armada-ssc.service
+# Retry while the motion node or the sensor core is not ready yet; no start rate limit.
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/libexec/armada/armada-direct-motion-start
+Restart=on-failure
+RestartSec=2
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=40
+
+[Install]
+WantedBy=multi-user.target

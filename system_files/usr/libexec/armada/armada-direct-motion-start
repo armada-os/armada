@@ -1,0 +1,21 @@
+#!/bin/bash
+# Starts armada-direct-motion with the device's IMU mount matrix and the optional
+# per-unit accelerometer calibration. Exits quietly where direct-mode gyro does not
+# apply: no matrix in the device profile, or rsinput loaded without motion_sensors.
+set -euo pipefail
+
+eval "$(/usr/libexec/armada/device-env)"
+[[ -n "${ARMADA_DIRECT_IMU_MATRIX:-}" ]] || exit 0
+[[ "$(cat /sys/module/rsinput/parameters/motion_sensors 2>/dev/null)" == Y ]] || exit 0
+
+# Written by a six-position calibration: ARMADA_DIRECT_ACCEL_OFFSET and
+# ARMADA_DIRECT_ACCEL_SCALE, three comma-separated sensor-axis values each.
+calibration=/etc/armada/direct-imu.conf
+if [[ -r "$calibration" ]]; then
+    source "$calibration"
+fi
+
+args=(--matrix "$ARMADA_DIRECT_IMU_MATRIX")
+[[ -z "${ARMADA_DIRECT_ACCEL_OFFSET:-}" ]] || args+=(--accel-offset "$ARMADA_DIRECT_ACCEL_OFFSET")
+[[ -z "${ARMADA_DIRECT_ACCEL_SCALE:-}" ]] || args+=(--accel-scale "$ARMADA_DIRECT_ACCEL_SCALE")
+exec /usr/libexec/armada/armada-direct-motion "${args[@]}"

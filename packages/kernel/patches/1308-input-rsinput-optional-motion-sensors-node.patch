@@ -1,0 +1,105 @@
+From: cerroverb <84094990+cerroverb@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: optional motion sensors node for direct mode
+
+The gamepad IMU sits behind the Snapdragon Sensor Core, which only
+userspace (libssc) can read. Without InputPlumber, SDL and Steam pair a
+motion sensors evdev node with a gamepad only when both report the same
+uniq, rsinput sets none, and uinput cannot set one.
+
+Add a motion_sensors module parameter, off by default. When set, the
+gamepad gets uniq = the serdev device name and a second input device,
+"<gamepad name> Motion Sensors" (phys rsinput-gamepad/input1), is
+registered with the same uniq, INPUT_PROP_ACCELEROMETER, MSC_TIMESTAMP,
+accelerometer axes at 4096 per g and gyro axes at 16 per degree per
+second. A userspace service writes the IMU samples into that node.
+Modelled on steam_sensors_register() in drivers/hid/hid-steam.c.
+Without the parameter the driver behaves exactly as before.
+
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -26,6 +26,22 @@
+ 
+ module_param(rumble_enable, bool, 0660);
+ 
++/*
++ * Off by default. When set, the gamepad gets a uniq ID and a second input
++ * device, "<gamepad name> Motion Sensors", is registered with the same uniq.
++ * The IMU sits behind the Snapdragon Sensor Core, which only userspace can read
++ * (libssc), so a userspace service writes its samples into that node. SDL pairs
++ * a motion node with a gamepad by matching uniq. Modelled on
++ * steam_sensors_register() in drivers/hid/hid-steam.c.
++ */
++static bool motion_sensors;
++module_param(motion_sensors, bool, 0444);
++
++#define RSINPUT_ACCEL_RES_PER_G   4096
++#define RSINPUT_ACCEL_RANGE       32768
++#define RSINPUT_GYRO_RES_PER_DPS  16
++#define RSINPUT_GYRO_RANGE        32768
++
+ /* MCU release reference; independent of the calibrated evdev maximum. */
+ #define RSINPUT_TRIGGER_RELEASE 0x610
+ 
+@@ -134,6 +150,7 @@
+ struct rsinput_driver {
+     struct serdev_device *serdev;
+     struct input_dev *input;
++    struct input_dev *sensors;
+     struct regulator *vdd;
+     bool vdd_off;
+     u32 trigger_release;
+@@ -488,6 +505,41 @@
+     return 0;
+ }
+ 
++static int rsinput_sensors_register(struct rsinput_driver *drv)
++{
++    struct device *dev = &drv->serdev->dev;
++    struct input_dev *sensors;
++
++    drv->input->uniq = dev_name(dev);
++
++    sensors = devm_input_allocate_device(dev);
++    if (!sensors)
++        return -ENOMEM;
++
++    sensors->name = devm_kasprintf(dev, GFP_KERNEL, "%s Motion Sensors", drv->input->name);
++    if (!sensors->name)
++        return -ENOMEM;
++    sensors->phys = "rsinput-gamepad/input1";
++    sensors->uniq = drv->input->uniq;
++    sensors->id = drv->input->id;
++
++    __set_bit(INPUT_PROP_ACCELEROMETER, sensors->propbit);
++    __set_bit(EV_MSC, sensors->evbit);
++    __set_bit(MSC_TIMESTAMP, sensors->mscbit);
++
++    for (unsigned int axis = ABS_X; axis <= ABS_Z; axis++) {
++        input_set_abs_params(sensors, axis, -RSINPUT_ACCEL_RANGE, RSINPUT_ACCEL_RANGE, 0, 0);
++        input_abs_set_res(sensors, axis, RSINPUT_ACCEL_RES_PER_G);
++    }
++    for (unsigned int axis = ABS_RX; axis <= ABS_RZ; axis++) {
++        input_set_abs_params(sensors, axis, -RSINPUT_GYRO_RANGE, RSINPUT_GYRO_RANGE, 0, 0);
++        input_abs_set_res(sensors, axis, RSINPUT_GYRO_RES_PER_DPS);
++    }
++
++    drv->sensors = sensors;
++    return input_register_device(sensors);
++}
++
+ static int rsinput_probe(struct serdev_device *serdev) {
+     struct rsinput_driver *drv;
+     u32 gamepad_bus = 0;
+@@ -669,6 +721,12 @@
+         drv->input->ff->playback = rsinput_rumble_play;
+     }
+ 
++    if (motion_sensors) {
++        error = rsinput_sensors_register(drv);
++        if (error)
++            return error;
++    }
++
+     error = input_register_device(drv->input);
+     if (error)
+         return error;

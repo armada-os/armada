@@ -1,0 +1,57 @@
+From: cerroverb <84094990+cerroverb@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: optional Xbox face button codes
+
+The MCU top face button is reported as BTN_NORTH, which is the same code
+as BTN_X, and the left one as BTN_WEST (BTN_Y). SDL maps BTN_X to the left
+button and BTN_Y to the top one for every non-Sony pad, so on the raw node
+(no InputPlumber remap) X and Y arrive swapped.
+
+Add xbox_face_codes, off by default. When set, the top button sends BTN_Y
+and the left one BTN_X. InputPlumber keeps the stock codes.
+
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -37,6 +37,16 @@
+ static bool motion_sensors;
+ module_param(motion_sensors, bool, 0444);
+ 
++/*
++ * Off by default. The MCU reports the top face button as BTN_NORTH, which is the
++ * same code as BTN_X, and the left one as BTN_WEST (= BTN_Y). SDL maps BTN_X to
++ * the left button and BTN_Y to the top one for every non-Sony pad, so without a
++ * remapper such as InputPlumber the two arrive swapped. When set, the driver
++ * sends BTN_Y for the top button and BTN_X for the left one.
++ */
++static bool xbox_face_codes;
++module_param(xbox_face_codes, bool, 0444);
++
+ #define RSINPUT_ACCEL_RES_PER_G   4096
+ #define RSINPUT_ACCEL_RANGE       32768
+ #define RSINPUT_GYRO_RES_PER_DPS  16
+@@ -176,6 +186,17 @@
+     BTN_THUMBL,  BTN_THUMBR,    BTN_MODE,	   BTN_BACK
+ };
+ 
++static unsigned int rsinput_keycode(unsigned int index)
++{
++    unsigned int code = keymap[index];
++
++    if (xbox_face_codes && code == BTN_NORTH)
++        return BTN_Y;
++    if (xbox_face_codes && code == BTN_WEST)
++        return BTN_X;
++    return code;
++}
++
+ static uint8_t compute_checksum(const uint8_t *data, size_t len) {
+     uint8_t checksum = 0;
+ 
+@@ -322,7 +343,7 @@
+     bitmap_xor(&changes, &current_states, &prev_states, ARRAY_SIZE(keymap));
+ 
+     for_each_set_bit(i, &changes, ARRAY_SIZE(keymap)) {
+-        input_report_key(drv->input, keymap[i], (current_states & BIT(i)));
++        input_report_key(drv->input, rsinput_keycode(i), (current_states & BIT(i)));
+     }
+ 
+     int16_t raw_trig_l = (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8));

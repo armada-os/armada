@@ -22,3 +22,32 @@ advertises, so this can duplicate existing buttons but cannot add new ones.
 
 `armada-direct-input.service` starts it only while
 `/etc/armada/direct-input` exists, which `controller-type set direct` creates.
+
+## armada-direct-motion
+
+Gyro and accelerometer for the raw gamepad. The IMU sits behind the Snapdragon
+Sensor Core, so it reads it through libssc (loaded at runtime, the same calls
+as InputPlumber's SSC driver) and writes the samples into the motion sensors
+node that rsinput registers when loaded with `motion_sensors=1`
+(kernel patch 1308). SDL and Steam pair that node with the gamepad because
+both report the same uniq.
+
+`controller-type set direct` writes `/etc/modprobe.d/armada-direct.conf` and
+reloads rsinput. It always sets `xbox_face_codes=1` (kernel patch 1311; without
+InputPlumber SDL would otherwise swap X and Y) and `forward_paddles=1` (patch
+1312; the paddles reach the gamepad inside the kernel, and armada-direct-input
+then only does the Quick Access chord). It adds `motion_sensors=1` on devices
+whose profile sets `ARMADA_DIRECT_IMU_MATRIX`. That row-major matrix rotates the sensor axes into SDL's (X right, Y top, Z
+toward the player). Run `armada-direct-motion --raw` with the device flat,
+upright and on its left edge to measure it for a new board.
+
+An optional per-unit accelerometer correction goes in
+`/etc/armada/direct-imu.conf`:
+
+```
+ARMADA_DIRECT_ACCEL_OFFSET=-1.430,0.290,0.840
+ARMADA_DIRECT_ACCEL_SCALE=1.0152,1.0089,0.9955
+```
+
+Both are sensor-axis values from a six-position calibration (each axis up and
+down), applied as `(reading - offset) * scale` before the matrix.
