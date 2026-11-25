@@ -1,0 +1,183 @@
+From: cerroverb <84094990+cerroverb@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: optionally send Steam's Quick Access chord
+
+The bottom right button reports BTN_BACK, which SDL maps to no gamepad
+button, so without InputPlumber Steam ignores it and a userspace service
+had to turn it into the Guide + A chord Steam opens Quick Access with.
+
+Add qam_chord, off by default. When set, the driver sends the chord itself:
+Guide on press and A one step later, A released two steps after the button
+and Guide three steps after. The order and the 80 ms step follow
+InputPlumber's xpad target (src/input/target/xpad.rs, MIN_CHORD_TIME). The
+steps run from a delayed work, and a frame and a chord step never report in
+the middle of each other.
+
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -61,6 +61,27 @@
+ static unsigned int paddle_right = BTN_EAST;
+ module_param(paddle_right, uint, 0444);
+ 
++/*
++ * Off by default. The bottom right button reports BTN_BACK, which SDL maps to
++ * no gamepad button, so Steam ignores it. When set, the driver sends Steam's
++ * Quick Access chord for it instead: Guide on press and A one step later, A
++ * released two steps after the button and Guide three steps after, so Steam
++ * always sees A inside a held Guide. The order and the 80 ms step follow
++ * InputPlumber's xpad target (src/input/target/xpad.rs, MIN_CHORD_TIME).
++ */
++static bool qam_chord;
++module_param(qam_chord, bool, 0444);
++
++#define RSINPUT_CHORD_STEP_MS 80
++#define RSINPUT_CHORD_QUEUE   8
++
++/* One key change of the Quick Access chord, sent once jiffies reaches due. */
++struct rsinput_chord_step {
++    unsigned long due;
++    unsigned int code;
++    int value;
++};
++
+ #define RSINPUT_ACCEL_RES_PER_G   4096
+ #define RSINPUT_ACCEL_RANGE       32768
+ #define RSINPUT_GYRO_RES_PER_DPS  16
+@@ -192,6 +213,11 @@
+     struct work_struct rumble_work;
+     int rumble_effect_id;
+     int rumble_val;
++    /* Held while a frame or a chord step is reported, so neither splits the other. */
++    spinlock_t report_lock;
++    struct delayed_work chord_work;
++    struct rsinput_chord_step chord[RSINPUT_CHORD_QUEUE];
++    unsigned int chord_len;
+ };
+ 
+ static const unsigned int keymap[] = {
+@@ -212,6 +238,69 @@
+     return code;
+ }
+ 
++/* Called with report_lock held. Sends all queued steps now, in order. */
++static void rsinput_chord_flush(struct rsinput_driver *drv)
++{
++    for (unsigned int i = 0; i < drv->chord_len; i++) {
++        input_report_key(drv->input, drv->chord[i].code, drv->chord[i].value);
++        input_sync(drv->input);
++    }
++    drv->chord_len = 0;
++}
++
++/*
++ * Called with report_lock held. A full queue (the button pressed faster than
++ * the steps drain) is sent at once first, so every press keeps its release.
++ */
++static void rsinput_chord_queue(struct rsinput_driver *drv, bool pressed)
++{
++    unsigned long now = jiffies;
++    unsigned long step = msecs_to_jiffies(RSINPUT_CHORD_STEP_MS);
++    const struct rsinput_chord_step press[] = {
++        { now, BTN_MODE, 1 },
++        { now + step, BTN_SOUTH, 1 },
++    };
++    const struct rsinput_chord_step release[] = {
++        { now + 2 * step, BTN_SOUTH, 0 },
++        { now + 3 * step, BTN_MODE, 0 },
++    };
++    const struct rsinput_chord_step *steps = pressed ? press : release;
++
++    if (drv->chord_len + 2 > RSINPUT_CHORD_QUEUE)
++        rsinput_chord_flush(drv);
++    for (int i = 0; i < 2; i++)
++        drv->chord[drv->chord_len++] = steps[i];
++    mod_delayed_work(system_wq, &drv->chord_work, 0);
++}
++
++static void rsinput_chord_work(struct work_struct *work)
++{
++    struct rsinput_driver *drv = container_of(to_delayed_work(work),
++                                              struct rsinput_driver, chord_work);
++    unsigned long flags, next = 0;
++    unsigned int kept = 0;
++
++    spin_lock_irqsave(&drv->report_lock, flags);
++    for (unsigned int i = 0; i < drv->chord_len; i++) {
++        struct rsinput_chord_step step = drv->chord[i];
++
++        if (time_after_eq(jiffies, step.due)) {
++            input_report_key(drv->input, step.code, step.value);
++            input_sync(drv->input);
++        } else {
++            if (!kept || time_before(step.due, next))
++                next = step.due;
++            drv->chord[kept++] = step;
++        }
++    }
++    drv->chord_len = kept;
++    spin_unlock_irqrestore(&drv->report_lock, flags);
++
++    if (kept)
++        mod_delayed_work(system_wq, &drv->chord_work,
++                         time_after(next, jiffies) ? next - jiffies : 0);
++}
++
+ static uint8_t compute_checksum(const uint8_t *data, size_t len) {
+     uint8_t checksum = 0;
+ 
+@@ -332,6 +421,7 @@
+     static unsigned long prev_states;
+     unsigned long keys = data[FRAME_POS_DATA_1] | (data[FRAME_POS_DATA_2] << 8);
+     unsigned long current_states = keys, changes;
++    unsigned long flags;
+     int i;
+ 
+     if (update_params) {
+@@ -358,8 +448,12 @@
+ 
+     bitmap_xor(&changes, &current_states, &prev_states, ARRAY_SIZE(keymap));
+ 
++    spin_lock_irqsave(&drv->report_lock, flags);
+     for_each_set_bit(i, &changes, ARRAY_SIZE(keymap)) {
+-        input_report_key(drv->input, rsinput_keycode(i), (current_states & BIT(i)));
++        if (qam_chord && keymap[i] == BTN_BACK)
++            rsinput_chord_queue(drv, current_states & BIT(i));
++        else
++            input_report_key(drv->input, rsinput_keycode(i), (current_states & BIT(i)));
+     }
+ 
+     int16_t raw_trig_l = (data[FRAME_POS_DATA_3] | (data[FRAME_POS_DATA_4] << 8));
+@@ -394,6 +488,7 @@
+     input_report_abs(drv->input, ABS_RY, drv->invert_ry ? ry * (-1) : ry);
+ 
+     input_sync(drv->input);
++    spin_unlock_irqrestore(&drv->report_lock, flags);
+     prev_states = keys;
+ 
+     } else {
+@@ -717,6 +812,8 @@
+     drv = devm_kzalloc(&serdev->dev, sizeof(*drv), GFP_KERNEL);
+     if (!drv)
+     return -ENOMEM;
++    spin_lock_init(&drv->report_lock);
++    INIT_DELAYED_WORK(&drv->chord_work, rsinput_chord_work);
+ 
+     drv->invert_x = device_property_present(&serdev->dev, "invert-x");
+     drv->invert_y = device_property_present(&serdev->dev, "invert-y");
+@@ -854,7 +951,8 @@
+ 
+     __set_bit(EV_KEY, drv->input->evbit);
+     for (int i = 0; i < ARRAY_SIZE(keymap); i++)
+-        input_set_capability(drv->input, EV_KEY, keymap[i]);
++        if (!(qam_chord && keymap[i] == BTN_BACK))
++            input_set_capability(drv->input, EV_KEY, keymap[i]);
+     if (forward_paddles) {
+         rsinput_paddle_codes_check(&serdev->dev);
+         input_set_capability(drv->input, EV_KEY, paddle_left);
+@@ -937,6 +1035,7 @@
+ 
+     rsinput_paddles_stop();
+     serdev_device_close(serdev);
++    cancel_delayed_work_sync(&drv->chord_work);
+     input_unregister_device(drv->input);
+     /* flush, not cancel: unregister queues the final rumble stop */
+     if (drv->rumble_work.func)

@@ -18,14 +18,14 @@ CONTROLLER_TYPES = {
     "direct": "Direct (no InputPlumber)",
 }
 # Direct mode: InputPlumber masked, the raw rsinput gamepad goes to SDL and Steam.
-# 65-armada-direct-input.rules and armada-direct-input.service act only while this exists.
+# 65-armada-direct-input.rules acts only while this exists.
 DIRECT = "direct"
 DIRECT_FLAG = Path("/etc/armada/direct-input")
-DIRECT_SERVICE = "armada-direct-input.service"
 # rsinput options for direct mode: Xbox face codes (SDL would swap X and Y without
-# InputPlumber), back paddles forwarded in the kernel, and on devices whose profile
-# sets ARMADA_DIRECT_IMU_MATRIX a motion node that armada-direct-motion fills from
-# the Snapdragon Sensor Core.
+# InputPlumber), back paddles forwarded in the kernel, the Quick Access chord for the
+# bottom right button sent by the kernel, and on devices whose profile sets
+# ARMADA_DIRECT_IMU_MATRIX a motion node that armada-direct-motion fills from the
+# Snapdragon Sensor Core.
 MOTION_SERVICE = "armada-direct-motion.service"
 DIRECT_MODPROBE = Path("/etc/modprobe.d/armada-direct.conf")
 # What the back paddles send in direct mode ("left=a", "right=b"). They are real
@@ -213,7 +213,7 @@ def load_paddles():
 def direct_options():
     paddles = load_paddles()
     options = (
-        "options rsinput xbox_face_codes=1 forward_paddles=1"
+        "options rsinput xbox_face_codes=1 forward_paddles=1 qam_chord=1"
         f" paddle_left={PADDLE_BUTTONS[paddles['left']]} paddle_right={PADDLE_BUTTONS[paddles['right']]}"
     )
     if device_env_value("ARMADA_DIRECT_IMU_MATRIX"):
@@ -233,13 +233,11 @@ def enable_direct():
         DIRECT_MODPROBE.write_text(options, encoding="utf-8")
         reload_rsinput()
     reload_direct_nodes()
-    systemctl("restart", DIRECT_SERVICE)
     systemctl("restart", MOTION_SERVICE)
 
 
 def disable_direct():
     systemctl("stop", MOTION_SERVICE)
-    systemctl("stop", DIRECT_SERVICE)
     DIRECT_FLAG.unlink(missing_ok=True)
     if DIRECT_MODPROBE.exists():
         DIRECT_MODPROBE.unlink()

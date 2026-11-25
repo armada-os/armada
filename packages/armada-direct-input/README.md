@@ -1,27 +1,21 @@
 # Armada Direct Input
 
-`armada-direct-input` runs in the direct controller mode, where InputPlumber is
-masked and games and Steam read the raw rsinput gamepad node. It writes into
-that node, so everything still sees one controller:
+The direct controller mode masks InputPlumber, so games and Steam read the raw
+rsinput gamepad node. The kernel driver does the extra buttons itself, so no
+userspace process sits between any button and the game.
 
-| Input | Written as |
+| Input | Sent by rsinput as |
 |---|---|
-| Left back paddle (`BTN_Z` on `gpio-keys-paddles`) | `BTN_SOUTH` (A) |
-| Right back paddle (`BTN_C` on `gpio-keys-paddles`) | `BTN_EAST` (B) |
-| Bottom right button (`BTN_BACK` on the gamepad) | Guide, then A 80 ms later, while held |
+| Left back paddle (`BTN_Z` on `gpio-keys-paddles`) | `BTN_SOUTH` (A), patch 1312 `forward_paddles` |
+| Right back paddle (`BTN_C` on `gpio-keys-paddles`) | `BTN_EAST` (B), patch 1312 `forward_paddles` |
+| Bottom right button (`BTN_BACK`) | Guide, then A 80 ms later, patch 1313 `qam_chord` |
 
 SDL maps no gamepad button to `BTN_BACK`, so Steam ignores that button on the
 raw node. Guide plus A is Steam's Quick Access Menu chord; the order and the
 80 ms steps are the ones InputPlumber's xpad target uses. With Steam Input off,
 a game also sees that A press.
 
-The gamepad is found by its phys path, `rsinput-gamepad/input0`. The paddles
-are optional, so a board without `gpio-keys-paddles` gets only the Quick
-Access chord. The kernel accepts only codes the gamepad node already
-advertises, so this can duplicate existing buttons but cannot add new ones.
-
-`armada-direct-input.service` starts it only while
-`/etc/armada/direct-input` exists, which `controller-type set direct` creates.
+This package holds the one service direct mode still needs, the gyro.
 
 ## armada-direct-motion
 
@@ -35,8 +29,8 @@ both report the same uniq.
 `controller-type set direct` writes `/etc/modprobe.d/armada-direct.conf` and
 reloads rsinput. It always sets `xbox_face_codes=1` (kernel patch 1311; without
 InputPlumber SDL would otherwise swap X and Y) and `forward_paddles=1` (patch
-1312; the paddles reach the gamepad inside the kernel, and armada-direct-input
-then only does the Quick Access chord), with the paddle buttons from
+1312; the paddles reach the gamepad inside the kernel) and `qam_chord=1` (patch
+1313), with the paddle buttons from
 `/etc/armada/direct-paddles.conf`. `controller-type paddles <left> <right>`
 sets them by name (a, b, x, y, lb, rb, select, start, guide, l3, r3, up, down,
 left, right; default a and b) and reloads rsinput when direct mode is on. The

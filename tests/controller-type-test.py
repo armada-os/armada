@@ -34,7 +34,7 @@ assert calls == [[
     ct.IFACE, "SetTargetDevices", "as", "3", "deck-uhid", "keyboard", "mouse",
 ]], calls
 
-# Direct mode masks InputPlumber, starts the injector and skips the D-Bus apply.
+# Direct mode masks InputPlumber, starts the motion service and skips the D-Bus apply.
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
     ct.DIRECT_FLAG = tmp / "direct-input"
@@ -54,12 +54,11 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not stale.exists()
     assert ["systemctl", "mask", "--now", "inputplumber.service"] in calls, calls
     assert ["udevadm", "trigger", "--action=add", "/sys/class/input/event5"] in calls, calls
-    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 paddle_left=304 paddle_right=305 motion_sensors=1\n"
+    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 qam_chord=1 paddle_left=304 paddle_right=305 motion_sensors=1\n"
     # rsinput reloads with the motion node before udev re-adds the gamepad.
     assert calls.index(["modprobe", "-r", "rsinput"]) < calls.index(["modprobe", "rsinput"]) \
         < calls.index(["udevadm", "trigger", "--action=add", "/sys/class/input/event5"]), calls
-    assert calls[-2:] == [["systemctl", "restart", "armada-direct-input.service"],
-                          ["systemctl", "restart", "armada-direct-motion.service"]], calls
+    assert calls[-1] == ["systemctl", "restart", "armada-direct-motion.service"], calls
     assert not any(c[0] == "busctl" for c in calls), calls
     assert ct.load_type(ct.available_types()) == "direct"
 
@@ -82,7 +81,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not ct.DIRECT_MODPROBE.exists()
     assert ["modprobe", "rsinput"] in calls, calls
     assert calls.index(["systemctl", "stop", "armada-direct-motion.service"]) \
-        < calls.index(["systemctl", "stop", "armada-direct-input.service"]) \
         < calls.index(["systemctl", "unmask", "inputplumber.service"]) \
         < calls.index(["systemctl", "start", "inputplumber.service"]), calls
     assert calls[-1][0] == "busctl", calls
@@ -100,7 +98,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ct.device_env_value = lambda name: ""
     calls.clear()
     assert ct.main(["controller-type", "set", "direct"]) == 0
-    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 paddle_left=304 paddle_right=305\n"
+    assert ct.DIRECT_MODPROBE.read_text(encoding="utf-8") == "options rsinput xbox_face_codes=1 forward_paddles=1 qam_chord=1 paddle_left=304 paddle_right=305\n"
     assert ["modprobe", "rsinput"] in calls, calls
     calls.clear()
     assert ct.main(["controller-type", "set", "deck-uhid"]) == 0
