@@ -1,0 +1,24 @@
+From: Armada contributors
+Subject: [PATCH] konkr-pocket-fit-elite: turn off SSC island mode
+
+Same SM8750 sensor config as the Odin 3, where s2idle entered right after
+a sensor close hangs the SoC with island on.
+
+--- a/sensors/config/pakala_power_0.json
++++ b/sensors/config/pakala_power_0.json
+@@ -8,7 +8,7 @@
+     ".island":{
+       "owner": "power_manager",
+       "enable_island":{ "type": "int", "ver": "0",
+-        "data": "1"
++        "data": "0"
+       }
+     }
+   }
+--- a/sensors/registry/pakala_power_0.json.power.island
++++ b/sensors/registry/pakala_power_0.json.power.island
+@@ -1 +1 @@
+-{"power.island":{"owner":"power_manager","enable_island":{"type":"int","ver":"0","data":"1"}}}
+\ No newline at end of file
++{"power.island":{"owner":"power_manager","enable_island":{"type":"int","ver":"0","data":"0"}}}
+\ No newline at end of file
