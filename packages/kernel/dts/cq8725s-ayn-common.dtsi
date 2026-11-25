@@ -258,14 +258,14 @@
 			label = "Back Paddle M1";
 			linux,code = <BTN_Z>;
 			gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
-			debounce-interval = <15>;
+			debounce-interval = <1>;
 		};
 
 		key-paddle-m2 {
 			label = "Back Paddle M2";
 			linux,code = <BTN_C>;
 			gpios = <&tlmm 7 GPIO_ACTIVE_LOW>;
-			debounce-interval = <15>;
+			debounce-interval = <1>;
 		};
 	};
 
