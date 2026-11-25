@@ -1,0 +1,81 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] pipewire: skip capture rendering while the stream is inactive
+
+The thread-safe buffer-sharing change retains displaced pending buffers
+for reuse. A paused stream can keep those buffers allocated while its
+process callback stops running. Continuing to paint then recycles the
+same buffers and performs capture GPU work without a consuming stream.
+
+Check the atomic streaming state before rendering, after the existing
+stale-buffer cleanup and dequeue. Keep the compositor callback active so
+removed buffers are still released while paused. Clear the streaming
+state on error and disconnect as well. Rendering already in flight may
+finish; subsequent frames wait for streaming to resume.
+
+Read the loop-owned copying flag before publishing a shared buffer as
+stale. Once that atomic pointer is cleared, the compositor can release
+the buffer, so the remove callback must not read the object afterward.
+
+diff --git a/src/pipewire.hpp b/src/pipewire.hpp
+--- a/src/pipewire.hpp
++++ b/src/pipewire.hpp
+@@ -57,6 +57,7 @@
+ 
+ bool init_pipewire(void);
+ uint32_t get_pipewire_stream_node_id(void);
++bool pipewire_is_streaming();
+ struct pipewire_buffer *dequeue_pipewire_buffer(void);
+ void pipewire_destroy_buffer(struct pipewire_buffer *buffer);
+ struct pipewire_buffer *push_pipewire_buffer(struct pipewire_buffer *buffer);
+diff --git a/src/pipewire.cpp b/src/pipewire.cpp
+--- a/src/pipewire.cpp
++++ b/src/pipewire.cpp
+@@ -339,6 +339,7 @@
+ 		break;
+ 	case PW_STREAM_STATE_ERROR:
+ 	case PW_STREAM_STATE_UNCONNECTED:
++		state->streaming = false;
+ 		state->running = false;
+ 		break;
+ 	default:
+@@ -597,9 +598,12 @@
+ {
+ 	struct pipewire_buffer *buffer = (struct pipewire_buffer *) pw_buffer->user_data;
+ 
++	// Publishing nullptr lets the compositor destroy a shared buffer immediately.
++	// Read loop-owned state first and do not access a shared buffer afterward.
++	const bool copying = buffer->copying;
+ 	buffer->buffer = nullptr;
+ 
+-	if (!buffer->copying) {
++	if (!copying) {
+ 		destroy_buffer(buffer);
+ 	}
+ }
+@@ -756,6 +760,11 @@
+ 	return pipewire_state.stream_node_id;
+ }
+ 
++bool pipewire_is_streaming()
++{
++	return pipewire_state.streaming;
++}
++
+ struct pipewire_buffer *dequeue_pipewire_buffer(void)
+ {
+ 	struct pipewire_state *state = &pipewire_state;
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -2926,6 +2926,11 @@
+ 		s_pPipewireBuffer = dequeue_pipewire_buffer();
+ 
+ 	if ( !s_pPipewireBuffer || !s_pPipewireBuffer->texture )
++		return;
++
++	// Paused streams can retain valid buffers. Keep the cleanup above active,
++	// but do not render or submit capture frames until the stream resumes.
++	if ( !pipewire_is_streaming() )
+ 		return;
+ 
+ 	struct FrameInfo_t frameInfo = {};
