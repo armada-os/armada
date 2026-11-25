@@ -1,0 +1,44 @@
+From: Diogo Trindade <diogotr7@gmail.com>
+Subject: [PATCH] input: rsinput: add a report-period device property
+
+The MCU report period is hard-coded to 2 (about 250 Hz), but firmware revisions
+reach different rates at lower periods. Keep 2 as the default and let a device
+tree select another value.
+
+Taken from diogotr7/armada commit 94dc4b43 (branch rsinput-max-rate-poc),
+modified: values above 100 are refused with a warning, the same limit as
+the test knob in that branch.
+
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -144,6 +144,7 @@
+     bool invert_y;
+     bool invert_rx;
+     bool invert_ry;
++    u32 report_period;
+     uint8_t rx_buf[1024];
+     size_t rx_len;
+     uint8_t sequence_number;
+@@ -237,7 +238,8 @@
+         DATA_COMMOD_SET_PAR,
+         0x01,
+         0x00, 0x00, 0x00, 0x06,
+-        0x00, 0x00, 0x00, 0x02
++        drv->report_period >> 24, (drv->report_period >> 16) & 0xff,
++        (drv->report_period >> 8) & 0xff, drv->report_period & 0xff
+     };
+     error = rsinput_send_command(drv, CMD_COMMOD, mcu_params, sizeof(mcu_params));
+     if (error < 0) {
+@@ -562,6 +564,12 @@
+ 
+     drv->trigger_release = RSINPUT_TRIGGER_RELEASE;
+     device_property_read_u32(&serdev->dev, "trigger-release", &drv->trigger_release);
++    drv->report_period = 2;
++    device_property_read_u32(&serdev->dev, "report-period", &drv->report_period);
++    if (drv->report_period > 100) {
++        dev_warn(&serdev->dev, "report-period %u out of range, using 2\n", drv->report_period);
++        drv->report_period = 2;
++    }
+ 
+     drv->vdd = devm_regulator_get(&serdev->dev, "vdd");
+     if (IS_ERR(drv->vdd)) {

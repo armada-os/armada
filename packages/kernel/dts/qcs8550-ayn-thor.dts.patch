@@ -99,3 +99,25 @@ suspended with the lid closed do not wake the device.
 +	/* Ignore presses while suspended with the lid closed. */
 +	lid-switch = <&lid_switch>;
 +};
+
+From: cerroverb <84094990+cerroverb@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: qcom: ayn-thor: run the gamepad MCU at its maximum report rate
+
+report-period 0 (rsinput patch 1309) takes the Thor gamepad from about 167
+to about 215 reports per second. The Thor UART line still goes idle between
+frames at that rate, so it needs no shorter RX DMA transfer.
+
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
+@@ -484,3 +484,11 @@
+ 	/* Ignore presses while suspended with the lid closed. */
+ 	lid-switch = <&lid_switch>;
+ };
++
++/*
++ * MCU maximum, about 215 reports per second instead of 167. Thor only: the other
++ * boards sharing qcs8550-ayn-common.dtsi are untested at this period.
++ */
++&gamepad {
++	report-period = <0>;
++};

@@ -1151,11 +1151,19 @@
 };
 
 &uart15 {
+	/*
+	 * The gamepad MCU streams 23-byte frames with no idle gap long enough for
+	 * the RX stale timeout at report-period 0, so short transfers deliver each
+	 * frame instead of one burst per 2048 bytes (about every 258 ms).
+	 */
+	qcom,rx-dma-len = <4>;
 	status = "okay";
 
 	gamepad {
 		compatible = "gamepad,rsinput";
 		axis-range = <1024>;
+		/* MCU maximum, about 344 reports per second instead of 250. */
+		report-period = <0>;
 
 		gamepad-bus = <0x0003>;
 		gamepad-vid = <0x2020>;
