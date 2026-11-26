@@ -296,7 +296,7 @@ export const en = {
   "experimental.dualScreenDescription": "Experimental features for dual screen handhelds.",
   "experimental.desktopDescription": "Choose Plasma Desktop or Mobile for desktop mode.",
   "experimental.sleepDescription": "Changes how the handheld suspends and resumes.",
-  "experimental.miscellaneous": "Miscellaneous",
+  "settings.miscellaneous": "Misc",
   "experimental.usbDescription": "Transfer files using the MTP protocol.",
   "about.localLogs": "Local Logs",
   "about.logDirectory": "Log directory",

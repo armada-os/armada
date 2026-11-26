@@ -298,7 +298,7 @@ export const ptPT = {
   "experimental.dualScreenDescription": "Recursos experimentais para dispositivos portáteis com dois ecrãs.",
   "experimental.desktopDescription": "Escolha Plasma Desktop ou Mobile para o ambiente de trabalho.",
   "experimental.sleepDescription": "Altera a forma como o dispositivo entra em suspensão e retoma.",
-  "experimental.miscellaneous": "Diversos",
+  "settings.miscellaneous": "Diversos",
   "experimental.usbDescription": "Transfira ficheiros utilizando o protocolo MTP.",
   "about.localLogs": "Registos locais",
   "about.logDirectory": "Pasta de registos",
