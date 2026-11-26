@@ -146,7 +146,7 @@ function PanelCalibrationModal({ closeModal }: { closeModal?: () => void }) {
       <ArmadaDialogHeader>{t("display.label")}</ArmadaDialogHeader>
       <DialogBody>
         <DialogControlsSection>
-          <ReadOnlyRow label={measured} />
+          <ReadOnlyRow label={<span className="armada-measured-rate">{measured}</span>} />
           <ButtonRow layout="below" onClick={auto} disabled={controlsDisabled}>
             {t(busy === "calibrating" ? "display.calibrating" : "display.autoCalibrate")}
           </ButtonRow>

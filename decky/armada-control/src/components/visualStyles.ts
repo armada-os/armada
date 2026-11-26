@@ -1,6 +1,7 @@
 import { theme } from "../theme";
 
 export const visualStyles = `
+  .armada-control-dialog .armada-measured-rate { font-size: ${theme.textDisplay}; font-weight: 600; }
   .armada-calibration-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

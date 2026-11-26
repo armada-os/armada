@@ -17,6 +17,15 @@ export function useStickyHeader(root: RefObject<HTMLDivElement | null>, header: 
     const padding = scroller ? bindScrollPadding(scroller) : null;
     // Decky's sticky title has no size token; measure it instead of fixing a height.
     const update = () => {
+      let background = title || host;
+      while (background) {
+        const color = navigation.ownerDocument.defaultView?.getComputedStyle(background).backgroundColor;
+        if (color && color !== "transparent" && color !== "rgba(0, 0, 0, 0)") {
+          element.style.setProperty("--armada-native-surface", color);
+          break;
+        }
+        background = background.parentElement;
+      }
       const titleHeight = title?.offsetHeight || 0;
       const titleLayer = title ? parseInt(navigation.ownerDocument.defaultView?.getComputedStyle(title).zIndex || "0", 10) || 0 : 0;
       const inset = titleHeight + navigation.offsetHeight;
@@ -37,9 +46,18 @@ export function useStickyHeader(root: RefObject<HTMLDivElement | null>, header: 
     if (title) observer.observe(title);
     observer.observe(navigation);
     if (host) observer.observe(host, { box: "border-box" });
+    const MutationObserver = navigation.ownerDocument.defaultView?.MutationObserver;
+    const themeObserver = MutationObserver ? new MutationObserver(update) : null;
+    for (let ancestor = host; ancestor; ancestor = ancestor.parentElement) {
+      themeObserver?.observe(ancestor, { attributes: true, attributeFilter: ["class", "style"] });
+    }
+    if (title) themeObserver?.observe(title, { attributes: true, attributeFilter: ["class", "style"] });
+    if (navigation.ownerDocument.head) themeObserver?.observe(navigation.ownerDocument.head, { childList: true, subtree: true, characterData: true });
     return () => {
       observer.disconnect();
+      themeObserver?.disconnect();
       padding?.restore();
+      element.style.removeProperty("--armada-native-surface");
       element.style.removeProperty("--armada-native-content-padding");
       element.style.removeProperty("--armada-native-title-height");
       element.style.removeProperty("--armada-tab-header-layer");
