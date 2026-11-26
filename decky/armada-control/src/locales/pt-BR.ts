@@ -291,6 +291,7 @@ export const ptBR = {
   "profiles.otherSettings": "Outros",
   "controller.emulationTitle": "Emulação de controle",
   "controller.emulationDescription": "Define como a Steam reconhece o controle integrado.",
+  "controller.gyroTitle": "Giroscópio",
   "controller.calibrationTitle": "Calibração",
   "controller.lastCalibrated": "Última calibração",
   "experimental.dualScreenTitle": "Recursos de duas telas",

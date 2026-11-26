@@ -289,6 +289,7 @@ export const en = {
   "profiles.otherSettings": "Others",
   "controller.emulationTitle": "Controller Emulation",
   "controller.emulationDescription": "Defines how Steam recognizes the integrated controller.",
+  "controller.gyroTitle": "Gyroscope",
   "controller.calibrationTitle": "Calibration",
   "controller.lastCalibrated": "Last calibrated",
   "experimental.dualScreenTitle": "Dual Screen Features",

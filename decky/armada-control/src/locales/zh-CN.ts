@@ -291,6 +291,7 @@ export const zhCN = {
   "profiles.otherSettings": "其他",
   "controller.emulationTitle": "控制器模拟",
   "controller.emulationDescription": "设置 Steam 如何识别内置控制器。",
+  "controller.gyroTitle": "陀螺仪",
   "controller.calibrationTitle": "校准",
   "controller.lastCalibrated": "上次校准",
   "experimental.dualScreenTitle": "双屏功能",

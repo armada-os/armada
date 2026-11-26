@@ -291,6 +291,7 @@ export const ptPT = {
   "profiles.otherSettings": "Outros",
   "controller.emulationTitle": "Emulação de comando",
   "controller.emulationDescription": "Define como a Steam reconhece o comando integrado.",
+  "controller.gyroTitle": "Giroscópio",
   "controller.calibrationTitle": "Calibração",
   "controller.lastCalibrated": "Última calibração",
   "experimental.dualScreenTitle": "Recursos de dois ecrãs",
