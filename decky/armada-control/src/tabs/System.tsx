@@ -83,6 +83,17 @@ export function System({ config, setConfig, logsState, savingLogs, setSavingLogs
   if (logsState.loading || (!logsState.value && !logsState.error)) return <LoadingState label={t("common.loadingSettings")} />;
 
   return <div>
+    {config.panelCalibrationSupported ? <PanelSection title={t("settings.display")}>
+      <PanelCalibration supported={config.panelCalibrationSupported} />
+    </PanelSection> : null}
+    {config.chargingFanSupported ? <PanelSection title={t("settings.charging")}>
+      <SliderEdit label={t("settings.chargingFanSpeed")} value={pwmToPercent(config.chargingFanPwm)} min={0} max={100} step={1} onChange={(value) => setChargingFanPwm(percentToPwm(value))} />
+    </PanelSection> : null}
+    <PanelSection title={t("settings.sleepMode")}>
+      <SectionDescription>{t("settings.sleepDescription")}</SectionDescription>
+      <SelectEdit value={config.sleepMode || "s2idle"} options={config.sleepModes.map(option => ({ ...option, label: translateLabel(option.label) }))}
+        onChange={value => saveSleepMode(config, setConfig, value, error => toaster.toast({ title: t("settings.sleepModeError"), body: String(error) }))} />
+    </PanelSection>
     <PanelSection title={t("settings.downloads")}>
       <ToggleRow
         label={t("settings.lowPowerDownloads")}
@@ -98,15 +109,6 @@ export function System({ config, setConfig, logsState, savingLogs, setSavingLogs
         disabled={saving}
         onChange={(enabled) => { void applyDownloads("onBattery", enabled, () => setLowPowerDownloadsOnBattery(enabled)); }}
       /> : null}
-    </PanelSection>
-    {config.chargingFanSupported || config.panelCalibrationSupported ? <PanelSection title={t("settings.system")}>
-      {config.chargingFanSupported ? <SliderEdit label={t("settings.chargingFanSpeed")} value={pwmToPercent(config.chargingFanPwm)} min={0} max={100} step={1} onChange={(value) => setChargingFanPwm(percentToPwm(value))} /> : null}
-      <PanelCalibration supported={config.panelCalibrationSupported} />
-    </PanelSection> : null}
-    <PanelSection title={t("settings.sleepMode")}>
-      <SectionDescription>{t("experimental.sleepDescription")}</SectionDescription>
-      <SelectEdit value={config.sleepMode || "s2idle"} options={config.sleepModes.map(option => ({ ...option, label: translateLabel(option.label) }))}
-        onChange={value => saveSleepMode(config, setConfig, value, error => toaster.toast({ title: t("settings.sleepModeError"), body: String(error) }))} />
     </PanelSection>
     <SleepLogs state={logsState} saving={savingLogs} setSaving={setSavingLogs} />
   </div>;

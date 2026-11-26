@@ -32,14 +32,14 @@ export function SleepLogs({ state, saving, setSaving }: {
   if (loading || (!logs && !error)) return <LoadingState label={t("common.loadingSettings")} />;
 
   return (
-      <PanelSection title={t("about.localLogs")}>
-        {error ? <SupportingText className="armada-note-error">{t("about.loadingError")}: {error}</SupportingText> : null}
+      <PanelSection title={t("settings.localLogs")}>
+        {error ? <SupportingText className="armada-note-error">{t("settings.logsLoadingError")}: {error}</SupportingText> : null}
         {error ? <ButtonRow layout="below" onClick={() => { void refresh(); }}>{t("common.retry")}</ButtonRow> : null}
         {logs ? <>
-          <ReadOnlyRow label={t("about.logDirectory")} description={logs.directory || t("common.unknown")} />
+          <ReadOnlyRow label={t("settings.logDirectory")} description={logs.directory || t("common.unknown")} />
           <ToggleRow
             label={t("settings.sleepLogs")}
-            description={t("about.sleepLogsDescription")}
+            description={t("settings.sleepLogsDescription")}
             value={logs.enabled}
             disabled={saving}
             onChange={(enabled) => { void setEnabled(enabled); }}

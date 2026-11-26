@@ -87,9 +87,35 @@ export function Settings({ config, setConfig }: {
 
   return (
     <>
+      <PanelSection title={t("settings.miscellaneous")}>
+        <ToggleRow label={t("settings.enableSsh")} value={config.sshEnabled} onChange={(enabled) => saveSshEnabled(config, setConfig, enabled)} />
+        <ToggleRow
+          label={t("settings.usbFileTransfer")}
+          description={config.mtpEnabled ? t("settings.enabledUntilShutdown") : t("settings.usbDescription")}
+          value={!!config.mtpEnabled}
+          onChange={setMtpEnabled}
+        />
+        <ToggleRow
+          label={t("settings.swipeGestures")}
+          description={t("settings.swipeGesturesDescription")}
+          value={config.swipeGesturesEnabled}
+          disabled={swipeGesturesSaving}
+          onChange={setSwipeGesturesEnabled}
+        />
+      </PanelSection>
+      {(config.desktopModes?.length || 0) > 1 ? (
+        <PanelSection title={t("settings.desktopMode")}>
+          <SectionDescription>{t("settings.desktopDescription")}</SectionDescription>
+          <SelectEdit
+            value={config.desktopMode || "desktop"}
+            options={(config.desktopModes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
+            onChange={setDesktopMode}
+          />
+        </PanelSection>
+      ) : null}
       {config.bottomScreenSupported ? (
-        <PanelSection title={t("experimental.dualScreenTitle")}>
-          <SectionDescription>{t("experimental.dualScreenDescription")}</SectionDescription>
+        <PanelSection title={t("settings.dualScreenTitle")}>
+          <SectionDescription>{t("settings.dualScreenDescription")}</SectionDescription>
           <ToggleRow
             label={t("settings.bottomScreen")}
             description={t("settings.bottomScreenDescription")}
@@ -108,32 +134,6 @@ export function Settings({ config, setConfig }: {
           ) : null}
         </PanelSection>
       ) : null}
-      {(config.desktopModes?.length || 0) > 1 ? (
-        <PanelSection title={t("settings.desktopMode")}>
-          <SectionDescription>{t("experimental.desktopDescription")}</SectionDescription>
-          <SelectEdit
-            value={config.desktopMode || "desktop"}
-            options={(config.desktopModes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
-            onChange={setDesktopMode}
-          />
-        </PanelSection>
-      ) : null}
-      <PanelSection title={t("settings.miscellaneous")}>
-        <ToggleRow label={t("settings.enableSsh")} value={config.sshEnabled} onChange={(enabled) => saveSshEnabled(config, setConfig, enabled)} />
-        <ToggleRow
-          label={t("settings.usbFileTransfer")}
-          description={config.mtpEnabled ? t("settings.enabledUntilShutdown") : t("experimental.usbDescription")}
-          value={!!config.mtpEnabled}
-          onChange={setMtpEnabled}
-        />
-        <ToggleRow
-          label={t("settings.swipeGestures")}
-          description={t("settings.swipeGesturesDescription")}
-          value={config.swipeGesturesEnabled}
-          disabled={swipeGesturesSaving}
-          onChange={setSwipeGesturesEnabled}
-        />
-      </PanelSection>
     </>
   );
 }
