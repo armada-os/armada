@@ -92,7 +92,11 @@ export const styles = `
       ${descriptionStyles}
       ${finalFieldStyles}
       :is(.armada-control-tabs, .armada-control-dialog) ${nativeField}:has([role="slider"]) {
-        --gamepad-slider-value-min-width: max-content;
+        --gamepad-slider-value-min-width: 3ch;
+      }
+      :is(.armada-control-tabs, .armada-control-dialog) ${nativeField}:has([role="slider"]) [id$="_Label"] > [aria-hidden="true"] {
+        flex-shrink: 0;
+        margin-inline-start: ${theme.spaceMedium};
       }
       .armada-control-tabs .armada-section-description.armada-supporting-text {
         padding-block-start: 0;
