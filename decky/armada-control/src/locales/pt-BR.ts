@@ -104,7 +104,7 @@ export const ptBR = {
   "settings.bottomScreenBrightness": "Brilho da tela inferior",
   "settings.bottomScreenError": "Não foi possível habilitar a tela inferior",
   "settings.bottomScreenBrightnessError": "Não foi possível alterar o brilho da tela inferior",
-  "settings.chargingFanSpeed": "Velocidade mínima da ventoinha enquanto carrega (%)",
+  "settings.chargingFanSpeed": "Velocidade mín. da ventoinha (%)",
   "settings.chargingFanSpeedError": "Não foi possível alterar a velocidade da ventoinha ao carregar",
   "settings.desktopMode": "Modo da área de trabalho",
   "settings.usbFileTransfer": "Transferência de arquivos por USB",
