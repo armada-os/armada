@@ -1,7 +1,7 @@
 import { clone } from "./util";
 import type { Tweaks } from "../types";
 
-const keys = ["nice", "gamescopeCores", "gamescopeNice", "scheduler", "thunks", "turnipDriver"];
+const keys = ["nice", "gamescopeCores", "gamescopeNice", "scheduler", "thunks", "cores", "wineTopology"];
 
 export function advancedSettings(settings: Record<string, any>, defaults: boolean): Record<string, any> {
   const names = defaults ? [...keys, "gamescopeVulkanRealtime"] : keys;

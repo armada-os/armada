@@ -340,7 +340,9 @@ test("Advanced Restore clears only its own overrides after Save and preserves in
   } });
   app.control("1", "ButtonRow", "compatibility.advancedSettings").props.onClick();
   app.render();
-  app.render();
+  assert.equal(app.modalControl("SelectEdit", "compatibility.gameCpuCores").props.value, "custom");
+  assert.equal(app.modalControl("TextEdit", "compatibility.customCoresDescription").props.value, "0-1");
+  assert.equal(app.modalControl("ToggleRow", "compatibility.wineCpuTopology").props.value, false);
   assert.equal(app.config.tweaks.games["1"].cores, "0-1");
   app.modalControl("DialogButton", "common.resetToDefault").props.onClick();
   app.render();
@@ -349,11 +351,10 @@ test("Advanced Restore clears only its own overrides after Save and preserves in
   assert.equal(app.advancedWrites.length, 0);
   app.modalControl("DialogButton", "common.saveChanges").props.onClick();
   await app.settle();
-  for (const key of ["nice", "gamescopeCores", "gamescopeNice", "scheduler", "thunks", "turnipDriver"]) {
+  for (const key of ["nice", "gamescopeCores", "gamescopeNice", "scheduler", "thunks", "cores", "wineTopology"]) {
     assert.equal(key in app.config.tweaks.games["1"], false, key);
   }
-  assert.equal(app.config.tweaks.games["1"].cores, "0-1");
-  assert.equal(app.config.tweaks.games["1"].wineTopology, false);
+  assert.equal(app.config.tweaks.games["1"].turnipDriver, "preview");
   assert.equal(app.config.tweaks.games["1"].env.LOCAL_OPTION, "1");
   assert.equal(app.config.tweaks.games["1"].enabled, true);
   assert.equal(app.config.tweaks.global.nice, -1);
@@ -655,7 +656,12 @@ test("explicit per-game settings stay separate from later defaults and a cleared
     global: { windowsCompatTool: FOLLOW_STEAM_COMPAT, fexProfile: "fast", cores: "all", env: { EXAMPLE: "1" } },
     games: { "1": { enabled: true } },
   } });
-  app.control("1", "SelectEdit", "compatibility.gameCpuCores").props.onChange("all");
+  app.control("1", "ButtonRow", "compatibility.advancedSettings").props.onClick();
+  app.render();
+  app.modalControl("SelectEdit", "compatibility.gameCpuCores").props.onChange("all");
+  app.render();
+  app.modalControl("DialogButton", "common.saveChanges").props.onClick();
+  await app.settle();
   app.control("1", "SelectEdit", "compatibility.fexPreset").props.onChange("fast");
   await app.control("1", "SelectEdit", "compatibility.gameResolution").props.onChange("Native");
   app.render();
@@ -666,7 +672,11 @@ test("explicit per-game settings stay separate from later defaults and a cleared
     global: { ...current.tweaks.global, cores: "0-3", env: { EXAMPLE: "2" } },
   } }));
   await app.settle();
-  assert.equal(app.control("1", "SelectEdit", "compatibility.gameCpuCores").props.value, "all");
+  app.control("1", "ButtonRow", "compatibility.advancedSettings").props.onClick();
+  app.render();
+  assert.equal(app.modalControl("SelectEdit", "compatibility.gameCpuCores").props.value, "all");
+  app.modalControl("DialogButton", "common.cancel").props.onClick();
+  app.render();
   assert.equal(app.control("1", "SelectEdit", "compatibility.fexPreset").props.value, "fast");
   assert.equal(app.control("1", "SelectEdit", "compatibility.gameResolution").props.value, "Native");
   assert.equal(app.config.tweaks.games["1"].env.EXAMPLE, "1");

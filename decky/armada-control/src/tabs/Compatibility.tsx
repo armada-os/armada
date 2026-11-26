@@ -813,7 +813,7 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
     ...(editingDefault ? [] : [{ data: "", label: t("common.useDefault") }]),
     ...turnipDrivers.map((driver) => ({ data: driver.id, label: turnipLabel(driver) })),
   ];
-  const ownTurnip = draft.turnipDriver;
+  const ownTurnip = (editingDefault ? tweaks.global : gameSettings).turnipDriver;
   const knownTurnip = (id: unknown) => turnipDrivers.some((driver) => driver.id === id);
   // A saved driver that is no longer installed launches on Stable, so show Stable.
   const turnipValue = knownTurnip(ownTurnip) ? String(ownTurnip) : editingDefault || ownTurnip ? "stable" : "";
@@ -829,7 +829,7 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
     ...(perf?.corePresets || [{ data: "all", label: "All Cores" }]).map((option) => ({ ...option, label: translateLabel(option.label) })),
     { data: "custom", label: t("common.custom") },
   ];
-  const coresValue = String((editingDefault ? tweaks.global : gameSettings).cores ?? "");
+  const coresValue = String(draft.cores ?? "");
   const coresIsCustom = customCores || (coresValue !== "" && !presetIds.includes(coresValue));
   const cpuCount = perf?.cpuCount || 8;
   const coresText = coresDraft ?? (presetIds.includes(coresValue) ? "" : coresValue);
@@ -846,7 +846,7 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
     }
     setCustomCores(false);
     setCoresDraft(null);
-    patchSettings({ cores: id || undefined });
+    patchAdvanced({ cores: id || undefined });
   };
   const schedulerOptions = [
     { data: "", label: t("common.default") },
@@ -855,6 +855,8 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
   const restoreAdvanced = () => {
     if (advancedBusy.current || (editingDefault && !config.tweaksDefaults)) return;
     restoredAdvanced.current = true;
+    setCustomCores(false);
+    setCoresDraft(null);
     setCustomGsCores(false);
     setGsCoresDraft(null);
     setAdvancedDraft(editingDefault ? advancedSettings(config.tweaksDefaults!.global, true) : {});
@@ -932,24 +934,26 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
   };
   const cpuControls = (
     <>
-      <SelectEdit label={t("compatibility.gameCpuCores")} value={coresIsCustom ? "custom" : coresValue} options={coreOptions} onChange={onSelectCores} />
+      <SelectEdit label={t("compatibility.gameCpuCores")} value={coresIsCustom ? "custom" : coresValue} options={coreOptions} disabled={advancedSaving} onChange={onSelectCores} />
       {coresIsCustom ? (
         <TextEdit
           label={t("compatibility.customCoresDescription")}
           value={coresText}
+          disabled={advancedSaving}
           onChange={(text) => {
             // Invalid drafts must never persist.
             setCoresDraft(text);
-            if (!cpulistError(text, cpuCount)) patchSettings({ cores: text });
+            if (!cpulistError(text, cpuCount)) patchAdvanced({ cores: text });
           }}
         />
       ) : null}
       {coresError ? <SupportingText className="armada-note-error">{coresError}</SupportingText> : null}
-      {values.cores ? (
+      {advancedValues.cores ? (
         <ToggleRow
           label={t("compatibility.wineCpuTopology")}
-          value={values.wineTopology !== false}
-          onChange={(on) => patchSettings({ wineTopology: on })}
+          value={advancedValues.wineTopology !== false}
+          disabled={advancedSaving}
+          onChange={(on) => patchAdvanced({ wineTopology: on })}
         />
       ) : null}
     </>
@@ -1021,6 +1025,9 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
   const ownEnvEntries = Object.entries(ownEnv).filter(([, value]) => typeof value === "string") as [string, string][];
   const envControls = (
     <>
+      <ButtonRow variant="primary" layout="below" onClick={() => openEnvVar(null)}>
+        {t("compatibility.addVariable")}
+      </ButtonRow>
       {inheritedEnvEntries.map(([key, value]) => (
         <ToggleRow
           key={key}
@@ -1041,9 +1048,6 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
           )}
         </ButtonRow>
       ))}
-      <ButtonRow variant="primary" layout="below" onClick={() => openEnvVar(null)}>
-        {t("compatibility.addVariable")}
-      </ButtonRow>
     </>
   );
 
@@ -1057,7 +1061,7 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
   const advancedPatch = advancedChanges(initialAdvanced.current, draft);
   const advancedDirty = Object.keys(advancedPatch).length > 0;
   const saveAdvanced = async () => {
-    if (advancedBusy.current || !advancedDirty || gsCoresError) return;
+    if (advancedBusy.current || !advancedDirty || gsCoresError || coresError) return;
     advancedBusy.current = true;
     setAdvancedAction("saving");
     setAdvancedError("");
@@ -1094,15 +1098,9 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
         {advancedError ? <div role="alert"><SupportingText className="armada-note-error">{advancedError}</SupportingText></div> : null}
         <DialogControlsSection>
           <DialogControlsSectionHeader>{t("options.performance")}</DialogControlsSectionHeader>
+          {cpuControls}
           {perfControls}
         </DialogControlsSection>
-        {turnipDrivers.length > 1 ? (
-          <DialogControlsSection>
-            <DialogControlsSectionHeader>{t("compatibility.drivers")}</DialogControlsSectionHeader>
-            <SelectEdit label="Turnip" value={turnipValue} options={turnipOptions} disabled={advancedSaving} onChange={(id) => patchAdvanced({ turnipDriver: String(id) || undefined })}
-              description={turnipValue ? t(turnipValue.startsWith("user:") ? "compatibility.turnipUserNote" : "compatibility.turnipBuiltinNote") : undefined} />
-          </DialogControlsSection>
-        ) : null}
         <DialogControlsSection>
           <DialogControlsSectionHeader>{t("compatibility.hostThunks")}</DialogControlsSectionHeader>
           {thunkModules.map((thunk) => (
@@ -1112,7 +1110,7 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
         {reapplyStatus ? <Field label={t("common.status")} description={reapplyStatus} bottomSeparator="none" /> : null}
       </DialogBody>
       <ArmadaDialogFooter>
-        <DialogButtonPrimary disabled={advancedSaving || !advancedDirty || !!gsCoresError} onClick={() => { void saveAdvanced(); }}>{advancedAction === "saving" ? t("common.saving") : t("common.saveChanges")}</DialogButtonPrimary>
+        <DialogButtonPrimary disabled={advancedSaving || !advancedDirty || !!gsCoresError || !!coresError} onClick={() => { void saveAdvanced(); }}>{advancedAction === "saving" ? t("common.saving") : t("common.saveChanges")}</DialogButtonPrimary>
         <DialogButton disabled={advancedSaving} onClick={closeAdvanced}>{t("common.cancel")}</DialogButton>
         <DialogButton disabled={advancedSaving || (editingDefault && !config.tweaksDefaults)} onClick={restoreAdvanced}>{t("common.resetToDefault")}</DialogButton>
         {runningSelectedGame ? (
@@ -1134,6 +1132,8 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
     initialAdvanced.current = advancedSettings(editingDefault ? tweaksRef.current.global : tweaksRef.current.games[game!.appid] || {}, editingDefault);
     initialThunks.current = clone(thunks);
     restoredAdvanced.current = false;
+    setCustomCores(false);
+    setCoresDraft(null);
     setAdvancedDraft(clone(initialAdvanced.current));
     setCustomGsCores(false);
     setGsCoresDraft(null);
@@ -1209,7 +1209,10 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
               ))}
             </Subsection>
           ) : null}
-          <Subsection title={t("profiles.cpuSettings")}>{cpuControls}</Subsection>
+          {turnipDrivers.length > 1 ? <Subsection title={t("compatibility.drivers")}>
+            <SelectEdit label="Turnip" value={turnipValue} options={turnipOptions} onChange={id => patchSettings({ turnipDriver: String(id) || undefined })}
+              description={turnipValue ? t(turnipValue.startsWith("user:") ? "compatibility.turnipUserNote" : "compatibility.turnipBuiltinNote") : undefined} />
+          </Subsection> : null}
           <Subsection title={t("compatibility.environment")}>{envControls}</Subsection>
           <Subsection title={t("compatibility.advanced")}>
             <ButtonRow layout="below" onClick={openAdvanced}>{t("compatibility.advancedSettings")}</ButtonRow>
