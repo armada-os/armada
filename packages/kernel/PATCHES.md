@@ -1007,6 +1007,17 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Fixes a livelock on the AYN Thor when a late IDLE_PATTERN_SENT interrupt latches after a DP unplug has gated the link clocks (#957).
+- `patches/0627-phy-qcom-qmp-combo-leave-the-USB-PCS-alone-in-DP-only-mode.patch`
+  source: https://lore.kernel.org/all/20261103135051.1668-1-26rote@gmail.com/
+  upstream: https://lore.kernel.org/all/20261103135051.1668-1-26rote@gmail.com/
+  notes: 7.2 variant of the v3 patch. 7.2 lacks the phy-next mux rework (89563a152973), so in DP-only mode USB init/exit only take and drop the common reference and don't count the USB user, and the switch/reconfigure hunks are dropped. Fixes USB and then DP failing after an s2idle resume on the AYN Thor with a 4-lane DP sink attached (#959).
+- `patches/0628-phy-qcom-qmp-combo-dont-disable-the-pipe-clock-when-USB-power-on-fails.patch`
+  source: armada
+  upstream: local
+  notes: Fixes the pipe clock being disabled twice when the USB PCS times out (#959).
+- `patches/0629-usb-dwc3-qcom-check-for-hcd-in-dwc3_qcom_read_usb2_speed.patch`
+  source: https://lore.kernel.org/all/20261126051958.2983579-1-prashanth.k@oss.qualcomm.com/
+  upstream: https://lore.kernel.org/all/20261126051958.2983579-1-prashanth.k@oss.qualcomm.com/
 
 - `dts/sm7750-retroidpocket-duo.dts`
   source: armada
