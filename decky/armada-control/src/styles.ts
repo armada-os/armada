@@ -91,6 +91,9 @@ export const styles = `
       ${sectionStyles}
       ${descriptionStyles}
       ${finalFieldStyles}
+      :is(.armada-control-tabs, .armada-control-dialog) ${nativeField}:has([role="slider"]) {
+        --gamepad-slider-value-min-width: max-content;
+      }
       .armada-control-tabs .armada-section-description.armada-supporting-text {
         padding-block-start: 0;
       }
