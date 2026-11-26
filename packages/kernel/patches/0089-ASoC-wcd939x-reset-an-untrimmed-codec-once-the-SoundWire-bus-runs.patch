@@ -1,0 +1,108 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: codecs: wcd939x: reset an untrimmed codec once the SoundWire bus runs
+
+A reset only gives the WCD9395 its full power-on state (trims included)
+while the SoundWire bus is clocked. The reset in probe runs before the
+bus is up, and a warm reboot resets the codec the same way, so after
+almost every boot the codec is left untrimmed: INTR_MASK_2 and
+BIAS_VBG_FINE_ADJ read 0x0e and 0x55 instead of 0x3e and 0xa5. The two
+registers are only markers (writing them does not help), but in that
+state the HPH compander mutes anything above about -30 dBFS, so
+headphone audio cuts out a moment after it starts.
+
+In the component probe, with the TX device enumerated, read
+BIAS_VBG_FINE_ADJ from the codec. If it is not 0xa5 (v1.0 has no such
+marker and is always reset), hold the codec in reset until the core
+has seen the TX device leave the bus, release it and wait for the core
+to initialise the device again, which writes the register map back.
+Writes stay in the cache in between.
+
+On a KONKR Pocket FIT the codec was untrimmed on warm and cold boots
+and headphone audio cut out after nearly every boot. With this it
+reads 0x3e and 0xa5 after the reset and a -20 dBFS tone plays without
+cutting out. An Odin 3 Portal's codec was untrimmed on every boot too
+and comes up trimmed with this. The path for a codec that is already in
+its power-on state did not come up in testing.
+---
+ sound/soc/codecs/wcd939x.c | 55 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -11,6 +11,7 @@
+ #include <linux/device.h>
+ #include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/iopoll.h>
+ #include <linux/kernel.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/component.h>
+@@ -3284,6 +3285,51 @@
+ 					&wcd->irq_chip);
+ }
+ 
++/*
++ * A reset taken without the SoundWire clock leaves the codec untrimmed
++ * (BIAS_VBG_FINE_ADJ 0x55, not 0xa5) and the HPH compander then mutes
++ * loud signals. v1.0 has no such marker.
++ */
++static bool wcd939x_in_power_on_state(struct wcd939x_priv *wcd939x)
++{
++	unsigned int val;
++	int ret;
++
++	if (wcd939x->version < WCD939X_VERSION_1_1)
++		return false;
++
++	regcache_cache_bypass(wcd939x->regmap, true);
++	ret = regmap_read(wcd939x->regmap, WCD939X_BIAS_VBG_FINE_ADJ, &val);
++	regcache_cache_bypass(wcd939x->regmap, false);
++
++	return !ret && val == 0xa5;
++}
++
++static int wcd939x_reset_on_bus(struct wcd939x_priv *wcd939x)
++{
++	struct sdw_slave *tx = wcd939x->tx_sdw_dev;
++	enum sdw_slave_status status;
++	int ret;
++
++	regcache_cache_only(wcd939x->regmap, true);
++	regcache_mark_dirty(wcd939x->regmap);
++
++	/* The core only re-initialises and syncs the device once it has seen it leave. */
++	gpiod_set_value(wcd939x->reset_gpio, 1);
++	ret = read_poll_timeout(READ_ONCE, status, status == SDW_SLAVE_UNATTACHED,
++				100, 100000, false, tx->status);
++	gpiod_set_value(wcd939x->reset_gpio, 0);
++
++	if (!ret)
++		ret = sdw_slave_wait_for_init(tx, 2000);
++	if (ret) {
++		regcache_cache_only(wcd939x->regmap, false);
++		regcache_sync(wcd939x->regmap);
++	}
++
++	return ret;
++}
++
+ /* Valid only once the TX device has enumerated. */
+ static unsigned int wcd939x_read_version(struct wcd939x_priv *wcd939x, struct device *dev)
+ {
+@@ -3320,6 +3366,15 @@
+ 	wcd939x->version = wcd939x_read_version(wcd939x, dev);
+ 	dev_dbg(dev, "wcd939x version: %s\n", version_to_str(wcd939x->version));
+ 
++	if (wcd939x_in_power_on_state(wcd939x)) {
++		dev_dbg(dev, "codec in its power-on state, no reset needed\n");
++	} else {
++		dev_dbg(dev, "codec untrimmed, resetting it on the SoundWire bus\n");
++		ret = wcd939x_reset_on_bus(wcd939x);
++		if (ret)
++			dev_warn(dev, "codec reset on the SoundWire bus failed: %d\n", ret);
++	}
++
+ 	wcd939x->variant = snd_soc_component_read_field(component,
+ 							WCD939X_DIGITAL_EFUSE_REG_0,
+ 							WCD939X_EFUSE_REG_0_WCD939X_ID);

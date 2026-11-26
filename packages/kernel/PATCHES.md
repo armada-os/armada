@@ -752,6 +752,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: On v2.0 WCD9395s, brings up the ZDET negative supply (vendor sequence) and discards the first HPH_L impedance ramp, which reads low and made stereo headphones detect as mono. Also reads the HPH_R trim from EFUSE_REG_21 + 4.
+- `patches/0089-ASoC-wcd939x-reset-an-untrimmed-codec-once-the-SoundWire-bus-runs.patch`
+  source: armada
+  upstream: local
+  notes: Resets an untrimmed WCD9395 (BIAS_VBG_FINE_ADJ not 0xa5) once the TX device is on the bus, holding reset until the core sees it leave, so the codec gets its power-on trims; fixes the per-boot HPH cut-out on the KONKR Pocket FIT and Odin 3 Portal.
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local
