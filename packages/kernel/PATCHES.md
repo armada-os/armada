@@ -980,6 +980,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: After the ClockStopNow broadcast, keeps the clock on until the controller reports the link stopped (up to about 50 ms), as the vendor driver does, and warns if it does not; skipped when no device acknowledged the clock stop and on v1.5.1 and older controllers, which do not report it. Mainline gated the clock while the link was often still running, so the devices lost sync on resume, dropped to device number 0 and were enumerated again, now and then failing or hanging and leaving the headphones silent. On the KONKR Pocket FIT's WCD9395 RX bus this took drops from 19 of 40 resumes to none, with no bus clashes or parity errors.
+- `patches/0091-soundwire-qcom-restart-the-enumeration-when-it-fails.patch`
+  source: armada
+  upstream: local
+  notes: Handles the controller's AUTO_ENUM_FAILED interrupt, which mainline logs as "SWR unknown interrupt value: 2048", by restarting the hardware enumeration as the vendor driver does (v2.0 and later controllers only, where the bit has that meaning; at most five restarts per runtime resume). A safety net for devices that still lose sync; before 0090 it brought the KONKR Pocket FIT's WCD9395 RX device back after resumes where it would otherwise have stayed unattached.
 - `patches/0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch`
   source: armada
   upstream: local
