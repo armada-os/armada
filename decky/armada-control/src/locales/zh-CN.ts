@@ -300,7 +300,7 @@ export const zhCN = {
   "settings.dualScreenDescription": "适用于双屏掌机的设置。",
   "settings.desktopDescription": "选择桌面模式使用的 Plasma 桌面版或移动版。",
   "settings.sleepDescription": "更改掌机的挂起和唤醒方式。",
-  "settings.miscellaneous": "其他设置",
+  "settings.general": "常规",
   "settings.usbDescription": "使用 MTP 协议传输文件。",
   "settings.localLogs": "本地日志",
   "settings.logDirectory": "日志目录",

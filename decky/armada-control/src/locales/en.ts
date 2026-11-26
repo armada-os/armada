@@ -298,7 +298,7 @@ export const en = {
   "settings.dualScreenDescription": "Settings for handhelds with two screens.",
   "settings.desktopDescription": "Choose Plasma Desktop or Mobile for desktop mode.",
   "settings.sleepDescription": "Changes how the handheld suspends and resumes.",
-  "settings.miscellaneous": "Misc",
+  "settings.general": "General",
   "settings.usbDescription": "Transfer files using the MTP protocol.",
   "settings.localLogs": "Local Logs",
   "settings.logDirectory": "Log directory",

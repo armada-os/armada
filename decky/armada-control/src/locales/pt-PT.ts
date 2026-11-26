@@ -300,7 +300,7 @@ export const ptPT = {
   "settings.dualScreenDescription": "Definições para dispositivos portáteis com dois ecrãs.",
   "settings.desktopDescription": "Escolha Plasma Desktop ou Mobile para o ambiente de trabalho.",
   "settings.sleepDescription": "Altera a forma como o dispositivo entra em suspensão e retoma.",
-  "settings.miscellaneous": "Diversos",
+  "settings.general": "Geral",
   "settings.usbDescription": "Transfira ficheiros utilizando o protocolo MTP.",
   "settings.localLogs": "Registos locais",
   "settings.logDirectory": "Pasta de registos",

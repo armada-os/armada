@@ -87,7 +87,7 @@ export function Settings({ config, setConfig }: {
 
   return (
     <>
-      <PanelSection title={t("settings.miscellaneous")}>
+      <PanelSection title={t("settings.general")}>
         <ToggleRow label={t("settings.enableSsh")} value={config.sshEnabled} onChange={(enabled) => saveSshEnabled(config, setConfig, enabled)} />
         <ToggleRow
           label={t("settings.usbFileTransfer")}

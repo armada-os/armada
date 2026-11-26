@@ -300,7 +300,7 @@ export const ptBR = {
   "settings.dualScreenDescription": "Configurações para dispositivos portáteis com duas telas.",
   "settings.desktopDescription": "Escolha Plasma Desktop ou Mobile para a área de trabalho.",
   "settings.sleepDescription": "Altera como o dispositivo suspende e retoma.",
-  "settings.miscellaneous": "Outros",
+  "settings.general": "Geral",
   "settings.usbDescription": "Transfira arquivos usando o protocolo MTP.",
   "settings.localLogs": "Registros locais",
   "settings.logDirectory": "Pasta de registros",
