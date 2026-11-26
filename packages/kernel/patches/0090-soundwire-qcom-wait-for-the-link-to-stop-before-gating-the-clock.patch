@@ -1,0 +1,73 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] soundwire: qcom: wait for the link to stop before gating the clock
+
+On a runtime suspend with clock stop, the controller broadcasts
+ClockStopNow and the driver gates its clock straight away, while the
+link can still be running. Devices that lose the clock before the link
+has stopped lose sync when it comes back: they drop to device number 0
+and are enumerated again, with bus clashes and parity errors on the
+way, and that enumeration now and then fails or hangs, leaving the
+headphones silent until a later resume.
+
+Keep the clock on until the controller reports the link stopped, as the
+vendor driver does (100 us, then poll every 500 us, for up to about 50
+ms), and warn if it does not stop. Skip the wait when no device
+acknowledged the clock stop, and on controllers up to v1.5.1, which do
+not report the link state.
+
+On the Pocket FIT's WCD9395 RX bus, 40 suspend and resume cycles with a
+stream open found the link still running at the clock cut in 22
+suspends and dropped the devices on 19 resumes, all after one of those
+22, with 6 bus clashes and 4 parity errors. With the wait, 40 cycles on
+the same boot dropped them on none, with no clashes or parity errors.
+---
+ drivers/soundwire/qcom.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -872,6 +872,33 @@
+ 	return ret;
+ }
+ 
++/*
++ * The link can keep running briefly after ClockStopNow; gating the clock
++ * then makes the devices lose sync on resume. v1.5.1 and older do not
++ * report the link state.
++ */
++static void swrm_wait_for_clock_stop(struct qcom_swrm_ctrl *ctrl)
++{
++	int retry = SWRM_LINK_STATUS_RETRY_CNT;
++	u32 comp_sts = 0;
++
++	if (ctrl->version <= SWRM_VERSION_1_5_1)
++		return;
++
++	usleep_range(100, 105);
++
++	do {
++		ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_FRAME_GEN_ENABLED],
++			       &comp_sts);
++		if (!(comp_sts & SWRM_FRM_GEN_ENABLED))
++			return;
++
++		usleep_range(500, 510);
++	} while (retry--);
++
++	dev_warn_ratelimited(ctrl->dev, "link still up after the clock stop\n");
++}
++
+ static bool swrm_wait_for_frame_gen_enabled(struct qcom_swrm_ctrl *ctrl)
+ {
+ 	int retry = SWRM_LINK_STATUS_RETRY_CNT;
+@@ -1848,6 +1875,9 @@
+ 			dev_err(dev, "bus clock stop failed %d", ret);
+ 			return ret;
+ 		}
++
++		if (ret != -ENODATA)
++			swrm_wait_for_clock_stop(ctrl);
+ 	}
+ 
+ 	clk_disable_unprepare(ctrl->hclk);

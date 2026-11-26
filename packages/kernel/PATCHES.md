@@ -976,6 +976,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0570-soundwire-qcom-skip-the-clock-stop-handshake-for-the-pmic-haptics-port.patch`
   source: armada
   upstream: local
+- `patches/0090-soundwire-qcom-wait-for-the-link-to-stop-before-gating-the-clock.patch`
+  source: armada
+  upstream: local
+  notes: After the ClockStopNow broadcast, keeps the clock on until the controller reports the link stopped (up to about 50 ms), as the vendor driver does, and warns if it does not; skipped when no device acknowledged the clock stop and on v1.5.1 and older controllers, which do not report it. Mainline gated the clock while the link was often still running, so the devices lost sync on resume, dropped to device number 0 and were enumerated again, now and then failing or hanging and leaving the headphones silent. On the KONKR Pocket FIT's WCD9395 RX bus this took drops from 19 of 40 resumes to none, with no bus clashes or parity errors.
 - `patches/0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch`
   source: armada
   upstream: local
