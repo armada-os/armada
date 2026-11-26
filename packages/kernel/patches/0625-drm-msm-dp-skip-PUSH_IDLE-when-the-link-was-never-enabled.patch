@@ -1,0 +1,86 @@
+From e249a6e2a130c08bb4d8b0a55cbe29754307e5c9 Mon Sep 17 00:00:00 2001
+From: Jesse Casco <jesse.casco@gmail.com>
+Date: Sat, 8 Aug 2026 13:13:25 -0400
+Subject: drm/msm/dp: skip PUSH_IDLE when the link was never enabled
+
+msm_dp_display_atomic_enable() returns early when link training fails,
+leaving ->power_on false and the main link down.
+msm_dp_display_atomic_disable() nevertheless writes DP_STATE_CTRL_PUSH_IDLE
+and waits for an idle-pattern completion that cannot arrive, so every failed
+enable is followed by "PUSH_IDLE pattern timedout".
+
+Every other step of the teardown is already gated on that flag:
+msm_dp_display_disable(), called from .atomic_post_disable(), returns early
+on !power_on. The PUSH_IDLE write is the only one that is not, so the
+controller's runtime-PM reference is then dropped without the link having
+been taken down.
+
+On glymur (Snapdragon X2 Elite) the consequence is not a warning. The SoC
+does not survive it: TrustZone force-stops the SOCCP and ADSP remote
+processors and the machine resets silently about 50 ms later, with no oops
+and no panic. On an ASUS Zenbook A16 (UX3607OA), whose eDP panel does not
+currently train, this reproduces without any compositor or GPU involvement:
+
+  # eDP enable has already failed with "Failed link training (rc=-104)"
+  echo 1 > /sys/class/graphics/fb0/blank
+
+  [535.645455] === marker ===
+  [535.694833] qcom_q6v5_pas d00000.remoteproc: fatal error received: \
+                 sys_m_smsm.c:512:TZ force stop
+  [535.694875] remoteproc remoteproc0: crash detected in soccp: type fatal error
+  [535.728857] qcom_q6v5_pas 6800000.remoteproc: fatal error received: \
+                 sys_m_smsm.c:783:err fatal notification received from TZ
+  <SoC reset>
+
+Gate the PUSH_IDLE write on ->power_on so the disable path is consistent
+with the rest of the teardown. With this applied the same sequence is
+harmless and the machine stays up; without it, it resets every time.
+
+The unconditional write dates back to the original DP driver
+(c943b4948b58 ("drm/msm/dp: add displayPort driver support")), but the
+surrounding code has been restructured several times since, so no Fixes:
+tag is offered.
+
+[Backport to 7.2: the function is still msm_dp_bridge_atomic_disable() and
+ gets its msm_dp_display_private from the bridge; the hunk is otherwise
+ unchanged. Upstream commit e249a6e2a130.]
+
+Note that the eDP link-training failure that exposes this on the A16 is a
+separate problem in the glymur eDP PHY and is reported separately; this
+change is about not damaging the machine when training fails, for whatever
+reason.
+
+Tested on ASUS Zenbook A16 (UX3607OA), Snapdragon X2 Elite Extreme, on
+linux-next next-20260803 and next-20260807. The machine has since been
+running next-20260807 with this patch as its daily driver.
+
+Assisted-by: Anthropic:Claude-Opus-5
+Signed-off-by: Jesse Casco <jesse.casco@gmail.com>
+Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Patchwork: https://patchwork.freedesktop.org/patch/745167/
+Link: https://lore.kernel.org/r/20260808171325.133041-1-jesse.casco@gmail.com
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -1411,6 +1411,20 @@
+ 	struct msm_dp_display_private *msm_dp_display;
+ 
+ 	msm_dp_display = container_of(dp, struct msm_dp_display_private, msm_dp_display);
++
++	/*
++	 * If .atomic_enable() bailed out - link training failure is the common
++	 * case - the mainlink was never brought up and ->power_on stayed false.
++	 * Driving the PUSH_IDLE pattern into a controller that was never
++	 * enabled times out, and .atomic_post_disable() then drops the
++	 * controller's runtime-PM reference without tearing the PHY back down,
++	 * because msm_dp_display_disable() returns early on !power_on.  On
++	 * glymur (Snapdragon X2 Elite) that combination is answered by a
++	 * TrustZone-level SOCCP/ADSP force-stop and a silent SoC reset.
++	 * There is nothing to push idle, so leave it alone.
++	 */
++	if (!dp->power_on)
++		return;
+ 
+ 	msm_dp_ctrl_push_idle(msm_dp_display->ctrl);
+ }
