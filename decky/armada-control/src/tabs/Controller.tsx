@@ -55,6 +55,8 @@ export function Controller({ config, setConfig }: {
           options={(config.controllerTypes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
           onChange={setControllerType}
         />
+        <ButtonRow layout="below" onClick={startCalibration}>{t("calibration.start")}</ButtonRow>
+        <ReadOnlyRow label={t("controller.lastCalibrated")} description={calibratedDate} />
       </PanelSection>
       {config.gyro.supported ? <PanelSection title={t("controller.gyroTitle")}>
         <ToggleRow label={t("settings.enableGyro")} value={config.gyro.enabled} disabled={gyroSaving} onChange={setGyroEnabled} />
@@ -72,10 +74,6 @@ export function Controller({ config, setConfig }: {
           onChange={setGyroOrientation}
         /> : null}
       </PanelSection> : null}
-      <PanelSection title={t("controller.calibrationTitle")}>
-        <ReadOnlyRow label={t("controller.lastCalibrated")} description={calibratedDate} />
-        <ButtonRow layout="below" onClick={startCalibration}>{t("calibration.start")}</ButtonRow>
-      </PanelSection>
     </>
   );
 }
