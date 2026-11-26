@@ -744,6 +744,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Optional qcom,ssp-period for the master FRAME_CTRL. The WCD939x class-H port (interval 64) does not divide the 50x16 RX frame; without an SSP its stream starts at a random phase and about half of the Odin 3's headphone streams are fuzzy.
+- `patches/0087-ASoC-wcd939x-read-the-codec-version-once-it-is-on-the-bus.patch`
+  source: armada
+  upstream: local
+  notes: Reads the codec version in the component probe, after the TX device has enumerated, and keeps it in the driver data; a failed read warns and assumes v2.0. The bind-time read could run before the codec was on the bus and returned garbage (an Odin 3 Portal's v2.0 part reported v1.0). 0088 and 0089 depend on the stored version.
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local

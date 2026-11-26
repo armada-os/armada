@@ -261,6 +261,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0084-ASoC-wcd-common-skip-the-interrupt-loop-without-a-regmap.patch
 0074-soundwire-qcom-PCM-data-port-format-enable.patch
 0086-soundwire-qcom-add-an-optional-SSP-period.patch
+0087-ASoC-wcd939x-read-the-codec-version-once-it-is-on-the-bus.patch
 0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch
 0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
 0613-ASoC-q6apm-scope-prepare-start-to-MI2S.patch

@@ -1,0 +1,86 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: codecs: wcd939x: read the codec version once it is on the bus
+
+The codec version is read in the component bind, which can run before
+the TX device has enumerated. The read then fails and the version
+comes from uninitialised values: an Odin 3 Portal's WCD9395 v2.0 was
+reported as v1.0. Only a debug message used it so far.
+
+Read the version in the component probe instead, after waiting for the
+TX device, and keep it for code that depends on it. If the read fails,
+warn and assume v2.0.
+---
+ sound/soc/codecs/wcd939x.c | 33 +++++++++++++++++++++------------
+ 1 file changed, 21 insertions(+), 12 deletions(-)
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -212,6 +212,7 @@
+ 	bool comp1_enable;
+ 	bool comp2_enable;
+ 	bool hph_pcm_enabled;
++	unsigned int version;
+ 	bool ldoh;
+ };
+ 
+@@ -3258,6 +3259,23 @@
+ 					&wcd->irq_chip);
+ }
+ 
++/* Valid only once the TX device has enumerated. */
++static unsigned int wcd939x_read_version(struct wcd939x_priv *wcd939x, struct device *dev)
++{
++	unsigned int id1, status1;
++
++	if (regmap_read(wcd939x->regmap, WCD939X_DIGITAL_CHIP_ID1, &id1) ||
++	    regmap_read(wcd939x->regmap, WCD939X_EAR_STATUS_REG_1, &status1)) {
++		dev_warn(dev, "failed to read the codec version, assuming 2.0\n");
++		return WCD939X_VERSION_2_0;
++	}
++
++	if (id1 != CHIPID_WCD939X_VER_MAJOR_1)
++		return WCD939X_VERSION_2_0;
++
++	return (status1 & CHIPID_WCD939X_VER_MINOR_1) ? WCD939X_VERSION_1_1 : WCD939X_VERSION_1_0;
++}
++
+ static int wcd939x_soc_codec_probe(struct snd_soc_component *component)
+ {
+ 	struct wcd939x_priv *wcd939x = snd_soc_component_get_drvdata(component);
+@@ -3274,6 +3292,9 @@
+ 	if (ret < 0)
+ 		return ret;
+ 
++	wcd939x->version = wcd939x_read_version(wcd939x, dev);
++	dev_dbg(dev, "wcd939x version: %s\n", version_to_str(wcd939x->version));
++
+ 	wcd939x->variant = snd_soc_component_read_field(component,
+ 							WCD939X_DIGITAL_EFUSE_REG_0,
+ 							WCD939X_EFUSE_REG_0_WCD939X_ID);
+@@ -3624,7 +3645,6 @@
+ static int wcd939x_bind(struct device *dev)
+ {
+ 	struct wcd939x_priv *wcd939x = dev_get_drvdata(dev);
+-	unsigned int version, id1, status1;
+ 	int ret;
+ 
+ #if IS_ENABLED(CONFIG_TYPEC)
+@@ -3711,17 +3731,6 @@
+ 
+ 	wcd939x_set_micbias_data(dev, wcd939x);
+ 
+-	/* Check WCD9395 version */
+-	regmap_read(wcd939x->regmap, WCD939X_DIGITAL_CHIP_ID1, &id1);
+-	regmap_read(wcd939x->regmap, WCD939X_EAR_STATUS_REG_1, &status1);
+-
+-	if (id1 == CHIPID_WCD939X_VER_MAJOR_1)
+-		version = ((status1 & CHIPID_WCD939X_VER_MINOR_1) ? WCD939X_VERSION_1_1 : WCD939X_VERSION_1_0);
+-	else
+-		version = WCD939X_VERSION_2_0;
+-
+-	dev_dbg(dev, "wcd939x version: %s\n", version_to_str(version));
+-
+ 	ret = snd_soc_register_component(dev, &soc_codec_dev_wcd939x,
+ 					 wcd939x_dais, ARRAY_SIZE(wcd939x_dais));
+ 	if (ret) {
