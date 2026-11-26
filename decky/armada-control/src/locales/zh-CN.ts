@@ -104,7 +104,7 @@ export const zhCN = {
   "settings.bottomScreenBrightness": "下屏亮度",
   "settings.bottomScreenError": "无法更改下屏设置",
   "settings.bottomScreenBrightnessError": "无法更改下屏亮度",
-  "settings.chargingFanSpeed": "休眠充电时的最低风扇转速（%）",
+  "settings.chargingFanSpeed": "休眠充电时的风扇转速（%）",
   "settings.chargingFanSpeedError": "无法更改充电时风扇转速",
   "settings.desktopMode": "桌面模式",
   "settings.usbFileTransfer": "USB 文件传输",
