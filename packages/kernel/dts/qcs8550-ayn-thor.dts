@@ -402,6 +402,15 @@
 	};
 };
 
+&mdss_dp0_out {
+	/*
+	 * Without link-frequencies the msm DP driver caps the link at HBR2.
+	 * A USB-C monitor that keeps USB 3 data gets two DP lanes, and 4K at
+	 * 60 Hz needs HBR3 on two lanes. The SM8550 QMP combo PHY has HBR3 tables.
+	 */
+	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
+};
+
 &mdss_dsi0 {
 	vdda-supply = <&vreg_l3e_1p2>;
 	status = "okay";
