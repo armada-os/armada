@@ -1,0 +1,144 @@
+From 06b16ab4f616e1a2a6cc3ac2955605d3e9a19ca0 Mon Sep 17 00:00:00 2001
+From: Mingyang Li <594058+tslmy@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 11:59:21 -0800
+Subject: [PATCH] drm/msm/dp: mask the link interrupts while the link clocks
+ are off
+
+The STATUS2 interrupt sources (READY_FOR_VIDEO, IDLE_PATTERN_SENT,
+FRAME_END, CRC_UPDATED) are unmasked once at host init and stay
+unmasked for as long as the controller is powered. The ISR also writes
+the full STATUS2 mask back every time it runs, so nothing ever masks
+them, even with the link clocks gated.
+
+On SM8550 (AYN Thor) an unplug can make PUSH_IDLE time out. The
+idle-pattern event then arrives late, when the Type-C combo PHY is torn
+down on the USB side. If that lands after msm_dp_ctrl_off() has gated
+the link clocks, the AHB ack doesn't clear IDLE_PATTERN_SENT, and the
+ISR acks it, returns IRQ_HANDLED and gets called again at once. The CPU
+taking the MDSS interrupt never leaves hardirq context. Touch, Wi-Fi
+and SSH die, and only a forced power-off recovers. (msm_mdss_irq_mask()
+only clears a software bit, so genirq couldn't stop the storm by
+disabling the child interrupt either.) When the late event arrives
+before the clocks are gated, it is acked once and nothing happens,
+which is what usually happens.
+
+Keep a software copy of the STATUS2 mask. Set it, and ack anything
+stale, right after the link clocks are enabled. Clear it, and ack,
+right before they are disabled. Make the ISR write back that copy
+instead of the full mask, and drop the STATUS2 bits while masked.
+---
+ drivers/gpu/drm/msm/dp/dp_ctrl.c | 48 ++++++++++++++++++++++++++++++--
+ 1 file changed, 45 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index 9024abd..dbba5ae 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -140,6 +140,11 @@ struct msm_dp_ctrl_private {
+ 	bool core_clks_on;
+ 	bool link_clks_on;
+ 	bool stream_clks_on;
++
++	/* serializes REG_DP_INTR_STATUS2 updates against the ISR */
++	spinlock_t intr2_lock;
++	/* STATUS2 sources to leave unmasked: only while the link clocks run */
++	u32 intr2_mask;
+ };
+ 
+ static inline u32 msm_dp_read_ahb(const struct msm_dp_ctrl_private *ctrl, u32 offset)
+@@ -242,34 +247,68 @@ static u32 msm_dp_ctrl_get_interrupt(struct msm_dp_ctrl_private *ctrl)
+ {
+ 	u32 intr, intr_ack;
+ 
++	spin_lock(&ctrl->intr2_lock);
++
+ 	intr = msm_dp_read_ahb(ctrl, REG_DP_INTR_STATUS2);
+ 	intr &= ~DP_INTERRUPT_STATUS2_MASK;
+ 	intr_ack = (intr & DP_INTERRUPT_STATUS2)
+ 			<< DP_INTERRUPT_STATUS_ACK_SHIFT;
++	/* do not unmask the link interrupts while the link clocks are off */
+ 	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS2,
+-		     intr_ack | DP_INTERRUPT_STATUS2_MASK);
++		     intr_ack | ctrl->intr2_mask);
++
++	if (!ctrl->intr2_mask)
++		intr = 0;
++
++	spin_unlock(&ctrl->intr2_lock);
+ 
+ 	return intr;
+ }
+ 
++/*
++ * The STATUS2 sources (READY_FOR_VIDEO, IDLE_PATTERN_SENT, ...) live in the
++ * link clock domain. If one latches after the link clocks are gated, the ack
++ * written over AHB never clears it and the interrupt fires again as soon as
++ * it is handled, which livelocks the CPU taking the MDSS interrupt. Unmask
++ * them only while the link clocks run.
++ */
++static void msm_dp_ctrl_link_irq_enable(struct msm_dp_ctrl_private *ctrl,
++					bool enable)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&ctrl->intr2_lock, flags);
++	ctrl->intr2_mask = enable ? DP_INTERRUPT_STATUS2_MASK : 0;
++	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS2,
++		     DP_INTERRUPT_STATUS2_ACK | ctrl->intr2_mask);
++	spin_unlock_irqrestore(&ctrl->intr2_lock, flags);
++}
++
+ void msm_dp_ctrl_enable_irq(struct msm_dp_ctrl *msm_dp_ctrl)
+ {
+ 	struct msm_dp_ctrl_private *ctrl =
+ 		container_of(msm_dp_ctrl, struct msm_dp_ctrl_private, msm_dp_ctrl);
++	unsigned long flags;
+ 
+ 	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS,
+ 			DP_INTERRUPT_STATUS1_MASK);
+-	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS2,
+-			DP_INTERRUPT_STATUS2_MASK);
++
++	spin_lock_irqsave(&ctrl->intr2_lock, flags);
++	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS2, ctrl->intr2_mask);
++	spin_unlock_irqrestore(&ctrl->intr2_lock, flags);
+ }
+ 
+ void msm_dp_ctrl_disable_irq(struct msm_dp_ctrl *msm_dp_ctrl)
+ {
+ 	struct msm_dp_ctrl_private *ctrl =
+ 		container_of(msm_dp_ctrl, struct msm_dp_ctrl_private, msm_dp_ctrl);
++	unsigned long flags;
+ 
+ 	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS, 0x00);
++
++	spin_lock_irqsave(&ctrl->intr2_lock, flags);
+ 	msm_dp_write_ahb(ctrl, REG_DP_INTR_STATUS2, 0x00);
++	spin_unlock_irqrestore(&ctrl->intr2_lock, flags);
+ }
+ 
+ static u32 msm_dp_ctrl_get_psr_interrupt(struct msm_dp_ctrl_private *ctrl)
+@@ -1763,6 +1802,7 @@ static int msm_dp_ctrl_link_clk_enable(struct msm_dp_ctrl *msm_dp_ctrl)
+ 		return ret;
+ 
+ 	ctrl->link_clks_on = true;
++	msm_dp_ctrl_link_irq_enable(ctrl, true);
+ 
+ 	drm_dbg_dp(ctrl->drm_dev, "enable link clocks\n");
+ 	drm_dbg_dp(ctrl->drm_dev, "stream_clks:%s link_clks:%s core_clks:%s\n",
+@@ -1779,6 +1819,7 @@ static void msm_dp_ctrl_link_clk_disable(struct msm_dp_ctrl *msm_dp_ctrl)
+ 
+ 	ctrl = container_of(msm_dp_ctrl, struct msm_dp_ctrl_private, msm_dp_ctrl);
+ 
++	msm_dp_ctrl_link_irq_enable(ctrl, false);
+ 	clk_bulk_disable_unprepare(ctrl->num_link_clks, ctrl->link_clks);
+ 
+ 	ctrl->link_clks_on = false;
+@@ -2736,6 +2777,7 @@ struct msm_dp_ctrl *msm_dp_ctrl_get(struct device *dev, struct msm_dp_link *link
+ 	if (ret)
+ 		dev_err(dev, "failed to add DP OPP table\n");
+ 
++	spin_lock_init(&ctrl->intr2_lock);
+ 	init_completion(&ctrl->idle_comp);
+ 	init_completion(&ctrl->psr_op_comp);
+ 	init_completion(&ctrl->video_comp);
