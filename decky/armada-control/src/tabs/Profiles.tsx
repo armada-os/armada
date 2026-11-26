@@ -52,6 +52,12 @@ export function Profiles({ config, setConfig, state }: {
   if (loading || (!curves && !error)) return <LoadingState label={t("common.loadingSettings")} />;
 
   return <div>
+    <PanelSection title={t("profiles.performance")}>
+      <SectionDescription>{t("profiles.performanceDescription")}</SectionDescription>
+      {Object.entries(config.power.profiles).map(([id, profile]) => <ButtonRow key={id} layout="below" onClick={() => editPower(id)}>
+        {translateLabel(profile.label || titleCase(id))}
+      </ButtonRow>)}
+    </PanelSection>
     <PanelSection title={t("profiles.fans")}>
       <SectionDescription>{t("profiles.fansDescription")}</SectionDescription>
       {error ? <>
@@ -64,12 +70,6 @@ export function Profiles({ config, setConfig, state }: {
         </ButtonRow>)}
         <ButtonRow variant="primary" layout="below" disabled={!Object.keys(curves.fanCurves).length} onClick={createFan}>{t("fanCurve.add")}</ButtonRow>
       </> : null}
-    </PanelSection>
-    <PanelSection title={t("profiles.performance")}>
-      <SectionDescription>{t("profiles.performanceDescription")}</SectionDescription>
-      {Object.entries(config.power.profiles).map(([id, profile]) => <ButtonRow key={id} layout="below" onClick={() => editPower(id)}>
-        {translateLabel(profile.label || titleCase(id))}
-      </ButtonRow>)}
     </PanelSection>
   </div>;
 }
