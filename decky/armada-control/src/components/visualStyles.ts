@@ -19,6 +19,7 @@ export const visualStyles = `
     font: inherit;
     font-weight: 600;
   }
+  .armada-calibration-steppers { margin-block-start: ${theme.spaceLarge}; }
   .armada-calibration-surround {
     position: relative;
     box-sizing: border-box;

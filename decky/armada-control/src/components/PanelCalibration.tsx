@@ -150,7 +150,7 @@ function PanelCalibrationModal({ closeModal }: { closeModal?: () => void }) {
           <ButtonRow layout="below" onClick={auto} disabled={controlsDisabled}>
             {t(busy === "calibrating" ? "display.calibrating" : "display.autoCalibrate")}
           </ButtonRow>
-          <Focusable className="armada-calibration-label" flow-children="row" tabIndex={-1} noFocusRing>
+          <Focusable className="armada-calibration-label armada-calibration-steppers" flow-children="row" tabIndex={-1} noFocusRing>
             <CompactButton onClick={() => step("slower")} disabled={controlsDisabled || rangeEnd === "slower"}>−</CompactButton>
             <span>{headline}</span>
             <CompactButton onClick={() => step("faster")} disabled={controlsDisabled || rangeEnd === "faster"}>+</CompactButton>
