@@ -57,7 +57,7 @@ export function createContentFixture({ games = [], autoLoad = false }: { games?:
     },
   };
   const components = ["components/TabNavigation", "components/ArmadaStyles", "components/LoadingState", "components/ConfigSection",
-    "tabs/Compatibility", "tabs/Profiles", "tabs/Controller", "tabs/DeviceSettings", "tabs/Experimental", "tabs/About"];
+    "tabs/Compatibility", "tabs/Profiles", "tabs/Controller", "tabs/System", "tabs/RGB", "tabs/Settings", "tabs/About"];
   const api = loadModule("Content.tsx", {
     react,
     "@decky/api": { toaster: { toast: () => {} } },

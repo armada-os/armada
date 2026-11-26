@@ -13,14 +13,14 @@ const readLogs = async () => { await waitForPendingApplies(); return getSleepLog
 
 export function useTabData(config: Config | null, setConfig: Dispatch<SetStateAction<Config | null>>, active: string, host: RefObject<HTMLDivElement | null>) {
   const [savingLogs, setSavingLogs] = useState(false);
-  const device = useConfigSection(config, setConfig, getDeviceConfig, deviceConfigFields, active === "RGB");
+  const device = useConfigSection(config, setConfig, getDeviceConfig, deviceConfigFields, active === "System");
   const controller = useConfigSection(config, setConfig, getControllerConfig, controllerConfigFields, active === "Controller");
   const profiles = useConfigSection(config, setConfig, getProfilesConfig, profilesConfigFields, active === "Profiles");
-  const experimental = useConfigSection(config, setConfig, getExperimentalConfig, experimentalConfigFields, active === "Experimental");
-  const about = useConfigSection(config, setConfig, getAboutConfig, aboutConfigFields, active === "About");
+  const experimental = useConfigSection(config, setConfig, getExperimentalConfig, experimentalConfigFields, active === "Settings" || active === "System");
+  const about = useConfigSection(config, setConfig, getAboutConfig, aboutConfigFields, active === "About" || active === "Settings");
   const rgb = useBackendState(readRgb, 0, !config?.rgbSupported, host, active === "RGB");
   const fans = useBackendState(getFansState, 10000, !config, host, active === "Profiles");
-  const logs = useBackendState(readLogs, 10000, !config || savingLogs, host, active === "About");
+  const logs = useBackendState(readLogs, 10000, !config || savingLogs, host, active === "System");
   const game = useGameSettingsState(config, host, active === "Compatibility");
   return { device, controller, profiles, experimental, about, rgb, fans, logs, game, savingLogs, setSavingLogs };
 }

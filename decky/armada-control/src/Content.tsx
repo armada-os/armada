@@ -17,12 +17,16 @@ import { ButtonRow, SupportingText } from "./components/widgets";
 import { Compatibility } from "./tabs/Compatibility";
 import { Profiles } from "./tabs/Profiles";
 import { Controller } from "./tabs/Controller";
-import { DeviceSettings } from "./tabs/DeviceSettings";
-import { Experimental } from "./tabs/Experimental";
+import { System } from "./tabs/System";
+import { RGB } from "./tabs/RGB";
+import { Settings } from "./tabs/Settings";
 import { About } from "./tabs/About";
 import { hasAboutConfig, hasControllerConfig, hasDeviceConfig, hasExperimentalConfig, hasProfilesConfig, initialConfigFields, mergeConfigSection } from "./lib/configSections";
 import { configFieldRevision } from "./lib/configMutation";
-import type { Config } from "./types";
+import type { AboutConfig, Config, DeviceConfig, ExperimentalConfig } from "./types";
+
+const hasSettingsConfig = (config: Config): config is Config & ExperimentalConfig & AboutConfig => hasExperimentalConfig(config) && hasAboutConfig(config);
+const hasSystemConfig = (config: Config): config is Config & DeviceConfig & ExperimentalConfig => hasDeviceConfig(config) && hasExperimentalConfig(config);
 
 export function Content() {
   useLocale();
@@ -117,20 +121,25 @@ export function Content() {
   </PanelSection> : <LoadingState label={t("common.loadingSettings")} />;
   const panels: Record<string, ReactNode> = config ? {
     Compatibility: <Compatibility config={config} setConfig={setConfig} saveTweaksNow={saveTweaksNow} state={data.game} />,
-    RGB: <ConfigSection config={config} state={data.device} loaded={hasDeviceConfig}>
-      {(current) => <DeviceSettings config={current} setConfig={setConfig} rgbState={data.rgb} />}
-    </ConfigSection>,
+    RGB: <RGB state={data.rgb} />,
     Controller: <ConfigSection config={config} state={data.controller} loaded={hasControllerConfig}>
       {(current) => <Controller config={current} setConfig={setConfig} />}
     </ConfigSection>,
     Profiles: <ConfigSection config={config} state={data.profiles} loaded={hasProfilesConfig}>
       {(current) => <Profiles config={current} setConfig={setConfig} state={data.fans} />}
     </ConfigSection>,
-    Experimental: <ConfigSection config={config} state={data.experimental} loaded={hasExperimentalConfig}>
-      {(current) => <Experimental config={current} setConfig={setConfig} />}
+    Settings: <ConfigSection config={config} state={data.experimental} loaded={hasExperimentalConfig}>
+      {current => <ConfigSection config={current} state={data.about} loaded={hasSettingsConfig}>
+        {loaded => <Settings config={loaded} setConfig={setConfig} />}
+      </ConfigSection>}
+    </ConfigSection>,
+    System: <ConfigSection config={config} state={data.device} loaded={hasDeviceConfig}>
+      {current => <ConfigSection config={current} state={data.experimental} loaded={hasSystemConfig}>
+        {loaded => <System config={loaded} setConfig={setConfig} logsState={data.logs} savingLogs={data.savingLogs} setSavingLogs={data.setSavingLogs} />}
+      </ConfigSection>}
     </ConfigSection>,
     About: <ConfigSection config={config} state={data.about} loaded={hasAboutConfig}>
-      {(current) => <About config={current} setConfig={setConfig} state={data.logs} saving={data.savingLogs} setSaving={data.setSavingLogs} />}
+      {(current) => <About config={current} />}
     </ConfigSection>,
   } : {};
   return <>
@@ -141,10 +150,11 @@ export function Content() {
       onShowTab={setTab}
       tabs={[
         { id: "Compatibility", title: t("navigation.games"), icon: tabIcons.Compatibility },
-        { id: "RGB", title: t("navigation.rgb"), icon: tabIcons.DeviceSettings },
-        { id: "Controller", title: t("navigation.controller"), icon: tabIcons.Controller },
         { id: "Profiles", title: t("navigation.profiles"), icon: tabIcons.Power },
-        { id: "Experimental", title: t("navigation.experimental"), icon: tabIcons.Experimental },
+        { id: "Controller", title: t("navigation.controller"), icon: tabIcons.Controller },
+        ...(config?.rgbSupported ? [{ id: "RGB", title: t("navigation.rgb"), icon: tabIcons.RGB }] : []),
+        { id: "Settings", title: t("navigation.settings"), icon: tabIcons.DeviceSettings },
+        { id: "System", title: t("navigation.system"), icon: tabIcons.System },
         { id: "About", title: t("navigation.about"), icon: tabIcons.About },
       ].map((item) => ({ ...item, content: config ? panels[item.id] : startup }))}
     />

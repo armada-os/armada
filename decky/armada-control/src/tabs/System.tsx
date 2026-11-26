@@ -2,26 +2,28 @@ import { toaster } from "@decky/api";
 import { PanelSection } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { getDeviceConfig, setChargingFanPwm as applyChargingFanPwm } from "../backend";
+import { getConfig, getDeviceConfig, setSleepMode as applySleepMode, setChargingFanPwm as applyChargingFanPwm } from "../backend";
 import { LoadingState } from "../components/LoadingState";
 import { PanelCalibration } from "../components/PanelCalibration";
-import { RgbLighting } from "../components/RgbLighting";
-import { ButtonRow, SliderEdit, SupportingText, ToggleRow } from "../components/widgets";
+import { SleepLogs } from "../components/SleepLogs";
+import { SectionDescription, SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
 import type { BackendState } from "../hooks/useBackendState";
 import { useDebouncedApply } from "../hooks/useDebouncedApply";
-import { t } from "../i18n";
+import { t, translateLabel } from "../i18n";
 import { getLowPowerDownloadSettings, setLowPowerDownloadsEnabled, setLowPowerDownloadsOnBattery, subscribeLowPowerDownloadSettings } from "../lib/lowPowerDownloads";
-import { markConfigFieldChange } from "../lib/configMutation";
+import { createConfigMutation, markConfigFieldChange } from "../lib/configMutation";
 import { percentToPwm, pwmToPercent } from "../lib/fanCurve";
-import type { Config, DeviceConfig, RgbConfig } from "../types";
+import type { Config, DeviceConfig, ExperimentalConfig, SleepLogsStatus } from "../types";
 
-export function DeviceSettings({ config, setConfig, rgbState }: {
-  config: Config & DeviceConfig;
+const saveSleepMode = createConfigMutation("sleepMode", applySleepMode, { read: getConfig });
+
+export function System({ config, setConfig, logsState, savingLogs, setSavingLogs }: {
+  config: Config & DeviceConfig & ExperimentalConfig;
   setConfig: Dispatch<SetStateAction<Config | null>>;
-  rgbState: BackendState<RgbConfig | null>;
+  logsState: BackendState<SleepLogsStatus>;
+  savingLogs: boolean;
+  setSavingLogs: Dispatch<SetStateAction<boolean>>;
 }) {
-  const { value: rgb, setValue: setRgbConfig, loading: rgbLoading, error: rgbError, refresh: refreshRgb } =
-    rgbState;
   const [downloads, setDownloads] = useState(getLowPowerDownloadSettings);
   const [saving, setSaving] = useState(false);
   const pending = useRef(false);
@@ -78,16 +80,9 @@ export function DeviceSettings({ config, setConfig, rgbState }: {
     }
   };
 
-  if (config.rgbSupported && rgbLoading) return <LoadingState label={t("common.loadingSettings")} />;
-
-  const rgbFailure = config.rgbSupported && rgbError ? <PanelSection>
-    <SupportingText className="armada-note-error">{t("rgb.loadError")}: {rgbError}</SupportingText>
-    <ButtonRow layout="below" onClick={() => { void refreshRgb(); }}>{t("common.retry")}</ButtonRow>
-  </PanelSection> : null;
+  if (logsState.loading || (!logsState.value && !logsState.error)) return <LoadingState label={t("common.loadingSettings")} />;
 
   return <div>
-    {rgbFailure}
-    {config.rgbSupported && rgb ? <RgbLighting config={rgb} setConfig={setRgbConfig} /> : null}
     <PanelSection title={t("settings.downloads")}>
       <ToggleRow
         label={t("settings.lowPowerDownloads")}
@@ -108,5 +103,11 @@ export function DeviceSettings({ config, setConfig, rgbState }: {
       {config.chargingFanSupported ? <SliderEdit label={t("settings.chargingFanSpeed")} value={pwmToPercent(config.chargingFanPwm)} min={0} max={100} step={1} onChange={(value) => setChargingFanPwm(percentToPwm(value))} /> : null}
       <PanelCalibration supported={config.panelCalibrationSupported} />
     </PanelSection> : null}
+    <PanelSection title={t("settings.sleepMode")}>
+      <SectionDescription>{t("experimental.sleepDescription")}</SectionDescription>
+      <SelectEdit value={config.sleepMode || "s2idle"} options={config.sleepModes.map(option => ({ ...option, label: translateLabel(option.label) }))}
+        onChange={value => saveSleepMode(config, setConfig, value, error => toaster.toast({ title: t("settings.sleepModeError"), body: String(error) }))} />
+    </PanelSection>
+    <SleepLogs state={logsState} saving={savingLogs} setSaving={setSavingLogs} />
   </div>;
 }

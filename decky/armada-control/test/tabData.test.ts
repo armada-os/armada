@@ -119,6 +119,9 @@ test("all tab payloads warm together without waiting for the first Game Settings
   app.select("About");
   assert.equal(app.state.about.loading, false);
   assert.equal(app.state.logs.loading, false);
+  assert.equal(app.timers.size, 0);
+  app.select("System");
+  assert.equal(app.state.logs.loading, false);
   assert.equal(app.timers.size, 1);
   app.resolve("getProtonTools");
   await app.settle();

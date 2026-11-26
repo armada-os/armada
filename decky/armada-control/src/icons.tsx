@@ -29,9 +29,9 @@ export const tabIcons = {
       <path d="M6 10v4m-2-2h4m8-1h.01m3 3h.01" />
     </>} />
   ),
-  Experimental: (
+  System: (
     <Icon size={TAB_ICON_SIZE} path={<>
-      <path d="M9 3h6m-5 0v7L4 20a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1l-6-10V3M7 15h10" />
+      <rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" />
     </>} />
   ),
   About: (

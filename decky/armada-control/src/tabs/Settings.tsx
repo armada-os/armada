@@ -9,23 +9,23 @@ import {
   setBottomScreenEnabled as applyBottomScreenEnabled,
   setDesktopMode as applyDesktopMode,
   setMtpEnabled as applyMtpEnabled,
-  setSleepMode as applySleepMode,
+  setSshEnabled as applySshEnabled,
   setSwipeGesturesEnabled as applySwipeGesturesEnabled,
 } from "../backend";
-import { NoticeSection, SectionDescription, SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
+import { SectionDescription, SelectEdit, SliderEdit, ToggleRow } from "../components/widgets";
 import { useDebouncedApply } from "../hooks/useDebouncedApply";
 import { t, translateLabel } from "../i18n";
 import { createConfigMutation, markConfigFieldChange } from "../lib/configMutation";
-import type { Config, ExperimentalConfig } from "../types";
+import type { AboutConfig, Config, ExperimentalConfig } from "../types";
 
 const saveMtpEnabled = createConfigMutation("mtpEnabled", applyMtpEnabled, { read: getConfig });
 const saveBottomScreenEnabled = createConfigMutation("bottomScreenEnabled", applyBottomScreenEnabled, { read: getConfig });
 const saveDesktopMode = createConfigMutation("desktopMode", applyDesktopMode, { read: getConfig });
-const saveSleepMode = createConfigMutation("sleepMode", applySleepMode, { read: getConfig });
+const saveSshEnabled = createConfigMutation("sshEnabled", applySshEnabled, { read: getConfig });
 const saveSwipeGesturesEnabled = createConfigMutation("swipeGesturesEnabled", applySwipeGesturesEnabled, { read: getConfig, optimistic: false });
 
-export function Experimental({ config, setConfig }: {
-  config: Config & ExperimentalConfig;
+export function Settings({ config, setConfig }: {
+  config: Config & ExperimentalConfig & AboutConfig;
   setConfig: Dispatch<SetStateAction<Config | null>>;
 }) {
   const [swipeGesturesSaving, setSwipeGesturesSaving] = useState(false);
@@ -83,13 +83,10 @@ export function Experimental({ config, setConfig }: {
   const setDesktopMode = (value: string) => saveDesktopMode(config, setConfig, value, (error) => {
     toaster.toast({ title: t("settings.desktopModeError"), body: String(error) });
   });
-  const setSleepMode = (value: string) => saveSleepMode(config, setConfig, value, (error) => {
-    toaster.toast({ title: t("settings.sleepModeError"), body: String(error) });
-  });
+
 
   return (
     <>
-      <NoticeSection title={t("experimental.warningTitle")}>{t("experimental.warning")}</NoticeSection>
       {config.bottomScreenSupported ? (
         <PanelSection title={t("experimental.dualScreenTitle")}>
           <SectionDescription>{t("experimental.dualScreenDescription")}</SectionDescription>
@@ -121,15 +118,8 @@ export function Experimental({ config, setConfig }: {
           />
         </PanelSection>
       ) : null}
-      <PanelSection title={t("settings.sleepMode")}>
-        <SectionDescription>{t("experimental.sleepDescription")}</SectionDescription>
-        <SelectEdit
-          value={config.sleepMode || "s2idle"}
-          options={(config.sleepModes || []).map((option) => ({ ...option, label: translateLabel(option.label) }))}
-          onChange={setSleepMode}
-        />
-      </PanelSection>
-      <PanelSection title={t("experimental.miscellaneous")}>
+      <PanelSection title={t("settings.system")}>
+        <ToggleRow label={t("settings.enableSsh")} value={config.sshEnabled} onChange={(enabled) => saveSshEnabled(config, setConfig, enabled)} />
         <ToggleRow
           label={t("settings.usbFileTransfer")}
           description={config.mtpEnabled ? t("settings.enabledUntilShutdown") : t("experimental.usbDescription")}
