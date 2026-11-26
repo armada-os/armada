@@ -1,0 +1,205 @@
+From: cerroverb <84094990+cerroverb@users.noreply.github.com>
+Subject: [PATCH] input: rsinput: optionally forward the back paddles in the kernel
+
+On the Odin 3 the back paddles are a separate gpio-keys device
+(gpio-keys-paddles: BTN_Z left, BTN_C right). Without InputPlumber a
+userspace service has to copy them into the gamepad node, one extra
+userspace round trip per press (median 0.046 to 0.061 ms measured).
+
+Add forward_paddles, off by default. When set, rsinput registers an input
+handler for gpio-keys-paddles and reports the paddles on the gamepad,
+as A and B unless paddle_left and paddle_right pick other button codes.
+Measured paddle event to gamepad event: median 2.1 us.
+
+--- a/drivers/input/joystick/rsinput.c
++++ b/drivers/input/joystick/rsinput.c
+@@ -47,6 +47,20 @@
+ static bool xbox_face_codes;
+ module_param(xbox_face_codes, bool, 0444);
+ 
++/*
++ * Off by default. When set, the gpio-keys-paddles back paddles (BTN_Z left,
++ * BTN_C right) are forwarded into the gamepad inside the kernel, so no
++ * userspace injector sits between a paddle press and the gamepad node.
++ * paddle_left and paddle_right pick the button code each paddle sends
++ * (default A and B); the driver advertises the chosen codes on the gamepad.
++ */
++static bool forward_paddles;
++module_param(forward_paddles, bool, 0444);
++static unsigned int paddle_left = BTN_SOUTH;
++module_param(paddle_left, uint, 0444);
++static unsigned int paddle_right = BTN_EAST;
++module_param(paddle_right, uint, 0444);
++
+ #define RSINPUT_ACCEL_RES_PER_G   4096
+ #define RSINPUT_ACCEL_RANGE       32768
+ #define RSINPUT_GYRO_RES_PER_DPS  16
+@@ -526,6 +540,135 @@
+     return 0;
+ }
+ 
++/* The gamepad the paddles are forwarded into; NULL while none is bound. */
++static struct input_dev *rsinput_paddle_target;
++static DEFINE_SPINLOCK(rsinput_paddle_lock);
++static bool rsinput_paddles_active;
++
++static void rsinput_paddle_event(struct input_handle *handle, unsigned int type,
++                                 unsigned int code, int value)
++{
++    unsigned int out = 0;
++    unsigned long flags;
++
++    if (type == EV_KEY && code == BTN_Z)
++        out = paddle_left;
++    else if (type == EV_KEY && code == BTN_C)
++        out = paddle_right;
++    else if (!(type == EV_SYN && code == SYN_REPORT))
++        return;
++
++    spin_lock_irqsave(&rsinput_paddle_lock, flags);
++    if (rsinput_paddle_target) {
++        if (out)
++            input_report_key(rsinput_paddle_target, out, value);
++        else
++            input_sync(rsinput_paddle_target);
++    }
++    spin_unlock_irqrestore(&rsinput_paddle_lock, flags);
++}
++
++static int rsinput_paddle_connect(struct input_handler *handler, struct input_dev *dev,
++                                  const struct input_device_id *id)
++{
++    struct input_handle *handle;
++    int error;
++
++    if (!dev->name || strcmp(dev->name, "gpio-keys-paddles"))
++        return -ENODEV;
++
++    handle = kzalloc(sizeof(*handle), GFP_KERNEL);
++    if (!handle)
++        return -ENOMEM;
++    handle->dev = dev;
++    handle->handler = handler;
++    handle->name = "rsinput-paddles";
++
++    error = input_register_handle(handle);
++    if (error)
++        goto err_free;
++    error = input_open_device(handle);
++    if (error)
++        goto err_unregister;
++    return 0;
++
++err_unregister:
++    input_unregister_handle(handle);
++err_free:
++    kfree(handle);
++    return error;
++}
++
++static void rsinput_paddle_disconnect(struct input_handle *handle)
++{
++    input_close_device(handle);
++    input_unregister_handle(handle);
++    kfree(handle);
++}
++
++static const struct input_device_id rsinput_paddle_ids[] = {
++    {
++        .flags = INPUT_DEVICE_ID_MATCH_EVBIT | INPUT_DEVICE_ID_MATCH_KEYBIT,
++        .evbit = { BIT_MASK(EV_KEY) },
++        .keybit = { [BIT_WORD(BTN_Z)] = BIT_MASK(BTN_Z) },
++    },
++    { }
++};
++
++static struct input_handler rsinput_paddle_handler = {
++    .event = rsinput_paddle_event,
++    .connect = rsinput_paddle_connect,
++    .disconnect = rsinput_paddle_disconnect,
++    .name = "rsinput-paddles",
++    .id_table = rsinput_paddle_ids,
++};
++
++/* A paddle code must be a button; anything else falls back to the default. */
++static void rsinput_paddle_codes_check(struct device *dev)
++{
++    if (paddle_left < BTN_MISC || paddle_left > KEY_MAX) {
++        dev_warn(dev, "paddle_left %u is not a button code, using A\n", paddle_left);
++        paddle_left = BTN_SOUTH;
++    }
++    if (paddle_right < BTN_MISC || paddle_right > KEY_MAX) {
++        dev_warn(dev, "paddle_right %u is not a button code, using B\n", paddle_right);
++        paddle_right = BTN_EAST;
++    }
++}
++
++static int rsinput_paddles_start(struct rsinput_driver *drv)
++{
++    unsigned long flags;
++    int error;
++
++    spin_lock_irqsave(&rsinput_paddle_lock, flags);
++    rsinput_paddle_target = drv->input;
++    spin_unlock_irqrestore(&rsinput_paddle_lock, flags);
++
++    error = input_register_handler(&rsinput_paddle_handler);
++    if (error) {
++        spin_lock_irqsave(&rsinput_paddle_lock, flags);
++        rsinput_paddle_target = NULL;
++        spin_unlock_irqrestore(&rsinput_paddle_lock, flags);
++        return error;
++    }
++    rsinput_paddles_active = true;
++    return 0;
++}
++
++static void rsinput_paddles_stop(void)
++{
++    unsigned long flags;
++
++    if (!rsinput_paddles_active)
++        return;
++    rsinput_paddles_active = false;
++    input_unregister_handler(&rsinput_paddle_handler);
++    spin_lock_irqsave(&rsinput_paddle_lock, flags);
++    rsinput_paddle_target = NULL;
++    spin_unlock_irqrestore(&rsinput_paddle_lock, flags);
++}
++
+ static int rsinput_sensors_register(struct rsinput_driver *drv)
+ {
+     struct device *dev = &drv->serdev->dev;
+@@ -704,6 +847,11 @@
+     __set_bit(EV_KEY, drv->input->evbit);
+     for (int i = 0; i < ARRAY_SIZE(keymap); i++)
+         input_set_capability(drv->input, EV_KEY, keymap[i]);
++    if (forward_paddles) {
++        rsinput_paddle_codes_check(&serdev->dev);
++        input_set_capability(drv->input, EV_KEY, paddle_left);
++        input_set_capability(drv->input, EV_KEY, paddle_right);
++    }
+ 
+     __set_bit(EV_ABS, drv->input->evbit);
+     input_set_abs_params(drv->input, ABS_X,
+@@ -766,12 +914,20 @@
+         return error;
+     }
+ 
++    /* The gamepad works without the paddles, so a failure here is not fatal. */
++    if (forward_paddles) {
++        error = rsinput_paddles_start(drv);
++        if (error)
++            dev_warn(&serdev->dev, "paddle forwarding unavailable: %d\n", error);
++    }
++
+     return 0;
+ }
+ 
+ static void rsinput_remove(struct serdev_device *serdev) {
+     struct rsinput_driver *drv = serdev_device_get_drvdata(serdev);
+ 
++    rsinput_paddles_stop();
+     serdev_device_close(serdev);
+     input_unregister_device(drv->input);
+     /* flush, not cancel: unregister queues the final rumble stop */
