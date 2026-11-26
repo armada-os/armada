@@ -748,6 +748,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Reads the codec version in the component probe, after the TX device has enumerated, and keeps it in the driver data; a failed read warns and assumes v2.0. The bind-time read could run before the codec was on the bus and returned garbage (an Odin 3 Portal's v2.0 part reported v1.0). 0088 and 0089 depend on the stored version.
+- `patches/0088-ASoC-wcd939x-fix-the-first-impedance-ramp-on-HPH_L.patch`
+  source: armada
+  upstream: local
+  notes: On v2.0 WCD9395s, brings up the ZDET negative supply (vendor sequence) and discards the first HPH_L impedance ramp, which reads low and made stereo headphones detect as mono. Also reads the HPH_R trim from EFUSE_REG_21 + 4.
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local

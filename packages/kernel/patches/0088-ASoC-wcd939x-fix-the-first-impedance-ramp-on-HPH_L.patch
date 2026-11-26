@@ -1,0 +1,81 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] ASoC: codecs: wcd939x: fix the first impedance ramp on HPH_L
+
+On the WCD9395 the first HPH_L ramp after the MBHC setup reads low
+(floating) and never ramps down, so the plug is classed as mono and
+surge protection stays off. HPH_R and any later HPH_L ramp are fine; a
+delay (50 ms, or 20 ms after the ramp setup) does not help.
+
+On v2.0, bring up the negative supply for the ramps as the vendor
+driver does, and run one HPH_L ramp first and discard it. The supply
+alone is enough while the codec is untrimmed, but not after a reset
+taken with the SoundWire bus running.
+
+Also read the right channel's trim from EFUSE_REG_21 + 4, not + 1.
+
+On a KONKR Pocket FIT, 54 ohm headphones read L floating / R 54 ohm
+(mono) before and 50-52 ohm on both channels (stereo) after, in both
+codec states. Android reads 54/54. An Odin 3 Portal reads 50/50 with
+this (50/53 before).
+---
+ sound/soc/codecs/wcd939x.c | 27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/wcd939x.c b/sound/soc/codecs/wcd939x.c
+--- a/sound/soc/codecs/wcd939x.c
++++ b/sound/soc/codecs/wcd939x.c
+@@ -2446,6 +2446,17 @@
+ 	reg3 = snd_soc_component_read(component, WCD939X_MBHC_CTL_CLK);
+ 	reg4 = snd_soc_component_read(component, WCD939X_MBHC_NEW_ZDET_ANA_CTL);
+ 
++	/* v2.0: the ramps need the ZDET negative supply (vendor sequence). */
++	if (wcd939x->version == WCD939X_VERSION_2_0) {
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x4e, 0x4e);
++		usleep_range(100, 110);
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x10, 0x10);
++		usleep_range(100, 110);
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x01, 0x01);
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x20, 0x20);
++		usleep_range(500, 510);
++	}
++
+ 	if (snd_soc_component_read_field(component, WCD939X_ANA_MBHC_ELECT,
+ 					 WCD939X_MBHC_ELECT_FSM_EN)) {
+ 		snd_soc_component_write_field(component, WCD939X_ANA_MBHC_ELECT,
+@@ -2475,6 +2486,10 @@
+ 	/* 1ms delay needed after disable surge protection */
+ 	usleep_range(1000, 1010);
+ 
++	/* The first HPH_L ramp after this setup reads low; discard it. */
++	if (wcd939x->version == WCD939X_VERSION_2_0)
++		wcd939x_mbhc_zdet_ramp(component, &z1l, NULL);
++
+ 	/* First get impedance on Left */
+ 	wcd939x_mbhc_zdet_ramp(component, &z1l, NULL);
+ 	if (z1l == WCD939X_ZDET_FLOATING_IMPEDANCE || z1l > WCD939X_ZDET_VAL_100K) {
+@@ -2492,7 +2507,7 @@
+ 		*zr = WCD939X_ZDET_FLOATING_IMPEDANCE;
+ 	} else {
+ 		*zr = z1r / 1000;
+-		wcd939x_wcd_mbhc_qfuse_cal(component, zr, 1);
++		wcd939x_wcd_mbhc_qfuse_cal(component, zr, 4);
+ 	}
+ 	dev_dbg(component->dev, "%s: impedance on HPH_R = %d(ohms)\n",
+ 		__func__, *zr);
+@@ -2567,6 +2582,16 @@
+ 	snd_soc_component_write(component, WCD939X_MBHC_NEW_ZDET_ANA_CTL, reg4);
+ 	snd_soc_component_write(component, WCD939X_MBHC_CTL_CLK, reg3);
+ 
++	if (wcd939x->version == WCD939X_VERSION_2_0) {
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x20, 0x00);
++		usleep_range(500, 510);
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x11, 0x00);
++		usleep_range(100, 110);
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x06, 0x00);
++		usleep_range(100, 110);
++		snd_soc_component_update_bits(component, WCD939X_MBHC_ZDET_VNEG_CTL, 0x48, 0x00);
++	}
++
+ 	if (is_fsm_disable)
+ 		snd_soc_component_write_field(component, WCD939X_ANA_MBHC_ELECT,
+ 					      WCD939X_MBHC_ELECT_FSM_EN, true);
