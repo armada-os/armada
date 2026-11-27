@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+[ -e /sys/kernel/mm/ksm/run ] || exit 0
+/usr/bin/grep -Fzxq -- retroidpocket,duo /sys/firmware/devicetree/base/compatible 2>/dev/null || exit 0
+
+dropin="$1/gamescope-session-plus@steam.service.d"
+mkdir -p "$dropin"
+printf '[Service]\nMemoryKSM=yes\n' >"$dropin/40-armada-rp-duo-ksm.conf"
