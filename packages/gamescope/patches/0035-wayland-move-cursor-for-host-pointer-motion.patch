@@ -1,0 +1,35 @@
+From 6a91be8bcba0faa709da03a0b9e77922c3ad8d60 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 26 Nov 2026 20:31:59 -0500
+Subject: [PATCH] wayland: move the cursor for host pointer motion in touch
+ passthrough
+
+The Wayland backend forwards host pointer motion through
+wlserver_touchmotion(). In the passthrough touch click mode that only
+sends touch motion, which is ignored without a touch down, so a nested
+gamescope started with --default-touch-mode 4 never moves its cursor:
+buttons are delivered, but always at the last warped position.
+
+Ask wlserver_touchmotion() to always warp the cursor for pointer
+motion. Other touch modes already warp, and real touch input from the
+host is unchanged.
+---
+ src/Backends/WaylandBackend.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/Backends/WaylandBackend.cpp b/src/Backends/WaylandBackend.cpp
+index bc9293d..bee294d 100644
+--- a/src/Backends/WaylandBackend.cpp
++++ b/src/Backends/WaylandBackend.cpp
+@@ -3214,7 +3214,7 @@ namespace gamescope
+         double flY = ( wl_fixed_to_double( fSurfaceY ) * uScale / 120.0 + oState->nDestY ) / g_nOutputHeight;
+ 
+         wlserver_lock();
+-        wlserver_touchmotion( flX, flY, 0, ++m_uFakeTimestamp );
++        wlserver_touchmotion( flX, flY, 0, ++m_uFakeTimestamp, true );
+         wlserver_unlock();
+     }
+     void CWaylandInputThread::Wayland_Pointer_Button( wl_pointer *pPointer, uint32_t uSerial, uint32_t uTime, uint32_t uButton, uint32_t uState )
+-- 
+2.56.1
+

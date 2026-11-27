@@ -80,6 +80,7 @@ pkgs=(
     erofs-fuse
     erofs-utils
     fuse-libs
+    fuse-overlayfs
     squashfs-tools
     squashfuse
 
@@ -88,11 +89,12 @@ pkgs=(
     steam-notif-daemon
 )
 
-dnf5 -y install --nogpgcheck \
+# --refresh: a local build's /var/cache mount can hold stale repo metadata.
+dnf5 -y install --refresh --nogpgcheck \
     --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' \
     terra-release
 
-dnf5 -y install --setopt=install_weak_deps=False "${pkgs[@]}"
+dnf5 -y install --refresh --setopt=install_weak_deps=False "${pkgs[@]}"
 
 
 #

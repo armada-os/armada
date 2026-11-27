@@ -1,0 +1,34 @@
+From 77dec1b29717a8250d05a9d2b4e5cdb40add8e6d Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 26 Nov 2026 09:23:39 -0500
+Subject: [PATCH] user: Keep running when the screen reader can't start
+
+OrcaManager needs /dev/uinput for its keyboard. Without it the setup
+service's error stopped the whole user daemon, taking every user
+interface with it. Log it and leave the screen reader interfaces off.
+---
+ steamos-manager/src/manager/user.rs | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/steamos-manager/src/manager/user.rs b/steamos-manager/src/manager/user.rs
+index ba71bcd..821fa35 100644
+--- a/steamos-manager/src/manager/user.rs
++++ b/steamos-manager/src/manager/user.rs
+@@ -1682,7 +1682,13 @@ impl Service for ScreenReaderSetupService {
+         }
+ 
+         let object_server = self.session.object_server();
+-        let orca_manager = OrcaManager::new(&self.session).await?;
++        let orca_manager = match OrcaManager::new(&self.session).await {
++            Ok(manager) => manager,
++            Err(e) => {
++                warn!("Screen reader unavailable: {e}");
++                return Ok(());
++            }
++        };
+         let screen_reader = Arc::new(Mutex::new(orca_manager));
+ 
+         loop {
+-- 
+2.56.1
+

@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 i = runpy.run_path(str(ROOT / "system_files/usr/libexec/armada/armada-installer"))
 
 
+@unittest.skipUnless(shutil.which("Xvfb"), "needs Xvfb (xorg-x11-server-Xvfb)")
 class PickerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

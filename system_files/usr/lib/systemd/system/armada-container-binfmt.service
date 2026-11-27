@@ -1,0 +1,16 @@
+[Unit]
+Description=Mount binfmt_misc for FEX inside a container
+Documentation=man:binfmt.d(5)
+# Only a private user namespace gets its own instance; otherwise this is the host's.
+ConditionVirtualization=private-users
+ConditionPathIsMountPoint=!/proc/sys/fs/binfmt_misc
+DefaultDependencies=no
+Before=systemd-binfmt.service sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+
+[Install]
+WantedBy=sysinit.target

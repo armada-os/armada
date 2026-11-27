@@ -79,16 +79,32 @@ along with the upstream-derived packages it ships (see
 [just](https://just.systems/) and [Podman](https://podman.io/):
 
 ```console
-$ just check     # Run the test suite and check recipe formatting
-$ just packages  # Build the packages the image consumes (slow from cold)
-$ just build     # Build the local bootc container image
-$ just --list    # Show disk-image, VM, and other development recipes
+$ just check   # Run the test suite and check recipe formatting
+$ just build   # Build the bootc image as localhost/armada:dev
+$ just disk    # Make a flashable image, output/armada-<version>.img.gz
+$ just --list  # Show every recipe
 ```
 
 Each package builds as a stage in `packages/Containerfile` and is published
 under a tag derived from its own sources, so an unchanged package is never
-rebuilt. `just build` uses a locally built package when you have one and the
-published image otherwise, so you only build what you are changing.
+rebuilt. `just build` builds only the packages you changed and uses the
+published images for the rest.
+
+### Testing changes in a container
+
+On an ARM64 Linux machine, userland changes can be tested without flashing a
+device: the image boots as a rootless Podman container, with Steam or Plasma
+in a window.
+
+```console
+$ just build        # Build the image from your checkout
+$ just run steam    # Boot it and start the Steam session
+$ just run desktop  # Or the Plasma desktop
+$ just sync         # Copy system_files and Decky edits in, no rebuild
+```
+
+It needs Linux 6.7+ and a Wayland session. Kernel, boot and hardware changes
+still need a device.
 
 Issues and pull requests are welcome. For installation or device support, check
 the [troubleshooting documentation](https://armadaos.dev/troubleshooting/frequently-asked-questions/)

@@ -1,18 +1,15 @@
 export image_name := env("IMAGE_NAME", "armada")
-export default_tag := env("DEFAULT_TAG", "latest")
+export default_tag := env("DEFAULT_TAG", "dev")
 export bib_image := env("BIB_IMAGE", "quay.io/centos-bootc/bootc-image-builder@sha256:2b52843ea2bfda73b0a08d97e76b734393b1d3a804681b9fabb26723bd3a2f0b")
 
 import? 'Justfile.local'
-
-alias build-vm := build-qcow2
-alias rebuild-vm := rebuild-qcow2
-alias run-vm := run-vm-qcow2
 
 [private]
 default:
     @just --list
 
-[group('Just')]
+# Run the tests and check the Justfile's formatting
+[group('Test')]
 check: test
     #!/usr/bin/bash
     find . -type f -name "*.just" | while read -r file; do
@@ -22,6 +19,7 @@ check: test
     echo "Checking syntax: Justfile"
     just --unstable --fmt --check -f Justfile
 
+# Run tests/*-test.sh and tests/*-test.py
 [group('Test')]
 test:
     #!/usr/bin/env bash
@@ -38,33 +36,6 @@ test:
         python3 -B "${test_file}"
     done
 
-[group('Just')]
-fix:
-    #!/usr/bin/bash
-    find . -type f -name "*.just" | while read -r file; do
-    	echo "Checking syntax: $file"
-    	just --unstable --fmt -f $file
-    done
-    echo "Checking syntax: Justfile"
-    just --unstable --fmt -f Justfile || { exit 1; }
-
-[group('Utility')]
-clean:
-    #!/usr/bin/bash
-    set -eoux pipefail
-    touch _build
-    find *_build* -exec rm -rf {} \;
-    rm -f previous.manifest.json
-    rm -f changelog.md
-    rm -f output.env
-    rm -rf output/
-
-[group('Utility')]
-[private]
-sudo-clean:
-    just sudoif just clean
-
-[group('Utility')]
 [private]
 sudoif command *args:
     #!/usr/bin/bash
@@ -93,10 +64,23 @@ package name:
     source packages/mesa-x86/BASE.env
     [ -d "packages/{{ name }}" ] || { echo "unknown package: {{ name }}" >&2; exit 1; }
     hash="$(packages/package-hash.sh {{ name }})"
-    buildah build \
+    # Match CI's runners: these three build on x86_64, the rest are arm64.
+    case "{{ name }}" in
+        mesa-android|lepton|mesa-x86) platform=linux/amd64 ;;
+        *) platform=linux/arm64 ;;
+    esac
+    if [ "${platform#linux/}" != "$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" ]; then
+        echo "note: building {{ name }} for ${platform} under emulation; expect it to be slow" >&2
+    fi
+    limits=()
+    out=$(tools/build-limits.sh)
+    [ -z "${out}" ] || mapfile -t limits <<<"${out}"
+    podman build \
         -f packages/Containerfile \
+        --platform "${platform}" \
         --target "out-{{ name }}" \
         --layers \
+        "${limits[@]}" \
         --build-arg "BUILDER_IMAGE=${BUILDER_IMAGE}" \
         --build-arg "GUEST_BUILDER_IMAGE=${GUEST_BUILDER_IMAGE}" \
         -t "localhost/armada/pkg/{{ name }}:${hash}" \
@@ -131,7 +115,9 @@ packages-status:
         fi
     done
 
-build $target_image=image_name $tag=default_tag:
+# Build the bootc image, first building any package changed in this checkout
+[group('Image')]
+build $target_image=image_name $tag=default_tag: _changed-packages
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -162,12 +148,16 @@ build $target_image=image_name $tag=default_tag:
         SECRET_ARGS+=("--secret" "id=GITHUB_TOKEN,env=GITHUB_TOKEN")
     fi
 
+    limits=()
+    out=$(tools/build-limits.sh)
+    [ -z "${out}" ] || mapfile -t limits <<<"${out}"
     podman build \
         --build-arg "ARMADA_VERSION=${ARMADA_VERSION}" \
         --build-arg-file "${REFS}" \
         "${SECRET_ARGS[@]}" \
         --platform linux/arm64 \
         --pull=newer \
+        "${limits[@]}" \
         --target armada-rootfs \
         --tag "${target_image}:${tag}" \
         .
@@ -278,20 +268,9 @@ _build-bib $target_image $tag $type $config: (_rootful_load_image target_image t
     sudo podman image prune -f 2>&1 | tail -3 || true
     podman image prune -f 2>&1 | tail -3 || true
 
-_rebuild-bib $target_image $tag $type $config: (build target_image tag) && (_build-bib target_image tag type config)
-
-[group('Build Virtual Machine Image')]
-build-qcow2 $target_image=("localhost/" + image_name) $tag=default_tag: && (_build-bib target_image tag "qcow2" "disk_config/disk.toml")
-
-[group('Build Virtual Machine Image')]
-build-raw $target_image=("localhost/" + image_name) $tag=default_tag: && (_build-bib target_image tag "raw" "disk_config/disk.toml")
-
-[group('Build Virtual Machine Image')]
-build-iso $target_image=("localhost/" + image_name) $tag=default_tag: && (_build-bib target_image tag "iso" "disk_config/iso.toml")
-
-# Output: ./output/armada-<version>.img.gz  (version = container label, date.sha)
-[group('Armada')]
-build-armada-image $target_image=("localhost/" + image_name) $tag=default_tag: (build-raw target_image tag)
+# Flashable ./output/armada-<version>.img.gz from localhost/armada
+[group('Disk Image')]
+disk $target_image=("localhost/" + image_name) $tag=default_tag: (_build-bib target_image tag "raw" "disk_config/disk.toml")
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Finalizing the freshly-built raw image..."
@@ -304,91 +283,47 @@ build-armada-image $target_image=("localhost/" + image_name) $tag=default_tag: (
     fi
     ./post_process/finalize-armada-image.sh output/image/disk.raw "${target_image}:${tag}"
 
-[group('Build Virtual Machine Image')]
-rebuild-qcow2 $target_image=("localhost/" + image_name) $tag=default_tag: && (_rebuild-bib target_image tag "qcow2" "disk_config/disk.toml")
-
-[group('Build Virtual Machine Image')]
-rebuild-raw $target_image=("localhost/" + image_name) $tag=default_tag: && (_rebuild-bib target_image tag "raw" "disk_config/disk.toml")
-
-[group('Build Virtual Machine Image')]
-rebuild-iso $target_image=("localhost/" + image_name) $tag=default_tag: && (_rebuild-bib target_image tag "iso" "disk_config/iso.toml")
-
-_run-vm $target_image $tag $type $config:
-    #!/usr/bin/bash
-    set -eoux pipefail
-
-    image_file="output/${type}/disk.${type}"
-    if [[ $type == iso ]]; then
-        image_file="output/bootiso/install.iso"
-    fi
-
-    if [[ ! -f "${image_file}" ]]; then
-        just "build-${type}" "$target_image" "$tag"
-    fi
-
-    port=8006
-    while grep -q :${port} <<< $(ss -tunalp); do
-        port=$(( port + 1 ))
-    done
-    echo "Using Port: ${port}"
-    echo "Connect to http://localhost:${port}"
-
-    run_args=()
-    run_args+=(--rm --privileged)
-    run_args+=(--pull=newer)
-    run_args+=(--publish "127.0.0.1:${port}:8006")
-    run_args+=(--env "CPU_CORES=4")
-    run_args+=(--env "RAM_SIZE=8G")
-    run_args+=(--env "DISK_SIZE=64G")
-    run_args+=(--env "TPM=Y")
-    run_args+=(--env "GPU=Y")
-    run_args+=(--device=/dev/kvm)
-    run_args+=(--volume "${PWD}/${image_file}":"/boot.${type}")
-    run_args+=(docker.io/qemux/qemu)
-
-    (sleep 30 && xdg-open http://localhost:"$port") &
-    podman run "${run_args[@]}"
-
-[group('Run Virtual Machine')]
-run-vm-qcow2 $target_image=("localhost/" + image_name) $tag=default_tag: && (_run-vm target_image tag "qcow2" "disk_config/disk.toml")
-
-[group('Run Virtual Machine')]
-run-vm-raw $target_image=("localhost/" + image_name) $tag=default_tag: && (_run-vm target_image tag "raw" "disk_config/disk.toml")
-
-[group('Run Virtual Machine')]
-run-vm-iso $target_image=("localhost/" + image_name) $tag=default_tag: && (_run-vm target_image tag "iso" "disk_config/iso.toml")
-
-[group('Run Virtual Machine')]
-spawn-vm rebuild="0" type="qcow2" ram="6G":
+# Build the packages with no published build for this checkout's sources
+[private]
+_changed-packages:
     #!/usr/bin/env bash
-
     set -euo pipefail
+    command -v skopeo >/dev/null || { echo "skopeo is required" >&2; exit 1; }
+    todo=()
+    for dir in packages/*/; do
+        pkg="$(basename "${dir}")"
+        [ -f "${dir}/build.sh" ] || continue
+        hash="$(packages/package-hash.sh "${pkg}")"
+        podman image exists "localhost/armada/pkg/${pkg}:${hash}" && continue
+        # Only a definite "not published" means build, never a network error.
+        if err=$(skopeo inspect --raw "docker://${pkg_registry}/${pkg}:${hash}" 2>&1 >/dev/null); then
+            continue
+        fi
+        case "${err}" in
+            # ghcr answers 401/403, not 404, for a package it never published.
+            *"manifest unknown"*|*"HTTP status: 401"*|*"HTTP status: 403"*) todo+=("${pkg}") ;;
+            *) echo "cannot check ${pkg_registry}/${pkg}:${hash}: ${err}" >&2; exit 1 ;;
+        esac
+    done
+    [ "${#todo[@]}" -eq 0 ] && exit 0
+    echo "Not published for these sources, building locally: ${todo[*]}"
+    for pkg in "${todo[@]}"; do
+        just package "${pkg}"
+    done
 
-    [ "{{ rebuild }}" -eq 1 ] && echo "Rebuilding the ISO" && just build-vm {{ rebuild }} {{ type }}
+# Copy this checkout's system_files and Decky plugins into the running container, no rebuild
+[group('Container')]
+sync:
+    @tools/dev-container.sh sync
 
-    systemd-vmspawn \
-      -M "bootc-image" \
-      --console=gui \
-      --cpus=2 \
-      --ram=$(echo {{ ram }}| /usr/bin/numfmt --from=iec) \
-      --network-user-mode \
-      --vsock=false --pass-ssh-key=false \
-      -i ./output/**/*.{{ type }}
+# Download or refresh an image for run --image: testing, user:branch, pr/<number>, or a reference
+[group('Container')]
+[positional-arguments]
+pull target:
+    @tools/dev-container.sh pull "$@"
 
-lint:
-    #!/usr/bin/env bash
-    set -eoux pipefail
-    if ! command -v shellcheck &> /dev/null; then
-        echo "shellcheck could not be found. Please install it."
-        exit 1
-    fi
-    /usr/bin/find . -iname "*.sh" -type f -exec shellcheck "{}" ';'
-
-format:
-    #!/usr/bin/env bash
-    set -eoux pipefail
-    if ! command -v shfmt &> /dev/null; then
-        echo "shfmt could not be found. Please install it."
-        exit 1
-    fi
-    /usr/bin/find . -iname "*.sh" -type f -exec shfmt --write "{}" ';'
+# Boot the image and run steam, desktop, status, logs, down (default: shell); --image <target> for another
+[group('Container')]
+[positional-arguments]
+run *args:
+    @ARMADA_DEV_IMAGE="${ARMADA_DEV_IMAGE:-localhost/${image_name}:${default_tag}}" tools/dev-container.sh "$@"

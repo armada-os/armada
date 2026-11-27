@@ -1,0 +1,83 @@
+From 368844af0f047e482fdd48dcb31bbc8b7d677536 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 26 Nov 2026 20:31:59 -0500
+Subject: [PATCH] wayland: forward touchpad scrolling from the host
+
+Pointer frames only produce scroll events for wheel axis sources, and
+continuous axis events are ignored, so two-finger touchpad scrolling
+over a nested gamescope does nothing.
+
+Collect continuous axis values separately, at 10 surface pixels per
+wheel step, and use them when the frame's source is a finger or a
+continuous device. Wheels are still counted from axis_value120 only, so
+a wheel that also sends axis is not doubled, and the choice does not
+depend on axis_source arriving before axis. Steps smaller than the
+1/120 resolution of value120 are carried to the next frame instead of
+being truncated away. Tilt wheels report value120 too, so their
+sideways steps, previously dropped with the frame, are now forwarded.
+---
+ src/Backends/WaylandBackend.cpp | 30 ++++++++++++++++++++++++------
+ 1 file changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/src/Backends/WaylandBackend.cpp b/src/Backends/WaylandBackend.cpp
+index bee294d..81ce1db 100644
+--- a/src/Backends/WaylandBackend.cpp
++++ b/src/Backends/WaylandBackend.cpp
+@@ -569,6 +569,7 @@ namespace gamescope
+         uint32_t m_uModMask[ GAMESCOPE_WAYLAND_MOD_COUNT ];
+ 
+         double m_flScrollAccum[2] = { 0.0, 0.0 };
++        double m_flContinuousScroll[2] = { 0.0, 0.0 };
+         uint32_t m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL;
+ 
+ 		wl_surface *m_pCurrentCursorSurface = nullptr;
+@@ -3235,6 +3236,11 @@ namespace gamescope
+         // Ignore any pointer events for which the `enter` event surface didn't pass `IsGamescopeToplevel` (libdecor frame)
+         if ( !m_bMouseEntered )
+             return;
++
++        assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
++
++        // Surface pixels, at 10 per wheel step as toolkits treat them.
++        m_flContinuousScroll[ !uAxis ] += wl_fixed_to_double( fValue ) / 10.0;
+     }
+     void CWaylandInputThread::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
+     {
+@@ -3272,16 +3278,28 @@ namespace gamescope
+     void CWaylandInputThread::Wayland_Pointer_Frame( wl_pointer *pPointer )
+     {
+         defer( m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL );
+-        double flX = m_flScrollAccum[0];
+-        double flY = m_flScrollAccum[1];
+-        m_flScrollAccum[0] = 0.0;
+-        m_flScrollAccum[1] = 0.0;
++
++        // Wheels report steps via axis_value120; touchpads only pixels via axis.
++        if ( m_uAxisSource == WL_POINTER_AXIS_SOURCE_FINGER || m_uAxisSource == WL_POINTER_AXIS_SOURCE_CONTINUOUS )
++        {
++            m_flScrollAccum[0] += m_flContinuousScroll[0];
++            m_flScrollAccum[1] += m_flContinuousScroll[1];
++        }
++        m_flContinuousScroll[0] = 0.0;
++        m_flContinuousScroll[1] = 0.0;
+ 
+         if ( !cv_wayland_mouse_warp_without_keyboard_focus && !m_bKeyboardEntered )
++        {
++            m_flScrollAccum[0] = 0.0;
++            m_flScrollAccum[1] = 0.0;
+             return;
++        }
+ 
+-        if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL )
+-            return;
++        // value120 is whole 1/120 steps, so carry the remainder to the next frame.
++        double flX = (int32_t)( m_flScrollAccum[0] * 120.0 ) / 120.0;
++        double flY = (int32_t)( m_flScrollAccum[1] * 120.0 ) / 120.0;
++        m_flScrollAccum[0] -= flX;
++        m_flScrollAccum[1] -= flY;
+ 
+         if ( flX == 0.0 && flY == 0.0 )
+             return;
+-- 
+2.56.1
+

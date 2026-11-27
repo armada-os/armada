@@ -1,12 +1,26 @@
 #!/usr/bin/env python3
+import atexit
 import importlib.machinery
 import importlib.util
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import time
 from unittest.mock import patch
+
+# Its own X server, as the resize checks need sizes no window manager overrides.
+if not shutil.which("Xvfb"):
+    print("armada tools UI test skipped: needs Xvfb (xorg-x11-server-Xvfb)")
+    sys.exit(0)
+xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1600x1000x24", "-nolisten", "tcp"],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+atexit.register(xvfb.terminate)
+os.environ["DISPLAY"] = ":" + xvfb.stdout.readline().decode().strip()
+os.environ["GDK_BACKEND"] = "x11"
+os.environ.pop("WAYLAND_DISPLAY", None)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "system_files/usr/lib/armada"))
