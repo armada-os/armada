@@ -6,6 +6,38 @@ commit, or `armada` for original work; a URL source with no `notes` is verbatim.
 A patch entry's `upstream` is `local` for an Armada-authored change, `unknown` when
 no equivalent submission was found, or a permanent URL to the upstream submission.
 
+## Adding host charge limiting
+
+Patch `0905` enforces charge thresholds in the kernel and shares the
+hysteresis and GLINK notification worker across charger backends. Each board
+opts in with its first (model-specific) root Device Tree compatible in
+`qcom_battmgr_find_host_ops()`. The probe also checks the GLINK driver variant
+before matching a board.
+
+- **Existing charger command.** If the target firmware implements the same
+  command and readback semantics, add one table entry pointing to the existing
+  backend. Thor's USB charging switch in `0907` is an example.
+- **Different charger command.** Add a board patch in `patches/series` with a
+  `qcom_battmgr_host_ops` implementation and a table entry. `set_inhibit` stops
+  or resumes charging. `verify_inhibit` can confirm a hold when firmware offers
+  readback. Backend callbacks run with the GLINK request mutex held and return
+  negative errno on failure. Keep board-specific firmware handling in the
+  backend patch. Property GET and SET replies must echo the requested property ID.
+  Optional lifecycle callbacks can allocate private state at probe, track connections,
+  and handle suspend and shutdown. KPFE's charge-rate command and USB-PD recovery are in `0906`.
+- **Steam menu and persistence.** Give the board its own SteamOS Manager
+  device TOML, following
+  [the Thor config](../steamos-manager/devices/ayn-thor.toml). Move its existing
+  device entry out of the SoC-wide file and add the new file to the RPM spec.
+  The manager applies the config to every board listed in the same TOML.
+  Use `host_power_supply` with `local_thresholds` to save the end threshold in
+  Armada. A backend with firmware threshold storage implements `prepare` and
+  `store_thresholds` and uses the existing `power_supply` method.
+
+Validate stop and resume on the same cable connection using measured battery
+current, health, and input voltage. Check reconnect and suspend behavior,
+then verify that Steam shows the menu and restores a selected cap after boot.
+
 - `patches/0000-tools-linux-types.h-Add-128-bit-integer-types-for-arm64-UAPI-structures.patch`
   source: https://git.kernel.org/torvalds/c/10a47fb67340bca274276faf855d7d460afd9a7a
   upstream: https://git.kernel.org/torvalds/c/10a47fb67340bca274276faf855d7d460afd9a7a
@@ -511,6 +543,18 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0904-power-supply-qcom-battmgr-report-charge-threshold-set-failures.patch`
   source: armada
   upstream: local
+- `patches/0905-power-supply-qcom-battmgr-host-charge-limit.patch`
+  source: armada
+  upstream: local
+  notes: Shared thresholds, lifecycle hooks, and matched GLINK replies for board-specific charger controls.
+- `patches/0906-power-supply-qcom-battmgr-kpfe-charge-limit.patch`
+  source: armada
+  upstream: local
+  notes: KPFE charge-rate backend with private state, firmware thresholds, and awake USB-PD recovery.
+- `patches/0907-power-supply-qcom-battmgr-thor-charge-limit.patch`
+  source: armada
+  upstream: local
+  notes: AYN Thor backend using the USB charging switch used by AYN's Charge Separation feature, with host-owned thresholds.
 - `patches/0910-firmware-qcom-scm-allow-QSEECOM-on-OpenABL-s-platforms.patch`
   source: https://github.com/OpenHandheldCollective/OpenABL/blob/8f09253f8f93e7d9ff0b5baf3bda87976f0c54ac/Linux/0001-firmware-qcom-scm-allow-QSEECOM-on-OpenABL-s-platforms.patch
   upstream: unknown

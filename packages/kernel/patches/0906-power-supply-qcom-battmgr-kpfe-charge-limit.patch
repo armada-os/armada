@@ -1,0 +1,474 @@
+Subject: [PATCH] power: supply: qcom_battmgr: use host charge limiting on KPFE
+
+Use the firmware charge-rate command while keeping firmware threshold
+storage. Allocate KPFE state at probe and keep the USB-PD reconnect
+and suspend handling in the backend.
+---
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 9363077..ef9f9e6 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -6,6 +6,7 @@
+  */
+ #include <linux/atomic.h>
+ #include <linux/auxiliary_bus.h>
++#include <linux/delay.h>
+ #include <linux/devm-helpers.h>
+ #include <linux/jiffies.h>
+ #include <linux/module.h>
+@@ -37,6 +38,8 @@ enum qcom_battmgr_variant {
+ 
+ #define BATTMGR_REQUEST_NOTIFICATION	0x4
+ 
++#define BATTMGR_SET_CHARGE_RATE		0x6
++
+ #define BATTMGR_NOTIFICATION		0x7
+ #define NOTIF_BAT_PROPERTY		0x30
+ #define NOTIF_USB_PROPERTY		0x32
+@@ -148,6 +151,13 @@ struct qcom_battmgr_discharge_time_request {
+ 	__le32 reserved;
+ };
+ 
++struct qcom_battmgr_charge_rate_request {
++	struct pmic_glink_hdr hdr;
++	__le32 battery_id;
++	__le32 charge_rate;
++	__le32 charging_path;
++};
++
+ struct qcom_battmgr_charge_ctrl_request {
+ 	struct pmic_glink_hdr hdr;
+ 	__le32 enable;
+@@ -831,13 +841,13 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
+ }
+ 
+ static int qcom_battmgr_set_charge_control(struct qcom_battmgr *battmgr,
+-					   u32 target_soc, u32 delta_soc)
++					   u32 target_soc, u32 delta_soc, bool enable)
+ {
+ 	struct qcom_battmgr_charge_ctrl_request request = {
+ 		.hdr.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
+ 		.hdr.type = cpu_to_le32(PMIC_GLINK_REQ_RESP),
+ 		.hdr.opcode = cpu_to_le32(BATTMGR_CHG_CTRL_LIMIT_EN),
+-		.enable = cpu_to_le32(1),
++		.enable = cpu_to_le32(enable),
+ 		.target_soc = cpu_to_le32(target_soc),
+ 		.delta_soc = cpu_to_le32(delta_soc),
+ 	};
+@@ -910,6 +920,269 @@ static int qcom_battmgr_host_apply(struct qcom_battmgr *battmgr, bool inhibit, i
+ 	return 0;
+ }
+ 
++struct qcom_battmgr_kpfe_state {
++	bool native_limit_enabled;
++	bool pd_online;
++	bool pd_offline_seen;
++	bool pd_pending;
++	bool pd_stop_pending;
++	bool pd_stop_needs_confirmation;
++	bool pd_suspended;
++	bool pd_rate_error;
++	int pd_epoch;
++	int pd_rate_error_epoch;
++	unsigned long pd_offline_at;
++	unsigned long pd_check_deadline;
++	unsigned long pd_stop_deadline;
++};
++
++static int qcom_battmgr_kpfe_init(struct qcom_battmgr *battmgr)
++{
++	battmgr->host_data = devm_kzalloc(battmgr->dev,
++					sizeof(struct qcom_battmgr_kpfe_state), GFP_KERNEL);
++	return battmgr->host_data ? 0 : -ENOMEM;
++}
++
++/* Called with the request mutex held. Firmware retains thresholds when disabled. */
++static int qcom_battmgr_kpfe_prepare(struct qcom_battmgr *battmgr)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++	u32 start_soc, end_soc;
++	int ret;
++
++	ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++					     BATT_CHG_CTRL_START_THR);
++	if (ret)
++		return ret;
++	ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++					     BATT_CHG_CTRL_END_THR);
++	if (ret)
++		return ret;
++	start_soc = battmgr->info.charge_ctrl_start;
++	end_soc = battmgr->info.charge_ctrl_end;
++	if (start_soc < CHARGE_CTRL_START_THR_MIN || start_soc > CHARGE_CTRL_START_THR_MAX ||
++	    end_soc < CHARGE_CTRL_END_THR_MIN || end_soc > CHARGE_CTRL_END_THR_MAX ||
++	    start_soc > end_soc)
++		return -ERANGE;
++
++	ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_BAT_PROPERTY_GET, BATT_CHG_CTRL_EN);
++	if (ret)
++		return ret;
++	if (kpfe->native_limit_enabled) {
++		ret = qcom_battmgr_set_charge_control(battmgr, end_soc, end_soc - start_soc, false);
++		if (ret)
++			return ret;
++		ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++						     BATT_CHG_CTRL_EN);
++		if (ret)
++			return ret;
++		if (kpfe->native_limit_enabled)
++			return -EIO;
++	}
++	return 0;
++}
++
++static int qcom_battmgr_kpfe_store_thresholds(struct qcom_battmgr *battmgr,
++					      u32 start_soc, u32 end_soc)
++{
++	return qcom_battmgr_set_charge_control(battmgr, end_soc, end_soc - start_soc, false);
++}
++
++static int qcom_battmgr_kpfe_set_inhibit(struct qcom_battmgr *battmgr, bool inhibit)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++	struct qcom_battmgr_charge_rate_request request = {
++		.hdr.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
++		.hdr.type = cpu_to_le32(PMIC_GLINK_REQ_RESP),
++		.hdr.opcode = cpu_to_le32(BATTMGR_SET_CHARGE_RATE),
++		.battery_id = cpu_to_le32(0),
++		.charge_rate = cpu_to_le32(inhibit ? 0 : 100),
++		.charging_path = cpu_to_le32(0),
++	};
++	int epoch = atomic_read(&battmgr->host_epoch);
++	int ret;
++
++	ret = qcom_battmgr_request(battmgr, &request, sizeof(request));
++	if (ret) {
++		kpfe->pd_rate_error = true;
++		kpfe->pd_rate_error_epoch = epoch;
++	}
++
++	return ret;
++}
++
++/* A short cable bounce cannot start another negotiation window. */
++static void qcom_battmgr_kpfe_pd_connection(struct qcom_battmgr *battmgr, int epoch)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++
++	if (kpfe->pd_epoch != epoch) {
++		kpfe->pd_epoch = epoch;
++		kpfe->pd_pending = false;
++		kpfe->pd_offline_seen = false;
++	}
++
++	if (!battmgr->usb.online) {
++		if (!kpfe->pd_offline_seen)
++			kpfe->pd_offline_at = jiffies;
++		kpfe->pd_offline_seen = true;
++		kpfe->pd_online = false;
++		kpfe->pd_pending = false;
++	} else if (!kpfe->pd_online) {
++		kpfe->pd_pending = !kpfe->pd_suspended &&
++			kpfe->pd_offline_seen &&
++			time_after_eq(jiffies, kpfe->pd_offline_at + HZ);
++		kpfe->pd_check_deadline = jiffies + 4 * HZ;
++		kpfe->pd_online = true;
++		kpfe->pd_offline_seen = false;
++	}
++}
++
++static int qcom_battmgr_kpfe_pd_source(struct qcom_battmgr *battmgr)
++{
++	union power_supply_propval type, maximum;
++	struct power_supply *psy;
++	int ret;
++
++	/* KPFE has one USB-C port on the PMIC GLINK UCSI instance. */
++	psy = power_supply_get_by_name("ucsi-source-psy-pmic_glink.ucsi.01");
++	if (!psy) {
++		dev_dbg_ratelimited(battmgr->dev, "KPFE USB-PD source is unavailable\n");
++		return -EAGAIN;
++	}
++	ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_ONLINE, &type);
++	if (!ret && !type.intval)
++		ret = -EAGAIN;
++	if (!ret)
++		ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_USB_TYPE, &type);
++	if (!ret && type.intval != POWER_SUPPLY_USB_TYPE_PD &&
++	    type.intval != POWER_SUPPLY_USB_TYPE_PD_PPS)
++		ret = -EAGAIN;
++	if (!ret)
++		ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_VOLTAGE_MAX,
++						&maximum);
++	power_supply_put(psy);
++	if (ret)
++		return ret;
++	/* Some firmware confirms PD but does not export the source PDOs. */
++	return !maximum.intval || maximum.intval >= 9000000;
++}
++
++static int qcom_battmgr_kpfe_pd_reapply_stop(struct qcom_battmgr *battmgr, int epoch)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++	int ret;
++
++	ret = qcom_battmgr_host_apply(battmgr, true, epoch);
++	/*
++	 * A failed release may still reply while we wait for the stop.
++	 * Require two successful replies in that case: at most one can
++	 * be for the release, and every subsequent request is a stop.
++	 */
++	if (!ret && kpfe->pd_stop_needs_confirmation) {
++		kpfe->pd_stop_needs_confirmation = false;
++		battmgr->host_inhibit_valid = false;
++		queue_delayed_work(system_percpu_wq, &battmgr->host_work, msecs_to_jiffies(250));
++		return -EAGAIN;
++	}
++	if (!ret)
++		kpfe->pd_stop_pending = false;
++	return ret;
++}
++
++/*
++ * Keep the request mutex held across release, voltage checks and reapplying
++ * the stop. Property readers can wait for the 2.5 s window and GLINK replies.
++ */
++static int qcom_battmgr_kpfe_pd_upgrade(struct qcom_battmgr *battmgr, int epoch)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++	unsigned long deadline;
++	int ret, high_samples = 0;
++
++	if (!kpfe->pd_pending || kpfe->pd_suspended)
++		return 0;
++	if ((kpfe->pd_rate_error && kpfe->pd_rate_error_epoch == epoch) ||
++	    time_after_eq(jiffies, kpfe->pd_check_deadline)) {
++		kpfe->pd_pending = false;
++		return 0;
++	}
++	ret = qcom_battmgr_kpfe_pd_source(battmgr);
++	if (ret == -EAGAIN) {
++		queue_delayed_work(system_percpu_wq, &battmgr->host_work, msecs_to_jiffies(250));
++		return 0;
++	}
++	if (ret <= 0) {
++		kpfe->pd_pending = false;
++		return 0;
++	}
++	ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_USB_PROPERTY_GET, USB_VOLT_MAX);
++	if (!ret && !battmgr->usb.voltage_max) {
++		queue_delayed_work(system_percpu_wq, &battmgr->host_work, msecs_to_jiffies(250));
++		return 0;
++	}
++	kpfe->pd_pending = false;
++	if (ret || battmgr->usb.voltage_max != 5000000)
++		return ret;
++	ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_BAT_PROPERTY_GET, BATT_HEALTH);
++	if (ret || battmgr->status.health != POWER_SUPPLY_HEALTH_GOOD)
++		return ret;
++
++	pm_wakeup_event(battmgr->dev, 6000);
++	deadline = jiffies + msecs_to_jiffies(2500);
++	/* Even a timed-out release may have reached firmware. Always send stop. */
++	kpfe->pd_stop_pending = true;
++	kpfe->pd_stop_deadline = jiffies + 10 * HZ;
++	ret = qcom_battmgr_host_apply(battmgr, false, epoch);
++	kpfe->pd_stop_needs_confirmation = !!ret;
++	while (!ret && time_before(jiffies, deadline)) {
++		ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_USB_PROPERTY_GET, USB_ONLINE);
++		if (ret || !battmgr->usb.online || epoch != atomic_read(&battmgr->host_epoch) ||
++		    time_after_eq(jiffies, deadline))
++			break;
++		ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_USB_PROPERTY_GET,
++						     USB_VOLT_NOW);
++		if (ret)
++			break;
++		if (battmgr->usb.voltage_now >= 8000000) {
++			if (++high_samples == 2)
++				break;
++		} else {
++			high_samples = 0;
++		}
++		msleep(100);
++	}
++	ret = qcom_battmgr_kpfe_pd_reapply_stop(battmgr, epoch);
++	if (!ret)
++		dev_info(battmgr->dev, "USB-PD reconnect: %s; battery stop restored\n",
++			 high_samples == 2 ? "higher voltage observed" :
++			 "no higher voltage observed");
++	return ret;
++}
++
++static int qcom_battmgr_kpfe_recover(struct qcom_battmgr *battmgr, int epoch)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++	int ret;
++
++	if (!kpfe->pd_stop_pending)
++		return 0;
++	ret = qcom_battmgr_kpfe_pd_reapply_stop(battmgr, epoch);
++	return ret ? ret : 1;
++}
++
++static int qcom_battmgr_kpfe_after_apply(struct qcom_battmgr *battmgr, bool inhibit,
++					int epoch)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++
++	if (inhibit)
++		return qcom_battmgr_kpfe_pd_upgrade(battmgr, epoch);
++
++	kpfe->pd_pending = false;
++	return 0;
++}
++
+ static unsigned int qcom_battmgr_host_retry_delay(unsigned int previous)
+ {
+ 	return clamp_val(previous * 2, CHARGE_CTRL_RETRY_MIN_S, CHARGE_CTRL_RETRY_MAX_S);
+@@ -1080,6 +1353,22 @@ static void qcom_battmgr_host_disable_wakeup(void *data)
+ 	device_init_wakeup(battmgr->dev, false);
+ }
+ 
++static int qcom_battmgr_kpfe_shutdown(struct qcom_battmgr *battmgr, int epoch)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++	int ret;
++
++	if (kpfe->pd_stop_pending)
++		return qcom_battmgr_host_apply(battmgr, true, epoch);
++
++	ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_BAT_PROPERTY_GET, BATT_HEALTH);
++	if (ret || battmgr->status.health != POWER_SUPPLY_HEALTH_GOOD)
++		return ret;
++	if (battmgr->host_inhibited || !battmgr->host_inhibit_valid)
++		return qcom_battmgr_host_apply(battmgr, false, epoch);
++	return 0;
++}
++
+ static void qcom_battmgr_host_shutdown(struct auxiliary_device *adev)
+ {
+ 	struct qcom_battmgr *battmgr = auxiliary_get_drvdata(adev);
+@@ -1124,7 +1413,7 @@ static int qcom_battmgr_set_charge_start_threshold(struct qcom_battmgr *battmgr,
+ 	}
+ 
+ 	mutex_lock(&battmgr->lock);
+-	ret = qcom_battmgr_set_charge_control(battmgr, target_soc, delta_soc);
++	ret = qcom_battmgr_set_charge_control(battmgr, target_soc, delta_soc, true);
+ 	mutex_unlock(&battmgr->lock);
+ 	if (!ret) {
+ 		battmgr->info.charge_ctrl_start = start_soc;
+@@ -1148,7 +1437,7 @@ static int qcom_battmgr_set_charge_end_threshold(struct qcom_battmgr *battmgr, i
+ 		delta_soc = end_soc - battmgr->info.charge_ctrl_start;
+ 
+ 	mutex_lock(&battmgr->lock);
+-	ret = qcom_battmgr_set_charge_control(battmgr, end_soc, delta_soc);
++	ret = qcom_battmgr_set_charge_control(battmgr, end_soc, delta_soc, true);
+ 	mutex_unlock(&battmgr->lock);
+ 	if (!ret) {
+ 		battmgr->info.charge_ctrl_start = end_soc - delta_soc;
+@@ -2066,6 +2355,42 @@ out_complete:
+ 	qcom_battmgr_complete_request(battmgr);
+ }
+ 
++static bool qcom_battmgr_kpfe_handle_response(struct qcom_battmgr *battmgr,
++					     unsigned int opcode,
++					     const void *data, size_t len)
++{
++	const struct {
++		struct pmic_glink_hdr hdr;
++		__le32 result;
++	} *response = data;
++	const struct qcom_battmgr_message *msg = data;
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++	unsigned int value;
++
++	if (opcode == BATTMGR_SET_CHARGE_RATE) {
++		if (len != sizeof(*response))
++			battmgr->error = -ENODATA;
++		else
++			battmgr->error = le32_to_cpu(response->result) ? -EIO : 0;
++	} else if (opcode == BATTMGR_BAT_PROPERTY_GET &&
++		   battmgr->pending_property == BATT_CHG_CTRL_EN) {
++		if (len != sizeof(msg->hdr) + sizeof(msg->intval))
++			return false;
++		battmgr->error = le32_to_cpu(msg->intval.result);
++		if (!battmgr->error) {
++			value = le32_to_cpu(msg->intval.value);
++			if (value > 1)
++				battmgr->error = -EPROTO;
++			else
++				kpfe->native_limit_enabled = value;
++		}
++	} else {
++		return false;
++	}
++	qcom_battmgr_complete_request(battmgr);
++	return true;
++}
++
+ static void qcom_battmgr_dispatch_response(struct qcom_battmgr *battmgr,
+ 					  const void *data, size_t len)
+ {
+@@ -2172,6 +2497,23 @@ static const struct of_device_id qcom_battmgr_of_variants[] = {
+ 
+ static char *qcom_battmgr_battery[] = { "battery" };
+ 
++static int qcom_battmgr_kpfe_pd_suspend_prepare(struct qcom_battmgr *battmgr);
++static void qcom_battmgr_kpfe_pd_suspend_complete(struct qcom_battmgr *battmgr);
++
++static const struct qcom_battmgr_host_ops qcom_battmgr_kpfe_ops = {
++	.init = qcom_battmgr_kpfe_init,
++	.prepare = qcom_battmgr_kpfe_prepare,
++	.store_thresholds = qcom_battmgr_kpfe_store_thresholds,
++	.set_inhibit = qcom_battmgr_kpfe_set_inhibit,
++	.recover = qcom_battmgr_kpfe_recover,
++	.update_connection = qcom_battmgr_kpfe_pd_connection,
++	.after_apply = qcom_battmgr_kpfe_after_apply,
++	.suspend_prepare = qcom_battmgr_kpfe_pd_suspend_prepare,
++	.suspend_complete = qcom_battmgr_kpfe_pd_suspend_complete,
++	.shutdown = qcom_battmgr_kpfe_shutdown,
++	.handle_response = qcom_battmgr_kpfe_handle_response,
++};
++
+ static const struct qcom_battmgr_host_ops *
+ qcom_battmgr_find_host_ops(enum qcom_battmgr_variant variant)
+ {
+@@ -2179,6 +2521,7 @@ qcom_battmgr_find_host_ops(enum qcom_battmgr_variant variant)
+ 		const char *compatible;
+ 		const struct qcom_battmgr_host_ops *ops;
+ 	} boards[] = {
++		{ .compatible = "konkr,pocket-fit-elite", .ops = &qcom_battmgr_kpfe_ops },
+ 		{}
+ 	};
+ 	const struct qcom_battmgr_host_ops *ops = NULL;
+@@ -2354,6 +2697,29 @@ static const struct auxiliary_device_id qcom_battmgr_id_table[] = {
+ };
+ MODULE_DEVICE_TABLE(auxiliary, qcom_battmgr_id_table);
+ 
++static int qcom_battmgr_kpfe_pd_suspend_prepare(struct qcom_battmgr *battmgr)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++
++	if (kpfe->pd_stop_pending) {
++		if (time_before(jiffies, kpfe->pd_stop_deadline))
++			return -EBUSY;
++		dev_warn_ratelimited(battmgr->dev, "suspending with unconfirmed USB-PD charge stop\n");
++	}
++	kpfe->pd_suspended = true;
++	kpfe->pd_pending = false;
++	return 0;
++}
++
++static void qcom_battmgr_kpfe_pd_suspend_complete(struct qcom_battmgr *battmgr)
++{
++	struct qcom_battmgr_kpfe_state *kpfe = battmgr->host_data;
++
++	/* An attachment whose timing is uncertain must not open a window. */
++	kpfe->pd_offline_seen = false;
++	kpfe->pd_suspended = false;
++}
++
+ static int qcom_battmgr_host_suspend_prepare(struct device *dev)
+ {
+ 	struct qcom_battmgr *battmgr = dev_get_drvdata(dev);

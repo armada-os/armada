@@ -1,0 +1,112 @@
+Subject: [PATCH] power: supply: qcom_battmgr: use host charge limiting on AYN Thor
+
+Use the USB_CHARGE_NOW property with readback and host-owned thresholds.
+Release the switch on orderly shutdown and opt Thor into hold reporting.
+---
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index ef9f9e6..ac1aa4c 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -96,6 +96,7 @@ enum qcom_battmgr_variant {
+ #define USB_ADAP_TYPE			7
+ #define USB_MOISTURE_DET_EN		8
+ #define USB_MOISTURE_DET_STS		9
++#define USB_CHARGE_NOW			15
+ 
+ #define BATTMGR_WLS_PROPERTY_GET	0x34
+ #define BATTMGR_WLS_PROPERTY_SET	0x35
+@@ -389,6 +390,7 @@ struct qcom_battmgr {
+ 	spinlock_t reply_lock;
+ 	unsigned int pending_opcode;
+ 	int pending_property;
++	bool usb_charge_now;
+ 
+ 	struct qcom_battmgr_info info;
+ 	struct qcom_battmgr_status status;
+@@ -1011,6 +1013,35 @@ static int qcom_battmgr_kpfe_set_inhibit(struct qcom_battmgr *battmgr, bool inhi
+ 	return ret;
+ }
+ 
++static int qcom_battmgr_thor_verify_inhibit(struct qcom_battmgr *battmgr)
++{
++	int ret;
++
++	ret = qcom_battmgr_host_get_property(battmgr, BATTMGR_USB_PROPERTY_GET, USB_CHARGE_NOW);
++	return ret ? ret : !battmgr->usb_charge_now;
++}
++
++static int qcom_battmgr_thor_set_inhibit(struct qcom_battmgr *battmgr, bool inhibit)
++{
++	int ret;
++
++	ret = qcom_battmgr_thor_verify_inhibit(battmgr);
++	if (ret < 0)
++		return ret;
++	if (ret == inhibit)
++		return 0;
++
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_USB_PROPERTY_SET,
++					  USB_CHARGE_NOW, !inhibit);
++	if (ret)
++		return ret > 0 ? -EIO : ret;
++
++	ret = qcom_battmgr_thor_verify_inhibit(battmgr);
++	if (ret < 0)
++		return ret;
++	return ret == inhibit ? 0 : -EIO;
++}
++
+ /* A short cable bounce cannot start another negotiation window. */
+ static void qcom_battmgr_kpfe_pd_connection(struct qcom_battmgr *battmgr, int epoch)
+ {
+@@ -1369,6 +1400,12 @@ static int qcom_battmgr_kpfe_shutdown(struct qcom_battmgr *battmgr, int epoch)
+ 	return 0;
+ }
+ 
++static int qcom_battmgr_thor_shutdown(struct qcom_battmgr *battmgr, int epoch)
++{
++	/* Return the charging switch to firmware control before the OS exits. */
++	return qcom_battmgr_host_apply(battmgr, false, epoch);
++}
++
+ static void qcom_battmgr_host_shutdown(struct auxiliary_device *adev)
+ {
+ 	struct qcom_battmgr *battmgr = auxiliary_get_drvdata(adev);
+@@ -2265,6 +2302,13 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 			goto out_complete;
+ 
+ 		switch (property) {
++		case USB_CHARGE_NOW:
++			val = le32_to_cpu(resp->intval.value);
++			if (val > 1)
++				battmgr->error = -EPROTO;
++			else
++				battmgr->usb_charge_now = val;
++			break;
+ 		case USB_ONLINE:
+ 			battmgr->usb.online = le32_to_cpu(resp->intval.value);
+ 			break;
+@@ -2514,6 +2558,14 @@ static const struct qcom_battmgr_host_ops qcom_battmgr_kpfe_ops = {
+ 	.handle_response = qcom_battmgr_kpfe_handle_response,
+ };
+ 
++static const struct qcom_battmgr_host_ops qcom_battmgr_thor_ops = {
++	.set_inhibit = qcom_battmgr_thor_set_inhibit,
++	.verify_inhibit = qcom_battmgr_thor_verify_inhibit,
++	.shutdown = qcom_battmgr_thor_shutdown,
++	.local_thresholds = true,
++	.status_charging_during_hold = true,
++};
++
+ static const struct qcom_battmgr_host_ops *
+ qcom_battmgr_find_host_ops(enum qcom_battmgr_variant variant)
+ {
+@@ -2522,6 +2574,7 @@ qcom_battmgr_find_host_ops(enum qcom_battmgr_variant variant)
+ 		const struct qcom_battmgr_host_ops *ops;
+ 	} boards[] = {
+ 		{ .compatible = "konkr,pocket-fit-elite", .ops = &qcom_battmgr_kpfe_ops },
++		{ .compatible = "ayn,thor", .ops = &qcom_battmgr_thor_ops },
+ 		{}
+ 	};
+ 	const struct qcom_battmgr_host_ops *ops = NULL;
