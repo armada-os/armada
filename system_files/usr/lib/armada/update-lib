@@ -4,6 +4,7 @@
 ARMADA_CANONICAL_REGISTRY="ghcr.io/armada-os/armada"
 ARMADA_LEGACY_REGISTRY="ghcr.io/virtudude/armada"
 ARMADA_CHANNEL_STATE="/var/lib/armada/update-channel"
+ARMADA_UPDATE_STATUS="/var/lib/armada/update-status.json"
 ARMADA_CHANNELS="stable beta testing"
 ARMADA_OSTREE_REPO="/ostree/repo"
 ARMADA_UPDATE_RESERVE_GIB=2
@@ -13,6 +14,25 @@ ARMADA_UPDATE_RESERVE_BYTES=$((ARMADA_UPDATE_RESERVE_GIB * 1024 * 1024 * 1024))
 armada_update_log() {
     echo "armada-update: $*" >&2
     logger -t armada-update -- "$*" 2>/dev/null || true
+}
+
+# Steam only sees exit 0 or 7, so record the last result for Armada Control.
+# Arguments are key=value; empty values are dropped. Best effort, never fails.
+armada_update_status() {
+    python3 - "$ARMADA_UPDATE_STATUS" "$@" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+path = sys.argv[1]
+data = {"time": int(time.time())}
+for arg in sys.argv[2:]:
+    key, _, value = arg.partition("=")
+    if value:
+        data[key] = int(value) if key.endswith("_bytes") and value.isdigit() else value
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path + ".tmp", "w") as f:
+    json.dump(data, f)
+os.chmod(path + ".tmp", 0o644)
+os.replace(path + ".tmp", path)
+PY
 }
 
 # Steam's picker speaks Valve's branch tokens; translate to/from our ghcr tags.

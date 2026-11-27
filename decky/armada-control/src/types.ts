@@ -1,3 +1,5 @@
+import type { UpdateStatus } from "./lib/updateStatus";
+
 export interface PowerProfile {
   label: string;
   cpu_governor: string;
@@ -172,6 +174,7 @@ export interface Config {
   protonDefaults: string[];
   osVersion: string;
   ablVersion: string;
+  updateStatus: UpdateStatus | null;
   bottomScreenSupported: boolean;
   bottomScreenEnabled: boolean;
   bottomScreenBrightnessSupported: boolean;

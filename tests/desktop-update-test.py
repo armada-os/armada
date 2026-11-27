@@ -23,6 +23,7 @@ class UpdateHookTests(unittest.TestCase):
         library = self.base / "update-lib"
         library.write_text((ROOT / "system_files/usr/lib/armada/update-lib").read_text() + '''
 ARMADA_CHANNEL_STATE="$TEST_CHANNEL_STATE"
+ARMADA_UPDATE_STATUS="$TEST_UPDATE_STATUS"
 armada_update_log() { echo "$*" >&2; }
 armada_booted_ref() { echo "${BOOTED_REF:-ostree-image-signed:docker://ghcr.io/armada-os/armada:stable}"; }
 armada_update_reserve_bytes() { echo 0; }
@@ -51,7 +52,8 @@ armada_bootc_with_progress() { echo "$*" >> "$BOOTC_CALLS"; echo '70%'; }
             "source /usr/lib/armada/update-lib", f"source {library}"))
         self.env = {**os.environ, "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
                     "BOOTC_STATE": str(self.base / "bootc.json"), "BOOTC_CALLS": str(self.base / "calls"),
-                    "TEST_CHANNEL_STATE": str(self.base / "channel")}
+                    "TEST_CHANNEL_STATE": str(self.base / "channel"),
+                    "TEST_UPDATE_STATUS": str(self.base / "state" / "update-status.json")}
 
     def run_hook(self, *arguments, **kwargs):
         return subprocess.run(["bash", str(self.hook), *arguments], env=self.env,
@@ -121,6 +123,40 @@ armada_bootc_with_progress() { echo "$*" >> "$BOOTC_CALLS"; echo '70%'; }
         result = self.run_hook("check")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.returncode, 7)
+
+    def status(self, *arguments):
+        result = self.run_hook(*arguments)
+        return result.returncode, json.loads((self.base / "state" / "update-status.json").read_text())
+
+    def test_every_result_is_recorded_without_changing_exit_codes(self):
+        code, status = self.status("check")
+        self.assertEqual((code, status["mode"], status["result"]), (0, "check", "available"))
+        self.assertEqual((status["target"], status["version"]), ("ghcr.io/armada-os/armada:stable", "new-version"))
+        self.env["AVAILABLE_BYTES"] = "40"
+        code, status = self.status("check")
+        self.assertEqual((code, status["result"]), (7, "no_space"))
+        self.assertEqual((status["needed_bytes"], status["reserve_bytes"], status["available_bytes"]), (100, 0, 40))
+        self.assertEqual(self.status()[1]["result"], "no_space")
+        self.assertFalse((self.base / "calls").exists())
+        del self.env["AVAILABLE_BYTES"]
+        self.env["NETWORK_FAILURE"] = "1"
+        code, status = self.status("check")
+        self.assertEqual((code, status["result"]), (7, "remote_unreachable"))
+        del self.env["NETWORK_FAILURE"]
+        self.env["REMOTE_DIGEST"] = "sha256:booted"
+        code, status = self.status("check")
+        self.assertEqual((code, status["result"]), (7, "up_to_date"))
+        self.env.update(REMOTE_DIGEST="sha256:staged", STAGED_DIGEST="sha256:staged", STAGED_REF="ghcr.io/armada-os/armada:stable")
+        code, status = self.status("check")
+        self.assertEqual((code, status["result"], status["version"]), (0, "staged", "staged-version"))
+        code, status = self.status()
+        self.assertEqual((code, status["mode"], status["result"]), (0, "apply", "staged"))
+
+    def test_status_write_failure_keeps_exit_code(self):
+        self.env["TEST_UPDATE_STATUS"] = "/proc/armada/update-status.json"
+        result = self.run_hook("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "new-version")
 
     def test_storage_failure_does_not_apply(self):
         self.env["AVAILABLE_BYTES"] = "1"

@@ -11,17 +11,32 @@ for arg in "$@"; do
     esac
 done
 
+mode=apply
+[ "${check}" = 1 ] && mode=check
+
+status() {
+    armada_update_status mode="${mode}" result="$1" target="${repository:+${repository}:${desired}}" \
+        version="${r_ver:-${r_digest:-}}" "${@:2}"
+}
+
 fail() {
-    armada_update_log "$1"
+    armada_update_log "$2"
+    status "$1" "${@:3}"
     exit 7
 }
 
-command -v bootc >/dev/null || fail "bootc is unavailable"
-reserve_bytes=$(armada_update_reserve_bytes) || fail "Could not determine the update storage reserve"
+no_space() {
+    [ "$1" = 1 ] || fail error "Could not determine free space for the update"
+    fail no_space "Not enough free space for the update" needed_bytes="${r_required}" \
+        reserve_bytes="${reserve_bytes}" available_bytes="$(armada_available_bytes)"
+}
+
+command -v bootc >/dev/null || fail error "bootc is unavailable"
+reserve_bytes=$(armada_update_reserve_bytes) || fail error "Could not determine the update storage reserve"
 
 booted_ref=$(armada_booted_ref)
 booted=$(armada_tag_from_ref "$booted_ref")
-target=$(armada_update_target "$booted_ref") || fail "Could not determine the update target"
+target=$(armada_update_target "$booted_ref") || fail error "Could not determine the update target"
 read -r repository desired <<<"$target"
 case "$booted_ref" in ostree-image-signed:*) verified=1 ;; *) verified=0 ;; esac
 
@@ -32,36 +47,41 @@ if [ "${check}" = 1 ]; then
     [ "${s_digest:-}" = "-" ] && s_digest=""
     [ "${s_ref:-}" = "-" ] && s_ref=""
     [ "${s_ver:-}" = "-" ] && s_ver=""
-    [ -n "${b_digest}" ] || fail "Could not read the booted deployment"
+    [ -n "${b_digest}" ] || fail error "Could not read the booted deployment"
     staged=$(armada_tag_from_ref "${s_ref}")
     remote_info=$(armada_remote_info "${desired}" "${repository}")
     remote_status=$?
     if [ "${remote_status}" != 0 ]; then
         armada_log_remote_info_failure "${remote_status}" "${repository}:${desired}"
-        fail "Could not inspect the update target"
+        [ "${remote_status}" = 2 ] && fail error "Could not read local OSTree layers"
+        fail remote_unreachable "Could not inspect the update target"
     fi
     read -r r_required r_digest r_ver <<<"${remote_info}"
     [ "${r_ver:-}" = "-" ] && r_ver=""
     if [ -z "${r_digest:-}" ] || ! [[ "${r_required:-}" =~ ^[0-9]+$ ]]; then
         armada_update_log "update target ${repository}:${desired} returned incomplete metadata"
-        fail "The update target returned incomplete metadata"
+        fail bad_metadata "The update target returned incomplete metadata"
     fi
     if [ "${staged}" != "${desired}" ] && { [ "${desired}" != "${booted}" ] || [ -n "${staged}" ]; }; then
-        armada_update_fits "${r_required}" "${reserve_bytes}" || fail "Not enough free space for the update"
+        armada_update_fits "${r_required}" "${reserve_bytes}" || no_space $?
+        status available
         printf '%s\n' "${r_ver:-${r_digest}}"
         exit 0
     fi
     # bootc upgrade --check caches its verdict; registry digests allow fresh comparisons.
     if [ "${r_digest}" != "${b_digest}" ] && [ "${r_digest}" != "${s_digest}" ]; then
-        armada_update_fits "${r_required}" "${reserve_bytes}" || fail "Not enough free space for the update"
+        armada_update_fits "${r_required}" "${reserve_bytes}" || no_space $?
+        status available
         printf '%s\n' "${r_ver:-${r_digest}}"
         exit 0
     fi
     if [ -n "${s_digest}" ]; then
         # Steam maps the reprinted staged version to restart-pending.
+        status staged version="${s_ver:-${s_digest}}"
         printf '%s\n' "${s_ver:-${s_digest}}"
         exit 0
     fi
+    status up_to_date
     exit 7
 fi
 
@@ -70,10 +90,12 @@ remote_info=$(armada_remote_info "${desired}" "${repository}")
 remote_status=$?
 if [ "${remote_status}" != 0 ]; then
     armada_log_remote_info_failure "${remote_status}" "${repository}:${desired}"
-    exit 7
+    [ "${remote_status}" = 2 ] && fail error "Could not read local OSTree layers"
+    fail remote_unreachable "Could not inspect the update target"
 fi
-read -r r_required _ <<<"${remote_info}"
-armada_update_fits "${r_required:-}" "${reserve_bytes}" || exit 7
+read -r r_required r_digest r_ver <<<"${remote_info}"
+[ "${r_ver:-}" = "-" ] && r_ver=""
+armada_update_fits "${r_required:-}" "${reserve_bytes}" || no_space $?
 
 staged=$(armada_tag_from_ref "$(armada_staged_ref)")
 
@@ -86,9 +108,10 @@ if [ "${staged}" != "${desired}" ] && { [ "${desired}" != "${booted}" ] || [ -n 
             printf '%s\n' "${booted}" > "${ARMADA_CHANNEL_STATE}" 2>/dev/null \
                 || echo "armada-update: could not revert channel state to ${booted}" >&2
         fi
-        exit 7
+        fail apply_failed "bootc switch failed"
     fi
 else
-    armada_bootc_with_progress bootc upgrade || exit 7
+    armada_bootc_with_progress bootc upgrade || fail apply_failed "bootc upgrade failed"
 fi
+status staged
 exit 0
