@@ -1,0 +1,141 @@
+From 52504ebbcbfea831b8e6b05c637d274f351dadca Mon Sep 17 00:00:00 2001
+From: Joonhoe Kim <26rote@gmail.com>
+Date: Thu, 26 Nov 2026 03:11:16 +0900
+Subject: [PATCH] usb: dwc3: tell xHCI that it lost its state when the core is
+ powered off
+
+dwc3_suspend_common() powers the core off for system suspend
+(dwc3_core_exit()) in OTG mode (DWC3_GCTL_PRTCAP_OTG), and in host mode
+when the controller may not wake the system or needs a full re-init. The
+xHCI registers and the state saved with the Controller Save State
+command are gone then, but nothing tells xhci-plat: xhci_resume() takes
+the "state intact" path, writes the saved registers back and asks the
+controller to restore its state (CRS).
+
+xhci-plat has a flag for exactly this, power_lost (commit 668cc6bc1178
+("usb: host: xhci-plat: allow upper layers to signal power loss"), used
+by cdns3), but dwc3 never sets it.
+
+On a Lenovo Y700 Gen 5 (TB323FU, SM8850; DWC3 + eUSB2 PHY) with a USB
+2.0 hub, a USB 3 flash drive and a Billboard device attached, and USB
+wakeup disabled, s2idle then broke the host controller on resume: either
+the controller wrote to an address that was not mapped
+
+  arm-smmu 15000000.iommu: Unhandled context fault: fsr=0x402,
+    iova=0xd85e7c300, fsynr=0x3d0011, cbfrsynra=0x40, cb=13
+  xhci-hcd xhci-hcd.2.auto: WARNING: Host System Error
+  usb 1-1: hub failed to enable device, error -108
+
+or its command ring would not stop
+
+  xhci-hcd xhci-hcd.2.auto: Abort failed to stop command ring: -110
+  xhci-hcd xhci-hcd.2.auto: xHCI host controller not responding, assume dead
+  xhci-hcd xhci-hcd.2.auto: HC died; cleaning up
+  usb 1-1: PM: **** DPM device timeout ****
+  Kernel panic - not syncing: usb 1-1: unrecoverable failure
+
+With wakeup enabled (the core stays powered) the same setup survived
+every cycle.
+
+Record that the core was powered off and pass this to xhci-plat as
+power_lost from a resume_quirk, so that xhci_resume() resets the
+controller and the devices are re-enumerated. Unlike a static
+XHCI_RESET_ON_RESUME this only applies to the resumes that follow a
+power-off; resumes with the core kept powered (host mode with wakeup
+enabled) and runtime resume keep the restore path. Clear the flag once
+xhci-plat has read it, so that a later system suspend that fails before
+the dwc3 core is suspended does not reset the controller.
+
+Fixes: c4a5153e87fd ("usb: dwc3: core: Power-off core/PHYs on system_suspend in host mode")
+Fixes: f09cc79b4b33 ("usb: dwc3: add dual role support using OTG block")
+Cc: stable@vger.kernel.org # 6.15.x
+Tested-by: Arun Iyengar <aiyengar1990@gmail.com>
+Acked-by: Thinh Nguyen <Thinh.Nguyen@synopsys.com>
+Signed-off-by: Joonhoe Kim <26rote@gmail.com>
+[ Backport to 7.2: host.c has no linux/bitfield.h include, so the
+  include hunk's context differs. ]
+---
+ drivers/usb/dwc3/core.c |  3 +++
+ drivers/usb/dwc3/core.h |  3 +++
+ drivers/usb/dwc3/host.c | 15 ++++++++++++---
+ 3 files changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index ceb49f2..ec4226e 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -2501,6 +2501,7 @@ static int dwc3_suspend_common(struct dwc3 *dwc, pm_message_t msg)
+ 		if (!PMSG_IS_AUTO(msg) &&
+ 		    (!device_may_wakeup(dwc->dev) || dwc->needs_full_reinit)) {
+ 			dwc3_core_exit(dwc);
++			dwc->xhci_power_lost = 1;
+ 			break;
+ 		}
+ 
+@@ -2537,6 +2538,8 @@ static int dwc3_suspend_common(struct dwc3 *dwc, pm_message_t msg)
+ 
+ 		dwc3_otg_exit(dwc);
+ 		dwc3_core_exit(dwc);
++		if (dwc->current_otg_role == DWC3_OTG_ROLE_HOST)
++			dwc->xhci_power_lost = 1;
+ 		break;
+ 	default:
+ 		/* do nothing */
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+index e0dee9d..3fd5477 100644
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -1171,6 +1171,8 @@ struct dwc3_glue_ops {
+  * @suspended: set to track suspend event due to U3/L2.
+  * @susphy_state: state of DWC3_GUSB2PHYCFG_SUSPHY + DWC3_GUSB3PIPECTL_SUSPHY
+  *		  before PM suspend.
++ * @xhci_power_lost: the core was powered off for system suspend; xHCI
++ *		     must not try to restore its state on resume
+  * @imod_interval: set the interrupt moderation interval in 250ns
+  *			increments or 0 to disable.
+  * @max_cfg_eps: current max number of IN eps used across all USB configs.
+@@ -1415,6 +1417,7 @@ struct dwc3 {
+ 	unsigned		wakeup_configured:1;
+ 	unsigned		suspended:1;
+ 	unsigned		susphy_state:1;
++	unsigned		xhci_power_lost:1;
+ 
+ 	u16			imod_interval;
+ 
+diff --git a/drivers/usb/dwc3/host.c b/drivers/usb/dwc3/host.c
+index 96b588b..ddc15f0 100644
+--- a/drivers/usb/dwc3/host.c
++++ b/drivers/usb/dwc3/host.c
+@@ -13,9 +13,7 @@
+ #include <linux/usb.h>
+ #include <linux/usb/hcd.h>
+ 
+-#include "../host/xhci-port.h"
+-#include "../host/xhci-ext-caps.h"
+-#include "../host/xhci-caps.h"
++#include "../host/xhci.h"
+ #include "../host/xhci-plat.h"
+ #include "core.h"
+ 
+@@ -77,7 +75,18 @@ static void dwc3_xhci_plat_start(struct usb_hcd *hcd)
+ 	dwc3_enable_susphy(dwc, true);
+ }
+ 
++static int dwc3_xhci_resume_quirk(struct usb_hcd *hcd)
++{
++	struct dwc3 *dwc = dev_get_drvdata(hcd->self.controller->parent);
++
++	hcd_to_xhci_priv(hcd)->power_lost = dwc->xhci_power_lost;
++	dwc->xhci_power_lost = 0;
++
++	return 0;
++}
++
+ static const struct xhci_plat_priv dwc3_xhci_plat_quirk = {
++	.resume_quirk = dwc3_xhci_resume_quirk,
+ 	.plat_start = dwc3_xhci_plat_start,
+ };
+ 
+-- 
+2.56.1
+

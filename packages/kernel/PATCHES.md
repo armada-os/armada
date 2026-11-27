@@ -1029,6 +1029,11 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   upstream: https://lore.kernel.org/all/20261119124558.1548-3-26rote@gmail.com/
   notes: v4, applied unchanged. Only boards whose `usb_1` node has `mode-switch` use it (the Thor, through `dts/qcs8550-ayn-thor.dts.patch`). The dt-binding patch (1/2) is not needed to build. With 0627 the PHY stops the USB3 PIPE clock in DP-only mode; without this the controller then faults on the first s2idle resume (SMMU fault, xHCI Host System Error) and USB stays down until reboot (#959).
 
+- `patches/0632-usb-dwc3-tell-xHCI-that-it-lost-its-state-when-the-core-is-powered-off.patch`
+  source: https://lore.kernel.org/all/20261125181116.121-1-26rote@gmail.com/
+  upstream: https://lore.kernel.org/all/20261125181116.121-1-26rote@gmail.com/
+  notes: v3 (Acked-by Thinh Nguyen, Cc stable), backported to 7.2: only the host.c include context differs. dwc3 powers the core off on system suspend when USB wakeup is off, as on the Thor, so xhci-plat must reset the controller on resume instead of restoring its saved state. Without it the first s2idle resume with any USB device attached faults (SMMU fault from the USB stream, xHCI Host System Error), with or without DisplayPort (#959).
+
 - `dts/sm7750-retroidpocket-duo.dts`
   source: armada
   upstream: local
