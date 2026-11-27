@@ -420,6 +420,18 @@
       }
     },
     {
+      "id": "ratatoskr",
+      "name": "Ratatoskr",
+      "summary": "AYN Thor bottom screen as a trackpad, keyboard and quick controls",
+      "category": "plugins",
+      "icon": "https://raw.githubusercontent.com/venatrix-ritz/Ratatoskr/main/touch-master.svg",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/venatrix-ritz/Ratatoskr/releases/457458936",
+        "asset": "^Ratatoskr\\.zip$"
+      }
+    },
+    {
       "id": "optiscaler",
       "name": "OptiScaler (ARM64EC)",
       "summary": "Plugin for installing OptiScaler into games with minimal effort",
