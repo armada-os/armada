@@ -1,0 +1,44 @@
+From 0ea5420d11e2530a14b41011d84eae544f1216e7 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 26 Nov 2026 09:23:39 -0500
+Subject: [PATCH] root: Keep running when the ftrace instance can't be set
+ up
+
+Containers and kernels without tracefs can't create the
+steamos-log-submitter instance. That only feeds OOM reports to the log
+submitter, so log it and carry on instead of taking down the daemon.
+---
+ steamos-manager/src/daemon/root.rs | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/steamos-manager/src/daemon/root.rs b/steamos-manager/src/daemon/root.rs
+index 82b2aaf..5c7bb9e 100644
+--- a/steamos-manager/src/daemon/root.rs
++++ b/steamos-manager/src/daemon/root.rs
+@@ -11,7 +11,7 @@ use std::path::PathBuf;
+ use tokio::sync::mpsc::Sender;
+ use tokio::sync::oneshot;
+ use tokio_util::sync::CancellationToken;
+-use tracing::error;
++use tracing::{error, warn};
+ use tracing::subscriber::set_global_default;
+ use tracing_subscriber::prelude::*;
+ use tracing_subscriber::{EnvFilter, Registry, fmt};
+@@ -122,8 +122,12 @@ impl DaemonContext for RootContext {
+     ) -> Result<()> {
+         self.state = state;
+ 
+-        let ftrace = Ftrace::init().await?;
+-        daemon.add_service(ftrace);
++        match Ftrace::init().await {
++            Ok(ftrace) => {
++                daemon.add_service(ftrace);
++            }
++            Err(e) => warn!("Not watching ftrace for OOM kills: {e}"),
++        }
+ 
+         let ip = DeckService::init().await?;
+         daemon.add_service(ip);
+-- 
+2.56.1
+

@@ -69,3 +69,9 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 
 - `patches/0034-vulkan-allow-linear-composition-output.patch`
   source: armada
+
+- `patches/0035-wayland-move-cursor-for-host-pointer-motion.patch`
+  source: armada
+
+- `patches/0036-wayland-forward-touchpad-scrolling.patch`
+  source: armada

@@ -11,8 +11,26 @@ TARGET=/usr/share/guestos/fex-mesa
 ROOTFS_MOUNT=${RUN}/rootfs
 MESA_MOUNT=${RUN}/mesa
 
+# Containers have no loop devices, and overlayfs refuses FUSE lowers in a userns.
+use_fuse=0
+systemd-detect-virt -cq && use_fuse=1
+
 mount_ro() {
-  mountpoint -q "$2" || mount -t squashfs -o ro,loop "$1" "$2"
+  mountpoint -q "$2" && return 0
+  if [ "${use_fuse}" = 1 ]; then
+    squashfuse -o allow_other "$1" "$2"
+  else
+    mount -t squashfs -o ro,loop "$1" "$2"
+  fi
+}
+
+mount_target() {
+  mountpoint -q "${TARGET}" && return 0
+  if [ "${use_fuse}" = 1 ]; then
+    fuse-overlayfs -o "lowerdir=${MESA_MOUNT}:${ROOTFS_MOUNT},allow_other" "${TARGET}"
+  else
+    mount -t overlay overlay -o "lowerdir=${MESA_MOUNT}:${ROOTFS_MOUNT}" "${TARGET}"
+  fi
 }
 
 unmount_if_mounted() {
@@ -35,8 +53,7 @@ case "${1:-start}" in
 
     mount_ro "${ROOTFS_SQSH}" "${ROOTFS_MOUNT}" || rollback
     mount_ro "${MESA_SQSH}" "${MESA_MOUNT}" || rollback
-    mountpoint -q "${TARGET}" || mount -t overlay overlay \
-      -o "lowerdir=${MESA_MOUNT}:${ROOTFS_MOUNT}" "${TARGET}" || rollback
+    mount_target || rollback
     ;;
   stop)
     unmount_if_mounted "${TARGET}" || exit 1

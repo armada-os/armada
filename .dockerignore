@@ -1,4 +1,5 @@
 **/node_modules
+**/__pycache__
 decky/armada-control/dist
 decky/armada-store/dist
 # Package sources build in packages/Containerfile with packages/ as their own

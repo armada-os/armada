@@ -27,11 +27,10 @@ class Dispenser(BaseHTTPRequestHandler):
         pass
 
 
+@unittest.skipUnless(HELPER.exists(), "install armada-aurora or set ARMADA_AURORA_HOME to its extracted files")
 class HelperTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not HELPER.exists():
-            raise RuntimeError("Install armada-aurora or set ARMADA_AURORA_HOME to its extracted files")
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Dispenser)
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()

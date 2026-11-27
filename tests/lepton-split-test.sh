@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 steamvr() { return 0; }
-source "${1:?usage: lepton-split-test.sh <patched-tool>/liblepton/liblepton.sh}"
+# Needs a real Lepton install, which lepton-armada builds on first launch.
+lib="${1:-${XDG_DATA_HOME:-$HOME/.local/share}/lepton-armada/tool/liblepton/liblepton.sh}"
+if [[ $# -gt 0 && ! -f "$lib" ]]; then
+    echo "lepton split test: $lib does not exist" >&2
+    exit 1
+elif [[ ! -f "$lib" ]]; then
+    echo "lepton split test skipped: no Lepton install; pass <lepton-armada tool>/liblepton/liblepton.sh"
+    exit 0
+fi
+source "$lib"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/APK set"
