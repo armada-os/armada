@@ -89,6 +89,8 @@
 0627-phy-qcom-qmp-combo-leave-the-USB-PCS-alone-in-DP-only-mode.patch
 0628-phy-qcom-qmp-combo-dont-disable-the-pipe-clock-when-USB-power-on-fails.patch
 0629-usb-dwc3-qcom-check-for-hcd-in-dwc3_qcom_read_usb2_speed.patch
+0630-usb-dwc3-qcom-restore-UTMI-PIPE-clock-on-resume.patch
+0631-usb-dwc3-qcom-use-the-UTMI-clock-as-PIPE-clock-in-DisplayPort-only-modes.patch
 
 # ============== Haptics ==============
 1000-input-misc-qcom-hv-haptics-sm8750.patch

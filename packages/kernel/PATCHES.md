@@ -916,7 +916,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada disables the inherited Pocket 6 PWM backlight and removes its panel reference so Nova uses its panel driver’s DSI backlight. Matches Retroid’s Nova panel wiring: L11B/L12B/L13B for vdd/vddio/vci, GPIO 70/143 fixed regulators for vdd18/vdd28, and rotation 0. Removes the inherited avdd supply and retains Armada DPU dithering and Nova's own ADSP firmware. The ROCKNIX Nova → RP6 → AYN common inheritance remains unchanged for other systems.
 - `dts/qcs8550-ayn-thor.dts.patch`
   source: armada
-  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`. It also sets `lid-switch` on the power key so it can't wake the device with the lid closed (patches 1306 and 1307).
+  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`. It also sets `lid-switch` on the power key so it can't wake the device with the lid closed (patches 1306 and 1307). It marks `usb_1` as a Type-C mode switch, so patch 0631 can run USB 2.0 from the UTMI clock while DisplayPort has all four lanes (#959).
 - `dts/sm8650-ayaneo-common.dtsi.patch`
   source: armada
   notes: Armada keeps volume-up from waking the system, wires the upstream SY7758 driver, marks PCIe WAKE# active-low, idles the codec rails in LPM during s2idle, and keeps the RTC offset in an SDAM cell with the alarm enabled after copying `dts/sm8650-ayaneo-common.dtsi`.
@@ -1018,6 +1018,16 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0629-usb-dwc3-qcom-check-for-hcd-in-dwc3_qcom_read_usb2_speed.patch`
   source: https://lore.kernel.org/all/20261126051958.2983579-1-prashanth.k@oss.qualcomm.com/
   upstream: https://lore.kernel.org/all/20261126051958.2983579-1-prashanth.k@oss.qualcomm.com/
+
+- `patches/0630-usb-dwc3-qcom-restore-UTMI-PIPE-clock-on-resume.patch`
+  source: https://lore.kernel.org/all/20261027-dwc3-utmi-resume-v1-1-ca9f0aa65783@gmail.com/
+  upstream: https://lore.kernel.org/all/20261027-dwc3-utmi-resume-v1-1-ca9f0aa65783@gmail.com/
+  notes: Prerequisite for 0631, which is based on it.
+
+- `patches/0631-usb-dwc3-qcom-use-the-UTMI-clock-as-PIPE-clock-in-DisplayPort-only-modes.patch`
+  source: https://lore.kernel.org/all/20261119124558.1548-3-26rote@gmail.com/
+  upstream: https://lore.kernel.org/all/20261119124558.1548-3-26rote@gmail.com/
+  notes: v4, applied unchanged. Only boards whose `usb_1` node has `mode-switch` use it (the Thor, through `dts/qcs8550-ayn-thor.dts.patch`). The dt-binding patch (1/2) is not needed to build. With 0627 the PHY stops the USB3 PIPE clock in DP-only mode; without this the controller then faults on the first s2idle resume (SMMU fault, xHCI Host System Error) and USB stays down until reboot (#959).
 
 - `dts/sm7750-retroidpocket-duo.dts`
   source: armada
