@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 26 Nov 2026 22:27:06 -0500
+Subject: [PATCH] Cargo: bump libbpf-sys to 1.7.1 for kernel-headers 7.3
+
+libbpf-sys 1.7.0 builds its vendored libbpf with -I include/, whose
+linux/types.h shadows the system header and lacks __u128. Starting with
+kernel-headers 7.3, the arm64 asm/sigcontext.h and asm/ptrace.h use
+__u128, so the libbpf-sys build script fails on aarch64:
+
+  /usr/include/asm/sigcontext.h:81:9: error: unknown type name '__u128'
+
+libbpf added the 128-bit types in f90a9c487d75 ("include: add 128-bit
+integer types to linux/types.h"), which ships in libbpf-sys 1.7.1.
+
+This is the libbpf-sys part of upstream 83e64fe4796b ("Cargo: update
+libbpf to latest versions"), without the other lockfile bumps.
+---
+ Cargo.lock                          | 4 ++--
+ rust/scx_arena/scx_arena/Cargo.toml | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 767d434b8..683c2e61e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3874,9 +3874,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "libbpf-sys"
+-version = "1.7.0+v1.7.0"
++version = "1.7.1+v1.7.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a109478760b2900aa2a6f2087e9d0de1d9c535b1758602af2845d5d2ccfaed7c"
++checksum = "222dd409cbd4db5e9d40410d17a168e1f80446386ae7bafbefa9bd0c1183ff64"
+ dependencies = [
+  "cc",
+  "nix 0.31.3",
+diff --git a/rust/scx_arena/scx_arena/Cargo.toml b/rust/scx_arena/scx_arena/Cargo.toml
+index 55a770ea6..134b9290a 100644
+--- a/rust/scx_arena/scx_arena/Cargo.toml
++++ b/rust/scx_arena/scx_arena/Cargo.toml
+@@ -10,7 +10,7 @@ license = "GPL-2.0-only"
+ anyhow = "1"
+ libc = "0.2"
+ libbpf-rs = "=0.27.0"
+-libbpf-sys = "=1.7.0"
++libbpf-sys = "=1.7.1"
+ simplelog = "0.12"
+ scx_utils = { path = "../../scx_utils", version = "1.1.3" }
+ 
+-- 
+2.56.1
+
