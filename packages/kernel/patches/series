@@ -177,6 +177,11 @@ v9_20260801_sachin_garg_media_iris_cache_work_mode_in_iris_set_stage.patch
 1088-media-iris-defer-gen1-capture-setup-until-the-sequence-is-known.patch
 1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch
 
+# ============== Video encode ==============
+0670-media-iris-subscribe-encoder-picture-type.patch
+0671-media-iris-gen2-force-keyframe.patch
+0672-media-iris-serialize-instance-controls.patch
+
 # ============== System tweaks ==============
 0500-ROCKNIX-set-boot-fanspeed.patch
 0501-ROCKNIX-fix-wifi-and-bt-mac.patch

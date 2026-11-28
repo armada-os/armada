@@ -487,6 +487,18 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch`
   source: https://github.com/shuuri-labs/pocknix-os/blob/00f393be748c778d117fd98e38b42533785d6b74/kernel/common/patches/1089-media-iris-never-return-a-gen1-decoded-frame-stamped-zero.patch
   upstream: unknown
+- `patches/0670-media-iris-subscribe-encoder-picture-type.patch`
+  source: armada
+  upstream: local
+  notes: Extracted from PR #737. Request encoder picture-type metadata through the existing HFI Gen2 subscription path so captured buffers carry KEYFRAME/PFRAME/BFRAME flags.
+- `patches/0671-media-iris-gen2-force-keyframe.patch`
+  source: https://git.zx2c4.com/linux-rng/commit/?id=6f62dcefd2494aa9ac01538372353bf07755491e
+  upstream: https://lore.kernel.org/all/20260723-dynamic_encode-v4-2-5fd6bd549ead@oss.qualcomm.com/
+  notes: Gen2/shared-control backport from PR #737 to Linux 7.2.6; omit the three Gen1-only changes. Add the standard force-keyframe control and preserve the requested sequence-header mode.
+- `patches/0672-media-iris-serialize-instance-controls.patch`
+  source: armada
+  upstream: local
+  notes: Extracted from PR #737. Share the instance mutex with control handling so dynamic controls cannot race buffer submission in the same HFI packet buffer. Update decoder controls under the held lock and clear the cached control pointer before handler destruction. Retain the newer deferred-capture work cancellation during close.
 - `patches/0500-ROCKNIX-set-boot-fanspeed.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/patches/linux/0500-ROCKNIX-set-boot-fanspeed.patch
   upstream: unknown
