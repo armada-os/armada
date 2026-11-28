@@ -108,6 +108,8 @@
 0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch
 0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch
 0618-drm-msm-dp-dont-fail-audio-prepare-when-display-off.patch
+0625-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-enabled.patch
+0626-drm-msm-dp-mask-link-interrupts-while-link-clocks-are-off.patch
 0619-drm-msm-map-submitqueue-priority-onto-high-low.patch
 0620-drm-msm-a6xx-hfi-irq-clears-only-the-cm3-fault.patch
 0621-drm-msm-a6xx-bound-the-gmu-wait-for-a-fault-devcoredump.patch

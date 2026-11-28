@@ -999,6 +999,14 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0624-drm-msm-a6xx-increase-gmu-fw-init-timeout.patch`
   source: https://github.com/RetroidPocket/linux/commit/ba970587a0e1203b6a0934b5b9174886b4c4d24c
   upstream: https://patchwork.freedesktop.org/patch/753014/
+- `patches/0625-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-enabled.patch`
+  source: https://git.kernel.org/torvalds/c/e249a6e2a130c08bb4d8b0a55cbe29754307e5c9
+  upstream: https://git.kernel.org/torvalds/c/e249a6e2a130c08bb4d8b0a55cbe29754307e5c9
+  notes: Backported to 7.2, where the function is still `msm_dp_bridge_atomic_disable()`; the added check is unchanged. Fixes silent SoC resets on the AYN Thor when a DP disable follows a failed link training (#953).
+- `patches/0626-drm-msm-dp-mask-link-interrupts-while-link-clocks-are-off.patch`
+  source: armada
+  upstream: local
+  notes: Fixes a livelock on the AYN Thor when a late IDLE_PATTERN_SENT interrupt latches after a DP unplug has gated the link clocks (#957).
 
 - `dts/sm7750-retroidpocket-duo.dts`
   source: armada
