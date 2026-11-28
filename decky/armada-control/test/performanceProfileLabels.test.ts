@@ -156,11 +156,11 @@ export class Dropdown {
     if (this.props.renderButtonValue != null) {
       buttonLabel = this.props.renderButtonValue(buttonLabel);
     }
-    return { hook: "render", args, options: this.props.rgOptions, buttonLabel };
+    return { hook: "render", args, options: this.props.rgOptions, buttonLabel, disabled: this.props.disabled };
   }
   BuildMenu(...args) {
     if (this.failWith) throw this.failWith;
-    return { hook: "BuildMenu", args, options: this.props.rgOptions };
+    return { hook: "BuildMenu", args, options: this.props.rgOptions, disabled: this.props.disabled };
   }
 }
 export function replacePatch(target, name, handler) {
@@ -203,6 +203,7 @@ type HookResult = {
   args: unknown[];
   options: Array<{ data?: unknown; label?: unknown; icon?: unknown; onSelect?: unknown }>;
   buttonLabel?: unknown;
+  disabled?: unknown;
 };
 
 type SettingFiber = {
@@ -227,7 +228,10 @@ type UiModule = {
 
 const ui = await import(uiUrl) as UiModule;
 const { registerSteamProfileLocalization } = await import(dataUrl(integrationOutput)) as {
-  registerSteamProfileLocalization: () => () => void;
+  registerSteamProfileLocalization: (lock?: {
+    profile: () => string;
+    subscribe: (listener: () => void) => () => void;
+  }) => () => void;
 };
 
 const PROFILE_SETTING = "steamos_platform_performance_profile";
@@ -439,6 +443,83 @@ test("uses the nearest setting identifier, never an option list, to select dropd
     for (const hook of ["render", "BuildMenu"] as const) {
       assert.throws(() => unrelated[hook](), (error) => error === nativeError);
     }
+  } finally {
+    unregister();
+    if (savedWindow === undefined) delete globalRecord.window;
+    else globalRecord.window = savedWindow;
+  }
+  assert.equal(ui.installedPatchCount(), 0);
+});
+
+// Steam's UI hangs if its profile dropdown is used while the running game is on
+// its own profile, so the dropdown must be locked for exactly that window.
+test("locks the profile dropdown only while the running game's own profile is in force", async () => {
+  const globalRecord = globalThis as { window?: unknown };
+  const savedWindow = globalRecord.window;
+  const steamSettings = { GetCurrentLanguage: () => Promise.resolve("english") };
+  globalRecord.window = { SteamClient: { Settings: steamSettings } };
+  let gameProfile = "";
+  let notify: (() => void) | undefined;
+  const lock = {
+    profile: () => gameProfile,
+    subscribe: (listener: () => void) => {
+      notify = listener;
+      return () => { notify = undefined; };
+    },
+  };
+  let unregister = registerSteamProfileLocalization(lock);
+  try {
+    await Promise.resolve();
+    await Promise.resolve();
+    const options = nativeOptions();
+    const props = { rgOptions: options, selectedOption: "Eco" };
+    const profile = withProfileSetting(new ui.Dropdown(props)) as FakeDropdown & { forceUpdate: () => void };
+    let repaints = 0;
+    profile.forceUpdate = () => { repaints += 1; };
+    const unrelated = new ui.Dropdown({ ...props, setting: "unrelated_setting" });
+
+    for (const hook of ["render", "BuildMenu"] as const) {
+      const result = profile[hook]();
+      assert.equal(result.disabled, undefined, "no game profile: dropdown usable");
+      assert.equal(result.options, options, "English keeps native options");
+    }
+
+    // Steam keeps the quick-menu tab mounted: the lock must repaint the
+    // dropdown it already drew, or it stays usable while it must not be.
+    gameProfile = "balanced";
+    notify!();
+    assert.equal(repaints, 1);
+    // The button says why it is locked, with the profile actually applied.
+    assert.equal(profile.render().buttonLabel, "Balanced · Armada Control");
+    for (const hook of ["render", "BuildMenu"] as const) {
+      const result = profile[hook]("forwarded");
+      assert.equal(result.disabled, true, hook);
+      assert.deepEqual(result.args, ["forwarded"]);
+      assert.equal(result.options, options);
+      assert.equal(profile.props, props, "props restored after the call");
+      assert.equal("disabled" in props, false);
+      assert.equal(unrelated[hook]().disabled, undefined, "other dropdowns stay usable");
+    }
+
+    gameProfile = "";
+    notify!();
+    assert.equal(repaints, 2);
+    assert.equal(profile.render().disabled, undefined, "unlocked once the game's profile ends");
+    assert.equal(profile.render().buttonLabel, "Eco");
+
+    unregister();
+    assert.equal(notify, undefined, "unregister drops the subscription");
+
+    // Locking and translation compose.
+    steamSettings.GetCurrentLanguage = () => Promise.resolve("schinese");
+    gameProfile = "performance";
+    unregister = registerSteamProfileLocalization(lock);
+    await Promise.resolve();
+    await Promise.resolve();
+    const translated = withProfileSetting(new ui.Dropdown(props)).render();
+    assert.equal(translated.disabled, true);
+    assert.deepEqual(translated.options.map((option) => option.label), ["节能", "均衡", "性能"]);
+    assert.equal(translated.buttonLabel, "性能 · Armada Control");
   } finally {
     unregister();
     if (savedWindow === undefined) delete globalRecord.window;

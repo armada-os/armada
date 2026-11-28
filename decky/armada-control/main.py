@@ -36,7 +36,7 @@ from armada_control.system import (
     set_ssh_enabled,
     set_swipe_gestures_enabled,
 )
-from armada_control.tweaks import load_compat_applied, save_compat_applied, save_tweaks
+from armada_control.tweaks import game_power_profile, load_compat_applied, save_compat_applied, save_tweaks
 from armada_control.fan_curves import get_state as get_fans_state, save_all as save_fan_curves, save_charging_pwm
 from armada_control.fan_sensors import get_current_temp
 
@@ -125,6 +125,9 @@ class Plugin:
 
     async def reapply_perf(self):
         return await asyncio.to_thread(reapply_perf)
+
+    async def get_game_power_profile(self):
+        return await asyncio.to_thread(game_power_profile)
 
     async def restart_game_mode(self):
         return await asyncio.to_thread(restart_game_mode)

@@ -12,12 +12,14 @@ import {
 } from "./lib/steamCompat";
 import { factoryDefaultTransition } from "./lib/protonPolicy";
 import { registerSteamProfileLocalization } from "./lib/steamProfileLocalization";
+import { registerGameProfileWatcher } from "./lib/gameProfileWatcher";
 import { registerLockWatcher } from "./lib/lockWatcher";
 import { registerLowPowerDownloadEntry } from "./lib/lowPowerDownloads";
 
 export default definePlugin(() => {
   let unregisterDownloadWatcher = () => {};
-  const unregisterProfileLocalization = registerSteamProfileLocalization();
+  const gameProfileWatcher = registerGameProfileWatcher();
+  const unregisterProfileLocalization = registerSteamProfileLocalization(gameProfileWatcher);
   const unregisterLockWatcher = registerLockWatcher();
   const unregisterLowPowerDownloadEntry = registerLowPowerDownloadEntry();
   const persistHandledGames = () => {
@@ -80,6 +82,7 @@ export default definePlugin(() => {
       cancelled = true;
       unregisterDownloadWatcher();
       unregisterProfileLocalization();
+      gameProfileWatcher.unregister();
       unregisterLockWatcher();
       unregisterLowPowerDownloadEntry();
     },

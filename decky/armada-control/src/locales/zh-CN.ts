@@ -158,6 +158,8 @@ export const zhCN = {
   "compatibility.customCores": "自定义核心",
   "compatibility.vulkanRealtimeQueue": "Vulkan 实时队列",
   "compatibility.cpuScheduler": "CPU 调度器",
+  "compatibility.powerProfile": "功耗方案",
+  "compatibility.powerProfileSystem": "使用系统方案",
   "compatibility.reapplyRunningGame": "重新应用到正在运行的游戏",
   "common.status": "状态",
   "compatibility.defaultVariables": "默认变量",

@@ -27,7 +27,7 @@ IFACE_LOW_POWER = "com.steampowered.SteamOSManager1.LowPowerMode1"
 LOGIN1_NAME = "org.freedesktop.login1"
 LOGIN1_PATH = "/org/freedesktop/login1"
 LOGIN1_IFACE = "org.freedesktop.login1.Manager"
-PROFILES = ["eco", "balanced", "performance"]
+PROFILES = list(armada_perf.POWER_PROFILES)
 STATE_FILE = Path("/var/lib/armada/powerd.state")
 FACTORY_CONFIG_FILE = Path("/usr/share/armada/power-profiles.conf")
 CONFIG_FILE = Path("/etc/armada/power-profiles.conf")
@@ -287,7 +287,10 @@ class ArmadaPower:
         self.fan_config = {}
         self.suspend_config = {}
         self.default_profile = ""
+        # system profile: the only one persisted (see effective_profile)
         self.profile = ""
+        self.game_profile = None
+        self.manual_profile = None
         self.gpu_level = "auto"
         self.manual_gpu_clock = 0
         self.gpu_manual_shown = {}
@@ -306,6 +309,8 @@ class ArmadaPower:
         self.discover()
         self.apply_underclock_refs()
         self.load_state()
+        # a daemon restart mid-game comes back on the game's profile
+        self.game_profile = armada_perf.game_power_profile(armada_perf.read_state())
         if self.fan_pwm:
             current = read_text(self.fan_pwm)
             self.last_pwm = int(current) if current.isdigit() else self.fan_config["min_pwm"]
@@ -594,12 +599,50 @@ class ArmadaPower:
             self.scx_failed = (spec, time.monotonic() + 60)
 
     def perf_tick(self):
+        state = {}
         try:
-            values = armada_perf.effective_state(armada_perf.read_state())
+            state = armada_perf.read_state()
+            values = armada_perf.effective_state(state)
             armada_perf.apply_gamescope(values)
             self.enforce_scheduler(values)
         except Exception as exc:
             print(f"armada-powerd: perf tick failed: {exc}", file=sys.stderr)
+        try:
+            self.sync_game_profile(state)
+        except Exception as exc:
+            print(f"armada-powerd: game profile sync failed: {exc}", file=sys.stderr)
+
+    def effective_profile(self):
+        # A quick-menu choice made while a game runs on its own profile, then
+        # that game's profile, then the system profile.
+        manual = getattr(self, "manual_profile", None)
+        if manual:
+            return manual
+        game = getattr(self, "game_profile", None)
+        return game[1] if game else self.profile
+
+    def sync_game_profile(self, state=None):
+        # Follows the running game's own power profile; never persisted, so a
+        # power cut mid-game boots back on the system profile.
+        if state is None:
+            state = armada_perf.read_state()
+        game = armada_perf.game_power_profile(state)
+        if game == getattr(self, "game_profile", None):
+            return
+        before = self.effective_profile()
+        self.game_profile = game
+        # a quick-menu choice only lasts for the game session it was made in
+        self.manual_profile = None
+        current = self.effective_profile()
+        print(f"armada-powerd: game profile {game[1] if game else 'cleared'}, "
+              f"now {current}", file=sys.stderr)
+        if current == before:
+            return
+        # suspend pinned the clocks low; resume re-applies the profile
+        if not self.suspended:
+            self.apply_profile()
+        if self.connection:
+            self.emit_properties({"Profile": GLib.Variant("s", self.label_for(current))})
 
     def discover_temps(self):
         control = []
@@ -690,7 +733,8 @@ class ArmadaPower:
         return int(freqs[-1] * settings["cpu_max"])
 
     def profile_settings(self):
-        return self.profile_config.get(self.profile, self.profile_config["balanced"])
+        return self.profile_config.get(
+            self.effective_profile(), self.profile_config["balanced"])
 
     def available_governors(self):
         for policy in self.cpu_policies:
@@ -1005,7 +1049,7 @@ class ArmadaPower:
         if prop == "AvailableProfiles":
             return GLib.Variant("as", [self.label_for(p) for p in PROFILES])
         if prop == "Profile":
-            return GLib.Variant("s", self.label_for(self.profile))
+            return GLib.Variant("s", self.label_for(self.effective_profile()))
         if prop == "SuggestedDefaultProfile":
             return GLib.Variant("s", self.label_for(self.default_profile))
         if prop == "AvailableGpuPerformanceLevels":
@@ -1038,9 +1082,18 @@ class ArmadaPower:
             profile = self.profile_for_label(value.get_string())
             if profile not in PROFILES:
                 raise ValueError(value.get_string())
-            self.profile = profile
+            self.sync_game_profile()
+            # a game on its own profile: the choice lasts until it exits and
+            # never becomes the system profile
+            session_only = bool(getattr(self, "game_profile", None))
+            if session_only:
+                self.manual_profile = profile
+            else:
+                self.profile = profile
+            print(f"armada-powerd: profile set to {profile}"
+                  f"{' until the game exits' if session_only else ''}", file=sys.stderr)
             self.apply_profile()
-            changed["Profile"] = GLib.Variant("s", self.label_for(self.profile))
+            changed["Profile"] = GLib.Variant("s", self.label_for(self.effective_profile()))
         elif prop == "GpuPerformanceLevel":
             level = value.get_string()
             if level not in ("auto", "manual"):
@@ -1076,6 +1129,7 @@ class ArmadaPower:
         gpu_min, gpu_max = self.resolved_gpu_auto_limits()
         return {
             "profile": self.get_property("Profile"),
+            "system_profile": GLib.Variant("s", self.label_for(self.profile)),
             "default_profile": self.get_property("SuggestedDefaultProfile"),
             "cpu_underclock": GLib.Variant("s", self.profile_settings()["cpu_underclock"]),
             "cpu_caps": GLib.Variant("a{su}", self.resolved_cpu_caps()),
