@@ -1,0 +1,13 @@
+[Unit]
+Description=Armada splash language cache
+After=local-fs.target armada-splash-early.service
+ConditionPathExists=/usr/libexec/armada/armada-splash
+ConditionPathExists=!/etc/armada/splash-disabled
+
+[Service]
+Type=exec
+User=armada
+ExecStart=/usr/libexec/armada/armada-splash-language
+
+[Install]
+WantedBy=graphical.target

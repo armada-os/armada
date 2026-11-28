@@ -8,6 +8,7 @@
 // Status file: one line per row centered below the image; leading '!' = red.
 
 #define _GNU_SOURCE
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
@@ -27,6 +28,8 @@
 
 #include "font8x8_basic.h"
 #include "stb_truetype.h"   // declarations only; implementation in stb_impl.c
+
+#include "splash-i18n.h"
 
 static volatile sig_atomic_t running = 1;
 static void on_signal(int s) { (void)s; running = 0; }
@@ -51,6 +54,10 @@ static int text_scale = 2;
 
 static char g_cur[512];
 static char g_shown[512];
+
+static SplashLocale g_locale = SPLASH_LOCALE_EN;
+static const char *g_locale_file;
+static int g_locale_file_auto;
 
 static void put_shadow(int x, int y, uint32_t c) {
     if (x >= 0 && x < SW && y >= 0 && y < SH) shadow[y * SW + x] = c;
@@ -141,8 +148,13 @@ static int load_font(const char *path, int px) {
     size_t off = 0; ssize_t r;
     while (off < (size_t)st.st_size && (r = read(fd, g_ttf_buf + off, st.st_size - off)) > 0) off += r;
     close(fd);
-    if (off != (size_t)st.st_size ||
-        !stbtt_InitFont(&g_ttf, g_ttf_buf, stbtt_GetFontOffsetForIndex(g_ttf_buf, 0))) {
+    if (off != (size_t)st.st_size) { free(g_ttf_buf); g_ttf_buf = NULL; return 0; }
+    // A CJK collection carries many faces; select the Simplified-Chinese
+    // monospace face by name, else fall back to face 0 (a single-face .ttf).
+    int fontstart = stbtt_FindMatchingFont(g_ttf_buf, "Noto Sans Mono CJK SC",
+                                           STBTT_MACSTYLE_NONE);
+    if (fontstart < 0) fontstart = stbtt_GetFontOffsetForIndex(g_ttf_buf, 0);
+    if (!stbtt_InitFont(&g_ttf, g_ttf_buf, fontstart)) {
         free(g_ttf_buf); g_ttf_buf = NULL; return 0;
     }
     g_ttf_scale = stbtt_ScaleForPixelHeight(&g_ttf, (float)px);
@@ -255,7 +267,10 @@ static void compose(const char *status) {
         if (*p) {
             uint32_t col = 0xFFFFFFFF;
             if (*p == '!') { col = 0xFFFF4040; p++; }
-            n = wrap(p, col, maxw, n);
+            // Translate only the drawn text; the raw status line is untouched.
+            char translated[512];
+            splash_translate_line(g_locale, p, translated, sizeof translated);
+            n = wrap(translated, col, maxw, n);
         }
         if (!nl) break;
         p = nl + 1;
@@ -759,7 +774,77 @@ static const char *arg(int argc, char **argv, const char *k, const char *def) {
     return def;
 }
 
+static int nonblank(const char *s) {
+    for (; s && *s; s++) if (!isspace((unsigned char)*s)) return 1;
+    return 0;
+}
+
+static const char *system_language(void) {
+    static const char *const vars[] = { "LC_ALL", "LC_MESSAGES", "LANG" };
+    for (size_t i = 0; i < sizeof vars / sizeof vars[0]; i++) {
+        const char *v = getenv(vars[i]);
+        if (nonblank(v)) return v;
+    }
+    return NULL;
+}
+
+static int refresh_locale_file(void) {
+    if (!g_locale_file_auto || !g_locale_file) return 0;
+    SplashLocale nl;
+    if (!splash_read_locale_file(g_locale_file, &nl)) return 0;
+    if (nl == g_locale) return 0;
+    g_locale = nl;
+    return 1;
+}
+
+static void resolve_locale(int argc, char **argv, int allow_cache) {
+    const char *override = arg(argc, argv, "--language", NULL);
+    if (!override) override = getenv("ARMADA_SPLASH_LANGUAGE");
+    g_locale_file = NULL;
+    g_locale_file_auto = 0;
+    if (!splash_language_is_auto(override)) {
+        g_locale = splash_locale_from_language(override);
+        return;
+    }
+    g_locale = splash_locale_from_language(system_language());
+    if (allow_cache) {
+        g_locale_file = arg(argc, argv, "--language-file", NULL);
+        if (g_locale_file) {
+            SplashLocale c;
+            if (splash_read_locale_file(g_locale_file, &c)) g_locale = c;
+            g_locale_file_auto = 1;
+            return;
+        }
+    }
+    char regpath[512];
+    const char *regenv = getenv("ARMADA_SPLASH_STEAM_REGISTRY");
+    if (nonblank(regenv)) {
+        snprintf(regpath, sizeof regpath, "%s", regenv);
+    } else {
+        const char *home = getenv("HOME");
+        if (getuid() == 0 || !nonblank(home)) home = "/home/armada";
+        snprintf(regpath, sizeof regpath, "%s/.steam/registry.vdf", home);
+    }
+    g_locale = splash_resolve_locale(override, regpath, system_language());
+}
+
 int main(int argc, char **argv) {
+    int opt_print_lang = 0, opt_write_lang = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--print-language")) opt_print_lang = 1;
+        else if (!strcmp(argv[i], "--write-language-file")) opt_write_lang = 1;
+    }
+    if (opt_print_lang) {
+        resolve_locale(argc, argv, 0);
+        puts(g_locale == SPLASH_LOCALE_ZH_CN ? "zh-CN" : "en");
+        return 0;
+    }
+    if (opt_write_lang) {
+        const char *wf = arg(argc, argv, "--write-language-file", NULL);
+        if (!wf || !*wf) return 2;
+        resolve_locale(argc, argv, 0);
+        return splash_write_locale_file(wf, g_locale) ? 0 : 3;
+    }
     const char *image = arg(argc, argv, "--image", NULL);
     const char *status = arg(argc, argv, "--status", NULL);
     const char *backend = arg(argc, argv, "--backend", "auto");
@@ -831,6 +916,7 @@ int main(int argc, char **argv) {
     g_logo_px_req = atoi(arg(argc, argv, "--logo-height", "0"));
     scale_logo(g_logo_px_req > 0 ? g_logo_px_req : auto_logo_px(text_ref));
 
+    resolve_locale(argc, argv, 1);
     read_status(status, g_cur, sizeof g_cur);
     compose(g_cur);
     strcpy(g_shown, g_cur);
@@ -858,8 +944,9 @@ int main(int argc, char **argv) {
                 }
             if (fds[1].revents & POLLIN) {
                 uint64_t x; ssize_t rr = read(tfd, &x, sizeof x); (void)rr;
+                int lch = refresh_locale_file();
                 read_status(status, g_cur, sizeof g_cur);
-                if (strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); x11_present(); }
+                if (lch || strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); x11_present(); }
             }
         }
         return 0;
@@ -894,8 +981,9 @@ int main(int argc, char **argv) {
                 break;
             }
         }
+        int lch = refresh_locale_file();
         read_status(status, g_cur, sizeof g_cur);
-        if (strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); present(); }
+        if (lch || strcmp(g_cur, g_shown)) { compose(g_cur); strcpy(g_shown, g_cur); present(); }
     }
     // TERM can land between takeover polls; the successor's announce precedes
     // the stop, so a final read decides. No announce (shutdown) = no linger.
