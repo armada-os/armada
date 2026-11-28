@@ -6,10 +6,12 @@ Android app under Lepton presents through the container's composer, which
 does no GPU work, while the app renders from its own processes, so the
 overlay shows no GPU load. When that pid is in another pid namespace than
 mangoapp, read the fdinfo of every process in it. Windows from mangoapp's
-own namespace are unchanged.
+own namespace are unchanged. Processes come and go in a container, so a
+changed set of GPU clients restarts the load baseline instead of reading
+their lifetime totals as a spike.
 ---
 diff --git a/src/gpu_fdinfo.cpp b/src/gpu_fdinfo.cpp
-index 53cab4f..45f85a5 100644
+index 53cab4f..59519d8 100644
 --- a/src/gpu_fdinfo.cpp
 +++ b/src/gpu_fdinfo.cpp
 @@ -6,25 +6,56 @@
@@ -77,3 +79,28 @@ index 53cab4f..45f85a5 100644
          auto file = std::ifstream(fd_path);
  
          if (!file.is_open())
+@@ -94,6 +125,12 @@ void GPU_fdinfo::find_fd()
+         total,
+         fdinfo.size()
+     );
++
++    // Client counters are cumulative, so a changed client set restarts the load baseline.
++    if (client_ids != tracked_client_ids) {
++        tracked_client_ids = client_ids;
++        previous_time = 0;
++    }
+ }
+ 
+ void GPU_fdinfo::open_fdinfo_fd(std::string path) {
+diff --git a/src/gpu_fdinfo.h b/src/gpu_fdinfo.h
+index a5b1d9e..214497c 100644
+--- a/src/gpu_fdinfo.h
++++ b/src/gpu_fdinfo.h
+@@ -76,6 +76,7 @@ private:
+     uint64_t get_gpu_time();
+ 
+     uint64_t previous_gpu_time = 0, previous_time = 0;
++    std::set<std::string> tracked_client_ids;
+ 
+     std::vector<uint64_t> xe_fdinfo_last_cycles;
+     std::map<std::string, std::pair<uint64_t, uint64_t>> prev_xe_cycles;
