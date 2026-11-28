@@ -81,3 +81,18 @@ test("download writes retain the latest intent across subscribers and permit ret
   assert.equal(app.api.getLowPowerDownloadSettings().enabled, true);
   stop();
 });
+
+
+test("cleanup preserves a sleep handler installed by another plugin", () => {
+  const calls: string[] = [];
+  const store = { InitiateSleep: () => { calls.push("original"); }, SetShowConfirmSleepModal: () => {} };
+  const api = loadModule("lib/lowPowerDownloads.ts", {}, { window: { SuspendResumeStore: store, clearInterval() {} } });
+  const stop = api.registerLowPowerDownloadEntry();
+  const wrapped = store.InitiateSleep;
+  const other = () => { calls.push("other"); wrapped(); };
+  store.InitiateSleep = other;
+  stop();
+  assert.equal(store.InitiateSleep, other);
+  store.InitiateSleep();
+  assert.deepEqual(calls, ["other", "original"]);
+});

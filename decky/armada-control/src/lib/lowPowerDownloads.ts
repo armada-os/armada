@@ -90,14 +90,15 @@ export function registerLowPowerDownloadEntry(): () => void {
     const store = window.SuspendResumeStore;
     if (stopped || !store?.InitiateSleep || !store.SetShowConfirmSleepModal) return false;
     const original = store.InitiateSleep;
-    store.InitiateSleep = function (this: any, ...args: unknown[]) {
-      if (!this.ShowConfirmSleepModal && shouldOffer()) {
+    const wrapped = function (this: any, ...args: unknown[]) {
+      if (!stopped && !this.ShowConfirmSleepModal && shouldOffer()) {
         this.SetShowConfirmSleepModal(true);
         return;
       }
       return original.apply(this, args);
     };
-    restore = () => { store.InitiateSleep = original; };
+    store.InitiateSleep = wrapped;
+    restore = () => { if (store.InitiateSleep === wrapped) store.InitiateSleep = original; };
     return true;
   };
   const timer = install() ? undefined : window.setInterval(() => {
