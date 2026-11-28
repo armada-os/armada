@@ -22,3 +22,12 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: armada
 - `patches/0009-mangoapp-throttle-overlay-to-one-render-per-game-frame.patch`
   source: https://github.com/flightlessmango/MangoHud/commit/2c1dc5283c045e9a7e424dc913fbafcdcc7e3be1
+- `patches/0010-msm-gpu-memory-and-hud-fixes.patch`
+  source: armada
+  notes: The msm memory-type part is adapted from
+  https://github.com/flightlessmango/MangoHud/pull/2073. Armada also uses the
+  process GPU memory for the VRAM row, shows the RAM usage percentage next to
+  the used amount, moves swap to a labelled SWAP row, hides temperature and
+  memory-clock cells that have no backing sensor (msm has no vram sensor or
+  memory clock, and handhelds have no RAM spd5118), and picks the primary
+  Qualcomm GPU sensor (gpuss_0_thermal) with a gpuss-* thermal-zone fallback.
