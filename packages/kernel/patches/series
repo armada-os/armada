@@ -261,6 +261,9 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0084-ASoC-wcd-common-skip-the-interrupt-loop-without-a-regmap.patch
 0074-soundwire-qcom-PCM-data-port-format-enable.patch
 0086-soundwire-qcom-add-an-optional-SSP-period.patch
+0087-ASoC-wcd939x-read-the-codec-version-once-it-is-on-the-bus.patch
+0088-ASoC-wcd939x-fix-the-first-impedance-ramp-on-HPH_L.patch
+0089-ASoC-wcd939x-reset-an-untrimmed-codec-once-the-SoundWire-bus-runs.patch
 0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch
 0612-ROCKNIX-odin3-q6apm-start-mi2s-port-at-prepare.patch
 0613-ASoC-q6apm-scope-prepare-start-to-MI2S.patch
@@ -288,6 +291,8 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 0080-ASoC-codecs-lpass-tx-macro-track-every-active-decimator.patch
 0564-soundwire-qcom-force-runtime-suspend-across-system-sleep.patch
 0570-soundwire-qcom-skip-the-clock-stop-handshake-for-the-pmic-haptics-port.patch
+0090-soundwire-qcom-wait-for-the-link-to-stop-before-gating-the-clock.patch
+0091-soundwire-qcom-restart-the-enumeration-when-it-fails.patch
 0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch
 
 # ============== Firmware ==============

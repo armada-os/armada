@@ -1,0 +1,127 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] soundwire: qcom: restart the enumeration when it fails
+
+When devices lose sync and come back at device number 0, the controller
+numbers them again. That hardware enumeration can give up: the
+controller raises AUTO_ENUM_FAILED, leaves the devices at device number
+0 and does nothing more. The driver has no case for the interrupt ("SWR
+unknown interrupt value: 2048"), the next attach interrupt finds the
+status unchanged, and the devices stay unattached until a later suspend
+and resume.
+
+Handle the interrupt as the vendor driver does: turn the enumeration
+off, give it a moment to go idle and turn it on again. Only do so on
+v2.0 and later controllers; on older ones AUTO_ENUM_FAILED is another
+bit and this one means something else. Stop after five restarts, until
+the next runtime resume, so that a failure that does not go away cannot
+keep the interrupt thread busy.
+
+0090 removes most of these drops. Before it, on a KONKR Pocket FIT,
+this left the WCD9395 RX device unattached, and the headphones silent,
+after some resumes from system suspend; with this the enumeration was
+restarted and the device came back each time.
+---
+ drivers/soundwire/qcom.c | 49 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 48 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -88,6 +88,7 @@
+ #define SWRM_V2_0_CMD_FIFO_RD_FIFO_ADDR				0x5040
+ #define SWRM_RD_FIFO_CMD_ID_MASK				GENMASK(11, 8)
+ #define SWRM_ENUMERATOR_CFG_ADDR				0x500
++#define SWRM_ENUMERATOR_STATUS					0x504
+ #define SWRM_ENUMERATOR_SLAVE_DEV_ID_1(m)		(0x530 + 0x8 * (m))
+ #define SWRM_ENUMERATOR_SLAVE_DEV_ID_2(m)		(0x534 + 0x8 * (m))
+ #define SWRM_MCP_FRAME_CTRL_BANK_ADDR(m)		(0x101C + 0x40 * (m))
+@@ -134,6 +135,8 @@
+ 
+ #define MAX_FREQ_NUM						1
+ #define TIMEOUT_MS						100
++#define SWRM_ENUMERATOR_IDLE_RETRIES				5
++#define SWRM_ENUMERATOR_MAX_RESTARTS				5
+ #define QCOM_SWRM_MAX_RD_LEN					0x1
+ #define DEFAULT_CLK_FREQ					9600000
+ #define SWRM_MAX_DAIS						0xF
+@@ -224,6 +227,7 @@
+ 	int (*reg_read)(struct qcom_swrm_ctrl *ctrl, int reg, u32 *val);
+ 	int (*reg_write)(struct qcom_swrm_ctrl *ctrl, int reg, int val);
+ 	u32 slave_status;
++	unsigned int enum_restarts;
+ 	u32 wr_fifo_depth;
+ 	bool clock_stop_not_supported;
+ 	bool sleep_suspended;
+@@ -728,6 +732,35 @@
+ 	return IRQ_HANDLED;
+ }
+ 
++/* Restart a failed hardware enumeration, a few times per runtime resume at most. */
++static void qcom_swrm_restart_enumeration(struct qcom_swrm_ctrl *ctrl)
++{
++	int retries = SWRM_ENUMERATOR_IDLE_RETRIES;
++	u32 status = 0;
++
++	if (ctrl->enum_restarts++ >= SWRM_ENUMERATOR_MAX_RESTARTS) {
++		dev_err(ctrl->dev, "enumeration keeps failing, giving up\n");
++		ctrl->intr_mask &= ~SWRM_INTERRUPT_STATUS_AUTO_ENUM_FAILED;
++		ctrl->reg_write(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_CPU_EN],
++				ctrl->intr_mask);
++		return;
++	}
++
++	ctrl->reg_write(ctrl, SWRM_ENUMERATOR_CFG_ADDR, 0);
++
++	do {
++		ctrl->reg_read(ctrl, SWRM_ENUMERATOR_STATUS, &status);
++		if (!status)
++			break;
++		usleep_range(100, 200);
++	} while (--retries);
++
++	if (status)
++		dev_dbg(ctrl->dev, "enumeration still busy (%#x)\n", status);
++
++	ctrl->reg_write(ctrl, SWRM_ENUMERATOR_CFG_ADDR, 1);
++}
++
+ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
+ {
+ 	struct qcom_swrm_ctrl *ctrl = dev_id;
+@@ -853,6 +886,18 @@
+ 				/* Wait 3.5ms to clear */
+ 				usleep_range(3500, 3505);
+ 				break;
++			case SWRM_INTERRUPT_STATUS_AUTO_ENUM_FAILED:
++				/* this bit means something else before v2.0 */
++				if (ctrl->version >= SWRM_VERSION_2_0_0) {
++					/* clear first: the restart can raise it again */
++					ctrl->reg_write(ctrl,
++							ctrl->reg_layout[SWRM_REG_INTERRUPT_CLEAR],
++							SWRM_INTERRUPT_STATUS_AUTO_ENUM_FAILED);
++					intr_sts &= ~SWRM_INTERRUPT_STATUS_AUTO_ENUM_FAILED;
++					qcom_swrm_restart_enumeration(ctrl);
++					break;
++				}
++				fallthrough;
+ 			default:
+ 				dev_err_ratelimited(ctrl->dev,
+ 						"%s: SWR unknown interrupt value: %d\n",
+@@ -1793,6 +1838,7 @@
+ 			disable_irq_nosync(ctrl->wake_irq);
+ 	}
+ 
++	ctrl->enum_restarts = 0;
+ 	clk_prepare_enable(ctrl->hclk);
+ 
+ 	if (ctrl->clock_stop_not_supported) {
+@@ -1828,7 +1874,8 @@
+ 		ctrl->reg_write(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_CLEAR],
+ 			SWRM_INTERRUPT_STATUS_MASTER_CLASH_DET);
+ 
+-		ctrl->intr_mask |= SWRM_INTERRUPT_STATUS_MASTER_CLASH_DET;
++		ctrl->intr_mask |= SWRM_INTERRUPT_STATUS_MASTER_CLASH_DET |
++				   SWRM_INTERRUPT_STATUS_AUTO_ENUM_FAILED;
+ 		if (ctrl->version < SWRM_VERSION_2_0_0)
+ 			ctrl->reg_write(ctrl,
+ 					ctrl->reg_layout[SWRM_REG_INTERRUPT_MASK_ADDR],

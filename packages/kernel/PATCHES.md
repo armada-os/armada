@@ -744,6 +744,18 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Optional qcom,ssp-period for the master FRAME_CTRL. The WCD939x class-H port (interval 64) does not divide the 50x16 RX frame; without an SSP its stream starts at a random phase and about half of the Odin 3's headphone streams are fuzzy.
+- `patches/0087-ASoC-wcd939x-read-the-codec-version-once-it-is-on-the-bus.patch`
+  source: armada
+  upstream: local
+  notes: Reads the codec version in the component probe, after the TX device has enumerated, and keeps it in the driver data; a failed read warns and assumes v2.0. The bind-time read could run before the codec was on the bus and returned garbage (an Odin 3 Portal's v2.0 part reported v1.0). 0088 and 0089 depend on the stored version.
+- `patches/0088-ASoC-wcd939x-fix-the-first-impedance-ramp-on-HPH_L.patch`
+  source: armada
+  upstream: local
+  notes: On v2.0 WCD9395s, brings up the ZDET negative supply (vendor sequence) and discards the first HPH_L impedance ramp, which reads low and made stereo headphones detect as mono. Also reads the HPH_R trim from EFUSE_REG_21 + 4.
+- `patches/0089-ASoC-wcd939x-reset-an-untrimmed-codec-once-the-SoundWire-bus-runs.patch`
+  source: armada
+  upstream: local
+  notes: Resets an untrimmed WCD9395 (BIAS_VBG_FINE_ADJ not 0xa5) once the TX device is on the bus, holding reset until the core sees it leave, so the codec gets its power-on trims; fixes the per-boot HPH cut-out on the KONKR Pocket FIT and Odin 3 Portal.
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local
@@ -925,7 +937,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada selects the accepted Pocket S2 WSA2 sound-card mapping after copying the ROCKNIX DTS.
 - `dts/sm8650-konkr-pf.dts.patch`
   source: armada
-  notes: Armada selects the shared WSA2 channel mapping through a Pocket FIT-specific sound-card compatible and binds `konkr_sysbtn` to the controller MCU UART, and loads its own ADSP firmware, marks the WCD939x headphone jack switches normally-closed so MBHC detects a plug (without them the jack never reports inserted), and sets up RX SoundWire port 9 (PCM timing and format enable) for the HPH PCM path the UCM profile uses.
+  notes: Armada selects the shared WSA2 channel mapping through a Pocket FIT-specific sound-card compatible and binds `konkr_sysbtn` to the controller MCU UART, and loads its own ADSP firmware, marks the WCD939x headphone jack switches normally-closed so MBHC detects a plug (without them the jack never reports inserted), and sets up RX SoundWire port 9 (PCM timing and format enable) for the HPH PCM path the UCM profile uses. The class-H port (2) is programmed as on stock Android: PCM format, a 64-slot sample interval and a 6-frame SSP period (0086), so its stream starts in phase.
 
 - `patches/0505-arm64-emulate-unaligned-atomics.patch`
   source: https://github.com/bylaws/linux/commit/7ae989a43ae7e3cb8007ac21c28dacc24c9d8320
@@ -964,6 +976,14 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0570-soundwire-qcom-skip-the-clock-stop-handshake-for-the-pmic-haptics-port.patch`
   source: armada
   upstream: local
+- `patches/0090-soundwire-qcom-wait-for-the-link-to-stop-before-gating-the-clock.patch`
+  source: armada
+  upstream: local
+  notes: After the ClockStopNow broadcast, keeps the clock on until the controller reports the link stopped (up to about 50 ms), as the vendor driver does, and warns if it does not; skipped when no device acknowledged the clock stop and on v1.5.1 and older controllers, which do not report it. Mainline gated the clock while the link was often still running, so the devices lost sync on resume, dropped to device number 0 and were enumerated again, now and then failing or hanging and leaving the headphones silent. On the KONKR Pocket FIT's WCD9395 RX bus this took drops from 19 of 40 resumes to none, with no bus clashes or parity errors.
+- `patches/0091-soundwire-qcom-restart-the-enumeration-when-it-fails.patch`
+  source: armada
+  upstream: local
+  notes: Handles the controller's AUTO_ENUM_FAILED interrupt, which mainline logs as "SWR unknown interrupt value: 2048", by restarting the hardware enumeration as the vendor driver does (v2.0 and later controllers only, where the bit has that meaning; at most five restarts per runtime resume). A safety net for devices that still lose sync; before 0090 it brought the KONKR Pocket FIT's WCD9395 RX device back after resumes where it would otherwise have stayed unattached.
 - `patches/0565-pinctrl-qcom-sm8650-lpass-lpi-force-runtime-suspend-across-system-sleep.patch`
   source: armada
   upstream: local
