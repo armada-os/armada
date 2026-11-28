@@ -1,0 +1,118 @@
+From 5ae1b24120616387875d4db15bd935a6439e0635 Mon Sep 17 00:00:00 2001
+From: Filippo Falezza <effeffe99@gmail.com>
+Date: Tue, 27 Oct 2026 01:21:42 +0000
+Subject: [PATCH 1/2] usb: dwc3: qcom: Restore UTMI PIPE clock on resume
+
+Boards whose controller has no SuperSpeed PHY set
+qcom,select-utmi-as-pipe-clk, and the glue then programs QSCRATCH
+GENERAL_CFG so that the core's PIPE clock domain runs from the UTMI
+clock. This is only done at probe.
+
+When the SoC reaches its deepest state in suspend-to-idle (CX power
+collapse), the QSCRATCH registers lose their contents. On resume the
+core is reinitialised with its PIPE domain unclocked, and the gadget
+does not come back:
+
+  dwc3-qcom a600000.usb: failed to enable ep0out
+
+The link stays down until the driver is unbound and bound again.
+
+Remember the property at probe and select the UTMI clock again in
+dwc3_qcom_resume(), after the clocks and interconnect paths are enabled
+and before the core is resumed. Move dwc3_qcom_select_utmi_clk() up so
+that it is defined before its new caller.
+
+Fixes: a4333c3a6ba9 ("usb: dwc3: Add Qualcomm DWC3 glue driver")
+Signed-off-by: Filippo Falezza <effeffe99@gmail.com>
+Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+---
+ drivers/usb/dwc3/dwc3-qcom.c | 45 ++++++++++++++++++++++--------------
+ 1 file changed, 28 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/usb/dwc3/dwc3-qcom.c b/drivers/usb/dwc3/dwc3-qcom.c
+index 012f7bd..5cd9921 100644
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -81,6 +81,7 @@ struct dwc3_qcom {
+ 	enum usb_dr_mode	mode;
+ 	bool			is_suspended;
+ 	bool			pm_suspended;
++	bool			utmi_as_pipe_clk;
+ 	struct icc_path		*icc_path_ddr;
+ 	struct icc_path		*icc_path_apps;
+ 
+@@ -334,6 +335,23 @@ static void dwc3_qcom_enable_interrupts(struct dwc3_qcom *qcom)
+ 		dwc3_qcom_enable_port_interrupts(&qcom->ports[i]);
+ }
+ 
++static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom)
++{
++	/* Configure dwc3 to use UTMI clock as PIPE clock not present */
++	dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++			  PIPE_UTMI_CLK_DIS);
++
++	usleep_range(100, 1000);
++
++	dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++			  PIPE_UTMI_CLK_SEL | PIPE3_PHYSTATUS_SW);
++
++	usleep_range(100, 1000);
++
++	dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
++			  PIPE_UTMI_CLK_DIS);
++}
++
+ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
+ {
+ 	u32 val;
+@@ -387,6 +405,15 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
+ 	if (ret)
+ 		dev_warn(qcom->dev, "failed to enable interconnect: %d\n", ret);
+ 
++	/*
++	 * The QSCRATCH registers lose their state when the controller's power
++	 * domain is collapsed during system suspend: select the UTMI clock
++	 * for the PIPE domain again, or the core can't run without a PIPE
++	 * clock ("failed to enable ep0out").
++	 */
++	if (qcom->utmi_as_pipe_clk)
++		dwc3_qcom_select_utmi_clk(qcom);
++
+ 	/* Clear existing events from PHY related to L2 in/out */
+ 	for (i = 0; i < qcom->num_ports; i++) {
+ 		dwc3_qcom_setbits(qcom->qscratch_base,
+@@ -418,23 +445,6 @@ static irqreturn_t qcom_dwc3_resume_irq(int irq, void *data)
+ 	return IRQ_HANDLED;
+ }
+ 
+-static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom)
+-{
+-	/* Configure dwc3 to use UTMI clock as PIPE clock not present */
+-	dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
+-			  PIPE_UTMI_CLK_DIS);
+-
+-	usleep_range(100, 1000);
+-
+-	dwc3_qcom_setbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
+-			  PIPE_UTMI_CLK_SEL | PIPE3_PHYSTATUS_SW);
+-
+-	usleep_range(100, 1000);
+-
+-	dwc3_qcom_clrbits(qcom->qscratch_base, QSCRATCH_GENERAL_CFG,
+-			  PIPE_UTMI_CLK_DIS);
+-}
+-
+ static int dwc3_qcom_request_irq(struct dwc3_qcom *qcom, int irq,
+ 				 const char *name)
+ {
+@@ -679,6 +689,7 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+ 	 */
+ 	ignore_pipe_clk = device_property_read_bool(dev,
+ 				"qcom,select-utmi-as-pipe-clk");
++	qcom->utmi_as_pipe_clk = ignore_pipe_clk;
+ 	if (ignore_pipe_clk)
+ 		dwc3_qcom_select_utmi_clk(qcom);
+ 
+-- 
+2.56.1
+

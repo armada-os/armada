@@ -916,7 +916,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada disables the inherited Pocket 6 PWM backlight and removes its panel reference so Nova uses its panel driver’s DSI backlight. Matches Retroid’s Nova panel wiring: L11B/L12B/L13B for vdd/vddio/vci, GPIO 70/143 fixed regulators for vdd18/vdd28, and rotation 0. Removes the inherited avdd supply and retains Armada DPU dithering and Nova's own ADSP firmware. The ROCKNIX Nova → RP6 → AYN common inheritance remains unchanged for other systems.
 - `dts/qcs8550-ayn-thor.dts.patch`
   source: armada
-  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`. It also sets `lid-switch` on the power key so it can't wake the device with the lid closed (patches 1306 and 1307).
+  notes: Armada fixes the hall-sensor pinctrl, makes only the lid-open edge wake, corrects touch orientation, and enables DPU dithering on the top panel after copying `dts/qcs8550-ayn-thor.dts`. It also sets `lid-switch` on the power key so it can't wake the device with the lid closed (patches 1306 and 1307). It marks `usb_1` as a Type-C mode switch, so patch 0631 can run USB 2.0 from the UTMI clock while DisplayPort has all four lanes (#959).
 - `dts/sm8650-ayaneo-common.dtsi.patch`
   source: armada
   notes: Armada keeps volume-up from waking the system, wires the upstream SY7758 driver, marks PCIe WAKE# active-low, idles the codec rails in LPM during s2idle, and keeps the RTC offset in an SDAM cell with the alarm enabled after copying `dts/sm8650-ayaneo-common.dtsi`.
@@ -999,6 +999,40 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0624-drm-msm-a6xx-increase-gmu-fw-init-timeout.patch`
   source: https://github.com/RetroidPocket/linux/commit/ba970587a0e1203b6a0934b5b9174886b4c4d24c
   upstream: https://patchwork.freedesktop.org/patch/753014/
+- `patches/0625-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-enabled.patch`
+  source: https://git.kernel.org/torvalds/c/e249a6e2a130c08bb4d8b0a55cbe29754307e5c9
+  upstream: https://git.kernel.org/torvalds/c/e249a6e2a130c08bb4d8b0a55cbe29754307e5c9
+  notes: Backported to 7.2, where the function is still `msm_dp_bridge_atomic_disable()`; the added check is unchanged. Fixes silent SoC resets on the AYN Thor when a DP disable follows a failed link training (#953).
+- `patches/0626-drm-msm-dp-mask-link-interrupts-while-link-clocks-are-off.patch`
+  source: armada
+  upstream: local
+  notes: Fixes a livelock on the AYN Thor when a late IDLE_PATTERN_SENT interrupt latches after a DP unplug has gated the link clocks (#957).
+- `patches/0627-phy-qcom-qmp-combo-leave-the-USB-PCS-alone-in-DP-only-mode.patch`
+  source: https://lore.kernel.org/all/20261103135051.1668-1-26rote@gmail.com/
+  upstream: https://lore.kernel.org/all/20261103135051.1668-1-26rote@gmail.com/
+  notes: 7.2 variant of the v3 patch. 7.2 lacks the phy-next mux rework (89563a152973), so in DP-only mode USB init/exit only take and drop the common reference and don't count the USB user, and the switch/reconfigure hunks are dropped. Fixes USB and then DP failing after an s2idle resume on the AYN Thor with a 4-lane DP sink attached (#959).
+- `patches/0628-phy-qcom-qmp-combo-dont-disable-the-pipe-clock-when-USB-power-on-fails.patch`
+  source: armada
+  upstream: local
+  notes: Fixes the pipe clock being disabled twice when the USB PCS times out (#959).
+- `patches/0629-usb-dwc3-qcom-check-for-hcd-in-dwc3_qcom_read_usb2_speed.patch`
+  source: https://lore.kernel.org/all/20261126051958.2983579-1-prashanth.k@oss.qualcomm.com/
+  upstream: https://lore.kernel.org/all/20261126051958.2983579-1-prashanth.k@oss.qualcomm.com/
+
+- `patches/0630-usb-dwc3-qcom-restore-UTMI-PIPE-clock-on-resume.patch`
+  source: https://lore.kernel.org/all/20261027-dwc3-utmi-resume-v1-1-ca9f0aa65783@gmail.com/
+  upstream: https://lore.kernel.org/all/20261027-dwc3-utmi-resume-v1-1-ca9f0aa65783@gmail.com/
+  notes: Prerequisite for 0631, which is based on it.
+
+- `patches/0631-usb-dwc3-qcom-use-the-UTMI-clock-as-PIPE-clock-in-DisplayPort-only-modes.patch`
+  source: https://lore.kernel.org/all/20261119124558.1548-3-26rote@gmail.com/
+  upstream: https://lore.kernel.org/all/20261119124558.1548-3-26rote@gmail.com/
+  notes: v4, applied unchanged. Only boards whose `usb_1` node has `mode-switch` use it (the Thor, through `dts/qcs8550-ayn-thor.dts.patch`). The dt-binding patch (1/2) is not needed to build. With 0627 the PHY stops the USB3 PIPE clock in DP-only mode; without this the controller then faults on the first s2idle resume (SMMU fault, xHCI Host System Error) and USB stays down until reboot (#959).
+
+- `patches/0632-usb-dwc3-tell-xHCI-that-it-lost-its-state-when-the-core-is-powered-off.patch`
+  source: https://lore.kernel.org/all/20261125181116.121-1-26rote@gmail.com/
+  upstream: https://lore.kernel.org/all/20261125181116.121-1-26rote@gmail.com/
+  notes: v3 (Acked-by Thinh Nguyen, Cc stable), backported to 7.2: only the host.c include context differs. dwc3 powers the core off on system suspend when USB wakeup is off, as on the Thor, so xhci-plat must reset the controller on resume instead of restoring its saved state. Without it the first s2idle resume with any USB device attached faults (SMMU fault from the USB stream, xHCI Host System Error), with or without DisplayPort (#959).
 
 - `dts/sm7750-retroidpocket-duo.dts`
   source: armada

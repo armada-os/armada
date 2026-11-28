@@ -85,6 +85,14 @@
 # ============== USB boot hang fix ==============
 0071-HACK-fix-usb-boot-hang.patch
 
+# ============== USB-C combo PHY / dwc3 resume ==============
+0627-phy-qcom-qmp-combo-leave-the-USB-PCS-alone-in-DP-only-mode.patch
+0628-phy-qcom-qmp-combo-dont-disable-the-pipe-clock-when-USB-power-on-fails.patch
+0629-usb-dwc3-qcom-check-for-hcd-in-dwc3_qcom_read_usb2_speed.patch
+0630-usb-dwc3-qcom-restore-UTMI-PIPE-clock-on-resume.patch
+0631-usb-dwc3-qcom-use-the-UTMI-clock-as-PIPE-clock-in-DisplayPort-only-modes.patch
+0632-usb-dwc3-tell-xHCI-that-it-lost-its-state-when-the-core-is-powered-off.patch
+
 # ============== Haptics ==============
 1000-input-misc-qcom-hv-haptics-sm8750.patch
 1001-input-qcom-haptics-update-assign-str.patch
@@ -108,6 +116,8 @@
 0036_ASoC--qcom--sc8280xp-Add-support-for-Primary-I2S.patch
 0032-ASoC-codecs-aw88166-AYN-Products-Specific-modificati.patch
 0618-drm-msm-dp-dont-fail-audio-prepare-when-display-off.patch
+0625-drm-msm-dp-skip-PUSH_IDLE-when-the-link-was-never-enabled.patch
+0626-drm-msm-dp-mask-link-interrupts-while-link-clocks-are-off.patch
 0619-drm-msm-map-submitqueue-priority-onto-high-low.patch
 0620-drm-msm-a6xx-hfi-irq-clears-only-the-cm3-fault.patch
 0621-drm-msm-a6xx-bound-the-gmu-wait-for-a-fault-devcoredump.patch

@@ -99,3 +99,18 @@ suspended with the lid closed do not wake the device.
 +	/* Ignore presses while suspended with the lid closed. */
 +	lid-switch = <&lid_switch>;
 +};
+--- a/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
++++ b/arch/arm64/boot/dts/qcom/qcs8550-ayn-thor.dts
+@@ -483,4 +483,12 @@
+ &pon_pwrkey {
+ 	/* Ignore presses while suspended with the lid closed. */
+ 	lid-switch = <&lid_switch>;
++};
++
++&usb_1 {
++	/*
++	 * Get the Type-C mode, to run USB 2.0 from the UTMI clock while
++	 * DisplayPort has all four lanes.
++	 */
++	mode-switch;
+ };

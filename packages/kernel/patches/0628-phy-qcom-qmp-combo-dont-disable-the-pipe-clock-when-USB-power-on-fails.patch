@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mingyang Li <594058+tslmy@users.noreply.github.com>
+Date: Thu, 26 Nov 2026 15:07:30 -0800
+Subject: [PATCH 2/3] phy: qcom: qmp-combo: don't disable the pipe clock when
+ USB power-on fails
+
+Since commit f546912bcac6 ("phy: qcom: qmp-combo: Move pipe_clk on/off
+to common"), qmp_combo_com_init() enables the USB pipe clock and
+qmp_combo_com_exit() disables it. The PHYSTATUS timeout path in
+qmp_combo_usb_power_on() still disables it, though.
+
+qmp_combo_usb_init() follows the failure with qmp_combo_com_exit(),
+so the pipe clock gets disabled twice:
+
+  qcom-qmp-combo-phy 88e8000.phy: phy initialization timed-out
+  gcc_usb3_prim_phy_pipe_clk already disabled
+  WARNING: drivers/clk/clk.c:1188 at clk_core_disable+0x2a0/0x310
+   qmp_combo_com_exit
+   qmp_combo_usb_init
+   phy_init
+  gcc_usb3_prim_phy_pipe_clk already unprepared
+
+When the failure comes from qmp_combo_typec_switch_set() or
+qmp_combo_typec_mux_set() instead, the common reference stays held,
+but the pipe clock is now off. USB 2.0 still needs that clock in
+DP-only mode. Then the next qmp_combo_com_exit() underflows it.
+
+Leave the pipe clock to the common code.
+
+Fixes: f546912bcac6 ("phy: qcom: qmp-combo: Move pipe_clk on/off to common")
+Signed-off-by: Mingyang Li <594058+tslmy@users.noreply.github.com>
+---
+ drivers/phy/qualcomm/phy-qcom-qmp-combo.c | 7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 5600d22..8ab3aaa 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -3879,15 +3879,10 @@ static int qmp_combo_usb_power_on(struct phy *phy)
+ 			PHY_INIT_COMPLETE_TIMEOUT);
+ 	if (ret) {
+ 		dev_err(qmp->dev, "phy initialization timed-out\n");
+-		goto err_disable_pipe_clk;
++		return ret;
+ 	}
+ 
+ 	return 0;
+-
+-err_disable_pipe_clk:
+-	clk_disable_unprepare(qmp->pipe_clk);
+-
+-	return ret;
+ }
+ 
+ static int qmp_combo_usb_power_off(struct phy *phy)
+-- 
+2.56.1
+
