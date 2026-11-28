@@ -45,7 +45,22 @@ cat > "$WORK/bin/umount" <<'EOF'
 printf 'umount %s\n' "$*" >> "$MOUNT_LOG"
 rm -f "$MOUNT_STATE/$(printf '%s' "$1" | sed 's|/|_|g')"
 EOF
+for fuse in squashfuse fuse-overlayfs; do
+    sed "s/^printf 'mount /printf '$fuse /" "$WORK/bin/mount" > "$WORK/bin/$fuse"
+done
+cat > "$WORK/bin/systemd-detect-virt" <<'EOF'
+#!/usr/bin/env bash
+[[ "${IN_CONTAINER:-0}" == 1 ]]
+EOF
 chmod +x "$WORK/bin"/*
+
+reset_mounts() {
+    rm -f "${MOUNT_STATE:?}"/*
+    : > "$MOUNT_LOG"
+}
+mount_state_of() {
+    printf '%s/%s' "$MOUNT_STATE" "$(printf '%s' "$1" | sed 's|/|_|g')"
+}
 
 export MOUNT_LOG="$WORK/mount.log" MOUNT_STATE="$WORK/state"
 mkdir -p "$MOUNT_STATE"
@@ -85,6 +100,15 @@ tail -n 3 "$MOUNT_LOG" > "$WORK/unmount.log"
 expected=$(printf 'umount %s\numount %s\numount %s' \
     "$WORK/root/usr/share/guestos/fex-mesa" "$WORK/run/mesa" "$WORK/run/rootfs")
 [[ "$(<"$WORK/unmount.log")" == "$expected" ]] || fail 'mounts were not removed in reverse order'
+
+# In a container the whole stack is mounted with FUSE.
+rm -f "$MOUNT_STATE"/* "$MOUNT_LOG"
+IN_CONTAINER=1 PATH="$WORK/bin:/usr/bin:/bin" "$WORK/helper" start || fail 'container start failed'
+log="$(<"$MOUNT_LOG")"
+assert_contains "$log" "squashfuse -o allow_other $rootfs_sqsh $WORK/run/rootfs"
+assert_contains "$log" "squashfuse -o allow_other $mesa_sqsh $WORK/run/mesa"
+assert_contains "$log" "fuse-overlayfs -o lowerdir=$WORK/run/mesa:$WORK/run/rootfs,allow_other"
+[[ "$log" != *"ro,loop"* ]] || fail 'container start tried a loop mount'
 
 grep -qx 'ConditionPathExists=/usr/share/fex-emu/RootFS/ArchLinux.sqsh' "$SERVICE" ||
     fail 'service does not require ArchLinux.sqsh'

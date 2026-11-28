@@ -274,6 +274,14 @@ FROM scratch AS out-extest
 COPY --from=pkg-extest /work/out/libextest.so /
 
 
+FROM builder-base AS pkg-qcom-va-driver
+COPY qcom-va-driver/ /work/
+WORKDIR /work
+RUN ./build.sh && /src/scrub-scratch.sh
+
+FROM scratch AS out-qcom-va-driver
+COPY --from=pkg-qcom-va-driver /work/out/ /rpms/
+
 FROM ${BUILDER_IMAGE} AS pkg-steam-bootstrap-builder
 COPY steam-bootstrap/install-builder-deps.sh /tmp/
 RUN /tmp/install-builder-deps.sh

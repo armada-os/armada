@@ -1,0 +1,34 @@
+From 0747a808cea2984eafe63cc7afc1c00cd62250cd Mon Sep 17 00:00:00 2001
+From: virtudude <virtudude@protonmail.com>
+Date: Thu, 26 Nov 2026 21:54:41 -0500
+Subject: [PATCH] skip libdecor plugins when nested
+
+With BACKEND=wayland gamescope runs as a window and decorates it through
+libdecor. Its plugins read org.freedesktop.appearance from the settings
+portal with a blocking D-Bus call, and gamescope-session-plus hides the
+portals with XDG_DESKTOP_PORTAL_DIR="", so the call hangs until the
+startup socket times out. Point libdecor at an empty plugin directory so
+the window goes undecorated. The DRM backend never takes this path, and
+an explicit LIBDECOR_PLUGIN_DIR is respected.
+---
+ usr/share/gamescope-session-plus/gamescope-session-plus | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/usr/share/gamescope-session-plus/gamescope-session-plus b/usr/share/gamescope-session-plus/gamescope-session-plus
+index 42094cb..84e7b88 100755
+--- a/usr/share/gamescope-session-plus/gamescope-session-plus
++++ b/usr/share/gamescope-session-plus/gamescope-session-plus
+@@ -226,6 +226,10 @@ if [ -z "$GAMESCOPECMD" ]; then
+ 	if [ -n "$BACKEND" ] && gamescope_has_option "--backend"; then
+ 		BACKEND_OPTION="--backend $BACKEND"
+ 	fi
++	# libdecor's plugins block on the portals this session hides.
++	if [ "$BACKEND" = "wayland" ] && [ -z "${LIBDECOR_PLUGIN_DIR:-}" ]; then
++		export LIBDECOR_PLUGIN_DIR=/nonexistent
++	fi
+ 	
+ 	MAX_SCALE_OPTION=""
+ 	if [ -n "$MAX_SCALE" ] && gamescope_has_option "--max-scale"; then
+-- 
+2.56.1
+

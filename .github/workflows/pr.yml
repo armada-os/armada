@@ -383,7 +383,7 @@ jobs:
           JUST_BIN=$(command -v just)
           sudo git config --global --add safe.directory "${GITHUB_WORKSPACE}"
           sudo env PATH="${PATH}" "${JUST_BIN}" \
-            build-armada-image "localhost/${IMAGE_NAME}" "${DISK_TAG}"
+            disk "localhost/${IMAGE_NAME}" "${DISK_TAG}"
           sudo chown -R "$(id -u):$(id -g)" output
 
       - name: Prepare disk image

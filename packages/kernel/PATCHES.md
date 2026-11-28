@@ -577,7 +577,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/ROCKNIX/distribution/blob/807c74fc46c124891d8aa9b57a68533d38e9a6b2/projects/ROCKNIX/devices/SM8250/patches/linux/0063_Mangmi-Pocket-Max-HL7139-charge-pump.patch
   upstream: unknown
 - `patches/0011-qcom-pm8150b-charger.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/patches/linux/0011-qcom-pm8150b-charger.patch
+  source: https://github.com/ROCKNIX/distribution/blob/7b4da83200a051c27b691f4b86c0e06bb79d2bdb/projects/ROCKNIX/devices/SM8250/patches/linux/0011-qcom-pm8150b-charger.patch
   upstream: unknown
   notes: Armada refreshed only the Makefile context for Linux 7.2's expanded Surface power-supply entries; charger and fuel-gauge behavior is unchanged.
 - `patches/0005-sm8250-uart.patch`
@@ -641,14 +641,20 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   upstream: https://lore.kernel.org/r/20260605-sm8750-uart15-v1-1-93e660722e61@gmail.com
 - `patches/0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0033-arm64-dts-qcom-sm8750-gpu-clock-controllers.patch
-  upstream: https://lore.kernel.org/r/20260714-gpucc_dt_v6-v6-1-16bf5289572d@oss.qualcomm.com
-- `patches/0038-arm64-dts-qcom-sm8750-add-GPU-nodes.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0038-arm64-dts-qcom-sm8750-add-GPU-nodes.patch
-  upstream: unknown
-- `patches/0038a-arm64-dts-qcom-sm8750-map-A8xx-RSCC-registers.patch`
+  upstream: https://git.kernel.org/torvalds/c/f695831a7af1f8d39203357572683981ebe4de77
+- `patches/0038-arm64-dts-qcom-sm8750-Add-GPU-and-GMU-nodes.patch`
+  source: https://git.kernel.org/torvalds/c/9e39531ce39a98a77ddcf58f838a50dbf164092c
+  upstream: https://git.kernel.org/torvalds/c/9e39531ce39a98a77ddcf58f838a50dbf164092c
+  notes: Context of the GPU node hunk refreshed to apply on 7.2.6 (after camcc instead of tcsr_mutex).
+- `patches/0038a-arm64-dts-qcom-sm8750-Add-GPU-cooling.patch`
+  source: https://git.kernel.org/torvalds/c/c4dc1775c7723e9ed1ff74b649fe72d8aa741eb1
+  upstream: https://git.kernel.org/torvalds/c/c4dc1775c7723e9ed1ff74b649fe72d8aa741eb1
+- `patches/0038b-arm64-dts-qcom-sm8750-keep-the-A830-chip-id-0x44050000.patch`
   source: armada
   upstream: local
-  notes: Armada expands the SM8750 GPU register mapping to `0x6c000` so Linux 7.1's A8xx recovery path can access RSCC at GPU offset `0x50000` without faulting.
+- `patches/0038c-arm64-dts-qcom-sm8750-poll-the-GPU-thermal-zones-while-throttling.patch`
+  source: armada
+  upstream: local
 - `patches/0035-arm64-dts-qcom-sm8750-set-CPU-capacity-dmips-mhz.patch`
   source: https://github.com/ROCKNIX/distribution/blob/f3e2b6187cd2ae2dc5122edfebe84228a314f2c5/projects/ROCKNIX/devices/SM8750/patches/linux/0076-arm64-dts-qcom-sm8750-set-CPU-capacity-dmips-mhz.patch
   upstream: unknown
@@ -659,9 +665,15 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0556a-arm64-dts-qcom-sm8750-add-the-soccp.patch`
   source: armada
   upstream: local
-- `patches/0049-drm-msm-a8xx-add-adreno-830-catalog.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0049-drm-msm-a8xx-add-adreno-830-catalog.patch
-  upstream: unknown
+- `patches/0049-drm-msm-a8xx-Add-support-for-Adreno-830-GPU.patch`
+  source: https://git.kernel.org/torvalds/c/2c94d177a927a25d3eb111fe83694b5f84239069
+  upstream: https://git.kernel.org/torvalds/c/2c94d177a927a25d3eb111fe83694b5f84239069
+- `patches/0049b-drm-msm-a6xx-Honor-perfmode_bw-threshold-on-A8x.patch`
+  source: https://git.kernel.org/torvalds/c/db6a2e4a7ebd4378d03a97f4bef22f8c157240ad
+  upstream: https://git.kernel.org/torvalds/c/db6a2e4a7ebd4378d03a97f4bef22f8c157240ad
+- `patches/0049c-drm-msm-a8xx-accept-the-A830-chip-id-0x44050000.patch`
+  source: armada
+  upstream: local
 - `patches/0039-wifi-ath12k-add-initial-hardware-definition-for-WCN7.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0039-wifi-ath12k-add-initial-hardware-definition-for-WCN7.patch
   upstream: unknown
@@ -713,9 +725,25 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0081-ASoC-wcd939x-fix-headphone-analog-volume-controls.patch`
   source: armada
   upstream: local
+- `patches/0082-ASoC-wcd939x-sdw-program-the-class-H-port-window.patch`
+  source: armada
+  upstream: local
+  notes: Declares only the class-H port SDW_DPN_FULL; the SM8550, SM8650 and SM8750 RX masters all give port 2 hstart 3 and hstop 6. Hardware-confirmed on the KONKR Pocket FIT.
+- `patches/0083-ASoC-wcd-clsh-run-the-class-H-start-up-only-once.patch`
+  source: armada
+  upstream: local
+  notes: Matches Qualcomm's downstream wcd-clsh.c, whose stereo state does nothing when the second headphone channel joins. Hardware-confirmed on the KONKR Pocket FIT.
+- `patches/0084-ASoC-wcd-common-skip-the-interrupt-loop-without-a-regmap.patch`
+  source: armada
+  upstream: not submitted
+  notes: The WCD937x/8x/9x RX SoundWire device has no regmap, but shares wcd_interrupt_callback(); an interrupt from it NULL-derefs in regmap_read() and kills the SoundWire IRQ thread. Return early without a regmap.
 - `patches/0074-soundwire-qcom-PCM-data-port-format-enable.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0074-soundwire-qcom-PCM-data-port-format-enable.patch
   upstream: unknown
+- `patches/0086-soundwire-qcom-add-an-optional-SSP-period.patch`
+  source: armada
+  upstream: local
+  notes: Optional qcom,ssp-period for the master FRAME_CTRL. The WCD939x class-H port (interval 64) does not divide the 50x16 RX frame; without an SSP its stream starts at a random phase and about half of the Odin 3's headphone streams are fuzzy.
 - `patches/0075-ASoC-wsa884x-preserve-Pocket-S2-compander-gain.patch`
   source: armada
   upstream: local
@@ -845,7 +873,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada adapts the Elite touchscreen node to the full ROCKNIX Chipone fork shared with the SM8650 Pocket FIT, keeps volume-up from waking the system, and adds the DisplayPort playback link required for USB-C DP Alt Mode audio; the touchscreen driver is selected only by those two device-tree nodes. Armada also marks PCIe WAKE# active-low and idles the codec rails in LPM during s2idle, and points the SoCCP remoteproc at the Elite's own firmware.
 - `dts/cq8725s-ayn-common.dtsi`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0046-arm64-dts-qcom-Add-AYN-CQ8725S-Common.patch
-  notes: Maintained directly by Armada. Shares clocks, regulators, ADSP enablement, PMIC-GLINK, speaker I2S wiring and amplifiers, Adreno 830, WCN7860 Wi-Fi, RSInput controller and back paddles, SD, display/touch wiring, keys, fan wiring and USB2 between Odin 3 and Portal.
+  notes: Maintained directly by Armada. Shares clocks, regulators, ADSP and CDSP enablement, PMIC-GLINK, speaker I2S wiring and amplifiers, Adreno 830, WCN7860 Wi-Fi, RSInput controller and back paddles, SD, display/touch wiring, keys, fan wiring and USB2 between Odin 3 and Portal.
 - `dts/cq8725s-ayn-odin3.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8750/patches/linux/0047-arm64-dts-qcom-Add-AYN-Odin3.patch
   notes: Maintained directly by Armada with later ROCKNIX updates, including haptics from commit `81a31e3d0f`. Carries Odin 3 peripherals and Armada display, audio, gamepad and suspend settings.
@@ -897,7 +925,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Armada selects the accepted Pocket S2 WSA2 sound-card mapping after copying the ROCKNIX DTS.
 - `dts/sm8650-konkr-pf.dts.patch`
   source: armada
-  notes: Armada selects the shared WSA2 channel mapping through a Pocket FIT-specific sound-card compatible and binds `konkr_sysbtn` to the controller MCU UART, and loads its own ADSP firmware.
+  notes: Armada selects the shared WSA2 channel mapping through a Pocket FIT-specific sound-card compatible and binds `konkr_sysbtn` to the controller MCU UART, and loads its own ADSP firmware, marks the WCD939x headphone jack switches normally-closed so MBHC detects a plug (without them the jack never reports inserted), and sets up RX SoundWire port 9 (PCM timing and format enable) for the HPH PCM path the UCM profile uses.
 
 - `patches/0505-arm64-emulate-unaligned-atomics.patch`
   source: https://github.com/bylaws/linux/commit/7ae989a43ae7e3cb8007ac21c28dacc24c9d8320
@@ -1234,6 +1262,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/1179-ASoC-qcom-fix-duo-speaker-slot-width.patch`
   source: armada; register definitions from https://github.com/awinic-driver/aw883xx/blob/main/aw883xx_pid_2066_reg.h
   upstream: local
+- `patches/0085-ASoC-qcom-sc8280xp-restart-SoundWire-streams-across-system-suspend.patch`
+  source: armada
+  upstream: local
+  notes: qcom_snd_sdw_prepare() skips a stream still marked prepared, so a SoundWire stream open across s2idle is never re-enabled and headphones come back thin and distorted. Tear the streams down in suspend_post and re-enable them in resume_pre. Needs 0528 and 0530.
 
 - `patches/1180-ASoC-qcom-q6apm-allow-s32-playback.patch`
   source: armada

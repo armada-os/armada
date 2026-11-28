@@ -24,3 +24,23 @@ mapping:
     target_event:
       gamepad:
         button: Guide
+        
+  - name: LC Left Paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_PROG3
+          value_type: button
+    target_event:
+      gamepad:
+        button: LeftTop
+
+  - name: RC Right Paddle
+    source_events:
+      - evdev:
+          event_type: KEY
+          event_code: KEY_PROG4
+          value_type: button
+    target_event:
+      gamepad:
+        button: RightTop

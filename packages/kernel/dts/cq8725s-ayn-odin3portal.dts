@@ -320,10 +320,6 @@
 			"qcom/sm8750/ayn/odin3portal/adsp_dtb.mbn";
 };
 
-&remoteproc_cdsp {
-	status = "disabled";
-};
-
 &remoteproc_mpss {
 	status = "disabled";
 };

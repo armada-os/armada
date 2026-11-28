@@ -712,13 +712,6 @@
 			"qcom/sm8750/ayn/odin3/adsp_dtb.mbn";
 };
 
-&remoteproc_cdsp {
-	firmware-name = "qcom/sm8750/ayn/odin3/cdsp.mbn",
-			"qcom/sm8750/ayn/odin3/cdsp_dtb.mbn";
-
-	status = "okay";
-};
-
 &remoteproc_soccp {
 	firmware-name = "qcom/sm8750/ayn/odin3/soccp.mbn";
 };

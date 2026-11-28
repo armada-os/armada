@@ -10,15 +10,6 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   disables the graphics/sparse-queue cross-sync introduced by Mesa commit
   `0cc0e786e096dca8cfd88d7088ab7e1a0147d045`; context trimmed to apply to both
   stable and devel
-- `patches/0002-add-a830-chip-id.patch`
-  source: https://github.com/ROCKNIX/distribution/blob/e485495a942daba186d4a8543e18a1ad09c9a5d5/projects/ROCKNIX/packages/graphics/mesa/patches/SM8750/0001-add-a830-chip-id.patch
-  affects: A830
-  notes: new patch header; chip IDs verbatim.
-- `patches/0004-freedreno-add-a722-support.patch`
-  source: https://gitlab.freedesktop.org/mesa/mesa/-/commit/803731f7ed4aa8e8265fe0aff08b85efb3f3c7e9
-  affects: A722
-  notes: `magic_regs` moved beside `num_vsc_pipes` so 0005 also fits the devel pin,
-  and `num_ccu = 2` folded in from upstream 8c589b897b3b.
 - `patches/0005-freedreno-a722-blob-regs.patch`
   source: https://github.com/Vauzi-17/710/blob/5db89bde562d/add_710_720_722.py
   affects: A722
@@ -54,6 +45,23 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   source: https://github.com/armada-os/armada/issues/748#issuecomment-6373073950
   affects: all GPUs
   notes: comment shortened
+- `patches/0016-freedreno-a8xx-wait-for-zpass-sample-counts.patch`
+  source: armada
+  affects: A8xx (freedreno GL only)
+- `patches/0017-freedreno-a8xx-rb-done-ts-after-each-draw.patch`
+  source: armada
+  affects: A8xx (freedreno GL only)
+- `patches/0018-dri3-gamescope-limiter-swap-interval-override.patch`
+  source: https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/jupiter-main/mesa-26.1.2.221562.radeonsi_26.1.2-5.src.tar.gz (steamos-mesa commit `18b3910ac08ebf58e7f43ff1bcf864bee4a077ab`)
+  affects: OpenGL over X11 (GLX/EGL DRI3), all GPUs
+  notes: line offsets refreshed for 26.3.0. While gamescope's frame limiter is on
+  (`GAMESCOPE_LIMITER_FILE` reads 1), GL windows swap with interval 1, so the
+  limiter can pace games that turned vsync off.
+- `patches/0019-tu-ir3-assume-speculatable-loads.patch`
+  source: armada
+  affects: all GPUs (Turnip only)
+  notes: undoes the performance cost of https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/42159
+  without reverting it; `TU_DEBUG=strictspec` restores upstream behavior
 
 ## Variants
 
@@ -64,7 +72,7 @@ apply (`BASE_PATCHES`, default all), or takes both from another variant
 
 ### devel
 
-Mesa main with 0001, 0005-0013 and 0015 (0002 and 0004 are upstream).
+Mesa main with 0001, 0005-0013, 0015 and 0019.
 
 ### winnative
 

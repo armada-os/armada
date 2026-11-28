@@ -1,0 +1,140 @@
+From: Armada <armada@armadaos.dev>
+Subject: [PATCH] tu, ir3: treat descriptor loads as speculatable again
+
+Since MR 42159, ir3 only moves loads into the preamble when Turnip can
+prove them speculatable. Runtime descriptor indices, partially bound
+descriptors and raw addresses never qualify, so DX12 games lose the
+early preamble on most shaders and run up to 10% slower.
+
+Assume all loads are speculatable, as before 26.3. Out-of-bounds
+descriptor indices can fault in the preamble again; TU_DEBUG=strictspec
+restores the upstream checks.
+
+---
+diff --git a/src/freedreno/ir3/ir3_compiler.h b/src/freedreno/ir3/ir3_compiler.h
+index d274335..315b194 100644
+--- a/src/freedreno/ir3/ir3_compiler.h
++++ b/src/freedreno/ir3/ir3_compiler.h
+@@ -24,6 +24,9 @@ struct ir3_ra_reg_set;
+ struct ir3_shader;
+ 
+ struct ir3_compiler_options {
++   /* Allow the early preamble even if its loads aren't marked speculatable */
++   bool assume_speculatable;
++
+    /* If true, promote UBOs (except for constant data) to constants using ldc.k
+     * in the preamble. The driver should ignore everything in ubo_state except
+     * for the constant data UBO, which is excluded because the command pushing
+diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compiler_nir.c
+index 49b4bde..bad65ff 100644
+--- a/src/freedreno/ir3/ir3_compiler_nir.c
++++ b/src/freedreno/ir3/ir3_compiler_nir.c
+@@ -5868,7 +5868,8 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
+       goto out;
+    }
+ 
+-   bool is_preamble_speculatable = ir3_nir_is_preamble_speculatable(ctx->s);
++   bool is_preamble_speculatable = ctx->compiler->options.assume_speculatable ||
++      ir3_nir_is_preamble_speculatable(ctx->s);
+ 
+    emit_instructions(ctx);
+ 
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 4f15084..6b7813c 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -102,6 +102,7 @@ tu_physical_device_compiler_options_init(struct tu_physical_device *device,
+     */
+    device->compiler_options.no_multi_pos = TU_DEBUG(NOMULTIPOS);
+    device->compiler_options.compute_round_robin = TU_DEBUG(COMPUTE_ROUND_ROBIN);
++   device->compiler_options.strict_speculation = TU_DEBUG(STRICT_SPECULATION);
+ }
+ 
+ static int
+@@ -3009,6 +3010,7 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+ 
+    {
+       struct ir3_compiler_options ir3_options = {
++         .assume_speculatable = !TU_DEBUG(STRICT_SPECULATION),
+          .push_ubo_with_preamble = true,
+          .disable_cache = true,
+          .bindless_fb_read_descriptor = -1,
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index 5ef943a..57496d3 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -164,7 +164,8 @@ struct tu_physical_device
+       bool allow_oob_indirect_ubo_loads : 1;
+       bool no_multi_pos : 1;
+       bool compute_round_robin : 1;
+-      uint32_t padding : 27;
++      bool strict_speculation : 1;
++      uint32_t padding : 26;
+    } compiler_options;
+ 
+    struct {
+diff --git a/src/freedreno/vulkan/tu_shader.cc b/src/freedreno/vulkan/tu_shader.cc
+index 78de211..9adf8df 100644
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -548,6 +548,12 @@ can_speculate_descriptor_load(nir_src array_index,
+                               const struct tu_descriptor_set_layout *set_layout,
+                               unsigned binding)
+ {
++   /* Assume indices are in bounds, as before 26.3, unless TU_DEBUG=strictspec.
++    * The check below fails for runtime indices, which vkd3d-proton uses.
++    */
++   if (!TU_DEBUG(STRICT_SPECULATION))
++      return true;
++
+    return nir_src_is_const(array_index) &&
+        (!set_layout->has_variable_descriptors ||
+         binding != set_layout->binding_count - 1) &&
+@@ -600,8 +606,8 @@ build_bindless(struct tu_device *dev, nir_builder *b,
+          can_speculate_descriptor_load(deref->arr.index, set_layout, binding);
+    }
+ 
+-   *descriptor_valid = !bind_layout->partially_bound &&
+-      can_speculate_descriptor;
++   *descriptor_valid = !TU_DEBUG(STRICT_SPECULATION) ||
++      (!bind_layout->partially_bound && can_speculate_descriptor);
+ 
+    return bindless_resource_ir3(b, set, desc_offset, can_speculate_descriptor);
+ }
+@@ -1296,6 +1302,12 @@ can_speculate_resource(nir_def *def,
+                        const struct tu_pipeline_layout *layout,
+                        bool *can_speculate_descriptor)
+ {
++   /* Assume valid, even if partially bound; see can_speculate_descriptor_load(). */
++   if (!TU_DEBUG(STRICT_SPECULATION)) {
++      *can_speculate_descriptor = true;
++      return true;
++   }
++
+    *can_speculate_descriptor = false;
+ 
+    /* We're looking for a pattern like this:
+diff --git a/src/freedreno/vulkan/tu_util.cc b/src/freedreno/vulkan/tu_util.cc
+index 76e4f4a..de7e3c7 100644
+--- a/src/freedreno/vulkan/tu_util.cc
++++ b/src/freedreno/vulkan/tu_util.cc
+@@ -57,6 +57,7 @@ static const struct debug_control tu_debug_options[] = {
+    { "forcecb", TU_DEBUG_FORCE_CONCURRENT_BINNING },
+    { "computeroundrobin", TU_DEBUG_COMPUTE_ROUND_ROBIN },
+    { "gmem_warmup", TU_DEBUG_GMEM_WARMUP },
++   { "strictspec", TU_DEBUG_STRICT_SPECULATION },
+    { NULL, 0 }
+ };
+ 
+diff --git a/src/freedreno/vulkan/tu_util.h b/src/freedreno/vulkan/tu_util.h
+index c212db4..54a440d 100644
+--- a/src/freedreno/vulkan/tu_util.h
++++ b/src/freedreno/vulkan/tu_util.h
+@@ -75,6 +75,7 @@ enum tu_debug_flags : uint64_t
+    TU_DEBUG_FORCE_CONCURRENT_BINNING = BITFIELD64_BIT(36),
+    TU_DEBUG_COMPUTE_ROUND_ROBIN      = BITFIELD64_BIT(37),
+    TU_DEBUG_GMEM_WARMUP              = BITFIELD64_BIT(38),
++   TU_DEBUG_STRICT_SPECULATION       = BITFIELD64_BIT(39),
+ };
+ 
+ struct tu_env {

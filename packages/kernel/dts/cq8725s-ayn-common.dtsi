@@ -764,6 +764,10 @@
 	status = "okay";
 };
 
+&mdss_dp0_out {
+   	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
+};
+
 &mdss_dsi0 {
 	vdda-supply = <&vreg_l3g_1p2>;
 
@@ -921,6 +925,13 @@
 	status = "okay";
 };
 
+&remoteproc_cdsp {
+	firmware-name = "qcom/sm8750/ayn/odin3/cdsp.mbn",
+			"qcom/sm8750/ayn/odin3/cdsp_dtb.mbn";
+
+	status = "okay";
+};
+
 &sdhc_2 {
 	cd-gpios = <&tlmm 55 GPIO_ACTIVE_LOW>;
 
@@ -941,6 +952,9 @@
 	status = "okay";
 
 	qcom,pcm-ports-mask = <0x200>;
+	/* The class-H port's sample interval (64) does not divide the 50x16
+	 * frame, so master and codec only line up on a multi-frame SSP. */
+	qcom,ssp-period = <6>;
 
 	wcd_rx: codec@0,4 {
 		compatible = "sdw20217010e00";

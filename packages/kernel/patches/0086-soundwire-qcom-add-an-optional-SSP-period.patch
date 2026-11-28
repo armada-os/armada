@@ -1,0 +1,70 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] soundwire: qcom: add an optional SSP period
+
+Add an optional qcom,ssp-period property (1 to 256 frames) that sets the
+stream synchronization point period in both banks' FRAME_CTRL, at init
+and on every bank switch. Without it nothing changes.
+
+A port whose sample interval does not divide the frame only lines up with
+the codec at an SSP. On the WCD939x RX bus the class-H port (interval 64)
+does not divide the 50x16 frame, so its stream starts at a random phase
+and about half of the headphone streams on an AYN Odin 3 are fuzzy. With
+a period of 6 frames, as on Android, every stream started clean.
+---
+ drivers/soundwire/qcom.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -93,6 +93,7 @@
+ #define SWRM_MCP_FRAME_CTRL_BANK_ADDR(m)		(0x101C + 0x40 * (m))
+ #define SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK			GENMASK(2, 0)
+ #define SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK			GENMASK(7, 3)
++#define SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_MASK		GENMASK(23, 16)
+ #define SWRM_MCP_BUS_CTRL					0x1044
+ #define SWRM_MCP_BUS_CLK_START					BIT(1)
+ #define SWRM_MCP_CFG_ADDR					0x1048
+@@ -211,6 +212,7 @@
+ 	int cols_index;
+ 	int rows_index;
+ 	u32 pcm_ports_mask;
++	u32 ssp_period;
+ 	unsigned long port_mask;
+ 	u32 intr_mask;
+ 	u8 rcmd_id;
+@@ -886,6 +888,9 @@
+ 	/* Clear Rows and Cols */
+ 	val = FIELD_PREP(SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK, ctrl->rows_index);
+ 	val |= FIELD_PREP(SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK, ctrl->cols_index);
++	if (ctrl->ssp_period)
++		val |= FIELD_PREP(SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_MASK,
++				  ctrl->ssp_period - 1);
+ 
+ 	reset_control_reset(ctrl->audio_cgcr);
+ 
+@@ -1013,6 +1018,9 @@
+ 
+ 	u32p_replace_bits(&val, ctrl->cols_index, SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK);
+ 	u32p_replace_bits(&val, ctrl->rows_index, SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK);
++	if (ctrl->ssp_period)
++		u32p_replace_bits(&val, ctrl->ssp_period - 1,
++				  SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_MASK);
+ 
+ 	return ctrl->reg_write(ctrl, reg, val);
+ }
+@@ -1462,6 +1470,14 @@
+ 
+ 	of_property_read_u32(np, "qcom,pcm-ports-mask", &ctrl->pcm_ports_mask);
+ 
++	if (of_property_present(np, "qcom,ssp-period")) {
++		ret = of_property_read_u32(np, "qcom,ssp-period", &ctrl->ssp_period);
++		if (ret)
++			return ret;
++		if (!ctrl->ssp_period || ctrl->ssp_period > 256)
++			return dev_err_probe(ctrl->dev, -EINVAL, "Invalid SSP period\n");
++	}
++
+ 	ret = of_property_read_u32(np, "qcom,dout-ports", &val);
+ 	if (!ret) { /* only if present */
+ 		if (val != ctrl->num_dout_ports) {

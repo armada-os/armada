@@ -53,6 +53,7 @@ pkgs=(
     rsync
     tailscale
     unzip
+    wireguard-tools
     xz
 
     # Audio
@@ -62,6 +63,7 @@ pkgs=(
     pipewire
     pipewire-alsa
     pipewire-pulseaudio
+    pipewire-utils
     pulseaudio-utils
     wireplumber
 
@@ -78,6 +80,7 @@ pkgs=(
     erofs-fuse
     erofs-utils
     fuse-libs
+    fuse-overlayfs
     squashfs-tools
     squashfuse
 
@@ -86,11 +89,12 @@ pkgs=(
     steam-notif-daemon
 )
 
-dnf5 -y install --nogpgcheck \
+# --refresh: a local build's /var/cache mount can hold stale repo metadata.
+dnf5 -y install --refresh --nogpgcheck \
     --repofrompath 'terra,https://repos.fyralabs.com/terra$releasever' \
     terra-release
 
-dnf5 -y install --setopt=install_weak_deps=False "${pkgs[@]}"
+dnf5 -y install --refresh --setopt=install_weak_deps=False "${pkgs[@]}"
 
 
 #
@@ -163,6 +167,7 @@ desktop_pkgs=(
     gwenview
     kio-extras
     libadwaita
+    libappindicator
     libdbusmenu-gtk3
     qt6-qttools
     qt6-qtvirtualkeyboard

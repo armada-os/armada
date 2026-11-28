@@ -3,6 +3,8 @@ Description=Apply Armada controller type
 After=inputplumber.service
 Requires=inputplumber.service
 Before=display-manager.service
+# A container has no built-in controller for InputPlumber to manage.
+ConditionVirtualization=!container
 
 [Service]
 Type=oneshot

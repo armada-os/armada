@@ -2,29 +2,19 @@
 set -euxo pipefail
 
 # Copy dist from the image build stage, not the source tree.
-install_plugin() {
-    local name=$1 dist=$2 src=/ctx/decky/$1 dest=/usr/share/decky-plugins/$1
-    install -d -m 0755 "${dest}"
-    cp -a "${src}/plugin.json" "${src}/package.json" "${src}/main.py" "${dest}/"
-    cp -a "${src}/py_modules" "${dest}/"
-    [[ ! -f "${src}/catalog.json" ]] || cp -a "${src}/catalog.json" "${dest}/"
-    [[ ! -d "${src}/templates" ]] || cp -a "${src}/templates" "${dest}/"
-    cp -a "${dist}" "${dest}/dist"
-    rm -f "${dest}/dist/"*.map
-    find "${dest}" -name __pycache__ -type d -prune -exec rm -rf {} +
-}
-install_plugin armada-control /packages/decky-dist
-install_plugin armada-store /packages/decky-store-dist
+./install-decky-plugin.sh /ctx/decky/armada-control /packages/decky-dist \
+    /usr/share/decky-plugins/armada-control
+./install-decky-plugin.sh /ctx/decky/armada-store /packages/decky-store-dist \
+    /usr/share/decky-plugins/armada-store
 chmod 0755 /usr/lib/decky-loader/armada-decky-sync
 
 decky_release="$(
     curl --retry 12 --retry-delay 10 -fsSL \
-        https://api.github.com/repos/SteamDeckHomebrew/decky-loader/releases |
-        jq -r 'first(.[])'
+        https://api.github.com/repos/SteamDeckHomebrew/decky-loader/releases/latest
 )"
 decky_version="$(jq -r '.tag_name' <<<"${decky_release}")"
 decky_url="$(jq -r '.assets[].browser_download_url | select(endswith("PluginLoader-arm64"))' <<<"${decky_release}")"
-decky_service_url=https://raw.githubusercontent.com/SteamDeckHomebrew/decky-loader/main/dist/plugin_loader-prerelease.service
+decky_service_url=https://raw.githubusercontent.com/SteamDeckHomebrew/decky-loader/main/dist/plugin_loader-release.service
 
 [[ -n "${decky_version}" && "${decky_version}" != "null" ]]
 [[ -n "${decky_url}" && "${decky_url}" != "null" ]]

@@ -26,6 +26,8 @@ Patch3:         0003-wifi-Always-write-wpa_supplicant-as-the-backend.patch
 Patch4:         0004-session-Track-gamescope-session-plus-steam.service-a.patch
 Patch5:         0005-power-Add-a-power_supply-battery-charge-limit-method.patch
 Patch6:         0006-Allow-LowPowerMode1-to-be-served-by-a-remote-interfa.patch
+Patch7:         0007-root-Keep-running-when-the-ftrace-instance-can-t-be-.patch
+Patch8:         0008-user-Keep-running-when-the-screen-reader-can-t-start.patch
 
 BuildRequires:  cargo
 BuildRequires:  rust

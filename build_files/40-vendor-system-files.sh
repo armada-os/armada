@@ -72,6 +72,7 @@ systemctl enable inputplumber.service
 systemctl enable inputplumber-suspend.service
 systemctl enable armada-ssc.service
 systemctl enable armada-guestos.service
+systemctl enable armada-container-binfmt.service
 systemctl enable usr-share-guestos-android.mount
 systemctl enable armada-device-quirks.service
 systemctl enable armada-panel-calibration.service
