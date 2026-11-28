@@ -1,11 +1,12 @@
 {
   "name": "armada-store",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "build": "shx rm -rf dist && rollup -c",
-    "watch": "rollup -c -w",
-    "test": "npm run test:i18n",
+    "sync-shared": "shx rm -rf src/armada-apps && shx cp -r ../shared/armada-apps/src src/armada-apps",
+    "build": "npm run sync-shared && shx rm -rf dist && rollup -c",
+    "watch": "npm run sync-shared && rollup -c -w",
+    "test": "npm run sync-shared && npm run test:i18n",
     "test:i18n": "node tests/i18n.test.mjs"
   },
   "dependencies": {

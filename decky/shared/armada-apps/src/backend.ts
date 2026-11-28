@@ -15,6 +15,8 @@ export const recordShortcut = (appId: string, steamAppid: number) =>
   call<[string, number], void>("record_shortcut", appId, steamAppid);
 export const clearShortcutRecord = (appId: string, keepPending = false, expected?: number) =>
   call<[string, boolean, number | null], void>("clear_shortcut", appId, keepPending, expected ?? null);
+export const clearReload = (name: string) => call<[string], void>("clear_reload", name);
+export const restartDecky = () => call<[], void>("restart_decky");
 export const resetConfig = (appId: string) => call<[string], void>("reset_config", appId);
 export const switchToDesktop = () => call<[], void>("switch_to_desktop");
 export const searchAndroid = (query: string, page?: AndroidPage, category?: string) =>

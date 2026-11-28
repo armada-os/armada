@@ -2,7 +2,8 @@ import threading
 import time
 from collections import OrderedDict
 
-from . import android, catalog, installers, paths, postinstall, store
+from . import catalog, installers, paths, records
+from .profile import profile
 
 ACTIVE_PHASES = {"queued", "resolving", "downloading", "installing", "extracting", "removing"}
 DONE_TTL = 10.0
@@ -43,6 +44,10 @@ def start(app_id, action):
         raise ValueError("Unknown app: " + str(app_id))
     if action != "uninstall" and not app.get("canInstall", True):
         raise ValueError("This app cannot be downloaded")
+    if action != "uninstall" and app.get("retired"):
+        raise ValueError("The Store no longer offers this app")
+    if action == "uninstall" and not catalog.removable(app):
+        raise ValueError("This app ships with Armada")
     global _worker
     with _lock:
         existing = _jobs.get(app_id)
@@ -53,7 +58,7 @@ def start(app_id, action):
         _jobs.move_to_end(app_id)
         _queue.append(app_id)
         if _worker is None or not _worker.is_alive():
-            _worker = threading.Thread(target=_run, name="armada-store-jobs", daemon=True)
+            _worker = threading.Thread(target=_run, name=profile.name + "-jobs", daemon=True)
             _worker.start()
     return job.snapshot()
 
@@ -151,11 +156,22 @@ def _execute(job):
             if job.action == "replace":
                 # Before the removal: dying in between must not strand the
                 # shortcut on a packaging that is gone.
-                store.add_pending_shortcut(job.app_id, force=True)
+                if catalog.launch_spec(app):
+                    records.add_pending_shortcut(job.app_id, force=True)
                 _remove_conflicts(job, app)
-            postinstall.run(app)
+            if profile.after_install:
+                try:
+                    profile.after_install(app)
+                except Exception as error:
+                    raise RuntimeError("Installed, but its setup failed: {}".format(error))
         else:
             _execute_uninstall(job, install, kind, app)
+            # A surviving Steam shortcut still needs the entry to be listed;
+            # the catalog payload drops it once nothing is left.
+            state = records.load_state()
+            if (kind not in profile.kinds and job.app_id not in (state.get("shortcuts") or {})
+                    and job.app_id not in (state.get("pendingShortcuts") or [])):
+                records.clear_entry(job.app_id)
         job.phase = "done"
         job.percent = None
     except installers.Cancelled:
@@ -179,15 +195,15 @@ def _remove_conflicts(job, app):
             # The entry and the record are keyed by app id, so the replacement
             # packaging does not inherit them.
             installers.remove_desktop_entry(job.app_id)
-            store.clear_appimage(job.app_id)
+            records.clear_appimage(job.app_id)
         else:
             raise RuntimeError("Unknown conflict type: " + str(entry.get("type")))
 
 
 def _execute_install(job, app, install, kind):
-    if kind == "android":
+    if kind in profile.kinds:
         job.phase = "resolving"
-        android.install(app, job.cancel, _download_progress(job))
+        profile.kinds[kind].install(app, job.cancel, _download_progress(job))
     elif kind == "flatpak":
         # Indeterminate until the first parsed percent, not a misleading 0%.
         job.phase = "installing"
@@ -197,14 +213,21 @@ def _execute_install(job, app, install, kind):
             job.percent = value
 
         installers.install_flatpak(install["ref"], job.cancel, on_percent)
-        installers.override_flatpak(install["ref"], install.get("overrides"))
+        # Right after each install commits, before anything else can fail: a
+        # later catalog change must not strand what is now on the device.
+        records.record_entry(job.app_id, app)
+        overrides = [*profile.base_overrides, *(install.get("overrides") or ())]
+        if overrides:
+            installers.override_flatpak(install["ref"], overrides)
         catalog.invalidate_flatpak_cache()
-        store.add_pending_shortcut(job.app_id)
+        if catalog.launch_spec(app):
+            records.add_pending_shortcut(job.app_id)
     elif kind == "appimage":
         job.phase = "resolving"
-        previous = ((store.load_state().get("appimages") or {}).get(job.app_id) or {}).get("filename")
+        previous = ((records.load_state().get("appimages") or {}).get(job.app_id) or {}).get("filename")
         filename, tag, stamp = installers.install_appimage(install, job.cancel, _download_progress(job))
-        store.record_appimage(job.app_id, filename, tag, stamp)
+        records.record_appimage(job.app_id, filename, tag, stamp)
+        records.record_entry(job.app_id, app)
         # A catalog filename change (ES-DE matches emulators by name) would
         # otherwise strand the old download in ~/Applications.
         if previous and previous != filename:
@@ -216,47 +239,86 @@ def _execute_install(job, app, install, kind):
         try:
             installers.write_desktop_entry(app, str(paths.apps_dir() / filename))
         except Exception as error:
-            print("armada-store: desktop entry skipped: {}".format(error))
+            print("{}: desktop entry skipped: {}".format(profile.name, error))
         # An app with no launch spec can never become a shortcut, so a pending
         # record for it would never clear.
         if catalog.launch_spec(app):
-            store.add_pending_shortcut(job.app_id)
+            records.add_pending_shortcut(job.app_id)
     elif kind == "deckyplugin":
         job.phase = "resolving"
-        previous = ((store.load_state().get("plugins") or {}).get(job.app_id) or {}).get("dir")
+        previous = ((records.load_state().get("plugins") or {}).get(job.app_id) or {}).get("dir")
+        if install.get("dir") and (paths.plugins_dir() / install["dir"]).exists():
+            previous = install["dir"]  # seeded by the image, so no record
         dirname, tag, stamp = installers.install_decky_plugin(
             install,
             job.cancel,
             _download_progress(job, DOWNLOAD_SPAN),
             _extract_progress(job, EXTRACT_SPAN),
         )
-        store.record_plugin(job.app_id, dirname, tag, stamp)
+        records.record_plugin(job.app_id, dirname, tag, stamp)
+        records.record_entry(job.app_id, app)
         if previous and previous != dirname:
             try:
                 installers.remove_decky_plugin({"dir": previous})
             except Exception:
                 pass
-        if previous:
-            installers.restart_decky()
+        # Decky loads a new plugin itself but leaves a running one on its old
+        # code; the panel asks Decky to reload it.
+        name = installers.plugin_name(dirname) if previous else None
+        if name:
+            records.add_pending_reload(name)
+    elif kind in catalog.COMPONENT_TYPES:
+        job.phase = "resolving"
+        tag, stamp = installers.install_component(
+            job.app_id,
+            install,
+            job.cancel,
+            _download_progress(job, DOWNLOAD_SPAN),
+            _extract_progress(job, EXTRACT_SPAN),
+        )
+        records.record_component(job.app_id, tag, stamp)
+        records.record_entry(job.app_id, app)
     else:
         raise RuntimeError("Unknown install type: " + str(kind))
 
 
 def _execute_uninstall(job, install, kind, app=None):
     job.phase = "removing"
-    store.clear_pending_shortcut(job.app_id)
-    state = store.load_state()
-    if kind == "android":
-        android.uninstall(app)
+    records.clear_pending_shortcut(job.app_id)
+    state = records.load_state()
+    if kind in profile.kinds:
+        profile.kinds[kind].uninstall(app)
     elif kind == "flatpak":
         installers.uninstall_flatpak(install["ref"], job.cancel)
         catalog.invalidate_flatpak_cache()
     elif kind == "appimage":
         installers.remove_appimage(install, (state.get("appimages") or {}).get(job.app_id))
         installers.remove_desktop_entry(job.app_id)
-        store.clear_appimage(job.app_id)
+        records.clear_appimage(job.app_id)
     elif kind == "deckyplugin":
-        installers.remove_decky_plugin((state.get("plugins") or {}).get(job.app_id))
-        store.clear_plugin(job.app_id)
+        # A fixed folder may have been seeded rather than installed, so it has
+        # no record; the catalog names it.
+        record = {"dir": install["dir"]} if install.get("dir") else (state.get("plugins") or {}).get(job.app_id)
+        installers.remove_decky_plugin(record)
+        records.clear_plugin(job.app_id)
+    elif kind in catalog.COMPONENT_TYPES:
+        installers.remove_component(kind, job.app_id)
+        records.clear_component(job.app_id)
     else:
         raise RuntimeError("Unknown install type: " + str(kind))
+
+
+def status_payload():
+    """What the panel polls every second. Shortcut records of hidden apps are
+    another plugin's; listing them here would make the panel chase apps it
+    can never find."""
+    current = profile.source.active()
+    hidden = profile.hidden_ids
+    return {
+        "catalogRevision": current["revision"],
+        "jobs": status(),
+        "installed": catalog.installed_map(current),
+        "shortcuts": {key: value for key, value in records.shortcuts().items() if key not in hidden},
+        "pending": [app_id for app_id in records.pending_shortcuts() if app_id not in hidden],
+        "reload": records.pending_reloads(),
+    }

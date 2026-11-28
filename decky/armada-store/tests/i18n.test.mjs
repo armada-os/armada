@@ -17,10 +17,10 @@ async function compileModule(relativePath) {
 const localeModuleUrls = Object.fromEntries(await Promise.all(
   ["en", "zh-CN"].map(async (locale) => [
     `./locales/${locale}`,
-    await compileModule(`../src/locales/${locale}.ts`),
+    await compileModule(`../src/armada-apps/locales/${locale}.ts`),
   ]),
 ));
-const i18nSource = await readFile(new URL("../src/i18n.ts", import.meta.url), "utf8");
+const i18nSource = await readFile(new URL("../src/armada-apps/i18n.ts", import.meta.url), "utf8");
 let i18nOutput = ts.transpileModule(i18nSource, { compilerOptions, fileName: "i18n.ts" }).outputText;
 for (const [modulePath, moduleUrl] of Object.entries(localeModuleUrls)) {
   i18nOutput = i18nOutput.replace(`from "${modulePath}"`, `from "${moduleUrl}"`);

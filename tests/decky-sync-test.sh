@@ -57,4 +57,34 @@ run_case equal-version-preserves-loader v3.2.8 b7 v3.2.8 installed
 run_case arm64-replaces-equal-x86 v3.3.1 3e v3.3.1 bundled
 run_case arm64-replaces-newer-x86 v3.3.2 3e v3.3.1 bundled
 
+# Plugins: Emulation keeps an installed copy newer than the image's (it also
+# updates from its own releases); everything else always takes the image's.
+plugin_case() {
+    local name=$1 plugin=$2 installed=$3 bundled=$4 winner=$5
+    rm -rf "$WORK/plugins" "$WORK/homebrew/plugins"
+    mkdir -p "$WORK/plugins/$plugin" "$WORK/homebrew/plugins/$plugin"
+    printf '{"version": "%s"}\n' "$bundled" > "$WORK/plugins/$plugin/package.json"
+    case "$installed" in
+        -) rm -rf "$WORK/homebrew/plugins/$plugin" ;;
+        '{') printf '{' > "$WORK/homebrew/plugins/$plugin/package.json" ;;
+        *) printf '{"version": "%s"}\n' "$installed" > "$WORK/homebrew/plugins/$plugin/package.json" ;;
+    esac
+    PATH="$WORK/bin:$PATH" "$WORK/sync"
+    local expected=$installed
+    [[ "$winner" == installed ]] || expected=$bundled
+    actual=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' \
+        "$WORK/homebrew/plugins/$plugin/package.json")
+    [[ "$actual" == "$expected" ]] || fail "$name: expected $expected, got $actual"
+}
+
+plugin_case emulation-newer-kept armada-emulation 0.2.0 0.1.0 installed
+plugin_case emulation-numeric-order armada-emulation 0.10.0 0.9.0 installed
+plugin_case emulation-older-replaced armada-emulation 0.1.0 0.2.0 bundled
+plugin_case emulation-equal-replaced armada-emulation 0.2.0 0.2.0 bundled
+plugin_case emulation-junk-replaced armada-emulation garbage 0.2.0 bundled
+plugin_case emulation-prefixed-replaced armada-emulation v0.3.0 0.2.0 bundled
+plugin_case store-always-image armada-store 0.9.0 0.2.0 bundled
+plugin_case emulation-missing-installed armada-emulation - 0.2.0 bundled
+plugin_case emulation-unreadable-installed armada-emulation '{' 0.2.0 bundled
+
 printf 'decky sync tests passed\n'

@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '../decky/armada-store');
 const ts = require(path.join(root, 'node_modules/typescript'));
-const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/lib/shortcuts.ts'), 'utf8'), {
+const code = ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../decky/shared/armada-apps/src/lib/shortcuts.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
 }).outputText;
 let added = 0, fail = true, created;

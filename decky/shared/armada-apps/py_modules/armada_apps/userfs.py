@@ -1,7 +1,9 @@
 import ctypes
 import errno
 import os
+import re
 import shutil
+import stat
 
 from .paths import user_home, user_ids
 
@@ -98,7 +100,8 @@ def make_staging(prefix):
     # on the same filesystem as the publish targets so rename stays atomic.
     home_fd = open_home()
     try:
-        name = ".armada-store-{}.{}".format(prefix, os.getpid())
+        from .profile import profile
+        name = ".{}-{}.{}".format(profile.name, prefix, os.getpid())
         try:
             shutil.rmtree(name, ignore_errors=True, dir_fd=home_fd)
         except OSError:
@@ -113,6 +116,28 @@ def make_staging(prefix):
     except Exception:
         os.close(home_fd)
         raise
+
+
+def sweep_staging():
+    """Remove staging folders a killed install left behind. Only at load,
+    when no job of this plugin can be running."""
+    from .profile import profile
+    pattern = re.compile(r"\.{}-[a-z]+\.[0-9]+".format(re.escape(profile.name)))
+    home_fd = open_home()
+    try:
+        for name in os.listdir(home_fd):
+            if not pattern.fullmatch(name):
+                continue
+            try:
+                info = os.stat(name, dir_fd=home_fd, follow_symlinks=False)
+            except OSError:
+                continue
+            # Only staging this plugin's own user made (root); anything the
+            # user made stays.
+            if stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid():
+                shutil.rmtree(name, ignore_errors=True, dir_fd=home_fd)
+    finally:
+        os.close(home_fd)
 
 
 def cleanup_staging(home_fd, name, fd):

@@ -2,6 +2,9 @@
 **/__pycache__
 decky/armada-control/dist
 decky/armada-store/dist
+decky/armada-emulation/dist
+decky/*/src/armada-apps
+decky/*/py_modules/armada_apps
 # Package sources build in packages/Containerfile with packages/ as their own
 # context. The image build consumes only their published images.
 packages

@@ -5,3 +5,6 @@ cosign.key
 __pycache__/
 *.pyc
 
+# Copied in from decky/shared by each plugin build
+decky/*/src/armada-apps/
+decky/*/py_modules/armada_apps/

@@ -1,4 +1,4 @@
-import type { AndroidPage } from "../types";
+import type { AndroidPage } from "../armada-apps/types";
 
 export class AndroidPages {
   pages: string[][] = [];

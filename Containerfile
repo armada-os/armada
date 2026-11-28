@@ -113,11 +113,18 @@ COPY decky/armada-control/package.json decky/armada-control/package-lock.json ./
 RUN npm ci
 COPY decky/armada-control/ ./
 RUN npm test && npm run build
+# The shared app library; each plugin's build copies its src into src/armada-apps.
+COPY decky/shared/ /build/shared/
 WORKDIR /build/armada-store
 COPY decky/armada-store/package.json decky/armada-store/package-lock.json ./
 RUN npm ci
 COPY decky/armada-store/ ./
-RUN npm run build
+RUN npm test && npm run build
+WORKDIR /build/armada-emulation
+COPY decky/armada-emulation/package.json decky/armada-emulation/package-lock.json ./
+RUN npm ci
+COPY decky/armada-emulation/ ./
+RUN npm test && npm run build
 
 FROM scratch AS ctx
 COPY build_files /build_files/
@@ -164,6 +171,7 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=umtp-responder,source=/rpms,target=/packages/umtp-responder \
     --mount=type=bind,from=decky-build,source=/build/armada-control/dist,target=/packages/decky-dist \
     --mount=type=bind,from=decky-build,source=/build/armada-store/dist,target=/packages/decky-store-dist \
+    --mount=type=bind,from=decky-build,source=/build/armada-emulation/dist,target=/packages/decky-emulation-dist \
     --mount=type=bind,from=armada-aurora,source=/rpms,target=/packages/armada-aurora \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \

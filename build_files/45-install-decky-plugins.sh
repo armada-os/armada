@@ -6,6 +6,10 @@ set -euxo pipefail
     /usr/share/decky-plugins/armada-control
 ./install-decky-plugin.sh /ctx/decky/armada-store /packages/decky-store-dist \
     /usr/share/decky-plugins/armada-store
+./install-decky-plugin.sh /ctx/decky/armada-emulation /packages/decky-emulation-dist \
+    /usr/share/decky-plugins/armada-emulation
+# The Store's catalog is also its offline fallback; never ship an empty Store.
+test -f /usr/share/decky-plugins/armada-store/catalog-v1.json
 chmod 0755 /usr/lib/decky-loader/armada-decky-sync
 
 decky_release="$(

@@ -1,6 +1,8 @@
 import asyncio
 
-from armada_store import android, catalog, jobs, postinstall, session, store, updates
+import armada_store  # configures the shared engine before anything uses it
+from armada_apps import catalog, installers, jobs, session, records, updates, userfs
+from armada_store import android, remote_catalog, shortcuts
 
 
 class Plugin:
@@ -10,8 +12,13 @@ class Plugin:
     async def import_android(self, path):
         return await asyncio.to_thread(android.import_local, path)
 
+    async def _main(self):
+        await asyncio.to_thread(userfs.sweep_staging)
+
     async def _unload(self):
-        await asyncio.to_thread(android.stop)
+        # Inline: a to_thread call here can stall shutdown until Decky kills
+        # the plugin 5s later.
+        android.stop()
 
     # Offload blocking work to a thread so a slow call can't stall Decky's asyncio loop.
     async def get_catalog(self):
@@ -19,12 +26,10 @@ class Plugin:
 
     async def get_status(self):
         def build():
-            return {
-                "jobs": jobs.status(),
-                "installed": catalog.installed_map(),
-                "shortcuts": store.shortcuts(),
-                "pending": store.pending_shortcuts(),
-            }
+            # The panel polls this every second; it doubles as the catalog's
+            # refresh timer while the Store stays open.
+            remote_catalog.maybe_refresh(remote_catalog.POLL_INTERVAL)
+            return jobs.status_payload()
 
         return await asyncio.to_thread(build)
 
@@ -47,16 +52,19 @@ class Plugin:
         return await asyncio.to_thread(jobs.dismiss, app_id)
 
     async def prepare_shortcut(self, path):
-        return await asyncio.to_thread(catalog.prepare_shortcut, path)
+        return await asyncio.to_thread(shortcuts.prepare_shortcut, path)
+
+    async def clear_reload(self, name):
+        return await asyncio.to_thread(records.clear_pending_reload, name)
+
+    async def restart_decky(self):
+        return await asyncio.to_thread(installers.restart_decky)
 
     async def record_shortcut(self, app_id, steam_appid):
-        return await asyncio.to_thread(store.record_shortcut, app_id, steam_appid)
+        return await asyncio.to_thread(records.record_shortcut, app_id, steam_appid)
 
     async def clear_shortcut(self, app_id, keep_pending=False, expected=None):
-        return await asyncio.to_thread(store.clear_shortcut, app_id, bool(keep_pending), expected)
-
-    async def reset_config(self, app_id):
-        return await asyncio.to_thread(postinstall.reset_config, app_id)
+        return await asyncio.to_thread(records.clear_shortcut, app_id, bool(keep_pending), expected)
 
     async def switch_to_desktop(self):
         return await asyncio.to_thread(session.switch_to_desktop)

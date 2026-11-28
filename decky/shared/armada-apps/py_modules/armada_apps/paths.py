@@ -33,12 +33,26 @@ def plugins_dir():
     return user_home() / "homebrew/plugins"
 
 
+# Where each component kind lives under the user's home, one folder per app id.
+COMPONENT_PARTS = {
+    # Steam reads compatibility tools only from its own root.
+    "proton": (".local", "share", "Steam", "compatibilitytools.d"),
+    # Must match the user driver folder in /usr/lib/armada/armada_turnip.py.
+    "turnip": (".local", "share", "armada", "turnip"),
+}
+
+
+def component_dir(kind):
+    return user_home().joinpath(*COMPONENT_PARTS[kind])
+
+
 def state_root():
     # Root-owned so state writes never touch user-writable directories.
-    env = os.environ.get("ARMADA_STORE_STATE_DIR")
+    from .profile import profile
+    env = os.environ.get(profile.env + "_STATE_DIR")
     if env:
         return Path(env)
-    return Path("/var/lib/armada-store")
+    return Path("/var/lib") / profile.name
 
 
 def plugin_dir():
@@ -46,3 +60,11 @@ def plugin_dir():
     if env:
         return Path(env)
     return Path(__file__).resolve().parents[2]
+
+
+def bundled_plugins_dir():
+    # Where the image keeps the plugins boot sync copies into homebrew.
+    env = os.environ.get("ARMADA_BUNDLED_PLUGINS")
+    if env:
+        return Path(env)
+    return Path("/usr/share/decky-plugins")

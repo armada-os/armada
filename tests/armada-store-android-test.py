@@ -15,7 +15,10 @@ from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "decky/armada-store/py_modules"))
-from armada_store import android, catalog, installers, jobs, paths, store
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "decky/shared/armada-apps/py_modules"))
+import armada_store  # noqa: F401  configures the shared engine
+from armada_apps import catalog, installers, jobs, paths, records
+from armada_store import android
 
 
 class AndroidTests(unittest.TestCase):
@@ -27,7 +30,7 @@ class AndroidTests(unittest.TestCase):
         self.environment = patch.dict(os.environ, {
             "ARMADA_STORE_STATE_DIR": str(self.root / "state"),
             "DECKY_USER_HOME": str(self.home), "DECKY_USER": "missing-test-user",
-            "ARMADA_STORE_ALLOW_INSECURE_URLS": "1",
+            "ARMADA_ALLOW_INSECURE_URLS": "1",
         })
         self.environment.start()
         self.info = {"package": "org.example.test", "name": "Example", "free": True, "version": "1"}
@@ -68,14 +71,14 @@ class AndroidTests(unittest.TestCase):
         self.assertTrue(catalog.installed_map()[self.app["id"]]["installed"])
         launch = catalog.launch_spec(self.app)
         self.assertEqual(launch["compatTool"], "lepton_armada")
-        self.assertEqual(store.pending_shortcuts(), [self.app["id"]])
+        self.assertEqual(records.pending_shortcuts(), [self.app["id"]])
         self.install(progress=lambda done, total: progress.append((done, total)))
         self.assertEqual(progress[-1][0], progress[-1][1])
-        self.assertEqual(store.pending_shortcuts(), [self.app["id"]])
-        store.record_shortcut(self.app["id"], 123)
+        self.assertEqual(records.pending_shortcuts(), [self.app["id"]])
+        records.record_shortcut(self.app["id"], 123)
         self.install()
-        self.assertEqual(store.pending_shortcuts(), [])
-        self.assertEqual(store.shortcuts()[self.app["id"]], 123)
+        self.assertEqual(records.pending_shortcuts(), [])
+        self.assertEqual(records.shortcuts()[self.app["id"]], 123)
 
     def test_search_ranks_exact_matches_and_retains_cached_metadata(self):
         self.resolve.stop()
@@ -264,22 +267,22 @@ class AndroidTests(unittest.TestCase):
         self.assertEqual(list(self.home.glob(".armada-store-*")), [])
 
     def test_state_failure_can_retry_without_duplicate_shortcuts(self):
-        with patch.object(store, "record_android", side_effect=OSError("state unavailable")):
+        with patch.object(records, "record_android", side_effect=OSError("state unavailable")):
             with self.assertLogs(level="ERROR") as logs:
                 with self.assertRaises(OSError):
                     self.install()
         self.assertIn("recording installation", logs.output[0])
         self.assertTrue(android.apk_path(self.app).exists())
-        self.assertEqual(store.pending_shortcuts(), [])
+        self.assertEqual(records.pending_shortcuts(), [])
         self.install()
-        self.assertEqual(store.pending_shortcuts(), [self.app["id"]])
+        self.assertEqual(records.pending_shortcuts(), [self.app["id"]])
 
     def test_cancelled_download_never_becomes_installed(self):
         cancel = threading.Event()
         with self.assertRaises(installers.Cancelled):
             self.install(cancel, lambda done, total: cancel.set())
         self.assertFalse(android.apk_path(self.app).exists())
-        self.assertEqual(store.pending_shortcuts(), [])
+        self.assertEqual(records.pending_shortcuts(), [])
         self.assertEqual(list(self.home.glob(".armada-store-*")), [])
 
     def test_truncated_and_unsafe_downloads_are_rejected(self):
@@ -302,14 +305,14 @@ class AndroidTests(unittest.TestCase):
 
     def test_local_import_is_repeatable_and_removal_keeps_source(self):
         apk = self.root / "base.apk"
-        with patch.object(catalog, "ANDROID_COMPAT_TOOL_DIR", str(self.root)):
+        with patch.object(android, "ANDROID_COMPAT_TOOL_DIR", str(self.root)):
             app_id = android.import_local(str(apk))
             self.assertEqual(android.import_local(str(apk)), app_id)
-        self.assertEqual(store.pending_shortcuts(), [app_id])
-        store.record_shortcut(app_id, 123)
-        with patch.object(catalog, "ANDROID_COMPAT_TOOL_DIR", str(self.root)):
+        self.assertEqual(records.pending_shortcuts(), [app_id])
+        records.record_shortcut(app_id, 123)
+        with patch.object(android, "ANDROID_COMPAT_TOOL_DIR", str(self.root)):
             android.import_local(str(apk))
-        self.assertEqual(store.pending_shortcuts(), [])
+        self.assertEqual(records.pending_shortcuts(), [])
         app = catalog.find_app(app_id)
         android.uninstall(app)
         self.assertTrue(apk.exists())

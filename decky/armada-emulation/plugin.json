@@ -1,0 +1,6 @@
+{
+  "name": "Armada Emulation",
+  "author": "Armada",
+  "flags": ["root"],
+  "api_version": 1
+}
