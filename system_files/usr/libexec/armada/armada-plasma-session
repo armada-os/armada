@@ -100,6 +100,8 @@ if [[ "$surface" == standalone ]]; then
         export DESKTOP_SESSION=plasma-mobile
         exec "${ARMADA_STARTPLASMA:-/usr/bin/startplasmamobile}"
     fi
+    # Steam's keyboard serves touch and controller alike; Plasma's would pop up over it.
+    export XDG_CONFIG_DIRS="/usr/share/armada/plasma/desktop:${XDG_CONFIG_DIRS:-/etc/xdg:/usr/share/kde-settings/kde-profile/default/xdg}"
     export DESKTOP_SESSION=plasma
     exec "${ARMADA_STARTPLASMA:-/usr/bin/startplasma-wayland}"
 fi
@@ -157,20 +159,31 @@ for file in kwinrc kwinrulesrc kdeglobals kxkbrc kcminputrc kglobalshortcutsrc; 
     ln -sfn "../../../$file" "$kwin_home/$file"
 done
 
+child_env="/usr/bin/env XDG_CONFIG_HOME=${config_home@Q} XDG_CACHE_HOME=${cache_home@Q}"
 kwin_args=()
 first_run=()
+steam_keyboard=()
 if [[ "$surface" == nested ]]; then
     # Mode 2 opens the keyboard for touch delivered as pointer clicks.
     export XDG_CONFIG_DIRS="/usr/share/armada/plasma/nested:$XDG_CONFIG_DIRS"
     # Plasma Mobile sets up its own keyboard.
-    [[ "$shell" == mobile ]] || kwin_args=(--inputmethod /usr/bin/plasma-keyboard)
+    if [[ "$shell" == desktop ]]; then
+        # Game Mode's Steam keyboard stands in for Plasma's, as on the desktop.
+        # KWin still needs an input method to report text focus to the watcher.
+        export XDG_CONFIG_DIRS="/usr/share/armada/plasma/desktop:$XDG_CONFIG_DIRS"
+        kwin_args=(--inputmethod /usr/bin/plasma-keyboard)
+        steam_keyboard=("$child_env /usr/libexec/armada/steam-keyboard-follow")
+        # Gamescope gives Steam's overlay every tap while its keyboard is up.
+        # Its children get KWin's own Xwayland; the helper also needs gamescope's, which hosts KWin.
+        host_xauthority=${XAUTHORITY-}
+        steam_keyboard+=("$child_env ARMADA_HOST_DISPLAY=${DISPLAY@Q} ARMADA_HOST_XAUTHORITY=${host_xauthority@Q} /usr/libexec/armada/steam-keyboard-outside")
+    fi
     if [[ ! -e "$kwin_home/kwinoutputconfig.json" ]]; then
         first_run=("/usr/bin/kscreen-doctor output.X11-0.scale.1.5")
     fi
     exec {lock}>&-
 fi
 
-child_env="/usr/bin/env XDG_CONFIG_HOME=${config_home@Q} XDG_CACHE_HOME=${cache_home@Q}"
 exec "${ARMADA_DBUS_RUN_SESSION:-/usr/bin/dbus-run-session}" \
     /usr/bin/env XDG_CONFIG_HOME="$kwin_home" XDG_CACHE_HOME="$kwin_cache" \
     "${ARMADA_KWIN_WAYLAND:-/usr/bin/kwin_wayland}" \
@@ -182,4 +195,5 @@ exec "${ARMADA_DBUS_RUN_SESSION:-/usr/bin/dbus-run-session}" \
     "${kwin_args[@]}" \
     --exit-with-session "$child_env $plasmashell" \
     "$child_env /usr/libexec/kf6/polkit-kde-authentication-agent-1" \
+    "${steam_keyboard[@]}" \
     "${first_run[@]}"
