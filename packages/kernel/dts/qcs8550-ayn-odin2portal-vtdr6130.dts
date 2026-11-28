@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "qcs8550-ayn-odin2portal.dts"
+
+&display_panel {
+	compatible = "vtdr6130,o2p";
+
+	vdd-supply = <&vdd_disp_2v8>;
+	/delete-property/ disp-supply;
+};

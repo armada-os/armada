@@ -1,0 +1,123 @@
+Subject: [PATCH] drm/panel: visionox-vtdr6130-cog: add Odin 2 Portal
+
+Newer AYN Odin 2 Portal units ship a Visionox VTDR6130 panel instead of
+the Chipone ICNA3512. Android selects it as
+qcom,mdss_dsi_vtdr6130_dsc_cmd and its command set, timings and DSC match
+the Odin 3 Portal, so reuse that init sequence.
+
+Use the Odin 2 Portal's supplies (vddio, vdd at 2.8 V, vci, blvdd), its
+Android frame lengths (0x12 at 120 Hz, 0x7b6 at 60 Hz), 60 Hz as the
+preferred mode and the captured maximum brightness of 3413.
+
+Link: https://github.com/armada-os/armada/issues/845
+
+diff --git a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+--- a/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
++++ b/drivers/gpu/drm/panel/panel-visionox-vtdr6130-cog.c
+@@ -71,6 +71,7 @@ struct panel_desc {
+ 	const struct vtdr6130_supply_config *supply_config;
+ 	unsigned int display_off_delay_ms;
+ 	unsigned int default_brightness;
++	unsigned int max_brightness;
+ 	bool vendor_dcs_long;
+ 	bool needs_d0;
+ 	bool off_in_lpm;
+@@ -554,6 +555,81 @@ static struct panel_desc vtdr6130_odin3portal_desc = {
+ 	.frame_len_60 = 0x7be,
+ };
+ 
++/*
++ * Odin 2 Portal VTDR6130 revision: the same panel module and command set as
++ * the Odin 3 Portal, with the Odin 2 Portal's supplies and Android frame
++ * lengths. 60 Hz stays preferred, as on the stock Android profile.
++ */
++static const struct drm_display_mode vtdr6130_odin2portal_modes[] = {
++	{
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 1974 + 4 + 14) * 60 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 1974,
++		.vsync_end = 1920 + 1974 + 4,
++		.vtotal = 1920 + 1974 + 4 + 14,
++	},
++	{
++		.clock = (1080 + 44 + 10 + 100) * (1920 + 18 + 4 + 14) * 120 / 1000,
++		.hdisplay = 1080,
++		.hsync_start = 1080 + 44,
++		.hsync_end = 1080 + 44 + 10,
++		.htotal = 1080 + 44 + 10 + 100,
++		.vdisplay = 1920,
++		.vsync_start = 1920 + 18,
++		.vsync_end = 1920 + 18 + 4,
++		.vtotal = 1920 + 18 + 4 + 14,
++	},
++};
++
++static const struct regulator_bulk_data odin2portal_panel_supplies[] = {
++	{ .supply = "vddio" },
++	{ .supply = "vdd" },
++	{ .supply = "vci" },
++	{ .supply = "blvdd" },
++};
++
++static const struct vtdr6130_supply_config odin2portal_supply_config[] = {
++	{ 1800000, 1800000, 200000, 0, 20, 0 },
++	{ 2800000, 2800000, 299000, 0, 0, 0 },
++	{ 3000000, 3000000, 10000, 0, 0, 0 },
++	{ 5000000, 5000000, 0, 0, 0, 0 },
++};
++
++static struct panel_desc vtdr6130_odin2portal_desc = {
++	.modes = vtdr6130_odin2portal_modes,
++	.num_modes = ARRAY_SIZE(vtdr6130_odin2portal_modes),
++	.bpc = 8,
++	.lanes = 4,
++	.format = MIPI_DSI_FMT_RGB888,
++	.mode_flags = MIPI_DSI_MODE_NO_EOT_PACKET |
++		      MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM,
++	.init_sequence = vtdr6130_odin3portal_init_sequence,
++	.vendor_dcs_long = true,
++	.off_in_lpm = true,
++	.dsc = {
++		.dsc_version_major = 1,
++		.dsc_version_minor = 1,
++		.slice_height = 12,
++		.slice_width = 540,
++		.slice_count = 2,
++		.bits_per_component = 8,
++		.bits_per_pixel = 8 << 4,
++		.block_pred_enable = true,
++	},
++	.supplies = odin2portal_panel_supplies,
++	.num_supplies = ARRAY_SIZE(odin2portal_panel_supplies),
++	.supply_config = odin2portal_supply_config,
++	.display_off_delay_ms = 20,
++	.default_brightness = 1024,
++	.max_brightness = 3413,
++	.frame_len_120 = 0x12,
++	.frame_len_60 = 0x7b6,
++};
++
+ static int vtdr6130_power_off(struct panel_info *pinfo, unsigned int count)
+ {
+ 	const struct vtdr6130_supply_config *config = pinfo->desc->supply_config;
+@@ -799,7 +875,7 @@ static struct backlight_device *vtdr6130_create_backlight(struct mipi_dsi_device
+ 	const struct backlight_properties props = {
+ 		.type = BACKLIGHT_RAW,
+ 		.brightness = pinfo->desc->default_brightness ?: 4095,
+-		.max_brightness = 4095,
++		.max_brightness = pinfo->desc->max_brightness ?: 4095,
+ 	};
+ 
+ 	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+@@ -966,6 +1042,7 @@ static int vtdr6130_probe(struct mipi_dsi_device *dsi)
+ }
+ 
+ static const struct of_device_id vtdr6130_of_match[] = {
++	{ .compatible = "vtdr6130,o2p", .data = &vtdr6130_odin2portal_desc },
+ 	{ .compatible = "vtdr6130,o3p", .data = &vtdr6130_odin3portal_desc },
+ 	{ .compatible = "vtdr6130,rpduo", .data = &vtdr6130_duo_desc },
+ 	{ .compatible = "vtdr6130,rp6", .data = &vtdr6130_rp6_desc },
