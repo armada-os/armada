@@ -1,0 +1,133 @@
+name: Release Armada Emulation
+
+# Releases reach every Store, so image features they need are detected at
+# runtime or gated by the catalog entry's minStoreVersion.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - decky/armada-emulation/**
+      - decky/shared/**
+      - build_files/install-decky-plugin.sh
+      - .github/workflows/release-armada-emulation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Per event: GitHub keeps one pending run per group, so a push would cancel
+# a queued release.
+concurrency:
+  group: release-armada-emulation-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_REPO: armada-os/armada-emulation
+
+jobs:
+  release:
+    name: Build and publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      # main as it is now: a queued run must never publish an older build.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Build
+        working-directory: decky/armada-emulation
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version decky/armada-emulation/package.json)
+          # x.y.z only: boot sync's sort -V ranks 0.2.0 above 0.2, the Store does not.
+          if ! [[ "${version}" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]]; then
+            echo "::error::package.json version ${version} is not x.y.z."
+            exit 1
+          fi
+          build_files/install-decky-plugin.sh decky/armada-emulation decky/armada-emulation/dist out/armada-emulation
+          (cd out && zip -qrX armada-emulation.zip armada-emulation)
+          echo "version=${version}" >>"${GITHUB_OUTPUT}"
+          echo "sha=$(git rev-parse HEAD)" >>"${GITHUB_OUTPUT}"
+
+      - name: Get release token
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_KEY }}
+          owner: armada-os
+          repositories: armada-emulation
+          permission-contents: write
+
+      - name: Update prerelease
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          SHA: ${{ steps.package.outputs.sha }}
+        run: |
+          set -euo pipefail
+          title="Armada Emulation ${VERSION} prerelease (${SHA::7})"
+          notes="Test build of armada-os/armada@${SHA}. Armada Store never installs this one."
+          if gh release view prerelease --repo "${RELEASE_REPO}" >/dev/null 2>&1; then
+            gh release upload prerelease out/armada-emulation.zip --clobber --repo "${RELEASE_REPO}"
+            gh release edit prerelease --title "${title}" --notes "${notes}" --repo "${RELEASE_REPO}"
+          else
+            gh release create prerelease out/armada-emulation.zip --prerelease \
+              --title "${title}" --notes "${notes}" --repo "${RELEASE_REPO}"
+          fi
+
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+          SHA: ${{ steps.package.outputs.sha }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          if gh release view "${tag}" --repo "${RELEASE_REPO}" >/dev/null 2>&1; then
+            echo "::error::${tag} is already released. Bump the version in decky/armada-emulation/package.json."
+            exit 1
+          fi
+          # gh prints the error body on failure; only a 404 means no release yet.
+          if ! latest=$(gh api "repos/${RELEASE_REPO}/releases/latest" --jq .tag_name 2>/dev/null); then
+            [[ "${latest}" == *'"status":"404"'* ]] || { echo "::error::Could not read the latest release: ${latest}"; exit 1; }
+            latest=
+          fi
+          # Stores refuse a release that is not newer than what they run.
+          if [[ -n "${latest}" ]] && ! python3 - "${latest#v}" "${VERSION}" <<'PY'
+          import sys
+          def key(v):
+              parts = [int(p) for p in v.split(".")]
+              while len(parts) > 1 and parts[-1] == 0:
+                  parts.pop()
+              return parts
+          sys.exit(0 if key(sys.argv[2]) > key(sys.argv[1]) else 1)
+          PY
+          then
+            echo "::error::${tag} is not newer than the latest release, ${latest}."
+            exit 1
+          fi
+          gh release create "${tag}" out/armada-emulation.zip --latest \
+            --title "Armada Emulation ${VERSION}" \
+            --notes "Built from armada-os/armada@${SHA}." \
+            --repo "${RELEASE_REPO}"
