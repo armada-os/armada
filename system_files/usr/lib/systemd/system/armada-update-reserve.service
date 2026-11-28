@@ -3,6 +3,8 @@ Description=Configure Armada OSTree update reserve
 After=local-fs.target
 Before=display-manager.service
 RequiresMountsFor=/ostree/repo
+# A container has no /sysroot or OSTree repo of its own.
+ConditionVirtualization=!container
 
 [Service]
 Type=oneshot

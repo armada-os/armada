@@ -35,3 +35,5 @@ to a commit, or `armada` if it is original; a URL source with no `notes` is verb
   source: armada
 - `patches/0011-add-ayn-odin-3-portal-quirks.patch`
   source: armada
+- `patches/0012-skip-libdecor-plugins-when-nested.patch`
+  source: armada

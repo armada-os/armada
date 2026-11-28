@@ -11,7 +11,7 @@ ABL_KIT="${REPO_ROOT}/packages/openabl-updater/sdcard"
 
 if [[ ! -f "${RAW_IMAGE}" ]]; then
     echo "ERROR: raw image not found at ${RAW_IMAGE}"
-    echo "Run 'just build-raw' first."
+    echo "Run 'just disk' first."
     exit 1
 fi
 

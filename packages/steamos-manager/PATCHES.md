@@ -22,3 +22,7 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0006-Allow-LowPowerMode1-to-be-served-by-a-remote-interfa.patch`
   source: armada
   notes: Steam's `CSleepController` only offers low-power downloads (screen off, finish the download, then sleep) when `LowPowerMode1` is on the bus. Upstream only registers it with a `tdp_limit.download_mode_limit`, which Qualcomm has no knob for, so `armada-powerd` serves it instead. The local `Fd<'_>` return becomes `OwnedFd` so the relay can pass the remote's handle straight through. It is imported from the `zbus` root, where zbus 6 re-exports it.
+- `patches/0007-root-Keep-running-when-the-ftrace-instance-can-t-be-.patch`
+  source: armada
+- `patches/0008-user-Keep-running-when-the-screen-reader-can-t-start.patch`
+  source: armada

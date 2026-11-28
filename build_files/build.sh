@@ -3,6 +3,11 @@ set -euxo pipefail
 
 cd /ctx/build_files
 
+# Keep RPMs in the /var/cache build mount so local rebuilds fetch only changes.
+keepcache=/etc/dnf/libdnf5.conf.d/90-armada-build-keepcache.conf
+printf '[main]\nkeepcache=True\n' > "${keepcache}"
+trap 'rm -f "${keepcache}"' EXIT
+
 run_step() {
     local step="${1#./}"
     local start="${SECONDS}"

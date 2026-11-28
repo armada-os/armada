@@ -12,7 +12,7 @@ tone mapping, eligibility, color plans, presentation sequencing and scanout
 retries. It has no Gamescope, GLM, Vulkan, DRM or libliftoff header dependency.
 
 Gamescope's host bridge and shader selection live in
-[`0035-drm-add-direct-auto-hdr.patch`](../gamescope/patches/0035-drm-add-direct-auto-hdr.patch),
+[`0037-drm-add-direct-auto-hdr.patch`](../gamescope/patches/0037-drm-add-direct-auto-hdr.patch),
 applied through its numbered patch stack. Gamescope builds against the interface
 header and loads the provider at runtime. An absent or incompatible provider
 keeps the native path. The host reuses its SDR mapping and LUT builder for both

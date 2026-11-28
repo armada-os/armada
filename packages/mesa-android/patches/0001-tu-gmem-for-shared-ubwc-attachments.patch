@@ -10,6 +10,7 @@ forced composition look fine.
 Use GMEM for render passes with an imported UBWC attachment
 (DRM_FORMAT_MOD_QCOM_COMPRESSED) whenever GMEM is possible.
 ---
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
 @@ -9,6 +9,8 @@
@@ -21,7 +22,7 @@ Use GMEM for render passes with an imported UBWC attachment
  #include "vk_common_entrypoints.h"
  #include "vk_log.h"
  #include "vk_render_pass.h"
-@@ -1427,6 +1429,19 @@
+@@ -1481,6 +1483,19 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
        return false;
     }
  
@@ -33,11 +34,11 @@ Use GMEM for render passes with an imported UBWC attachment
 +      const struct tu_image_view *iview = cmd->state.attachments[a];
 +      if (iview && iview->image->layout[0].ubwc &&
 +          iview->image->vk.drm_format_mod == DRM_FORMAT_MOD_QCOM_COMPRESSED) {
-+         cmd->state.rp.gmem_disable_reason = "Shared UBWC attachment";
++         cmd->state.rp.force_render_mode_reason = "Shared UBWC attachment";
 +         return false;
 +      }
 +   }
 +
     /* This is a case where it's better to avoid GMEM, too many tiles but no HW binning possible. */
     if (!vsc->binning_possible && vsc->binning_useful) {
-       cmd->state.rp.gmem_disable_reason = "Too many tiles and HW binning is not possible";
+       cmd->state.rp.force_render_mode_reason =

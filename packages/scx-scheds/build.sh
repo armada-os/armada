@@ -39,9 +39,14 @@ curl -fL --retry 3 -o /tmp/steamos-scx.src.tar.gz "${STEAMOS_SRC_URL}"
 echo "${STEAMOS_SRC_SHA256}  /tmp/steamos-scx.src.tar.gz" | sha256sum -c -
 tar -xzf /tmp/steamos-scx.src.tar.gz -C /tmp scx-scheds/scx
 [ "$(git --git-dir=/tmp/scx-scheds/scx rev-parse "${STEAMOS_TAG}^{commit}")" = "${STEAMOS_COMMIT}" ]
+mkdir /tmp/scx-src
 git --git-dir=/tmp/scx-scheds/scx archive --prefix="scx-${VERSION}/" "${STEAMOS_TAG}" ':!vendor' |
-  gzip -1 >"${PKG}/scx-steamos.tar.gz"
-rm -rf /tmp/scx-scheds /tmp/steamos-scx.src.tar.gz
+  tar -x -C /tmp/scx-src
+for p in /work/patches/*.patch; do
+  git -C "/tmp/scx-src/scx-${VERSION}" apply --verbose "${p}"
+done
+tar -C /tmp/scx-src -cf - "scx-${VERSION}" | gzip -1 >"${PKG}/scx-steamos.tar.gz"
+rm -rf /tmp/scx-scheds /tmp/scx-src /tmp/steamos-scx.src.tar.gz
 
 # scx_nitosis, like scx_mitosis, has a ktstr-tests feature that forces a static libelf build
 sed -i \

@@ -3,6 +3,7 @@
 from dataclasses import replace
 from pathlib import Path
 import runpy
+import shutil
 import tempfile
 import unittest
 
@@ -11,6 +12,7 @@ i = runpy.run_path(str(ROOT / "system_files/usr/libexec/armada/armada-installer"
 run, output = i["run"], i["output"]
 
 
+@unittest.skipUnless(shutil.which("sgdisk"), "needs sgdisk (gdisk)")
 class DiskTests(unittest.TestCase):
     def test_fresh_and_position_based_replacement(self):
         for names in (None, ("OTHER_BOOT", "OTHER_ROOT"), ("vendor", "metadata"), ("", "")):

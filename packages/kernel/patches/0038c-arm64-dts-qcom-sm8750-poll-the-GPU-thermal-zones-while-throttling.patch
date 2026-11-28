@@ -1,0 +1,84 @@
+From: Armada <noreply@armada.local>
+Subject: [PATCH] arm64: dts: qcom: sm8750: poll the GPU thermal zones while throttling
+
+Without polling-delay-passive the GPU zones are only re-evaluated when the
+sensor crosses another trip, so step_wise stops after the first cooling
+step. Poll every 10 ms while passive, as SM8650 and the upstream fix for
+monaco (242a566e7061) do.
+
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm8750.dtsi b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8750.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8750.dtsi
+@@ -7356,6 +7356,8 @@
+ 		};
+ 
+ 		gpuss0-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 1>;
+ 
+ 			trips {
+@@ -7381,6 +7383,8 @@
+ 		};
+ 
+ 		gpuss1-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 2>;
+ 
+ 			trips {
+@@ -7406,6 +7410,8 @@
+ 		};
+ 
+ 		gpuss2-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 3>;
+ 
+ 			trips {
+@@ -7431,6 +7437,8 @@
+ 		};
+ 
+ 		gpuss3-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 4>;
+ 
+ 			trips {
+@@ -7456,6 +7464,8 @@
+ 		};
+ 
+ 		gpuss4-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 5>;
+ 
+ 			trips {
+@@ -7481,6 +7491,8 @@
+ 		};
+ 
+ 		gpuss5-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 6>;
+ 
+ 			trips {
+@@ -7506,6 +7518,8 @@
+ 		};
+ 
+ 		gpuss6-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 7>;
+ 
+ 			trips {
+@@ -7531,6 +7545,8 @@
+ 		};
+ 
+ 		gpuss7-thermal {
++			polling-delay-passive = <10>;
++
+ 			thermal-sensors = <&tsens2 8>;
+ 
+ 			trips {

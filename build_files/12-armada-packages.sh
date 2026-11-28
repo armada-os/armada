@@ -85,6 +85,9 @@ pkgs=(
     # Patched hexagonrpc: sns_registry for the Portal's sensors PD
     /packages/hexagonrpc/hexagonrpc-[0-9]*.rpm
 
+    # VA-API over the iris video decoder, also into GL.host for Flatpak apps
+    /packages/qcom-va-driver/qcom-va-driver-[0-9]*.rpm
+
     # FEX Emu for emulating x86_64 applications
     /packages/fex/fex-emu-*.rpm
     /packages/fex-rootfs-archlinux/*.rpm

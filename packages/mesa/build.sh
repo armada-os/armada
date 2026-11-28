@@ -28,6 +28,9 @@ mkdir -p out
 
 export HOME=/tmp
 dnf -y install rpm-build rpmdevtools koji 'dnf-command(builddep)' ccache curl
+# Mesa 26.3 needs the Venus protocol headers, which on Fedora 44 are only in
+# updates-testing so far, so builddep can't find them.
+dnf -y install --enablerepo=updates-testing venus-protocol-devel
 export PATH=/usr/lib64/ccache:$PATH CC=gcc CXX=g++
 ccache -z
 rpmdev-setuptree

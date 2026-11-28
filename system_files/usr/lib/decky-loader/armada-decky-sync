@@ -41,8 +41,8 @@ if [[ -x "${homebrew}/services/PluginLoader" ]]; then
 fi
 
 if [[ ! -f "${homebrew}/settings/loader.json" ]]; then
-    # Default new installs to Decky's prerelease channel for current Steam-on-ARM fixes.
-    printf '{\n  "branch": 1\n}\n' >"${homebrew}/settings/loader.json"
+    # Decky branch 0 is the stable channel.
+    printf '{\n  "branch": 0\n}\n' >"${homebrew}/settings/loader.json"
 fi
 
 if [[ -d "$src" ]]; then
