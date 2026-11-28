@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Steam Desktop Controls
+Comment=Start Steam to provide gamepad controls in Desktop Mode
+Exec=/usr/libexec/armada/desktop-steam-autostart
+Terminal=false
+OnlyShowIn=KDE;
+X-KDE-autostart-after=panel
+X-KDE-StartupNotify=false
