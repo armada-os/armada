@@ -663,6 +663,8 @@ check("device-env non-SM8250 Proton defaults",
       "proton_11-arm64:proton-experimental-arm64:proton-cachyos-11.0-arm64")
 thor = run_device_env("AYN Thor")
 check("device-env SM8550 irq littles", thor.get("ARMADA_IRQ_CORES") == "0-2")
+check("device-env SM8550 gpu-worker middles", thor.get("ARMADA_GPU_WORKER_CORES") == "3-6")
+check("device-env SM8750 gpu-worker unset", odin3.get("ARMADA_GPU_WORKER_CORES") == "''")
 thor_override = run_device_env("AYN Thor", {"ARMADA_IRQ_CORES": ""})
 check("device-env explicit-empty override honored",
       thor_override.get("ARMADA_IRQ_CORES") == "''")
@@ -783,6 +785,44 @@ full_mask = sum(1 << c for c in ALL)
 check("irq auto empty = all", power.irq_mask() == full_mask)
 power.system_config = {"irq_cores": "garbage!"}
 check("irq bad falls back to all", power.irq_mask() == full_mask)
+
+# --- armada-powerd: gpu-worker placement ------------------------------------
+power.system_config = {"irq_cores": "auto"}
+power.env = {"ARMADA_IRQ_CORES": "0-2", "ARMADA_GPU_WORKER_CORES": "3-6"}
+check("gpu-worker cores", power.gpu_worker_cpus() == {3, 4, 5, 6})
+power.env = {"ARMADA_IRQ_CORES": "0-3", "ARMADA_GPU_WORKER_CORES": "3-6"}
+check("gpu-worker cores skip the irq cores", power.gpu_worker_cpus() == {4, 5, 6})
+power.env = {"ARMADA_IRQ_CORES": "", "ARMADA_GPU_WORKER_CORES": "3-6"}
+check("gpu-worker left alone with unrestricted irqs", power.gpu_worker_cpus() == set())
+power.env = {"ARMADA_IRQ_CORES": "0-2", "ARMADA_GPU_WORKER_CORES": ""}
+check("gpu-worker left alone without a core list", power.gpu_worker_cpus() == set())
+
+fake_proc = os.path.join(WORK, "proc")
+for pid, comm in ((1, "systemd"), (151, "gpu-worker"), (152, "kworker/0:1H")):
+    os.makedirs(os.path.join(fake_proc, str(pid)))
+    with open(os.path.join(fake_proc, str(pid), "comm"), "w") as f:
+        f.write(comm + "\n")
+real_path, real_getaff, real_setaff = powerd.Path, powerd.os.sched_getaffinity, powerd.os.sched_setaffinity
+affinity = {151: set(range(8))}
+set_calls, timers = [], []
+powerd.Path = lambda *a: real_path(fake_proc) if a == ("/proc",) else real_path(*a)
+powerd.os.sched_getaffinity = lambda pid: set(affinity[pid])
+powerd.os.sched_setaffinity = lambda pid, cpus: (set_calls.append((pid, set(cpus))),
+                                                 affinity.__setitem__(pid, set(cpus)))
+powerd.GLib = type("FakeGLib", (), {"timeout_add_seconds": staticmethod(
+    lambda secs, fn, *args: timers.append((secs, args)))})
+with contextlib.redirect_stderr(io.StringIO()):
+    power.env = {"ARMADA_IRQ_CORES": "0-2", "ARMADA_GPU_WORKER_CORES": "3-6"}
+    power.apply_gpu_worker_affinity()
+    check("gpu-worker moved to 3-6", set_calls == [(151, {3, 4, 5, 6})] and not timers)
+    power.apply_gpu_worker_affinity()
+    check("gpu-worker already placed: no write", len(set_calls) == 1)
+    os.remove(os.path.join(fake_proc, "151", "comm"))
+    power.apply_gpu_worker_affinity()
+    check("gpu-worker not there yet: retry armed", timers == [(5, (11,))])
+    power.apply_gpu_worker_affinity(tries=0)
+    check("gpu-worker last try: no more retries", len(timers) == 1)
+powerd.Path, powerd.os.sched_getaffinity, powerd.os.sched_setaffinity = real_path, real_getaff, real_setaff
 
 factory_parser = configparser.ConfigParser()
 factory_parser.read(factory)
