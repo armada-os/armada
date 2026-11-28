@@ -22,6 +22,14 @@ function post_gamescope_start {
 	printf 'DISPLAY=%s\nGAMESCOPE_WAYLAND_DISPLAY=%s\n' "$DISPLAY" "$GAMESCOPE_WAYLAND_DISPLAY" \
 		>"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/gamescope-environment"
 
+	local server
+	if /usr/bin/grep -Fzxq -- retroidpocket,duo /sys/firmware/devicetree/base/compatible 2>/dev/null &&
+		server=$(LC_ALL=C /usr/bin/xprop -root GAMESCOPE_XWAYLAND_SERVER_ID 2>/dev/null) &&
+		[[ "$server" == 'GAMESCOPE_XWAYLAND_SERVER_ID(CARDINAL) = 0' ]]; then
+		/usr/bin/xprop -root -f GAMESCOPE_STEAM_MAX_HEIGHT 32c -set GAMESCOPE_STEAM_MAX_HEIGHT 720 ||
+			printf '%s\n' 'Could not set the Steam UI height limit.' >&2
+	fi
+
 	# Run steam-tweaks if exists
 	if command -v steam-tweaks > /dev/null; then
 		steam-tweaks

@@ -171,6 +171,7 @@ desktop_pkgs=(
     libdbusmenu-gtk3
     qt6-qttools
     qt6-qtvirtualkeyboard
+    xprop
     xorg-x11-server-Xwayland
     zenity
 
