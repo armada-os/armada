@@ -1,0 +1,788 @@
+From dada8c24bacae3f590f95ddf0be25f9c516dd0f0 Mon Sep 17 00:00:00 2001
+From: Raxcoms <mpaulo968@gmail.com>
+Date: Thu, 5 Nov 2026 23:49:08 -0300
+Subject: [PATCH] gamescope: add hooks for an optional external color provider
+
+Load the AutoHDR provider through one versioned C interface. The provider
+owns inverse tone mapping, eligibility, color plans, presentation policy
+and pipeline retries without Gamescope or graphics-stack dependencies.
+Missing or incompatible providers leave native presentation active.
+
+Keep only the host bridge for frame facts, LUT resources and atomic
+operations here. Reuse SDR gamut mapping, the LUT builder and native
+color-state tracking. The provider maps linear RGB before shared gain,
+white balance and output encoding; scanout and composition use the same
+extra LUT pair while SDR overlays retain their normal mapping.
+
+Primary/unleased-plane checks and allocation constraints keep the effect
+on the game without forcing composition. Disabled processing bypasses
+the provider after one-time cleanup. No GPU conversion pass is added.
+The interface is independent of private Gamescope layouts; updates still
+need review of host hook ordering, layer identity and shader slots.
+---
+ src/Backends/DRMBackend.cpp            |  42 ++++-
+ src/backend.h                          |   2 +
+ src/color_helpers.cpp                  |   8 +
+ src/color_helpers.h                    |  10 ++
+ src/color_provider.glsl                |  16 ++
+ src/color_provider.h                   | 233 +++++++++++++++++++++++++
+ src/rendervulkan.cpp                   |   9 +-
+ src/rendervulkan.hpp                   |   8 +-
+ src/shaders/composite.h                |   9 +-
+ src/shaders/descriptor_set_constants.h |   3 +-
+ src/steamcompmgr.cpp                   |  70 +++++++-
+ 11 files changed, 385 insertions(+), 25 deletions(-)
+ create mode 100644 src/color_provider.glsl
+ create mode 100644 src/color_provider.h
+
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 8ead53d..2051d4c 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -61,6 +61,8 @@
+ #include "libdisplay-info/edid.h"
+ #include "wlr_end.hpp"
+ 
++#include "color_provider.h"
++
+ #include "gamescope-control-protocol.h"
+ 
+ extern int g_nPreferredOutputWidth;
+@@ -149,8 +151,8 @@ struct drm_t {
+ 		std::shared_ptr<gamescope::BackendBlob> output_lut3d;
+ 		bool output_luts_applied = false;
+ 		// AMD plane property blobs, or colorop DATA blobs when bPlaneLuts
+-		std::shared_ptr<gamescope::BackendBlob> lut3d_id[ EOTF_Count ];
+-		std::shared_ptr<gamescope::BackendBlob> shaperlut_id[ EOTF_Count ];
++		std::shared_ptr<gamescope::BackendBlob> lut3d_id[ VKR_LUT3D_COUNT ];
++		std::shared_ptr<gamescope::BackendBlob> shaperlut_id[ VKR_LUT3D_COUNT ];
+ 		amdgpu_transfer_function output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
+ 	} current, pending;
+ 
+@@ -2787,6 +2789,8 @@ struct LiftoffStateCacheEntry
+ 		GamescopeAppTextureColorspace colorspace;
+ 		AlphaBlendingMode_t eAlphaBlendingMode;
+ 		bool applyColorMgmt;
++		// AutoHDR needs a LUT plane even when the layer geometry is unchanged.
++		bool colorProvider;
+ 	} layerState[ k_nMaxLayers ];
+ 
+ 	bool operator == (const LiftoffStateCacheEntry& entry) const
+@@ -2816,6 +2820,7 @@ struct LiftoffStateCacheEntryKasher
+ 			hash_combine(hash, k.layerState[i].colorRange);
+ 			hash_combine(hash, k.layerState[i].colorspace);
+ 			hash_combine(hash, k.layerState[i].eAlphaBlendingMode);
++			hash_combine(hash, k.layerState[i].colorProvider);
+ 		}
+ 
+ 		return hash;
+@@ -2936,16 +2941,19 @@ static int drm_set_plane_luts( struct drm_t *drm, const FrameInfo_t *frameInfo )
+ 			continue;
+ 
+ 		// Not a layout failure, so kept out of the liftoff state cache.
+-		uint32_t uEOTF = ColorSpaceToEOTFIndex( pLayer->colorspace );
++		// Select per-layer tables so SDR overlays keep their own mapping.
++		const uint32_t uEOTF = gamescope::ColorProviderPlaneUsesLuts( *pLayer, drm->bPlaneLuts )
++			? EOTF_Count : ColorSpaceToEOTFIndex( pLayer->colorspace );
+ 		if ( !drm->pending.shaperlut_id[ uEOTF ] || !drm->pending.lut3d_id[ uEOTF ] )
+ 			return -EAGAIN;
+ 
+ 		auto &props = pPlane->GetProperties();
+ 		props.COLOR_PIPELINE->SetPendingValue( drm->req, pPlane->GetLutPipeline(), false );
+-		props.IGC_DATA->SetPendingValue( drm->req, drm->pending.shaperlut_id[ uEOTF ]->GetBlobValue(), false );
+-		props.IGC_BYPASS->SetPendingValue( drm->req, 0, false );
+-		props.LUT3D_DATA->SetPendingValue( drm->req, drm->pending.lut3d_id[ uEOTF ]->GetBlobValue(), false );
+-		props.LUT3D_BYPASS->SetPendingValue( drm->req, 0, false );
++		// Resume resets inactive colorops behind the property cache.
++		props.IGC_DATA->SetPendingValue( drm->req, drm->pending.shaperlut_id[ uEOTF ]->GetBlobValue(), true );
++		props.IGC_BYPASS->SetPendingValue( drm->req, 0, true );
++		props.LUT3D_DATA->SetPendingValue( drm->req, drm->pending.lut3d_id[ uEOTF ]->GetBlobValue(), true );
++		props.LUT3D_BYPASS->SetPendingValue( drm->req, 0, true );
+ 	}
+ 
+ 	return drmModeAtomicCommit( drm->fd, drm->req,
+@@ -3000,6 +3008,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
+ 		}
+ 		entry.layerState[i].eAlphaBlendingMode = frameInfo->layers.get( i ).eAlphaBlendingMode;
+ 		entry.layerState[i].applyColorMgmt = frameInfo->layers.get( i ).applyColorMgmt;
++		entry.layerState[i].colorProvider = frameInfo->layers.get( i ).colorProvider;
+ 	}
+ 
+ 	return entry;
+@@ -3964,7 +3973,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
+ 		.timeout_ns = std::numeric_limits<int64_t>::max()
+ 	};
+ 
+-	int ret = liftoff_output_apply( drm->lo_output, drm->req, drm->flags, &lo_options);
++	int ret = gamescope::g_ColorProvider.Apply( drm->planes,
++		gamescope::ColorProviderPlaneMask( *frameInfo, drm->bPlaneLuts ), drm->lo_layers,
++		drm->lo_output, drm->req, drm->flags, lo_options );
+ 
+ 	// The NVIDIA 555 series drivers started advertising DRM_CAP_SYNCOBJ, but do
+ 	// not support IN_FENCE_FD. However, there is no way to hide the IN_FENCE_FD
+@@ -4531,7 +4542,7 @@ static bool drm_update_plane_luts(struct drm_t *drm)
+ 	static constexpr uint32_t k_nLut3DSize = s_nLutEdgeSize3d * s_nLutEdgeSize3d * s_nLutEdgeSize3d;
+ 	auto ToLut32 = []( uint16_t val ) { return uint32_t( val ) * 0x10001u; };
+ 
+-	for ( uint32_t e = 0; e < EOTF_Count; e++ )
++	for ( uint32_t e = 0; e < VKR_LUT3D_COUNT; e++ )
+ 	{
+ 		const gamescope_color_mgmt_luts &luts = g_ColorMgmtLuts[e];
+ 		drm->pending.shaperlut_id[e] = nullptr;
+@@ -5572,6 +5583,19 @@ namespace gamescope
+ 			return g_DRM.pending.output_degamma && g_DRM.pending.output_lut3d;
+ 		}
+ 
++		virtual bool SupportsPlaneColorLuts() const override
++		{
++			// Only unleased LUT planes on the primary CRTC can convert a game alone.
++			if ( g_sDrmLeaseClientSocket || g_bForceDisableColorMgmt || !g_DRM.pCRTC )
++				return false;
++
++			return std::any_of( g_DRM.planes.begin(), g_DRM.planes.end(), []( const auto &plane )
++			{
++				return plane->GetLutPipeline() && !g_DRM.leasedPlaneIds.contains( plane->GetObjectId() ) &&
++					( plane->GetModePlane()->possible_crtcs & g_DRM.pCRTC->GetCRTCMask() );
++			} );
++		}
++
+ 		virtual bool SupportsOutputLUTs() const override
+ 		{
+ 			// The kernel exposes DPU_3D_LUT only where the DSPP LUT blocks are driven.
+diff --git a/src/backend.h b/src/backend.h
+index fde91d5..938fdb9 100644
+--- a/src/backend.h
++++ b/src/backend.h
+@@ -348,6 +348,8 @@ namespace gamescope
+         virtual bool SupportsOutputLUTs() const { return false; }
+         // An output LUT pair exists; it may be one frame behind the color management state.
+         virtual bool OutputLUTsReady() const { return false; }
++        // Without per-layer hardware LUTs, keep AutoHDR off instead of forcing composition.
++        virtual bool SupportsPlaneColorLuts() const { return false; }
+         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
+ 		inline bool SupportsFormat( uint32_t uDrmFormat ) const
+ 		{
+diff --git a/src/color_helpers.cpp b/src/color_helpers.cpp
+index 04f48a9..fa74d2d 100644
+--- a/src/color_helpers.cpp
++++ b/src/color_helpers.cpp
+@@ -805,6 +805,14 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
+                     glm::vec3 nativeColorLinear = dest_from_native * sourceColorLinear;
+                     destColorLinear = glm::mix( destColorLinear, nativeColorLinear, amount );
+ 
++                    // Run the plane transform before the shared gain and white balance.
++                    if ( tonemapping.preGainTransform )
++                    {
++                        const auto mapped = tonemapping.preGainTransform(
++                            { destColorLinear.r, destColorLinear.g, destColorLinear.b }, tonemapping.preGainTransformData );
++                        destColorLinear = { mapped.r, mapped.g, mapped.b };
++                    }
++
+                     // Apply linear Mult
+                     destColorLinear = vMultLinear * destColorLinear;
+ 
+diff --git a/src/color_helpers.h b/src/color_helpers.h
+index e3c421f..1b02b8f 100644
+--- a/src/color_helpers.h
++++ b/src/color_helpers.h
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include <gamescope-color-provider.h>
++
+ #define GLM_ENABLE_EXPERIMENTAL 1
+ 
+ #include <algorithm>
+@@ -246,6 +248,11 @@ struct displaycolorimetry_t
+ 	glm::vec2 white;
+ };
+ 
++glm::mat3 normalised_primary_matrix( const primaries_t & rgbPrimaries,
++	const glm::vec2 & whitePrimary, float whiteLuminance );
++
++using color_transform_stage_t = gamescope_color_rgb (*)( gamescope_color_rgb color, const void *data );
++
+ struct nightmode_t
+ {
+ 	bool operator == (const nightmode_t&) const = default;
+@@ -286,6 +293,9 @@ struct tonemapping_t
+ 	float g22_luminance = 1.f; // what luminance should be applied for g22 EOTF conversions?
+ 	ETonemapOperator eOperator = ETonemapOperator_None;
+ 	eetf_2390_t eetf2390;
++	// Optional LUT-generation stage before gain and white balance, in linear RGB nits.
++	color_transform_stage_t preGainTransform = nullptr;
++	const void *preGainTransformData = nullptr;
+ 
+ 	inline glm::vec3 apply( const glm::vec3 & inputNits ) const
+ 	{
+diff --git a/src/color_provider.glsl b/src/color_provider.glsl
+new file mode 100644
+index 0000000..173f062
+--- /dev/null
++++ b/src/color_provider.glsl
+@@ -0,0 +1,16 @@
++#ifndef GAMESCOPE_COLOR_PROVIDER_GLSL
++#define GAMESCOPE_COLOR_PROVIDER_GLSL
++
++uint color_provider_lut_index(uint originalLayer, uint inputEotf) {
++    // RCAS remaps offset slots; only the original game layer uses the extra LUT.
++    return originalLayer == 0 && textureQueryLevels(s_shaperLut[EOTF_Count]) != 0
++        ? EOTF_Count : inputEotf;
++}
++
++vec3 apply_layer_color_mgmt(vec3 color, uint offsetLayerIdx, uint colorspaceLayerIdx, uint colorspace);
++
++vec3 apply_layer_color_mgmt(vec3 color, uint layerIdx, uint colorspace) {
++    return apply_layer_color_mgmt(color, layerIdx, layerIdx, colorspace);
++}
++
++#endif
+diff --git a/src/color_provider.h b/src/color_provider.h
+new file mode 100644
+index 0000000..8e6b539
+--- /dev/null
++++ b/src/color_provider.h
+@@ -0,0 +1,233 @@
++#pragma once
++
++#include <gamescope-color-provider.h>
++#include <cstdio>
++#include <dlfcn.h>
++#include <span>
++
++#include "rendervulkan.hpp"
++#include "convar.h"
++
++#if HAVE_DRM
++extern "C" {
++#include <libliftoff.h>
++}
++#endif
++
++namespace gamescope
++{
++	inline ConVar<bool> cv_armada_auto_hdr{ "armada_auto_hdr", false, "Enable inverse tone mapping for SDR games." };
++
++	struct ColorProviderConnection
++	{
++		const gamescope_color_provider *api = nullptr;
++		void *instance = nullptr;
++
++		~ColorProviderConnection() { if ( instance ) api->destroy( instance ); }
++	};
++
++	inline const ColorProviderConnection *GetColorProvider( bool enabled )
++	{
++		if ( !enabled )
++			return nullptr;
++		static const ColorProviderConnection provider = []() -> ColorProviderConnection
++		{
++			void *library = dlopen( "libarmada-autohdr.so.2", RTLD_NOW | RTLD_LOCAL );
++			if ( !library )
++			{
++				fprintf( stderr, "Color provider unavailable: %s\n", dlerror() );
++				return {};
++			}
++			const auto query = reinterpret_cast<gamescope_color_provider_get_interface_fn>(
++				dlsym( library, "gamescope_color_provider_get_interface" ) );
++			const auto *api = query ? query( GAMESCOPE_COLOR_PROVIDER_ABI ) : nullptr;
++			if ( !gamescope_color_provider_is_compatible( api ) )
++			{
++				fprintf( stderr, "Incompatible color provider; keeping native presentation\n" );
++				dlclose( library );
++				return {};
++			}
++			void *instance = api->create();
++			if ( !instance )
++			{
++				fprintf( stderr, "Color provider initialization failed\n" );
++				dlclose( library );
++				return {};
++			}
++			// Keep the module loaded while its callbacks can be used.
++			return { api, instance };
++		}();
++		return provider.instance ? &provider : nullptr;
++	}
++
++	inline gamescope_color_plan CreateColorProviderPlan( const gamescope_color_mgmt_t &color, float sdrNits )
++	{
++		const auto *provider = GetColorProvider( true );
++		if ( !provider )
++			return { color.flHDRInputGain, color.flInternalDisplayBrightness, nullptr, nullptr };
++		gamescope_color_config config{ {}, sdrNits, color.flInternalDisplayBrightness, color.flHDRInputGain };
++		const auto &display = color.displayColorimetry;
++		const auto &output = color.outputEncodingColorimetry;
++		const glm::mat3 nativeFromOutput = display == output ? glm::mat3( 1.0f ) :
++			glm::inverse( normalised_primary_matrix( display.primaries, display.white, 1.0f ) ) *
++				normalised_primary_matrix( output.primaries, output.white, 1.0f );
++		for ( int column = 0; column < 3; column++ )
++			for ( int row = 0; row < 3; row++ )
++				config.native_from_output[column * 3 + row] = nativeFromOutput[column][row];
++		return provider->api->configure( provider->instance, &config );
++	}
++
++	inline bool ColorProviderPlaneUsesLuts( const FrameInfo_t::Layer_t &layer, bool hardwareLuts )
++	{
++		return layer.colorProvider && hardwareLuts && layer.applyColorMgmt &&
++			( layer.colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB ||
++			  layer.colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR );
++	}
++
++	inline uint32_t ColorProviderPlaneMask( const FrameInfo_t &frame, bool hardwareLuts )
++	{
++		uint32_t mask = 0;
++		for ( int i = 0; i < frame.layers.count(); i++ )
++			if ( ColorProviderPlaneUsesLuts( frame.layers.get( i ), hardwareLuts ) )
++				mask |= 1u << i;
++		return mask;
++	}
++
++	inline void BindColorProviderCompositeLuts( const FrameInfo_t &frame, CVulkanCmdBuffer &cmdBuffer )
++	{
++		// Partial composition can omit the game while retaining its LUT pointers.
++		const bool enabled = frame.layers.count() && frame.layers.get( 0 ).colorProvider;
++		cmdBuffer.bindColorMgmtLuts( EOTF_Count,
++			enabled ? frame.shaperLut[EOTF_Count] : nullptr,
++			enabled ? frame.lut3D[EOTF_Count] : nullptr );
++	}
++
++	inline void ClearColorProviderFrameLuts( FrameInfo_t &frame )
++	{
++		// Source-space captures keep the game's original SDR presentation.
++		frame.shaperLut[EOTF_Count] = nullptr;
++		frame.lut3D[EOTF_Count] = nullptr;
++	}
++
++	class ColorProviderHost
++	{
++	public:
++		struct FrameState { bool active; bool primary; bool async; };
++
++		bool Enabled() const { return cv_armada_auto_hdr; }
++		bool Available( const gamescope_color_capabilities &caps ) const
++		{
++			const auto *provider = GetColorProvider( Enabled() );
++			return provider && provider->api->available( &caps );
++		}
++		bool Active( bool available, const gamescope_color_content &content ) const
++		{
++			const auto *provider = GetColorProvider( available );
++			return provider && provider->api->active( available, &content );
++		}
++
++		int PresentFrame( IBackendConnector *connector, FrameInfo_t &frame,
++			const gamescope_color_mgmt_luts &luts, const FrameState &state )
++		{
++			const bool enabled = Enabled();
++			const auto *provider = GetColorProvider( enabled || ( state.primary && m_hdrPresented ) );
++			if ( !provider )
++				return connector ? connector->Present( &frame, state.async ) : 0;
++			const bool hasLayers = frame.layers.count() != 0;
++			const gamescope_color_frame facts{ enabled, state.active, frame.bFadingOut, hasLayers,
++				luts.HasLuts(), hasLayers && ColorspaceIsHDR( frame.layers.get( 0 ).colorspace ),
++				state.primary, connector != nullptr };
++			struct Context
++			{
++				IBackendConnector *connector;
++				FrameInfo_t &frame;
++				const gamescope_color_mgmt_luts &luts;
++				bool async;
++			} context{ connector, frame, luts, state.async };
++			const gamescope_color_present_ops ops{
++				.data = &context,
++				.attach_game_luts = []( void *data ) {
++					auto &ctx = *static_cast<Context *>( data );
++					auto &game = ctx.frame.layers.get( 0 );
++					game.colorProvider = true;
++					// Cached frames also need the scanout color pipeline.
++					game.applyColorMgmt = true;
++					ctx.frame.shaperLut[EOTF_Count] = ctx.luts.vk_lut1d;
++					ctx.frame.lut3D[EOTF_Count] = ctx.luts.vk_lut3d;
++				},
++				.present = []( void *data ) {
++					auto &ctx = *static_cast<Context *>( data );
++					return ctx.connector ? ctx.connector->Present( &ctx.frame, ctx.async ) : 0;
++				},
++			};
++			const auto result = provider->api->present( provider->instance, &facts, &ops );
++			m_hdrPresented = result.hdr_presented;
++			return result.status;
++		}
++
++		template<typename Available, typename ContentActive>
++		void ExtendHdrOutput( bool &capable, bool &active, Available available, ContentActive content ) const
++		{
++			if ( !Enabled() )
++				return;
++			const bool convertedContent = content();
++			capable = capable || available();
++			active |= convertedContent;
++		}
++
++		bool HdrPresented() const { return Enabled() && m_hdrPresented; }
++
++#if HAVE_DRM
++		template<typename Planes>
++		int Apply( const Planes &planes, uint32_t gameLayerMask,
++			std::span<liftoff_layer *const> layers, liftoff_output *output,
++			drmModeAtomicReq *request, uint32_t flags, const liftoff_output_apply_options &options )
++		{
++			if ( !gameLayerMask && !m_constraintsSet )
++				return liftoff_output_apply( output, request, flags, &options );
++			m_constraintsSet = gameLayerMask != 0;
++			const auto *provider = GetColorProvider( true );
++			if ( !provider )
++				return liftoff_output_apply( output, request, flags, &options );
++			struct Context
++			{
++				const Planes &planes;
++				std::span<liftoff_layer *const> layers;
++				liftoff_output *output;
++				drmModeAtomicReq *request;
++				uint32_t flags;
++				const liftoff_output_apply_options &options;
++			} context{ planes, layers, output, request, flags, options };
++			const gamescope_color_scanout_ops ops{
++				.data = &context, .pipeline_count = planes.size(), .layer_count = layers.size(),
++				.pipeline = []( void *data, size_t index ) -> uint64_t {
++					return static_cast<Context *>( data )->planes[index]->GetLutPipeline();
++				},
++				.unset_pipeline = []( void *data, size_t layer ) {
++					liftoff_layer_unset_property( static_cast<Context *>( data )->layers[layer], "COLOR_PIPELINE" );
++				},
++				.set_pipeline = []( void *data, size_t layer, uint64_t pipeline ) {
++					liftoff_layer_set_property( static_cast<Context *>( data )->layers[layer], "COLOR_PIPELINE", pipeline );
++				},
++				.apply = []( void *data ) {
++					const auto &ctx = *static_cast<Context *>( data );
++					return liftoff_output_apply( ctx.output, ctx.request, ctx.flags, &ctx.options );
++				},
++				.needs_composition = []( void *data ) -> uint32_t {
++					return liftoff_output_needs_composition( static_cast<Context *>( data )->output );
++				},
++			};
++			return provider->api->scanout( provider->instance, gameLayerMask, &ops );
++		}
++
++#endif
++
++	private:
++		bool m_hdrPresented = false;
++#if HAVE_DRM
++		bool m_constraintsSet = false;
++#endif
++	};
++
++	inline ColorProviderHost g_ColorProvider;
++}
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 8d577e1..62603ba 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -33,6 +33,7 @@
+ #include "wlr_end.hpp"
+ 
+ #include "rendervulkan.hpp"
++#include "color_provider.h"
+ #include "ClientFormatPolicy.h"
+ #include "main.hpp"
+ #include "steamcompmgr.hpp"
+@@ -1689,6 +1690,9 @@ void CVulkanCmdBuffer::bindTarget(gamescope::Rc<CVulkanTexture> target)
+ 
+ void CVulkanCmdBuffer::clearState()
+ {
++	// Reset the extra game LUT binding when a command buffer is reused.
++	bindColorMgmtLuts(EOTF_Count, nullptr, nullptr);
++
+ 	for (auto& texture : m_boundTextures)
+ 		texture = nullptr;
+ 
+@@ -4513,6 +4517,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 	for (uint32_t i = 0; i < EOTF_Count; i++)
+ 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
+ 
++	gamescope::BindColorProviderCompositeLuts( *frameInfo, *cmdBuffer );
++
+ 	if ( frameInfo->useFSRLayer0 || frameInfo->useSGSRLayer0 )
+ 	{
+ 		uint32_t inputX = frameInfo->layers.get( 0 ).tex->width();
+@@ -4680,7 +4686,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 				cmdBuffer->uploadConstants<BlitPushData_t>(constants);
+ 			}
+ 
+-			for (uint32_t i = 0; i < EOTF_Count; i++)
++			// PipeWire converts the finished composite; do not apply its LUTs twice.
++			for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
+ 				cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
+ 
+ 			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 9ab5054..849e59e 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -297,8 +297,8 @@ struct FrameInfo_t
+ 	BlurMode blurLayer0;
+ 	int blurRadius;
+ 
+-	gamescope::Rc<CVulkanTexture> shaperLut[EOTF_Count];
+-	gamescope::Rc<CVulkanTexture> lut3D[EOTF_Count];
++	gamescope::Rc<CVulkanTexture> shaperLut[VKR_LUT3D_COUNT];
++	gamescope::Rc<CVulkanTexture> lut3D[VKR_LUT3D_COUNT];
+ 
+ 	bool allowVRR;
+ 	// Content identical to the previous present, eg. an adaptive sync idle hold.
+@@ -327,6 +327,7 @@ struct FrameInfo_t
+ 		GamescopeUpscaleFilter filter = GamescopeUpscaleFilter::LINEAR;
+ 
+ 		bool blackBorder;
++		bool colorProvider = false;
+ 		bool applyColorMgmt; // drm only
+ 
+ 		AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
+@@ -505,6 +506,7 @@ using mat3x4 = std::array<std::array<float, 4>, 3>;
+ 
+ struct gamescope_color_mgmt_t
+ {
++	bool colorProvider = false;
+ 	bool enabled;
+ 	uint32_t externalDirtyCtr;
+ 	nightmode_t nightmode;
+@@ -584,7 +586,7 @@ struct gamescope_color_mgmt_tracker_t
+ };
+ 
+ extern gamescope_color_mgmt_tracker_t g_ColorMgmt;
+-extern gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];
++extern gamescope_color_mgmt_luts g_ColorMgmtLuts[ VKR_LUT3D_COUNT ];
+ 
+ struct VulkanOutput_t
+ {
+diff --git a/src/shaders/composite.h b/src/shaders/composite.h
+index 7f3645e..9d5c251 100644
+--- a/src/shaders/composite.h
++++ b/src/shaders/composite.h
+@@ -1,4 +1,5 @@
+ #include "colorimetry.h"
++#include "../color_provider.glsl"
+ 
+ #include "shaderfilter.h"
+ #include "alphamode.h"
+@@ -99,7 +100,7 @@ vec3 apply_layer_luts(vec3 color, uint plane_eotf) {
+ //
+ // ie. call colorspace_plane_degamma_tf(color.rgb, colorspace) before
+ // input to this function.
+-vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
++vec3 apply_layer_color_mgmt(vec3 color, uint offsetLayerIdx, uint colorspaceLayerIdx, uint colorspace) {
+     if (colorspace == colorspace_passthru)
+         return color;
+ 
+@@ -110,9 +111,9 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
+     }
+ 
+     // Shaper + 3D LUT path to match DRM.
+-    uint plane_eotf = colorspace_to_eotf(colorspace);
++    uint plane_eotf = color_provider_lut_index(colorspaceLayerIdx, colorspace_to_eotf(colorspace));
+ 
+-    if (layer == 0 && checkDebugFlag(compositedebug_Heatmap))
++    if (offsetLayerIdx == 0 && checkDebugFlag(compositedebug_Heatmap))
+     {
+         // Debug HDR heatmap.
+         color = hdr_heatmap(color, colorspace);
+@@ -211,7 +212,7 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
+     }
+     // JoshA: AMDGPU applies 3x4 CTM like this, where A is 1.0, but it only affects .rgb.
+     color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
+-    color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
++    color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspaceLayerIdx, colorspace);
+ 
+     return color;
+ }
+diff --git a/src/shaders/descriptor_set_constants.h b/src/shaders/descriptor_set_constants.h
+index e81b006..5bac416 100644
+--- a/src/shaders/descriptor_set_constants.h
++++ b/src/shaders/descriptor_set_constants.h
+@@ -9,6 +9,7 @@
+ #define VKR_NIS_COEF_SCALER_SLOT (VKR_BLUR_EXTRA_SLOT + 1u)
+ #define VKR_NIS_COEF_USM_SLOT    (VKR_NIS_COEF_SCALER_SLOT + 1u)
+ 
+-#define VKR_LUT3D_COUNT 2 // Must match EOTF_Count
++// One extra game LUT pair keeps the standard SDR and PQ tables available.
++#define VKR_LUT3D_COUNT (EOTF_Count + 1)
+ 
+ #endif
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index 409dd6e..47d04d3 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -94,6 +94,7 @@
+ #include "edid.h"
+ #include "hdmi.h"
+ #include "convar.h"
++#include "color_provider.h"
+ #include "Script/Script.h"
+ #include "refresh_rate.h"
+ #include "commit.h"
+@@ -155,7 +156,7 @@ static gamescope_color_mgmt_luts g_ColorMgmtLutsOverride[ EOTF_Count ];
+ std::atomic<std::shared_ptr<lut3d_t>> g_ColorMgmtLooks[EOTF_Count];
+ 
+ 
+-gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];
++gamescope_color_mgmt_luts g_ColorMgmtLuts[ VKR_LUT3D_COUNT ];
+ 
+ gamescope_color_mgmt_luts g_ScreenshotColorMgmtLuts[ EOTF_Count ];
+ gamescope_color_mgmt_luts g_ScreenshotColorMgmtLutsHDR[ EOTF_Count ];
+@@ -337,13 +338,14 @@ static const gamescope_color_mgmt_t k_ScreenshotColorMgmtHDR =
+ static void
+ create_color_mgmt_luts(
+ 	const gamescope_color_mgmt_t& newColorMgmt,
+-	gamescope_color_mgmt_luts outColorMgmtLuts[ EOTF_Count ],
+-	bool bScaleSDRWhite )
++	gamescope_color_mgmt_luts *outColorMgmtLuts,
++	bool bScaleSDRWhite, const gamescope_color_plan *pProvider = nullptr )
+ {
+ 	const displaycolorimetry_t& displayColorimetry = newColorMgmt.displayColorimetry;
+ 	const displaycolorimetry_t& outputEncodingColorimetry = newColorMgmt.outputEncodingColorimetry;
+ 
+-	for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
++	// The extra pair takes SDR input; leave the ordinary SDR/PQ tables unchanged.
++	for ( uint32_t nInputEOTF = 0; nInputEOTF < ( pProvider ? 1u : uint32_t( EOTF_Count ) ); nInputEOTF++ )
+ 	{
+ 		if (!outColorMgmtLuts[nInputEOTF].vk_lut1d)
+ 			outColorMgmtLuts[nInputEOTF].vk_lut1d = vulkan_create_1d_lut(s_nLutSize1d);
+@@ -395,6 +397,14 @@ create_color_mgmt_luts(
+ 				// for sdrGamutWideness indepdendent of the output encoding (for SDR data), and when mapping SDR -> PQ output
+ 				// we only want to utilize a portion of the gamut the actual display can reproduce
+ 				buildSDRColorimetry( &inputColorimetry, &colorMapping, newColorMgmt.sdrGamutWideness, displayColorimetry );
++				if ( pProvider )
++				{
++					// Use HDR gain for the game; SDR UI dimming stays on the standard LUT.
++					flGain = pProvider->input_gain;
++					tonemapping.g22_luminance = pProvider->g22_luminance;
++					tonemapping.preGainTransform = pProvider->map;
++					tonemapping.preGainTransformData = pProvider->data;
++				}
+ 			}
+ 			else if ( inputEOTF == EOTF_PQ )
+ 			{
+@@ -504,6 +514,19 @@ gamescope::ConVar<bool> cv_hdr_content_driven{ "hdr_content_driven", false, "Onl
+ bool g_bHDRItmEnable = false;
+ int g_nCurrentRefreshRate_CachedValue = 0;
+ 
++static bool steamcompmgr_color_provider_available()
++{
++	if ( !gamescope::g_ColorProvider.Enabled() )
++		return false;
++	const auto *connector = GetBackend()->GetCurrentConnector();
++	return gamescope::g_ColorProvider.Available( {
++		.color_management = g_ColorMgmt.pending.enabled, .hdr = g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug,
++		.lease_client = bool( g_sDrmLeaseClientSocket ), .legacy_itm = g_bHDRItmEnable,
++		.override_luts = g_ColorMgmtLutsOverride[EOTF_Gamma22].HasLuts(), .hardware_luts = GetBackend()->SupportsPlaneColorLuts(),
++		.peak_nits = connector ? connector->GetHDRInfo().uMaxContentLightLevel : 0u,
++	} );
++}
++
+ // Follows the panel backlight over sysfs for panels that ignore it in PQ. steamcompmgr thread only.
+ class CBacklightWatcher final : public gamescope::IWaitable
+ {
+@@ -648,6 +671,8 @@ update_color_mgmt()
+ 		( GetBackend()->GetCurrentConnector()->GetHDRInfo().bSoftwareBacklight && g_ColorMgmt.pending.enabled && g_ColorMgmt.pending.outputEncodingEOTF == EOTF_PQ )
+ 			? std::max( g_BacklightWatcher.GetFactor(), 0.01f ) : 1.0f;
+ 
++	g_ColorMgmt.pending.colorProvider = steamcompmgr_color_provider_available();
++
+ #ifdef COLOR_MGMT_MICROBENCH
+ 	struct timespec t0, t1;
+ #else
+@@ -674,6 +699,14 @@ update_color_mgmt()
+ 			g_ColorMgmtLuts[i].reset();
+ 	}
+ 
++	if ( g_ColorMgmt.pending.colorProvider )
++	{
++		const auto plan = gamescope::CreateColorProviderPlan( g_ColorMgmt.pending, g_flHDRItmSdrNits );
++		create_color_mgmt_luts( g_ColorMgmt.pending, &g_ColorMgmtLuts[EOTF_Count], false, &plan );
++	}
++	else if ( g_ColorMgmt.current.colorProvider )
++		g_ColorMgmtLuts[EOTF_Count].reset();
++
+ #ifdef COLOR_MGMT_MICROBENCH
+ 	clock_gettime(CLOCK_MONOTONIC_RAW, &t1);
+ #endif
+@@ -3156,6 +3189,19 @@ static bool PaintBlankOverlayPlaceholder()
+ 	return s_bPaint;
+ }
+ 
++static bool steamcompmgr_color_provider_content( const global_focus_t *pFocus )
++{
++	const bool available = pFocus && steamcompmgr_color_provider_available();
++	if ( !available )
++		return false;
++
++	const auto &commit = pFocus->HeldCommits[HELD_COMMIT_BASE];
++	return gamescope::g_ColorProvider.Active( available, {
++		.game = commit && !commit->is_steam, .hdr = commit && ColorspaceIsHDR( commit->colorspace() ),
++		.steam_focused = pFocus->focusWindow && window_is_steam( pFocus->focusWindow ),
++	} );
++}
++
+ static void
+ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ {
+@@ -3587,7 +3633,10 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ 		}
+ 	}
+ 
+-	if ( pConnector && pConnector->Present( &frameInfo, async ) != 0 )
++	if ( gamescope::g_ColorProvider.PresentFrame( pConnector, frameInfo, g_ColorMgmtLuts[EOTF_Count], {
++		.active = steamcompmgr_color_provider_content( pFocus ),
++		.primary = pFocus == GetCurrentFocus(), .async = async,
++	} ) != 0 )
+ 	{
+ 		return;
+ 	}
+@@ -3654,6 +3703,7 @@ paint_all( global_focus_t *pFocus, bool async, bool bRepeatFrame )
+ 
+ 			if ( drmCaptureFormat == DRM_FORMAT_NV12 || oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
+ 			{
++				gamescope::ClearColorProviderFrameLuts( frameInfo );
+ 				// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
+ 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+ 				{
+@@ -7610,6 +7660,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
+ 			g_flHDRItmSdrNits = 100.f;
+ 		else if ( g_flHDRItmSdrNits > 1000.f)
+ 			g_flHDRItmSdrNits = 1000.f;
++		if ( g_ColorMgmtLuts[EOTF_Count].HasLuts() )
++			g_ColorMgmt.pending.externalDirtyCtr++;
+ 		hasRepaint = true;
+ 	}
+ 	if ( ev->atom == ctx->atoms.gamescopeHDRItmTargetNits )
+@@ -10570,7 +10622,7 @@ steamcompmgr_main(int argc, char **argv)
+ 
+ 		// Capability is advertised to clients regardless of the live "active"
+ 		// state below, so games can request HDR while the panel is idling in SDR.
+-		const bool bOutputHDRCapable = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
++		bool bOutputHDRCapable = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
+ 
+ 		{
+ 			gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
+@@ -10595,6 +10647,9 @@ steamcompmgr_main(int argc, char **argv)
+ 					}
+ 				}
+ 			}
++			// Extend the completed native HDR decision with AutoHDR.
++			gamescope::g_ColorProvider.ExtendHdrOutput( bOutputHDRCapable, bOutputHDRActive,
++				steamcompmgr_color_provider_available, [] { return steamcompmgr_color_provider_content( GetCurrentFocus() ); } );
+ 			if ( bOutputHDRActive != g_bOutputHDREnabled )
+ 				xwm_log.infof( "HDR output %s%s", bOutputHDRActive ? "enabled" : "disabled", bContentDriven ? " (hdr_content_driven)" : "" );
+ 			g_bOutputHDREnabled = bOutputHDRActive;
+@@ -10826,7 +10881,8 @@ steamcompmgr_main(int argc, char **argv)
+ 					app_hdr_metadata = pCurrentFocus->HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
+ 			}
+ 
+-			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
++			// Advertise converted HDR only after a primary frame was presented.
++			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace ) || gamescope::g_ColorProvider.HdrPresented();
+ 
+ 			if ( app_wants_hdr != g_bAppWantsHDRCached )
+ 			{
