@@ -46,11 +46,12 @@ function TabDecoration({ tab, view }: { tab: ArmadaTab; view: TabMotionView }) {
   </>;
 }
 
-export function TabNavigation({ tabs, activeTab, onShowTab, rootRef }: {
+export function TabNavigation({ tabs, activeTab, onShowTab, rootRef, onBack }: {
   tabs: ArmadaTab[];
   activeTab: string;
   onShowTab: (id: string) => void;
   rootRef?: RefObject<HTMLDivElement | null>;
+  onBack?: (() => void) | null;
 }) {
   const ownRoot = useRef<HTMLDivElement>(null);
   const root = rootRef || ownRoot;
@@ -110,6 +111,13 @@ export function TabNavigation({ tabs, activeTab, onShowTab, rootRef }: {
       className="armada-control-tabs"
       flow-children="column"
       onButtonDown={handleButton}
+      onCancelActionDescription={onBack ? t("gameLibrary.back") : undefined}
+      onCancelButton={onBack ? (event) => {
+        if (event.defaultPrevented || !root.current?.contains(event.target as Node)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onBack();
+      } : undefined}
       scrollIntoViewWhenChildFocused="force"
       fnScrollIntoViewHandler={(target) => revealFocus(target.Element)}
       actionDescriptionMap={{

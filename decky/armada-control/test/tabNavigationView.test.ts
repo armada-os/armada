@@ -5,7 +5,7 @@ import { adjacentTab } from "../src/lib/tabNavigation.ts";
 import { loadModule } from "./helpers/loadModule.ts";
 
 const buttons = { BUMPER_LEFT: 5, BUMPER_RIGHT: 6, DIR_DOWN: 10 };
-function setup(visible = ["games", "profiles", "about"]) {
+function setup(visible = ["games", "profiles", "about"], onBack?: () => void) {
   let active = visible[0], cursor = 0, tree: any;
   const slots: any[] = [], pending: Array<() => void> = [];
   const effects = new Map<number, { deps: any[]; cleanup?: () => void }>();
@@ -33,7 +33,7 @@ function setup(visible = ["games", "profiles", "about"]) {
   });
   function render() {
     cursor = 0;
-    tree = TabNavigation({ tabs, activeTab: active, onShowTab: (id: string) => { active = id; } });
+    tree = TabNavigation({ tabs, activeTab: active, onShowTab: (id: string) => { active = id; }, onBack });
     for (const node of nodes(tree).filter(node => node.type === "Focusable")) {
       const name = node.props.role === "navigation" ? "header" : node.props["aria-label"];
       if (node.props.ref) node.props.ref.current = name === "header" ? header : root;
@@ -45,6 +45,7 @@ function setup(visible = ["games", "profiles", "about"]) {
   return {
     render, focus, motion, get active() { return active; }, nodes: () => nodes(tree),
     header: () => nodes(tree).find(node => node.props?.role === "navigation").props,
+    cancel: (origin: "header" | "modal") => tree.props.onCancelButton?.({ target: origin === "header" ? header : outside, preventDefault() {}, stopPropagation() {} }),
     press(button: number, origin = "panel", prevented = false) {
       let consumed = false;
       tree.props.onButtonDown({ target: origin === "modal" ? outside : origin === "header" ? header : inside, detail: { button }, defaultPrevented: prevented,
@@ -88,4 +89,14 @@ test("header arrows and bumpers preserve header focus until Down or activation e
   assert.equal(panel.props.focusableIfEmpty, true);
   app.nodes().find(node => node.props?.className === "armada-tab-selected").props.onClick();
   assert.deepEqual(app.focus, ["profiles", "profiles"]);
+});
+
+
+test("Back from the header returns to the subpage without handling modal events", () => {
+  let calls = 0;
+  const app = setup(undefined, () => { calls++; });
+  app.cancel("modal");
+  assert.equal(calls, 0);
+  app.cancel("header");
+  assert.equal(calls, 1);
 });

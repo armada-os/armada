@@ -1,7 +1,8 @@
-import { ButtonItem, DialogButton, DialogButtonPrimary, DropdownItem, Field, PanelSection, PanelSectionRow, SliderField, TextField, ToggleField, gamepadDialogClasses } from "@decky/ui";
-import type { ReactNode } from "react";
+import { ButtonItem, DialogButton, DialogButtonPrimary, DropdownItem, Field, Focusable, PanelSection, PanelSectionRow, SliderField, TextField, ToggleField, gamepadDialogClasses } from "@decky/ui";
+import type { ComponentType, ReactNode } from "react";
 import type { ButtonItemProps, DialogButtonProps, FieldProps, TextFieldProps } from "@decky/ui";
 import type { DropdownChoice } from "../types";
+import { t } from "../i18n";
 
 type Option = string | DropdownChoice;
 type Separator = "standard" | "thick" | "none";
@@ -89,6 +90,24 @@ export function TextEdit({ label, description, value, onChange, disabled, bottom
       <TextField {...inputProps} aria-label={label} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} />
     </Field>
   </ControlRow>;
+}
+
+const SearchTextField = TextField as ComponentType<TextFieldProps & { placeholder?: string }>;
+
+type SearchProps = { label: string; value: string; onChange: (value: string) => void };
+
+export function SearchInput({ label, value, onChange }: SearchProps) {
+  return <Focusable noFocusRing onSecondaryActionDescription={value ? t("gameLibrary.clear") : undefined} onSecondaryButton={value ? (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onChange("");
+  } : undefined}>
+    <SearchTextField aria-label={label} placeholder={label} value={value} bShowClearAction onChange={(event) => onChange(event.target.value)} />
+  </Focusable>;
+}
+
+export function SearchEdit(props: SearchProps) {
+  return <ControlRow><Field bottomSeparator="standard" childrenLayout="below"><SearchInput {...props} /></Field></ControlRow>;
 }
 
 export function ToggleRow({ label, value, onChange, disabled, description, bottomSeparator = "standard" }: {

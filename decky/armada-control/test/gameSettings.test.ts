@@ -21,7 +21,7 @@ function containsText(value: any, text: string): boolean {
   if (Array.isArray(value)) return value.some((child) => containsText(child, text));
   return !!value && typeof value === "object" && containsText(value.props?.children, text);
 }
-function setup(overrides: Record<string, any> = {}, loadTab = false) {
+function setup(overrides: Record<string, any> = {}, loadTab = false, mode?: "game" | "global") {
   let config: any = {
     installedGames: clone(games), game: games[0], selectedGame: games[0],
     tweaks: { global: { windowsCompatTool: FOLLOW_STEAM_COMPAT, fexProfile: "default" }, games: { "1": { enabled: true } } },
@@ -29,12 +29,14 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
     protonDefaults: ["stable"], envPresets: [], turnipDrivers: [],
     ...overrides,
   };
+  if (mode === "game" && !("selectedGame" in overrides)) config.selectedGame = null;
   const modals: Element[] = [];
   const modalEntries: Array<{ element: Element; open: boolean; Close: () => void }> = [];
   const modalTrees: any[] = [];
   const advancedWrites: any[] = [];
   let advancedResponse: () => Promise<void> = async () => {};
   const resolutionWrites: Array<[number, string]> = [];
+  const resetPolicyCalls: string[][] = [];
   const resolutions = new Map<number, string | Promise<string>>();
   const compatStates = new Map<string, any>();
   const compatListeners = new Map<string, Set<(state: any) => void>>();
@@ -57,7 +59,7 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
     config = { ...config, tweaks: update(config.tweaks) };
     return config;
   };
-  const componentNames = ["DialogBody", "DialogButton", "DialogControlsSection", "DialogControlsSectionHeader", "DialogFooter", "Dropdown", "Field", "PanelSection", "TextField"];
+  const componentNames = ["DialogBody", "DialogButton", "DialogControlsSection", "DialogControlsSectionHeader", "DialogFooter", "Dropdown", "Field", "Focusable", "PanelSection", "TextField"];
   const element = (type: Element["type"], props: any, key?: string) => ({ type, props, key });
   const effectHook = (pending: () => Array<() => void>) => (effect: () => (() => void) | undefined, dependencies: any[]) => {
     const owner = frame;
@@ -137,7 +139,7 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
     resetCompatToolToDefault: async (appid: string) => { compatStates.set(appid, { tool: "", priority: 0 }); return ""; },
     resetLaunchOptionsForGame: async () => true,
     resolveProfileAppids: async (appids: string[]) => appids,
-    resetAllGamePolicies: async () => {},
+    resetAllGamePolicies: async (appids: string[]) => { resetPolicyCalls.push([...appids]); },
   };
   const steamSettings = {
     getGlobalResolution: () => globalResolution,
@@ -166,7 +168,7 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
       return entry;
     } };
     if (id === "../components/widgets") return {
-      ...Object.fromEntries(["ButtonRow", "ControlRow", "LabelWithBadge", "NoticeSection", "SectionDescription", "SelectEdit", "SliderEdit", "SupportingText", "TextEdit", "ToggleRow"].map((name) => [name, name])),
+      ...Object.fromEntries(["ButtonRow", "ControlRow", "LabelWithBadge", "NoticeSection", "SectionDescription", "SearchEdit", "SelectEdit", "SliderEdit", "SupportingText", "TextEdit", "ToggleRow"].map((name) => [name, name])),
       Subsection: ({ title, children }: any) => element("Fragment", { children: [
         element("div", { className: "armada-subheader", role: "heading", "aria-level": 3, children: title }), children,
       ] }),
@@ -187,13 +189,14 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
     if (id === "../lib/gameSettingsQueue") return queue;
     if (id === "../lib/configMutation") return { markConfigFieldChange };
     if (id === "../lib/configSaveQueue") return saves;
+    if (id === "../lib/scrollRegion") return { findScrollParent: () => null };
     if (id === "../lib/advancedSettings") return advanced;
     if (id === "../lib/steamSettings") return steamSettings;
     if (id === "../backend") return {
       getCompatMappedAppids: async () => [], getStartupInstalledGames: async () => clone(games), saveCompatApplied: async () => {},
       reapplyPerf: async () => {}, restartGameMode: async () => {},
     };
-  }, { window: { SteamClient: { Apps: apps }, setTimeout, clearTimeout } });
+  }, { window: { SteamClient: { Apps: apps }, setTimeout, clearTimeout }, setTimeout, clearTimeout });
 
   const initialHook = loadModule("hooks/useGameSettingsState.ts", (id: string) => {
     if (id === "react") return react;
@@ -230,7 +233,7 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
     };
     const target = selected?.appid || "";
     if (!initialValues.has(target)) initialValues.set(target, initial);
-    tree = rootMounted ? expand(element(loadTab ? LoadedSettings : exports.GameSettingsContent, { config, setConfig, saveTweaksNow, initial: initialValues.get(target), state: initialState }), "root") : null;
+    tree = rootMounted ? expand(element(loadTab ? LoadedSettings : exports.GameSettingsContent, { config, setConfig, saveTweaksNow, initial: initialValues.get(target), state: initialState, mode }), "root") : null;
     const layoutEffects = pendingLayoutEffects;
     pendingLayoutEffects = [];
     for (const effect of layoutEffects) effect();
@@ -250,7 +253,7 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
   }
   function editor(appid: string | null) {
     const node = allElements(tree).find((node) => typeof node.type === "function"
-      && Object.prototype.hasOwnProperty.call(node.props, "game") && (node.props.game?.appid ?? null) === appid);
+      && Object.prototype.hasOwnProperty.call(node.props, "saveTweaksNow") && Object.prototype.hasOwnProperty.call(node.props, "game") && (node.props.game?.appid ?? null) === appid);
     assert.ok(node, `Missing settings editor for ${appid ?? "defaults"}`);
     return node;
   }
@@ -268,7 +271,7 @@ function setup(overrides: Record<string, any> = {}, loadTab = false) {
   }
   render();
   return {
-    render, editor, control, modalControl, modals, resolutions, compatStates, resolutionWrites, apps, compat, setConfig, advancedWrites,
+    render, editor, control, modalControl, modals, resolutions, compatStates, resolutionWrites, resetPolicyCalls, apps, compat, setConfig, advancedWrites,
     notifyCompat: (appid: string, state: any) => { for (const listener of compatListeners.get(appid) || []) listener(state); },
     refreshInitial: () => initialState.refresh(),
     loadInitial: async () => { releaseInitial(); await initialRequest.catch(() => {}); await new Promise((resolve) => setImmediate(resolve)); render(); },
@@ -409,7 +412,7 @@ test("single-game reset cannot replay the cached native policy into the main pan
   await app.loadInitial();
   await app.settle();
   const publish = app.elements().find((node) => typeof node.type === "function" && node.type.name === "GameSettingsContent")!.props.onPolicyChange;
-  app.control("1", "ButtonRow", "common.resetToDefault").props.onClick();
+  app.control("1", "ButtonRow", "gameLibrary.deleteConfig").props.onClick();
   app.modals.at(-1)!.props.onConfirm();
   await app.settle();
   publish({ resolution: "Default", selection: "preview", tools: [{ id: "late-tool", label: "Late tool" }] });
@@ -423,13 +426,150 @@ test("single-game reset cannot replay the cached native policy into the main pan
   assert.equal(app.control("1", "SelectEdit", "compatibility.tool").props.value, USE_DEFAULT_COMPAT);
 });
 
+test("the game library explains how to add its first profile", () => {
+  const app = setup({ tweaks: { global: {}, games: {} } }, false, "game");
+  assert.ok(app.elements().some((node) => node.type === "SupportingText" && node.props.children === "gameLibrary.empty"));
+});
+
+test("a selected game without a profile offers creation", async () => {
+  const app = setup({ selectedGame: games[0], tweaks: { global: {}, games: {} } }, false, "game");
+  assert.ok(app.elements().some((node) => node.type === "SectionDescription" && node.props.children === "gameLibrary.noProfile"));
+  const create = app.elements().find((node) => node.type === "ButtonRow" && node.props.children === "gameLibrary.createTitle");
+  assert.ok(create);
+  create.props.onClick();
+  assert.equal(app.modals.at(-1)!.props.title, "gameLibrary.createTitle");
+  app.modals.at(-1)!.props.onConfirm();
+  await app.settle();
+  assert.equal(app.config.tweaks.games["1"].enabled, true);
+  assert.ok(app.editor("1"));
+});
+
+test("search shows an empty message for each game group", () => {
+  const app = setup({}, false, "game");
+  const search = app.elements().find((node) => node.type === "SearchEdit");
+  assert.ok(search);
+  search.props.onChange("no matching game");
+  app.render();
+  assert.equal(app.elements().filter((node) => node.type === "SupportingText" && node.props.children === "gameLibrary.noResults").length, 2);
+});
+
+test("the add-game picker confirms before creating a profile", () => {
+  const app = setup({}, false, "game");
+  const add = app.elements().find((node) => node.type === "ButtonRow" && node.props.children === "gameLibrary.add");
+  assert.ok(add);
+  add.props.onClick();
+  app.render();
+  const row = app.modalElements().find((node) => node.type === "DialogButton" && node.props.children?.props?.game?.appid === "2");
+  assert.ok(row);
+  row.props.onClick();
+  assert.equal(app.modals.at(-1)!.props.title, "gameLibrary.createTitle");
+  assert.equal(app.config.tweaks.games["2"], undefined);
+});
+
+test("Back returns from the game editor to the library", () => {
+  const app = setup({}, false, "game");
+  const row = app.elements().find((node) => node.type === "DialogButton" && node.props.children?.props?.game?.appid === "1");
+  assert.ok(row);
+  row.props.onClick();
+  app.render();
+  const scope = app.elements().find((node) => node.type === "Focusable" && node.props.onCancelButton);
+  assert.ok(scope);
+  let prevented = false;
+  let stopped = false;
+  scope.props.onCancelButton({ preventDefault: () => { prevented = true; }, stopPropagation: () => { stopped = true; } });
+  app.render();
+  assert.equal(prevented && stopped, true);
+  assert.equal(app.elements().some((node) => node.type === "Focusable" && node.props.onCancelButton), false);
+  assert.ok(app.config.tweaks.games["1"]);
+});
+
+test("restoring defaults keeps the game profile and clears its overrides", async () => {
+  const app = setup({ tweaks: { global: {}, games: { "1": { enabled: true, fexProfile: "fast", nice: -5, steamCompatTool: "preview", steamResolution: "960x540" } } } }, false, "game");
+  const row = app.elements().find((node) => node.type === "DialogButton" && node.props.children?.props?.game?.appid === "1");
+  assert.ok(row);
+  row.props.onClick();
+  app.render();
+  app.control("1", "ButtonRow", "common.resetToDefault").props.onClick();
+  await app.settle();
+  assert.equal(app.config.tweaks.games["1"].enabled, true);
+  assert.equal(app.config.tweaks.games["1"].fexProfile, undefined);
+  assert.equal(app.config.tweaks.games["1"].nice, undefined);
+  assert.equal(app.config.tweaks.games["1"].steamCompatTool, USE_DEFAULT_COMPAT);
+  assert.equal(app.config.tweaks.games["1"].steamResolution, "Default");
+  assert.ok(app.editor("1"));
+});
+
+test("resetting a game returns to the list only after a successful save", async () => {
+  const app = setup({}, false, "game");
+  const row = app.elements().find((node) => node.type === "DialogButton" && node.props.children?.props?.game?.appid === "1");
+  assert.ok(row);
+  row.props.onClick();
+  app.render();
+  app.respondAdvanced(async () => { throw new Error("save failed"); });
+  app.control("1", "ButtonRow", "gameLibrary.deleteConfig").props.onClick();
+  app.modals.at(-1)!.props.onConfirm();
+  await app.settle();
+  assert.ok(app.editor("1"));
+  assert.ok(app.config.tweaks.games["1"]);
+  app.respondAdvanced(async () => {});
+  app.control("1", "ButtonRow", "gameLibrary.deleteConfig").props.onClick();
+  app.modals.at(-1)!.props.onConfirm();
+  await app.settle();
+  assert.equal(app.config.tweaks.games["1"], undefined);
+  assert.equal(app.elements().some((node) => typeof node.type === "function" && node.props.game?.appid === "1" && "saveTweaksNow" in node.props), false);
+});
+
+test("reset all targets saved active profiles, including uninstalled games", async () => {
+  const app = setup({ tweaks: {
+    global: { windowsCompatTool: FOLLOW_STEAM_COMPAT },
+    games: { "1": { enabled: true }, "3": { enabled: true }, "4": { enabled: false, nice: -5 } },
+  } }, false, "game");
+  const reset = app.elements().find((node) => node.type === "ButtonRow" && containsText(node.props.children, "gameLibrary.deleteAll"));
+  assert.ok(reset);
+  reset.props.onClick();
+  app.modals.at(-1)!.props.onConfirm();
+  await app.settle();
+  assert.deepEqual(app.resetPolicyCalls, [["1", "3"]]);
+  assert.deepEqual(app.resolutionWrites.sort((a, b) => a[0] - b[0]), [[1, "Default"], [3, "Default"]]);
+  assert.deepEqual(Object.keys(app.config.tweaks.games), []);
+});
+
+test("reset all keeps saved profiles when Steam cannot resolve a game", async () => {
+  const app = setup({ tweaks: { global: {}, games: { "1": { enabled: true }, "3": { enabled: true } } } }, false, "game");
+  app.compat.resolveProfileAppids = async () => ["1"];
+  const reset = app.elements().find((node) => node.type === "ButtonRow" && containsText(node.props.children, "gameLibrary.deleteAll"));
+  assert.ok(reset);
+  reset.props.onClick();
+  app.modals.at(-1)!.props.onConfirm();
+  await app.settle();
+  assert.deepEqual(Object.keys(app.config.tweaks.games), ["1", "3"]);
+  assert.deepEqual(app.resolutionWrites, []);
+  assert.deepEqual(app.resetPolicyCalls, []);
+});
+
+test("reset all preserves a profile added while its save is pending", async () => {
+  const app = setup({}, false, "game");
+  let release!: () => void;
+  app.respondAdvanced(() => new Promise<void>((resolve) => { release = resolve; }));
+  const reset = app.elements().find((node) => node.type === "ButtonRow" && containsText(node.props.children, "gameLibrary.deleteAll"));
+  assert.ok(reset);
+  reset.props.onClick();
+  app.modals.at(-1)!.props.onConfirm();
+  await new Promise((resolve) => setImmediate(resolve));
+  app.setConfig((current: any) => ({ ...current, tweaks: { ...current.tweaks, games: { ...current.tweaks.games, "2": { enabled: true, nice: -5 } } } }));
+  release();
+  await app.settle();
+  assert.equal(app.config.tweaks.games["1"], undefined);
+  assert.equal(app.config.tweaks.games["2"].nice, -5);
+});
+
 test("reset all clears game overrides and resolutions without replacing global defaults", async () => {
   const app = setup({ tweaks: {
     global: { windowsCompatTool: FOLLOW_STEAM_COMPAT, fexProfile: "fast" },
     games: { "1": { nice: -5 }, "2": { scheduler: "eevdf" } },
   } });
   const defaults = clone(app.config.tweaks.global);
-  app.control(null, "ButtonRow", "compatibility.resetAllGames").props.onClick();
+  app.control(null, "ButtonRow", "gameLibrary.deleteAll").props.onClick();
   app.modals.at(-1)!.props.onConfirm();
   await app.settle();
   assert.equal(Object.keys(app.config.tweaks.games).length, 0);
@@ -500,7 +640,7 @@ test("reset waits for pending native saves instead of allowing them to recreate 
     await write(appid, value);
   };
   const saving = app.control("1", "SelectEdit", "compatibility.gameResolution").props.onChange("1280x720");
-  app.control("1", "ButtonRow", "common.resetToDefault").props.onClick();
+  app.control("1", "ButtonRow", "gameLibrary.deleteConfig").props.onClick();
   app.modals.at(-1)!.props.onConfirm();
   release();
   await saving;

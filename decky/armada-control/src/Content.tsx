@@ -30,7 +30,9 @@ const hasSystemConfig = (config: Config): config is Config & DeviceConfig & Expe
 
 export function Content() {
   useLocale();
-  const [tab, setTab] = useState("Compatibility");
+  const [tab, setTab] = useState(() => currentGame() ? "Compatibility" : "GlobalSettings");
+  const [gameBack, setGameBack] = useState<(() => void) | null>(null);
+  const updateGameBack = useCallback((handler: (() => void) | null) => setGameBack(() => handler), []);
   const [config, setConfig] = useState<Config | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const savedTweaksSnapshot = useRef("");
@@ -120,7 +122,8 @@ export function Content() {
     <ButtonRow layout="below" onClick={() => { void load(getInitialConfig); }}>{t("common.retry")}</ButtonRow>
   </PanelSection> : <LoadingState label={t("common.loadingSettings")} />;
   const panels: Record<string, ReactNode> = config ? {
-    Compatibility: <Compatibility config={config} setConfig={setConfig} saveTweaksNow={saveTweaksNow} state={data.game} />,
+    Compatibility: <Compatibility mode="game" onBackChange={updateGameBack} config={config} setConfig={setConfig} saveTweaksNow={saveTweaksNow} state={data.game} />,
+    GlobalSettings: <Compatibility mode="global" config={config} setConfig={setConfig} saveTweaksNow={saveTweaksNow} state={data.game} />,
     RGB: <RGB state={data.rgb} />,
     Controller: <ConfigSection config={config} state={data.controller} loaded={hasControllerConfig}>
       {(current) => <Controller config={current} setConfig={setConfig} />}
@@ -148,8 +151,10 @@ export function Content() {
       rootRef={host}
       activeTab={tab}
       onShowTab={setTab}
+      onBack={tab === "Compatibility" ? gameBack : null}
       tabs={[
-        { id: "Compatibility", title: t("navigation.games"), icon: tabIcons.Compatibility },
+        { id: "GlobalSettings", title: t("gameLibrary.globalTab"), icon: tabIcons.GlobalSettings },
+        { id: "Compatibility", title: t("gameLibrary.gameTab"), icon: tabIcons.Compatibility },
         { id: "Profiles", title: t("navigation.profiles"), icon: tabIcons.Power },
         { id: "Controller", title: t("navigation.controller"), icon: tabIcons.Controller },
         ...(config?.rgbSupported ? [{ id: "RGB", title: t("navigation.rgb"), icon: tabIcons.RGB }] : []),

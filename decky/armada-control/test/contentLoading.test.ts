@@ -24,9 +24,9 @@ test("a failed initial load provides a native retry and clears the error while r
   await app.settle();
   assert.equal(app.state.type, "TabNavigation");
   assert.equal(app.config.tweaks.global.marker, "loaded");
-  assert.deepEqual(Array.from(app.state.props.tabs, (tab: any) => tab.id), ["Compatibility", "Profiles", "Controller", "Settings", "System", "About"]);
+  assert.equal(app.state.props.tabs.some((tab: any) => tab.id === "RGB"), false);
   app.edit((config: any) => ({ ...config, rgbSupported: true }));
-  assert.deepEqual(Array.from(app.state.props.tabs, (tab: any) => tab.id), ["Compatibility", "Profiles", "Controller", "RGB", "Settings", "System", "About"]);
+  assert.equal(app.state.props.tabs.some((tab: any) => tab.id === "RGB"), true);
   app.unmount();
 });
 

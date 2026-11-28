@@ -6,12 +6,13 @@ import {
   DialogControlsSection,
   DialogControlsSectionHeader,
   Field,
+  Focusable,
   PanelSection,
 } from "@decky/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { getCompatMappedAppids, getStartupInstalledGames, reapplyPerf, restartGameMode, saveCompatApplied } from "../backend";
-import { ButtonRow, LabelWithBadge, NoticeSection, SectionDescription, SelectEdit, SliderEdit, Subsection, SupportingText, TextEdit, ToggleRow } from "../components/widgets";
+import { ButtonRow, LabelWithBadge, NoticeSection, SearchEdit, SearchInput, SectionDescription, SelectEdit, SliderEdit, Subsection, SupportingText, TextEdit, ToggleRow } from "../components/widgets";
 import { ArmadaConfirmModal, ArmadaDialogFooter, ArmadaDialogHeader, ArmadaModalRoot } from "../components/ArmadaModalRoot";
 import { useModalView } from "../components/useModalView";
 import { LoadingState } from "../components/LoadingState";
@@ -25,6 +26,7 @@ import { availableGames } from "../lib/games";
 import { changeGameProfile, gameCompatSelection, gameProfileEnabled } from "../lib/gameSettings";
 import { runGameSettingsMutation } from "../lib/gameSettingsQueue";
 import { trackConfigSave } from "../lib/configSaveQueue";
+import { findScrollParent } from "../lib/scrollRegion";
 import { markConfigFieldChange } from "../lib/configMutation";
 import { advancedChanges, advancedSettings, patchGameSettings } from "../lib/advancedSettings";
 import {
@@ -210,14 +212,64 @@ function EnvVarModal({
   );
 }
 
+function GameLabel({ game, inactive = false }: { game: GameRef; inactive?: boolean }) {
+  const [icon, setIcon] = useState("");
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    let requested = false;
+    const loadIcon = () => {
+      try {
+        const store = (window as any).appStore;
+        const overview = store?.GetAppOverviewByAppID?.(Number(game.appid));
+        if (!store?.GetIconURLForApp) return;
+        if (!overview) {
+          if (attempts++ < 5) timer = setTimeout(loadIcon, 500);
+          return;
+        }
+        // Steam loads shortcut icons asynchronously after the first request.
+        const url = !requested || overview.icon_data !== undefined || overview.icon_hash
+          ? store.GetIconURLForApp(overview) : null;
+        requested = true;
+        if (url) setIcon(url);
+        else if (overview.icon_data === undefined && attempts++ < 5) timer = setTimeout(loadIcon, 500);
+      } catch {
+        setIcon("");
+      }
+    };
+    loadIcon();
+    return () => clearTimeout(timer);
+  }, [game.appid]);
+  return <span className="armada-game-label"><span className="armada-game-icon">{icon && <img src={icon} alt="" onError={() => setIcon("")} />}</span><span className="armada-game-name">{game.name}</span>{inactive && <span className="armada-label-badge">{t("gameLibrary.inactive")}</span>}</span>;
+}
+
+function GamePicker({ games, onSelect, closeModal }: { games: GameRef[]; onSelect: (game: GameRef) => void; closeModal?: () => void }) {
+  const [query, setQuery] = useState("");
+  const matching = games.filter((game) => game.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  return <ArmadaModalRoot className="armada-game-picker" modalClassName="armada-game-picker-position" onCancel={closeModal}>
+    <ArmadaDialogHeader>{t("gameLibrary.add")}</ArmadaDialogHeader>
+    <DialogBody className="armada-game-picker-body">
+      <SearchInput label={t("gameLibrary.search")} value={query} onChange={setQuery} />
+      {query.trim() && <Subsection title={t("gameLibrary.results")}>{null}</Subsection>}
+      {matching.length ? <div className="armada-game-list armada-game-picker-list">{matching.map((game) =>
+        <DialogButton key={game.appid} onClick={() => { closeModal?.(); onSelect(game); }}><GameLabel game={game} /></DialogButton>)}</div> : <SupportingText>{t("gameLibrary.noResults")}</SupportingText>}
+    </DialogBody>
+    <ArmadaDialogFooter><DialogButton onClick={closeModal}>{t("common.cancel")}</DialogButton></ArmadaDialogFooter>
+  </ArmadaModalRoot>;
+}
+
 type CompatibilityProps = {
   config: Config;
   setConfig: Dispatch<SetStateAction<Config | null>>;
   saveTweaksNow: (update: (current: Tweaks) => Tweaks) => Promise<Config>;
+  mode?: "game" | "global";
+  onBackChange?: (handler: (() => void) | null) => void;
 };
 
 export function Compatibility({ state, ...props }: CompatibilityProps & { state: BackendState<InitialGameSettings> }) {
   const { value, loading, error, refresh, setValue } = state;
+  const previousValue = useRef<InitialGameSettings | null>(null);
+  if (value) previousValue.current = value;
   const updatePolicy = useCallback((policy: { resolution: string; selection: string; tools: CompatTool[] }) => {
     setValue((current) => {
       if (!current?.policy) return current;
@@ -226,30 +278,173 @@ export function Compatibility({ state, ...props }: CompatibilityProps & { state:
     });
   }, [setValue]);
   useEffect(() => () => { void refresh(); }, [refresh]);
-  if (loading) return <LoadingState label={t("common.loadingSettings")} />;
-  if (!value) return <PanelSection>
+  if (loading && !previousValue.current) return <LoadingState label={t("common.loadingSettings")} />;
+  if (!value && !loading) return <PanelSection>
     <SupportingText className="armada-note-error">{t("common.loadError")}: {error}</SupportingText>
     <ButtonRow layout="below" onClick={() => { void refresh(); }}>{t("common.retry")}</ButtonRow>
   </PanelSection>;
-  return <GameSettingsContent {...props} initial={value} onPolicyChange={updatePolicy} />;
+  return <GameSettingsContent {...props} initial={(value || previousValue.current)!} pending={loading} onPolicyChange={updatePolicy} />;
 }
 
-export function GameSettingsContent({ config, setConfig, saveTweaksNow, initial, onPolicyChange }: CompatibilityProps & { initial: InitialGameSettings; onPolicyChange?: (policy: { resolution: string; selection: string; tools: CompatTool[] }) => void }) {
+export function GameSettingsContent({ config, setConfig, saveTweaksNow, initial, onPolicyChange, mode, pending, onBackChange }: CompatibilityProps & { initial: InitialGameSettings; pending?: boolean; onPolicyChange?: (policy: { resolution: string; selection: string; tools: CompatTool[] }) => void }) {
   const compatTools = initial.compatTools;
+  const [editingGame, setEditingGame] = useState<GameRef | null>(() => mode === "game" ? (config.selectedGame === undefined ? config.game || null : config.selectedGame) : null);
+  const [creatingGame, setCreatingGame] = useState<string | null>(null);
+  const [creationStarted, setCreationStarted] = useState(false);
+  const [returnToTop, setReturnToTop] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const activeGame = useRef(editingGame);
+  activeGame.current = editingGame;
+  useLayoutEffect(() => {
+    if (!returnToTop || !listRef.current) return;
+    findScrollParent(listRef.current)?.scrollTo({ top: 0, behavior: "instant" });
+    listRef.current.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    setReturnToTop(false);
+  }, [returnToTop, pending]);
+  const [query, setQuery] = useState("");
   const [resetVersion, setResetVersion] = useState(0);
   const [defaultResolution, setDefaultResolution] = useState(getGlobalResolution());
   const [resetting, setResetting] = useState<"game" | "all" | null>(null);
   const [changingProfile, setChangingProfile] = useState(false);
+  const [resetAllError, setResetAllError] = useState("");
   const tweaksRef = useRef(config.tweaks);
   tweaksRef.current = config.tweaks;
-  const selectedGame = config.selectedGame === undefined ? config.game || null : config.selectedGame;
+  const selectedGame = mode === "game" ? editingGame : config.selectedGame === undefined ? config.game || null : config.selectedGame;
   const games = availableGames(config);
   if (selectedGame?.appid && !games.some((game) => game.appid === selectedGame.appid)) games.unshift(selectedGame);
+  const configured = new Set(Object.keys(config.tweaks.games));
+  const matching = games.filter((game) => game.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const matchingConfigured = matching.filter((game) => configured.has(game.appid));
+  const matchingOther = matching.filter((game) => !configured.has(game.appid));
+  const openGame = (game: GameRef, create = false) => {
+    setCreationStarted(false);
+    setCreatingGame(create ? game.appid : null);
+    setConfig((current) => current ? { ...current, selectedGame: game } : current);
+    setEditingGame(game);
+  };
+  const returnToList = useCallback(() => {
+    setEditingGame(null);
+    setCreatingGame(null);
+    setCreationStarted(false);
+    setConfig((current) => current ? { ...current, selectedGame: null } : current);
+    setReturnToTop(true);
+  }, []);
+  useEffect(() => {
+    onBackChange?.(mode === "game" && selectedGame ? returnToList : null);
+    return () => onBackChange?.(null);
+  }, [mode, selectedGame?.appid, onBackChange, returnToList]);
+  const confirmCreate = (game: GameRef) => showArmadaModal(<ArmadaConfirmModal
+    title={t("gameLibrary.createTitle")}
+    description={t("gameLibrary.createDescription", { game: game.name })}
+    confirmText={t("gameLibrary.create")}
+    cancelText={t("common.cancel")}
+    closeBeforeConfirm
+    onConfirm={() => openGame(game, true)}
+  />);
+  const gameRow = (game: GameRef, create = false) => <DialogButton key={game.appid} onClick={() => create ? confirmCreate(game) : openGame(game)}>
+    <GameLabel game={game} inactive={config.tweaks.games[game.appid]?.enabled === false} />
+  </DialogButton>;
+  const chooseGame = () => showArmadaModal(<GamePicker games={games.filter((game) => !configured.has(game.appid))} onSelect={confirmCreate} />);
+
+  const resetAllGames = async () => {
+    if (resetting || changingProfile) return;
+    const apps = window.SteamClient?.Apps;
+    setResetting("all");
+    setResetAllError("");
+    try {
+      await trackConfigSave(runGameSettingsMutation(async () => {
+        const profiles = tweaksRef.current.games;
+        const profileIds = Object.keys(profiles);
+        if (!profileIds.length) return;
+        const activeIds = profileIds.filter((appid) => profiles[appid].enabled !== false);
+        const gameAppids = await resolveProfileAppids(activeIds);
+        const resolvedIds = new Set(gameAppids);
+        const unavailable = activeIds.filter((appid) => !resolvedIds.has(appid));
+        if (unavailable.length) throw new Error(t("gameSettings.unavailableProfiles", { ids: unavailable.join(", ") }));
+        const savedTool = String(tweaksRef.current.global.windowsCompatTool || "");
+        let pinned: string[] | null | undefined;
+        if (gameAppids.length && !compatTools.length) pinned = null;
+        else if (gameAppids.length && savedTool && savedTool !== FOLLOW_STEAM_COMPAT && !compatTools.some((tool) => tool.id === savedTool)) {
+          pinned = await getCompatMappedAppids(savedTool).catch(() => null);
+        }
+        let nextResolution = 0;
+        const resetResolution = async () => {
+          while (nextResolution < gameAppids.length) {
+            const appid = gameAppids[nextResolution++];
+            if (!apps?.SetAppResolutionOverride) throw new Error("Steam resolution settings are unavailable");
+            await setGameResolution(appid, "Default");
+          }
+        };
+        const results = await Promise.allSettled([
+          ...(gameAppids.length ? [resetAllGamePolicies(gameAppids, pinned)] : []),
+          ...Array.from({ length: Math.min(10, gameAppids.length) }, resetResolution),
+        ]);
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
+        markConfigFieldChange(setConfig, "tweaks", profileIds.map((appid) => ["games", appid]));
+        const saved = await saveTweaksNow((current) => {
+          const next = clone(current);
+          for (const appid of profileIds) delete next.games[appid];
+          return next;
+        });
+        tweaksRef.current = saved.tweaks;
+        setGameCompatProfiles(saved.tweaks.games);
+        void persistCompatHandledGames(saveCompatApplied).catch(() => {});
+        if (config.selectedGame?.appid && profileIds.includes(config.selectedGame.appid)) {
+          onPolicyChange?.({ resolution: "Default", selection: USE_DEFAULT_COMPAT, tools: initial.policy?.tools || [] });
+        }
+        setResetVersion((version) => version + 1);
+        if (mode === "game") setEditingGame(null);
+      }));
+    } catch (error) {
+      setResetAllError(t("gameSettings.updateError", { error: String(error) }));
+    } finally {
+      setResetting(null);
+    }
+  };
+  const confirmResetAllGames = () => {
+    showArmadaModal(<ArmadaConfirmModal
+      title={t("gameLibrary.deleteAll")}
+      description={t("compatibility.resetAllDescription")}
+      confirmText={t("gameLibrary.deleteAll")}
+      cancelText={t("common.cancel")}
+      closeBeforeConfirm
+      onConfirm={() => { void resetAllGames(); }}
+    />);
+  };
+
+  if (pending) return <LoadingState label={t("common.loadingSettings")} />;
 
   return (
-    <>
+    <Focusable className="armada-game-settings-scope" flow-children="column" tabIndex={-1} noFocusRing
+      onCancelActionDescription={mode === "game" && selectedGame ? t("gameLibrary.back") : undefined}
+      onCancelButton={mode === "game" && selectedGame ? (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        returnToList();
+      } : undefined}>
       <NoticeSection title={t("common.information")}>{t("compatibility.nextLaunchNotice")}</NoticeSection>
-      <PanelSection title={t("gameSettings.perGame")}>
+      {mode === "game" && !selectedGame && <div className="armada-game-library" ref={listRef}>
+        <PanelSection title={t("gameSettings.perGame")}>
+          <SearchEdit label={t("gameLibrary.search")} value={query} onChange={setQuery} />
+          <ButtonRow variant="primary" layout="below" onClick={chooseGame}>{t("gameLibrary.add")}</ButtonRow>
+          <ButtonRow layout="below" disabled={!!resetting || changingProfile} onClick={confirmResetAllGames}>{resetting === "all" ? t("common.resetting") : t("gameLibrary.deleteAll")}</ButtonRow>
+          {resetAllError && <SupportingText className="armada-note-error">{resetAllError}</SupportingText>}
+        </PanelSection>
+        <div className="armada-section-divider"><PanelSection title={query.trim() ? t("gameLibrary.results") : `${t("gameLibrary.configured")} (${new Intl.NumberFormat(getCurrentLocale()).format(matchingConfigured.length)})`}>
+          {query.trim() ? <>
+            <Subsection title={t("gameLibrary.configured")}>{matchingConfigured.length
+              ? <div className="armada-game-list">{matchingConfigured.map((game) => gameRow(game))}</div>
+              : <SupportingText>{t("gameLibrary.noResults")}</SupportingText>}</Subsection>
+            <Subsection title={t("gameLibrary.other")}>{matchingOther.length
+              ? <div className="armada-game-list">{matchingOther.map((game) => gameRow(game, true))}</div>
+              : <SupportingText>{t("gameLibrary.noResults")}</SupportingText>}</Subsection>
+          </> : matchingConfigured.length ? <div className="armada-game-list">{matchingConfigured.map((game) => gameRow(game))}</div>
+            : <SupportingText>{t("gameLibrary.empty")}</SupportingText>}
+        </PanelSection></div>
+      </div>}
+      {mode === "game" && selectedGame && <PanelSection><ButtonRow layout="below" onClick={returnToList}>{t("gameLibrary.back")}</ButtonRow><div className="armada-game-heading" role="heading" aria-level={2}><GameLabel game={selectedGame} /></div></PanelSection>}
+      {!mode && <PanelSection title={t("gameSettings.perGame")}>
         <SectionDescription>{t("gameSettings.overrides")}</SectionDescription>
         <SelectEdit
           value={selectedGame?.appid || ""}
@@ -261,8 +456,12 @@ export function GameSettingsContent({ config, setConfig, saveTweaksNow, initial,
             ? { ...current, selectedGame: games.find((game) => game.appid === appid) || null }
             : current)}
         />
-      </PanelSection>
-      {selectedGame?.appid ? (
+      </PanelSection>}
+      {mode === "game" && selectedGame?.appid && !configured.has(selectedGame.appid) && creatingGame !== selectedGame.appid && <PanelSection>
+        <SectionDescription>{t("gameLibrary.noProfile")}</SectionDescription>
+        <ButtonRow variant="primary" layout="below" onClick={() => confirmCreate(selectedGame)}>{t("gameLibrary.createTitle")}</ButtonRow>
+      </PanelSection>}
+      {mode !== "global" && selectedGame?.appid && (mode !== "game" || configured.has(selectedGame.appid) || creatingGame === selectedGame.appid) ? (
         <CompatibilitySettings
           key={`${selectedGame.appid}-${resetVersion}`}
           config={config}
@@ -270,6 +469,13 @@ export function GameSettingsContent({ config, setConfig, saveTweaksNow, initial,
           saveTweaksNow={saveTweaksNow}
           tweaksRef={tweaksRef}
           game={selectedGame}
+          createOnOpen={creatingGame === selectedGame.appid && !creationStarted}
+          onCreateStarted={() => setCreationStarted(true)}
+          setResetVersionForGame={() => setResetVersion((version) => version + 1)}
+          onGameReset={mode === "game" ? (appid) => {
+            if (activeGame.current?.appid !== appid) return;
+            returnToList();
+          } : undefined}
           initialPolicy={initial.policy}
           onPolicyChange={onPolicyChange}
           compatTools={compatTools}
@@ -281,7 +487,7 @@ export function GameSettingsContent({ config, setConfig, saveTweaksNow, initial,
           setChangingProfile={setChangingProfile}
         />
       ) : null}
-      <PanelSection title={t("gameSettings.defaults")}>
+      {mode !== "game" && <><PanelSection title={t("gameSettings.defaults")}>
         <SectionDescription>{t("gameSettings.defaultsDescription")}</SectionDescription>
       </PanelSection>
       <CompatibilitySettings
@@ -297,16 +503,17 @@ export function GameSettingsContent({ config, setConfig, saveTweaksNow, initial,
         setResetting={setResetting}
         changingProfile={changingProfile}
         setChangingProfile={setChangingProfile}
-        onResetAll={() => {
-          onPolicyChange?.({ resolution: "Default", selection: USE_DEFAULT_COMPAT, tools: initial.policy?.tools || [] });
-          setResetVersion((version) => version + 1);
-        }}
-      />
-    </>
+        onResetAll={mode ? undefined : confirmResetAllGames}
+      /></>}
+    </Focusable>
   );
 }
 
-function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, game, compatTools, initialPolicy, defaultResolution, setDefaultResolution, resetting, setResetting, changingProfile, setChangingProfile, onResetAll, onPolicyChange }: {
+function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, game, compatTools, initialPolicy, defaultResolution, setDefaultResolution, resetting, setResetting, changingProfile, setChangingProfile, onResetAll, onPolicyChange, createOnOpen, onCreateStarted, onGameReset, setResetVersionForGame }: {
+  createOnOpen?: boolean;
+  onCreateStarted?: () => void;
+  onGameReset?: (appid: string) => void;
+  setResetVersionForGame?: () => void;
   config: Config;
   setConfig: Dispatch<SetStateAction<Config | null>>;
   saveTweaksNow: (update: (current: Tweaks) => Tweaks) => Promise<Config>;
@@ -369,7 +576,6 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
   const initialResolution = useRef(!!initialPolicy);
   const initialCompat = useRef(!!initialPolicy);
   const runtimeGame = config.game;
-  const games = availableGames(config);
   const selectedAppidRef = useRef("");
   selectedAppidRef.current = game?.appid || "";
   const tweaks = config.tweaks;
@@ -496,11 +702,11 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
     }
   };
   const mutateAndSave = <T,>(mutate: () => Promise<T>) => trackConfigSave(runGameSettingsMutation(mutate));
-  const changeNativeGameProfile = (appid: string, enabled: boolean, persist?: (patch: Partial<Tweaks["games"][string]>) => Promise<void>) => {
+  const changeNativeGameProfile = (appid: string, enabled: boolean, persist?: (patch: Partial<Tweaks["games"][string]>) => Promise<void>, settings = tweaksRef.current.games[appid] || {}) => {
     if (!apps?.GetResolutionOverrideForApp || !apps.SetAppResolutionOverride) {
       throw new Error("Steam resolution settings are unavailable");
     }
-    return changeGameProfile(tweaksRef.current.games[appid] || {}, enabled, {
+    return changeGameProfile(settings, enabled, {
       readCompat: () => resolveCompatState(appid),
       readResolution: () => getGameResolution(appid),
       selectCompat: async (selection) => {
@@ -540,6 +746,11 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
       setChangingProfile(false);
     }
   };
+  useEffect(() => {
+    if (!createOnOpen || !game?.appid) return;
+    onCreateStarted?.();
+    void setGameProfileEnabled(true);
+  }, [createOnOpen, game?.appid]);
   const resetGame = async (appid: string) => {
     if (resetting || changingProfile) return;
     setResetting("game");
@@ -562,6 +773,32 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
         setResolutionMessage("");
         setMappingVersion((version) => version + 1);
       });
+      onGameReset?.(appid);
+    } catch (error) {
+      setProfileMessage(t("gameSettings.updateError", { error: String(error) }));
+    } finally {
+      setResetting(null);
+    }
+  };
+  const restoreGameDefaults = async () => {
+    if (!game?.appid || resetting || changingProfile) return;
+    const appid = game.appid;
+    setResetting("game");
+    setProfileMessage("");
+    try {
+      await mutateAndSave(async () => {
+        await changeNativeGameProfile(appid, true, async (patch) => {
+          markConfigFieldChange(setConfig, "tweaks", [["games", appid]]);
+          const saved = await saveTweaksNow((current) => ({ ...current, games: { ...current.games, [appid]: { name: game.name, ...patch } } }));
+          tweaksRef.current = saved.tweaks;
+          updateGameCompatProfile(appid, patch);
+        }, {});
+        setResolution("Default");
+        setCurrentTool(USE_DEFAULT_COMPAT);
+        setMappingVersion((version) => version + 1);
+      });
+      onPolicyChange?.({ resolution: "Default", selection: USE_DEFAULT_COMPAT, tools: perGameTools });
+      setResetVersionForGame?.();
     } catch (error) {
       setProfileMessage(t("gameSettings.updateError", { error: String(error) }));
     } finally {
@@ -616,61 +853,14 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
       }
     }
   };
-  const resetAllGames = async () => {
-    if (resetting || changingProfile) return;
-    const knownAppids = Array.from(new Set([...games.map((installed) => installed.appid), ...Object.keys(tweaksRef.current.games)]));
-    setResetting("all");
-    setProfileMessage("");
-    try {
-      await mutateAndSave(async () => {
-        const gameAppids = await resolveProfileAppids(knownAppids);
-        const pinned = await pinnedToMissingTool();
-        let nextResolution = 0;
-        const resetResolution = async () => {
-          while (nextResolution < gameAppids.length) {
-            const appid = gameAppids[nextResolution++];
-            if (!apps?.SetAppResolutionOverride) throw new Error("Steam resolution settings are unavailable");
-            await setGameResolution(appid, "Default");
-          }
-        };
-        const results = await Promise.allSettled([
-          resetAllGamePolicies(gameAppids, pinned),
-          ...Array.from({ length: Math.min(10, gameAppids.length) }, resetResolution),
-        ]);
-        const failed = results.find((result) => result.status === "rejected");
-        if (failed?.status === "rejected") throw failed.reason;
-        markConfigFieldChange(setConfig, "tweaks", [["games"]]);
-        const saved = await saveTweaksNow((current) => ({ ...current, games: {} }));
-        tweaksRef.current = saved.tweaks;
-        setGameCompatProfiles({});
-        persistHandledGames();
-        setResolution("Default");
-        onResetAll?.();
-      });
-    } catch (error) {
-      setProfileMessage(t("gameSettings.updateError", { error: String(error) }));
-    } finally {
-      setResetting(null);
-    }
-  };
-  const confirmResetAllGames = () => {
-    showArmadaModal(<ArmadaConfirmModal
-      title={t("compatibility.resetAllGames")}
-      description={t("compatibility.resetAllDescription")}
-      confirmText={t("compatibility.resetAllGames")}
-      cancelText={t("common.cancel")}
-      closeBeforeConfirm
-      onConfirm={() => { void resetAllGames(); }}
-    />);
-  };
   const confirmResetGame = () => {
     if (!game?.appid || resetting || changingProfile) return;
     const appid = game.appid;
     showArmadaModal(
       <ArmadaConfirmModal
-        title={t("compatibility.resetGame")}
+        title={t("gameLibrary.deleteConfig")}
         description={t("compatibility.resetGameDescription", { game: game.name || t("games.thisGame") })}
-        confirmText={t("compatibility.resetGame")}
+        confirmText={t("gameLibrary.deleteConfig")}
         cancelText={t("common.cancel")}
         closeBeforeConfirm
         onConfirm={() => { void resetGame(appid); }}
@@ -1216,15 +1406,16 @@ function CompatibilitySettings({ config, setConfig, saveTweaksNow, tweaksRef, ga
           <Subsection title={t("compatibility.environment")}>{envControls}</Subsection>
           <Subsection title={t("compatibility.advanced")}>
             <ButtonRow layout="below" onClick={openAdvanced}>{t("compatibility.advancedSettings")}</ButtonRow>
-            {editingDefault ? (
-              <ButtonRow layout="below" disabled={!!resetting || changingProfile} onClick={confirmResetAllGames}>
-                {resettingAll ? t("common.resetting") : t("compatibility.resetAllGames")}
+            {editingDefault ? (onResetAll &&
+              <ButtonRow layout="below" disabled={!!resetting || changingProfile} onClick={onResetAll}>
+                {resettingAll ? t("common.resetting") : t("gameLibrary.deleteAll")}
               </ButtonRow>
-            ) : (
+            ) : <>
+              <ButtonRow layout="below" disabled={!!resetting || changingProfile} onClick={() => { void restoreGameDefaults(); }}>{t("common.resetToDefault")}</ButtonRow>
               <ButtonRow layout="below" disabled={!!resetting || changingProfile} onClick={confirmResetGame}>
-                {resettingGame ? t("common.resetting") : t("common.resetToDefault")}
+                {resettingGame ? t("common.resetting") : t("gameLibrary.deleteConfig")}
               </ButtonRow>
-            )}
+            </>}
           </Subsection>
         </PanelSection>
       ) : null}

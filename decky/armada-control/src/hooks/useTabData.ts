@@ -21,6 +21,6 @@ export function useTabData(config: Config | null, setConfig: Dispatch<SetStateAc
   const rgb = useBackendState(readRgb, 0, !config?.rgbSupported, host, active === "RGB");
   const fans = useBackendState(getFansState, 10000, !config, host, active === "Profiles");
   const logs = useBackendState(readLogs, 10000, !config || savingLogs, host, active === "System");
-  const game = useGameSettingsState(config, host, active === "Compatibility");
+  const game = useGameSettingsState(config, host, active === "Compatibility" || active === "GlobalSettings");
   return { device, controller, profiles, experimental, about, rgb, fans, logs, game, savingLogs, setSavingLogs };
 }

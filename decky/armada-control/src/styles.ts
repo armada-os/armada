@@ -11,7 +11,8 @@ const sectionStyles = classMap
       .armada-control-tab-content .${classes.PanelSection} {
         margin-block-end: 0;
       }
-      .armada-control-tab-content .${classes.PanelSection} ~ .${classes.PanelSection}:has(> .${classes.PanelSectionTitle}) {
+      .armada-control-tab-content .${classes.PanelSection} ~ .${classes.PanelSection}:has(> .${classes.PanelSectionTitle}),
+      .armada-control-tab-content .armada-game-library > .${classes.PanelSection}:first-child:has(> .${classes.PanelSectionTitle}) {
         border-block-start: ${theme.separatorWidth} solid ${theme.separator};
         padding-block-start: ${theme.spaceLarge};
       }
@@ -52,6 +53,21 @@ const finalFieldStyles = `
 `;
 
 export const styles = `
+      .armada-section-divider { border-block-start: ${theme.separatorWidth} solid ${theme.separator}; padding-block-start: ${theme.spaceLarge}; }
+      .armada-game-list { display: flex; flex-direction: column; gap: ${theme.spaceMedium}; margin-block-start: ${theme.spaceMedium}; }
+      :is(.armada-control-tabs, .armada-control-dialog) .armada-game-list button.DialogButton { display: flex; width: 100%; box-sizing: border-box; justify-content: flex-start; align-items: center; text-align: start; padding: ${theme.spaceMedium} ${theme.spaceLarge}; }
+      .armada-game-picker-body { margin-block-start: ${theme.spaceLarge}; }
+      .armada-control-dialog-position.armada-game-picker-position.Panel { padding-block: ${theme.spaceSmall}; }
+      .armada-control-dialog.armada-game-picker { max-block-size: 100%; }
+      .armada-game-picker-list { margin-block-start: ${theme.spaceLarge}; max-block-size: var(--armada-picker-list-height, calc(11em + 16 * ${theme.spaceMedium})); overflow-y: auto; }
+      .armada-game-label { display: flex; align-items: center; gap: ${theme.spaceMedium}; width: 100%; min-width: 0; }
+      .armada-game-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .armada-game-label .armada-label-badge { margin-inline-start: ${theme.spaceMedium}; }
+      .armada-game-heading { margin-block: ${theme.spaceLarge} ${theme.spaceMedium}; font-size: var(--armada-game-heading-size, 1.125rem); font-weight: 600; }
+      .armada-game-heading .armada-game-name { white-space: normal; overflow-wrap: anywhere; }
+      .armada-game-icon { width: 2em; height: 2em; flex: none; background: ${theme.subtle}; }
+      .armada-game-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }
+
       ${disabledButtonStyles}
       .armada-loading-state {
         display: flex;
@@ -85,7 +101,8 @@ export const styles = `
         min-width: 0;
         padding-block-start: ${theme.spaceLarge};
       }
-      .armada-tab-panels:has(> .armada-control-tab-content > ${nativeSection}:first-child .armada-notice) {
+      .armada-tab-panels:has(> .armada-control-tab-content > ${nativeSection}:first-child .armada-notice),
+      .armada-tab-panels:has(> .armada-control-tab-content > .armada-game-settings-scope > ${nativeSection}:first-child .armada-notice) {
         padding-block-start: 0;
       }
       ${sectionStyles}
@@ -173,6 +190,9 @@ export const styles = `
         line-height: 1.4;
         color: ${theme.error};
       }
+      .armada-control-dialog { max-block-size: var(--armada-dialog-max-height, calc(100vh - 7rem)); }
+      .armada-control-dialog .DialogContent_InnerWidth { min-block-size: 0; }
+      .armada-control-dialog .DialogBody { min-block-size: 0; overflow-y: auto; }
       .armada-control-dialog-scroll {
         display: contents;
       }
