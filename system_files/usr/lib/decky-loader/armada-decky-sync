@@ -48,9 +48,14 @@ fi
 # Plugins that also update from their own releases through Armada Store.
 remote_updated=(armada-emulation)
 
+# Errors are caught in Python: abrt logs any uncaught exception as a crash.
 plugin_version() {
-    python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("version", ""))' \
-        "$1/package.json" 2>/dev/null || true
+    python3 -c '
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get("version", ""))
+except Exception:
+    pass' "$1/package.json" 2>/dev/null || true
 }
 
 # Those keep an installed copy that is newer than the image's.

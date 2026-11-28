@@ -64,7 +64,11 @@ plugin_case() {
     rm -rf "$WORK/plugins" "$WORK/homebrew/plugins"
     mkdir -p "$WORK/plugins/$plugin" "$WORK/homebrew/plugins/$plugin"
     printf '{"version": "%s"}\n' "$bundled" > "$WORK/plugins/$plugin/package.json"
-    printf '{"version": "%s"}\n' "$installed" > "$WORK/homebrew/plugins/$plugin/package.json"
+    case "$installed" in
+        -) rm -rf "$WORK/homebrew/plugins/$plugin" ;;
+        '{') printf '{' > "$WORK/homebrew/plugins/$plugin/package.json" ;;
+        *) printf '{"version": "%s"}\n' "$installed" > "$WORK/homebrew/plugins/$plugin/package.json" ;;
+    esac
     PATH="$WORK/bin:$PATH" "$WORK/sync"
     local expected=$installed
     [[ "$winner" == installed ]] || expected=$bundled
@@ -80,5 +84,7 @@ plugin_case emulation-equal-replaced armada-emulation 0.2.0 0.2.0 bundled
 plugin_case emulation-junk-replaced armada-emulation garbage 0.2.0 bundled
 plugin_case emulation-prefixed-replaced armada-emulation v0.3.0 0.2.0 bundled
 plugin_case store-always-image armada-store 0.9.0 0.2.0 bundled
+plugin_case emulation-missing-installed armada-emulation - 0.2.0 bundled
+plugin_case emulation-unreadable-installed armada-emulation '{' 0.2.0 bundled
 
 printf 'decky sync tests passed\n'
