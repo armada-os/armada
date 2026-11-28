@@ -1,0 +1,13 @@
+[Unit]
+Description=Enable KSM on Retroid Pocket Duo
+ConditionFirmware=device-tree-compatible(retroidpocket,duo)
+ConditionPathExists=/sys/kernel/mm/ksm/run
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo 1 > /sys/kernel/mm/ksm/run'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
