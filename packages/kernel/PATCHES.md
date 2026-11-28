@@ -793,6 +793,10 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: https://github.com/hashtagbasit/SteamOS-ARM-Port/blob/162a3d97e61d94e0740193a8af49fc95de408439/external-and-mods/kernel-sm8550/dts/qcs8550-ayn-odin2-gyro.dtsi
   upstream: not submitted
   notes: justjoseorg's heap node, memory-region and qcom,vmids, moved from a board file into the SM8550, QCS8550 and SM8650 SoC dtsi so every board on those SoCs has them; qcom,fastrpc-adsp-sensors-pdr is dropped because this kernel does not read it.
+- `patches/0625-arm64-dts-qcom-sm8250-set-the-SLPI-FastRPC-heap-vmid.patch`
+  source: armada
+  upstream: local
+  notes: VMID 5 is QCOM_SCM_VMID_SSC_Q6, written as a number because sm8250.dtsi does not include the SCM bindings header. There is no reserved-memory node. On this kernel the SLPI FastRPC probe assigns a memory-region immediately, and that call failed on the Pocket 5, so the device node never appeared. With only the VMID set, the sensors PD allocates its heap when it attaches.
 - `dts/qcs8550-ayaneo-pocketace.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8550/linux/dts/qcom/qcs8550-ayaneo-pocketace.dts
 - `dts/qcs8550-ayaneo-pocket-common.dtsi`
@@ -854,11 +858,13 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   notes: Drops ROCKNIX's kernel thermal-zone fan include after copying the DTS; Armada powerd owns the PWM fan curve and must not race a second controller.
 - `dts/sm8250-retroidpocket-flip2.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/linux/dts/qcom/sm8250-retroidpocket-flip2.dts
+  notes: Keeps the shared SM8250 SLPI firmware name. The included Pocket 5 file points the SLPI at the Pocket 5 image, which the Flip2 does not use.
 - `dts/sm8250-retroidpocket-flip2-visionox.dts`
   source: armada
   notes: Support for Visionox display panel models
 - `dts/sm8250-retroidpocket-rp5.dts`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/linux/dts/qcom/sm8250-retroidpocket-rp5.dts
+  notes: Points the SLPI at the Pocket 5 Android sensor firmware. That image is the split `slpi.mdt` plus `slpi.bNN` segments from the modem partition, not a single `slpi.mbn`. The shared `qcom/sm8250/slpi.mbn` name is a different image, and linux-firmware does not ship one. The Visionox include inherits this path.
 - `dts/sm8250-retroidpocket-rp5-visionox.dts`
   source: armada
   notes: Support for Visionox display panel models

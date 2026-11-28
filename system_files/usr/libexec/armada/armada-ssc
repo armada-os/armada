@@ -10,9 +10,14 @@ ARMADA_GYRO=${ARMADA_GYRO:-1}
 # ARMADA_GYRO_CORRECTION rotates the SSC axes before InputPlumber's mount matrix.
 ARMADA_GYRO_CORRECTION=$(sed -n 's/^ARMADA_GYRO_CORRECTION=//p' /etc/armada/gyro.conf 2>/dev/null | head -1 || true)
 
-root="/usr/share/armada/ssc/${ARMADA_DEVICE_ID:-}"
+# A panel variant can share another id's archive. The name is a directory.
+ssc_id=${ARMADA_SSC_ID:-${ARMADA_DEVICE_ID:-}}
+case "$ssc_id" in
+    "" | *[!a-z0-9-]*) ssc_id="" ;;
+esac
+root="/usr/share/armada/ssc/${ssc_id}"
 supported=0
-if [ -n "${ARMADA_DEVICE_ID:-}" ] && [ -d "$root" ]; then
+if [ -n "$ssc_id" ] && [ -d "$root" ]; then
     supported=1
 fi
 
@@ -39,9 +44,23 @@ rm -rf "$state"
 mkdir -p "$state"
 cp -a "$root/." "$state/"
 
-# The ADSP has one FastRPC node; the device tree decides whether it is secure.
+# Pocket 6 and the other ADSP boards use fastrpc-adsp. The Pocket 5 IMU is
+# on the SLPI, which shows up as fastrpc-sdsp. The device tree decides
+# whether the node is the secure one.
+case "${ARMADA_SSC_FASTRPC:-}" in
+    "" | fastrpc-adsp)
+        set -- /dev/fastrpc-adsp /dev/fastrpc-adsp-secure
+        ;;
+    fastrpc-sdsp)
+        set -- /dev/fastrpc-sdsp /dev/fastrpc-sdsp-secure
+        ;;
+    *)
+        echo "armada-ssc: unsupported FastRPC node ${ARMADA_SSC_FASTRPC}" >&2
+        exit 1
+        ;;
+esac
 for _ in $(seq 60); do
-    for node in /dev/fastrpc-adsp /dev/fastrpc-adsp-secure; do
+    for node in "$@"; do
         [ -e "$node" ] && exec hexagonrpcd -f "$node" -d adsp -s -R "$state"
     done
     sleep 1
