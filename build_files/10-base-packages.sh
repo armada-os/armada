@@ -200,6 +200,16 @@ desktop_pkgs=(
     google-noto-sans-mono-fonts
     google-noto-sans-thai-vf-fonts
     google-noto-sans-vf-fonts
+
+    # Input Methods - Required for Steam's CJK Keyboards
+    ibus
+    ibus-anthy
+    # Japanese
+    ibus-mozc
+    # Korean
+    ibus-hangul
+    # Chinese (pinyin)
+    ibus-pinyin
 )
 
 dnf5 -y install --setopt=install_weak_deps=False "${desktop_pkgs[@]}"
