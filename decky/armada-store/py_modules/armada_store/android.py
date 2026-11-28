@@ -10,8 +10,13 @@ import time
 import zipfile
 from pathlib import Path
 
-from . import installers, paths, store, userfs
-from .proc import clean_env
+from armada_apps import installers, paths, records, userfs
+from armada_apps.catalog import DEFAULT_LAUNCH_OPTIONS
+from armada_apps.proc import clean_env
+
+# Runs Android apps; shipped by the lepton package.
+ANDROID_COMPAT_TOOL = "lepton_armada"
+ANDROID_COMPAT_TOOL_DIR = "/usr/share/steam/compatibilitytools.d/lepton-armada"
 
 PACKAGE = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 _lock = threading.RLock()
@@ -152,7 +157,7 @@ def search(query, page=None, category=None):
 def apps():
     """Combine session search results with persistent installed and imported entries."""
     entries = {app["id"]: app for app in _results}
-    entries.update(store.load_state().get("android") or {})
+    entries.update(records.load_state().get("android") or {})
     return list(entries.values())
 
 
@@ -163,18 +168,29 @@ def apk_path(app):
         paths.apps_dir() / "Android" / install["package"] / "base.apk")
 
 
+def installed_info(app):
+    return {"installed": apk_path(app).is_file(), "version": app.get("version", "")}
+
+
+def launch_command(app):
+    path = apk_path(app)
+    return {"name": app.get("name") or app.get("id") or "App", "exe": str(path),
+            "startDir": str(path.parent), "launchOptions": DEFAULT_LAUNCH_OPTIONS,
+            "compatTool": ANDROID_COMPAT_TOOL}
+
+
 def import_local(path):
     """Validate a standalone APK and queue its Steam shortcut without moving the source."""
-    from . import catalog
-    if not str(path).lower().endswith(".apk") or not catalog._is_apk(path):
+    from . import shortcuts
+    if not str(path).lower().endswith(".apk") or not shortcuts._is_apk(path):
         raise ValueError("Choose a valid standalone APK")
-    launch = catalog.prepare_shortcut(path)
+    launch = shortcuts.prepare_shortcut(path)
     app_id = "android-local:" + hashlib.sha256(os.fsencode(path)).hexdigest()[:24]
     app = {"id": app_id, "name": launch["name"], "category": "android",
            "summary": "Local APK", "canInstall": False,
            "install": {"type": "android", "path": path}}
-    store.record_android(app_id, app)
-    store.add_pending_shortcut(app_id)
+    records.record_android(app_id, app)
+    records.add_pending_shortcut(app_id)
     logging.info("Android local APK shortcut queued: %s", app_id)
     return app_id
 
@@ -275,9 +291,9 @@ def install(app, cancel, progress):
         installers._publish_tree(home_fd, staging_name, staging_fd, dest_fd, package, preserved)
         # State and shortcut work starts only after the complete set has been published.
         phase = "recording installation"
-        store.record_android(app["id"], record)
+        records.record_android(app["id"], record)
         phase = "queuing Steam shortcut"
-        store.add_pending_shortcut(app["id"])
+        records.add_pending_shortcut(app["id"])
         logging.info("Android install completed: %s", package)
     except installers.Cancelled:
         logging.info("Android install cancelled: %s", package)
@@ -312,5 +328,5 @@ def uninstall(app):
                 userfs.remove_entry(fd, package)
             finally:
                 os.close(fd)
-    store.clear_android(app["id"])
+    records.clear_android(app["id"])
     logging.info("Android entry removed: %s", app["id"])

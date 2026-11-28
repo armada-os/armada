@@ -1,0 +1,24 @@
+{
+  "name": "armada-emulation",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "sync-shared": "shx rm -rf src/armada-apps && shx cp -r ../shared/armada-apps/src src/armada-apps",
+    "build": "npm run sync-shared && shx rm -rf dist && rollup -c",
+    "watch": "npm run sync-shared && rollup -c -w",
+    "test": "npm run sync-shared && npx tsc --noEmit"
+  },
+  "dependencies": {
+    "@decky/api": "1.1.3",
+    "@decky/ui": "4.11.6"
+  },
+  "devDependencies": {
+    "@decky/rollup": "1.0.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@types/webpack": "5.28.5",
+    "rollup": "4.62.0",
+    "shx": "0.4.0",
+    "typescript": "6.0.3"
+  }
+}

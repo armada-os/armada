@@ -345,11 +345,17 @@ case "$cmd" in
             -f "$repo/Containerfile" "$repo" >/dev/null
         stage=$(mktemp -d)
         trap 'rm -rf "$stage"' EXIT
-        plugins=(armada-control armada-store)
+        plugins=(armada-control armada-store armada-emulation)
         podman run --rm --security-opt label=disable -v "$stage:/out" localhost/armada-decky-build \
             sh -c 'for p in "$@"; do cp -r "/build/$p/dist" "/out/$p-dist"; done' sh "${plugins[@]}"
         cp "$repo/build_files/install-decky-plugin.sh" "$stage/"
-        tar -C "$repo/decky" -cf "$stage/src.tar" --exclude=node_modules --exclude=__pycache__ "${plugins[@]}"
+        # Each plugin's copies of the shared library; the library itself stays.
+        copies=()
+        for p in "${plugins[@]}"; do
+            copies+=(--exclude="$p/src/armada-apps" --exclude="$p/py_modules/armada_apps")
+        done
+        tar -C "$repo/decky" -cf "$stage/src.tar" --exclude=node_modules --exclude=__pycache__ \
+            "${copies[@]}" "${plugins[@]}" shared
         podman exec "$name" rm -rf /run/armada-dev-sync
         tar -C "$stage" -cf - . | podman exec -i "$name" sh -c \
             'mkdir -p /run/armada-dev-sync && tar -C /run/armada-dev-sync -xf - && tar -C /run/armada-dev-sync -xf /run/armada-dev-sync/src.tar'

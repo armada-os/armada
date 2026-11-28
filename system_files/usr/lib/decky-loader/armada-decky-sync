@@ -45,10 +45,33 @@ if [[ ! -f "${homebrew}/settings/loader.json" ]]; then
     printf '{\n  "branch": 0\n}\n' >"${homebrew}/settings/loader.json"
 fi
 
+# Plugins that also update from their own releases through Armada Store.
+remote_updated=(armada-emulation)
+
+plugin_version() {
+    python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("version", ""))' \
+        "$1/package.json" 2>/dev/null || true
+}
+
+# Those keep an installed copy that is newer than the image's.
+installed_is_newer() {
+    local bundled installed
+    bundled=$(plugin_version "$1")
+    installed=$(plugin_version "$2")
+    # Plain dotted numbers only: sort -V would rank "v1" or junk above "0.2.0".
+    local plain='^[0-9]+(\.[0-9]+){0,3}$'
+    [[ "${installed}" =~ ${plain} && "${bundled}" =~ ${plain} && "${installed}" != "${bundled}" ]] || return 1
+    [[ $(printf '%s\n%s\n' "${bundled}" "${installed}" | sort -V | tail -n1) == "${installed}" ]]
+}
+
 if [[ -d "$src" ]]; then
     for plugin in "$src"/*/; do
         [[ -d "$plugin" ]] || continue
         name=$(basename "$plugin")
+        if [[ " ${remote_updated[*]} " == *" ${name} "* ]] &&
+            installed_is_newer "$plugin" "${homebrew}/plugins/${name}"; then
+            continue
+        fi
         rm -rf "${homebrew}/plugins/${name}"
         cp -a "$plugin" "${homebrew}/plugins/${name}"
     done

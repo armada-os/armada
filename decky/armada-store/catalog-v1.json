@@ -1,0 +1,317 @@
+{
+  "schemaVersion": 1,
+  "categories": [
+    {
+      "id": "applications",
+      "name": {
+        "en": "Applications",
+        "zh-CN": "应用程序"
+      },
+      "icon": "layout-grid.svg"
+    },
+    {
+      "id": "android",
+      "name": {
+        "en": "Android Apps",
+        "zh-CN": "安卓应用"
+      },
+      "icon": "android.svg"
+    },
+    {
+      "id": "plugins",
+      "name": {
+        "en": "Decky Plugins",
+        "zh-CN": "Decky 插件"
+      },
+      "icon": "plug.svg"
+    },
+    {
+      "id": "proton",
+      "name": {
+        "en": "Proton",
+        "zh-CN": "Proton"
+      },
+      "icon": "layers.svg"
+    },
+    {
+      "id": "turnip",
+      "name": {
+        "en": "Turnip Drivers",
+        "zh-CN": "Turnip 驱动"
+      },
+      "icon": "cpu.svg"
+    }
+  ],
+  "apps": [
+    {
+      "id": "moonlight",
+      "name": "Moonlight",
+      "summary": "PC game streaming",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/moonlight_stream/Moonlight/f8be001ec73b9d6ffd16ff8382a82de3/icons/128x128/com.moonlight_stream.Moonlight.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "com.moonlight_stream.Moonlight",
+        "overrides": [
+          "--filesystem=/var/home/armada",
+          "--filesystem=/home/armada",
+          "--filesystem=/run/media",
+          "--filesystem=/media"
+        ]
+      }
+    },
+    {
+      "id": "chiaki",
+      "name": "chiaki-ng",
+      "summary": "PlayStation remote play",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/io/github/streetpea.Chiaki4deck/2fe7226c5e12e88e3292b17832669572/icons/128x128/io.github.streetpea.Chiaki4deck.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.streetpea.Chiaki4deck",
+        "overrides": [
+          "--filesystem=/var/home/armada",
+          "--filesystem=/home/armada",
+          "--filesystem=/run/media",
+          "--filesystem=/media"
+        ]
+      }
+    },
+    {
+      "id": "greenlight",
+      "name": "Greenlight",
+      "summary": "Xbox cloud gaming and remote play",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/io/github/unknownskl.greenlight/3a01668dcdacb74c1134aa163f31391d/icons/128x128/io.github.unknownskl.greenlight.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "io.github.unknownskl.greenlight",
+        "overrides": [
+          "--filesystem=/var/home/armada",
+          "--filesystem=/home/armada",
+          "--filesystem=/run/media",
+          "--filesystem=/media"
+        ]
+      }
+    },
+    {
+      "id": "prism-launcher",
+      "name": "Prism Launcher",
+      "summary": "Minecraft",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/org/prismlauncher/PrismLauncher/2cc36c7257fc4073cbc74a5e312caee1/icons/128x128/org.prismlauncher.PrismLauncher.png",
+      "install": {
+        "type": "flatpak",
+        "ref": "org.prismlauncher.PrismLauncher",
+        "overrides": [
+          "--filesystem=/var/home/armada",
+          "--filesystem=/home/armada",
+          "--filesystem=/run/media",
+          "--filesystem=/media"
+        ]
+      }
+    },
+    {
+      "id": "protonplus",
+      "name": "ProtonPlus",
+      "summary": "Install and manage Proton and Wine runners",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/vysp3r/ProtonPlus/c09f1de1cb1a40acdd89eee078699f2d/icons/128x128/com.vysp3r.ProtonPlus.png",
+      "note": "Run it from desktop mode",
+      "desktopOnly": true,
+      "install": {
+        "type": "flatpak",
+        "ref": "com.vysp3r.ProtonPlus",
+        "overrides": [
+          "--filesystem=/var/home/armada",
+          "--filesystem=/home/armada",
+          "--filesystem=/run/media",
+          "--filesystem=/media"
+        ]
+      }
+    },
+    {
+      "id": "heroic",
+      "name": "Heroic Games Launcher",
+      "summary": "Play Epic, GOG and Amazon games",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/heroicgameslauncher/hgl/7c9401fb986461cf52a549d0514c83b9/icons/128x128/com.heroicgameslauncher.hgl.png",
+      "note": "Ships with Armada",
+      "install": {
+        "type": "system",
+        "exec": "/usr/bin/heroic",
+        "launchOptions": "--no-sandbox"
+      }
+    },
+    {
+      "id": "firefox",
+      "name": "Firefox",
+      "summary": "Web browser",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/icons/128x128/org.mozilla.firefox.png",
+      "note": "Ships with Armada",
+      "install": {
+        "type": "system",
+        "exec": "/usr/bin/firefox"
+      }
+    },
+    {
+      "id": "nested-desktop",
+      "name": "Nested Desktop",
+      "summary": "Plasma Desktop in Game Mode",
+      "category": "applications",
+      "icon": "https://kde.org/stuff/clipart/logo/plasma-logo-colorful.svg",
+      "note": "Ships with Armada",
+      "controllerTemplate": "mouse",
+      "install": {
+        "type": "system",
+        "exec": "/usr/bin/armada-nested-desktop"
+      }
+    },
+    {
+      "id": "flatseal",
+      "name": "Flatseal",
+      "summary": "Manage Flatpak permissions",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/github/tchx84.Flatseal/462bde383c024a52b3132ae3df79704a/icons/128x128/com.github.tchx84.Flatseal.png",
+      "note": "Run it from desktop mode",
+      "desktopOnly": true,
+      "install": {
+        "type": "flatpak",
+        "ref": "com.github.tchx84.Flatseal",
+        "overrides": [
+          "--filesystem=/var/home/armada",
+          "--filesystem=/home/armada",
+          "--filesystem=/run/media",
+          "--filesystem=/media"
+        ]
+      }
+    },
+    {
+      "id": "distroshelf",
+      "name": "DistroShelf",
+      "summary": "Graphical interface for managing Distrobox containers",
+      "category": "applications",
+      "icon": "https://dl.flathub.org/media/com/ranfdev/DistroShelf/a795d9521e32f6b32b6e226d368a25c1/icons/128x128/com.ranfdev.DistroShelf.png",
+      "note": "Run it from desktop mode",
+      "desktopOnly": true,
+      "install": {
+        "type": "flatpak",
+        "ref": "com.ranfdev.DistroShelf",
+        "overrides": [
+          "--filesystem=/var/home/armada",
+          "--filesystem=/home/armada",
+          "--filesystem=/run/media",
+          "--filesystem=/media"
+        ]
+      }
+    },
+    {
+      "id": "quiver-launcher",
+      "name": "Quiver Launcher",
+      "summary": "App manager and launcher",
+      "category": "applications",
+      "icon": "https://raw.githubusercontent.com/tgeorgiadis/quiver-launcher/main/apps/launcher/src-tauri/icons/128x128.png",
+      "note": "v3.5.1 and later supported",
+      "install": {
+        "type": "appimage",
+        "releases": "https://api.github.com/repos/tgeorgiadis/quiver-launcher/releases?per_page=15",
+        "asset": "QuiverLauncher-linux-arm64\\.AppImage$",
+        "filename": "QuiverLauncher.AppImage"
+      }
+    },
+    {
+      "id": "decky-lsfg-vk",
+      "name": "Decky LSFG-VK",
+      "summary": "Lossless Scaling frame generation",
+      "category": "plugins",
+      "icon": "https://raw.githubusercontent.com/xXJSONDeruloXx/decky-lsfg-vk/main/assets/decky-lossless-logo.png",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/xXJSONDeruloXx/decky-lsfg-vk/releases/364422297",
+        "asset": "^Decky\\.LSFG-VK\\.zip$"
+      }
+    },
+    {
+      "id": "optiscaler",
+      "name": "OptiScaler (ARM64EC)",
+      "summary": "Plugin for installing OptiScaler into games with minimal effort",
+      "category": "plugins",
+      "icon": "https://github.com/user-attachments/assets/c7dad5da-0b29-4710-8a57-b58e4e407abd",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/justradical/decky-optiscaler-arm64ec/releases/394141296",
+        "asset": "^OptiScaler\\.zip$"
+      }
+    },
+    {
+      "id": "armada-emulation",
+      "name": "Armada Emulation",
+      "summary": "Emulator installs, updates and setup",
+      "category": "plugins",
+      "icon": "",
+      "install": {
+        "type": "deckyplugin",
+        "releases": "https://api.github.com/repos/armada-os/armada-emulation/releases/latest",
+        "asset": "^armada-emulation\\.zip$",
+        "dir": "armada-emulation"
+      }
+    },
+    {
+      "id": "droiddeck-proton",
+      "name": "DroidDeck Proton",
+      "summary": "GE-Proton for ARM64 with Valve bleeding-edge Wine and DroidDeck fixes",
+      "category": "proton",
+      "icon": "https://avatars.githubusercontent.com/u/333418672?v=4",
+      "install": {
+        "type": "proton",
+        "releases": "https://api.github.com/repos/Droid-Deck/DroidDeck-Proton/releases?per_page=20",
+        "asset": "^DroidDeck-Proton-[0-9.-]+-aarch64\\.tar\\.gz$",
+        "checksum": "^DroidDeck-Proton-[0-9.-]+-aarch64\\.sha512sum$",
+        "version": "^DroidDeck-Proton-(.+)$"
+      }
+    },
+    {
+      "id": "ge-proton",
+      "name": "GE-Proton",
+      "summary": "Proton with extra game fixes and media codecs",
+      "category": "proton",
+      "icon": "https://avatars.githubusercontent.com/u/11287837?v=4",
+      "install": {
+        "type": "proton",
+        "releases": "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases?per_page=10",
+        "asset": "^GE-Proton[0-9]+-[0-9]+-aarch64\\.tar\\.gz$",
+        "checksum": "^GE-Proton[0-9]+-[0-9]+-aarch64\\.sha512sum$",
+        "version": "^GE-Proton(.+)$"
+      }
+    },
+    {
+      "id": "droiddeck-turnip",
+      "name": "DroidDeck Turnip",
+      "summary": "Turnip Vulkan driver built weekly from Mesa main",
+      "category": "turnip",
+      "icon": "https://avatars.githubusercontent.com/u/333418672?v=4",
+      "install": {
+        "type": "turnip",
+        "releases": "https://api.github.com/repos/Droid-Deck/Drivers/releases?per_page=10",
+        "asset": "^DD-Turnip-v[0-9.]+\\.zip$",
+        "checksum": "^DD-Turnip-v[0-9.]+\\.zip\\.sha256$",
+        "path": "linux",
+        "version": "^DD-Turnip-v(.+)$"
+      }
+    },
+    {
+      "id": "banners-turnip",
+      "name": "Banners Turnip",
+      "summary": "Turnip Vulkan driver for every Adreno, built from Mesa main several times a day",
+      "category": "turnip",
+      "icon": "https://avatars.githubusercontent.com/u/205237651?v=4",
+      "install": {
+        "type": "turnip",
+        "releases": "https://api.github.com/repos/The412Banner/Banners-Turnip/releases?per_page=10",
+        "asset": "^Turnip-v[0-9.]+-[0-9]{8}(-r[0-9]+)?-Banners-AIO-Linux\\.zip$",
+        "version": "^v(.+)$"
+      }
+    }
+  ]
+}

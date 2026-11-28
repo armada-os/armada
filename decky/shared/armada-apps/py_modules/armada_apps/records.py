@@ -33,8 +33,10 @@ def load_state():
 def _mutate_state(mutate):
     with _lock:
         state = _read(STATE_FILE, dict)
+        before = json.dumps(state, sort_keys=True)
         mutate(state)
-        _write(STATE_FILE, state)
+        if json.dumps(state, sort_keys=True) != before:
+            _write(STATE_FILE, state)
         return state
 
 
@@ -54,6 +56,29 @@ def record_plugin(app_id, dirname, tag, stamp=""):
 
 def clear_plugin(app_id):
     _mutate_state(lambda s: s.setdefault("plugins", {}).pop(app_id, None))
+
+
+def record_component(app_id, tag, stamp=""):
+    _mutate_state(lambda s: s.setdefault("components", {}).__setitem__(
+        app_id, {"tag": tag, "stamp": stamp}))
+
+
+def clear_component(app_id):
+    _mutate_state(lambda s: s.setdefault("components", {}).pop(app_id, None))
+
+
+def add_pending_reload(name):
+    _mutate_state(lambda s: s.setdefault("pendingReloads", []).append(name)
+                  if name not in s.get("pendingReloads", []) else None)
+
+
+def clear_pending_reload(name):
+    _mutate_state(lambda s: s.__setitem__(
+        "pendingReloads", [n for n in s.get("pendingReloads") or [] if n != name]))
+
+
+def pending_reloads():
+    return list(load_state().get("pendingReloads") or [])
 
 
 def record_android(app_id, app):
@@ -120,3 +145,21 @@ def clear_pending_shortcut(app_id):
 
 def pending_shortcuts():
     return list(load_state().get("pendingShortcuts") or [])
+
+
+# The catalog entry an app was installed from, so it stays manageable after
+# the catalog drops or stops supporting it.
+def record_entry(app_id, app):
+    entry = {key: value for key, value in app.items() if key != "retired"}
+    _mutate_state(lambda s: s.setdefault("entries", {}).__setitem__(app_id, entry))
+
+
+# For installs from before entries were recorded; never replaces one an
+# install has written meanwhile.
+def adopt_entry(app_id, app):
+    entry = {key: value for key, value in app.items() if key != "retired"}
+    _mutate_state(lambda s: s.setdefault("entries", {}).setdefault(app_id, entry))
+
+
+def clear_entry(app_id):
+    _mutate_state(lambda s: s.setdefault("entries", {}).pop(app_id, None))

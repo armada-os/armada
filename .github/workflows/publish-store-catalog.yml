@@ -1,0 +1,80 @@
+---
+name: Publish Store catalog
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - decky/armada-store/catalog-v*.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-store-catalog
+  cancel-in-progress: false
+
+env:
+  R2_ENDPOINT_URL: ${{ vars.R2_ENDPOINT_URL }}
+  R2_BUCKET: ${{ vars.R2_BUCKET }}
+  R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+
+jobs:
+  publish:
+    name: Upload to R2
+    runs-on: ubuntu-24.04-arm
+    steps:
+      # main as it is now, not the pushed commit: a queued run must never put
+      # back an older catalog.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Check R2 configuration
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          for setting in R2_ENDPOINT_URL R2_BUCKET R2_PUBLIC_URL R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY; do
+            if [ -z "${!setting}" ]; then
+              echo "::error::${setting} is not configured. Set it in repository Settings > Secrets and variables > Actions."
+              exit 1
+            fi
+          done
+
+      - name: Check catalogs
+        run: python3 -I tools/check-store-catalog.py
+
+      - name: Upload
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: "true"
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+          AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+        run: |
+          set -euo pipefail
+          # Icons first and never deleted: a catalog only names icons already
+          # up, and cached catalogs keep naming old ones.
+          for icon in decky/armada-store/icons/*.svg; do
+            aws s3 cp "${icon}" "s3://${R2_BUCKET}/store/icons/${icon##*/}" \
+              --endpoint-url "${R2_ENDPOINT_URL}" \
+              --content-type image/svg+xml --cache-control "public, max-age=300" \
+              --only-show-errors
+          done
+          for file in decky/armada-store/catalog-v*.json; do
+            name="${file##*/}"
+            # Stores poll every few minutes; a longer edge cache only delays changes.
+            aws s3 cp "${file}" "s3://${R2_BUCKET}/store/${name}" \
+              --endpoint-url "${R2_ENDPOINT_URL}" \
+              --content-type application/json --cache-control "public, max-age=300" \
+              --only-show-errors
+            curl -fsS "${R2_PUBLIC_URL%/}/store/${name}" -o /tmp/published.json
+            cmp -s /tmp/published.json "${file}" \
+              || echo "::warning::${R2_PUBLIC_URL%/}/store/${name} still serves an older copy (edge cache)."
+          done
