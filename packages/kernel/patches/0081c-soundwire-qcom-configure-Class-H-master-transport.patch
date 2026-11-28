@@ -1,0 +1,222 @@
+From: mrdidit <26687854+mrdidit@users.noreply.github.com>
+Subject: [PATCH] soundwire: qcom: fix master masks and formatter cleanup
+
+Allow per-port master channel masks without changing the codec channel
+mask. The Pocket S2 Android reference uses two master channels for its
+single-channel Class-H codec port.
+
+PCM and PDM32 use the same unbanked formatter. Preserve it while either
+bank has enabled channels and clear it after both banks stop. Track
+programmed ports so removing a module-parameter bit cannot skip cleanup,
+and propagate register access failures during setup and bank switching.
+
+Extract the remaining changes from Armada PR #817's 0081c. SSP-period
+support is already provided by patch 0086 and is retained unchanged.
+Based on ovid-io's WCD939x transport analysis and Qualcomm's separate
+master-channel mapping and formatter lifecycle.
+
+Link: https://github.com/armada-os/armada/pull/817
+Link: https://github.com/armada-os/armada/pull/803#issuecomment-6481609416
+Link: https://api.github.com/repos/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8650/git/blobs/a42eca8f2ea2c3692decabf48930a12e83d2c426
+
+---
+diff --git a/drivers/soundwire/qcom.c b/drivers/soundwire/qcom.c
+--- a/drivers/soundwire/qcom.c
++++ b/drivers/soundwire/qcom.c
+@@ -122,6 +122,7 @@
+ #define SWRM_V2_0_LINK_STATUS					0x5064
+ 
+ #define SWRM_DP_PORT_CTRL_EN_CHAN_SHFT				0x18
++#define SWRM_DP_PORT_CTRL_EN_CHAN_MASK				GENMASK(31, 24)
+ #define SWRM_DP_PORT_CTRL_OFFSET2_SHFT				0x10
+ #define SWRM_DP_PORT_CTRL_OFFSET1_SHFT				0x08
+ #define SWRM_AHB_BRIDGE_WR_DATA_0				0xc85
+@@ -162,6 +163,7 @@
+ 	u8 word_length;
+ 	u8 blk_group_count;
+ 	u8 lane_control;
++	u8 master_channel_mask;
+ };
+ 
+ /*
+@@ -212,6 +214,7 @@
+ 	int cols_index;
+ 	int rows_index;
+ 	u32 pcm_ports_mask;
++	u32 formatter_ports;
+ 	u32 ssp_period;
+ 	unsigned long port_mask;
+ 	u32 intr_mask;
+@@ -1024,8 +1027,11 @@
+ 	u32 reg = SWRM_MCP_FRAME_CTRL_BANK_ADDR(bus->params.next_bank);
+ 	struct qcom_swrm_ctrl *ctrl = to_qcom_sdw(bus);
+ 	u32 val;
+-
+-	ctrl->reg_read(ctrl, reg, &val);
++	int ret;
++
++	ret = ctrl->reg_read(ctrl, reg, &val);
++	if (ret)
++		return ret;
+ 
+ 	u32p_replace_bits(&val, ctrl->cols_index, SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK);
+ 	u32p_replace_bits(&val, ctrl->rows_index, SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK);
+@@ -1047,17 +1053,10 @@
+ 				p_params->bps - 1);
+ }
+ 
+-/*
+- * Ports carrying PCM samples (e.g. the WCD939x HIFI_PCM headphone port)
+- * additionally need the controller's per-port PCM format enable
+- * (SWRM_DOUT_DP_PCM_PORT_CTRL) set; PDM ports don't care. Mainline has no
+- * binding for per-port stream type yet, so take the port set from an
+- * optional DT mask, overridable via module parameter for kernels whose DTB
+- * predates the property.
+- */
++/* PCM and PDM32 ports require the unbanked formatter. */
+ static uint pcm_ports_mask;
+ module_param(pcm_ports_mask, uint, 0644);
+-MODULE_PARM_DESC(pcm_ports_mask, "Bitmask of data ports carrying PCM (overrides qcom,pcm-ports-mask)");
++MODULE_PARM_DESC(pcm_ports_mask, "PCM/PDM32 port mask added to qcom,pcm-ports-mask");
+ 
+ static int qcom_swrm_transport_params(struct sdw_bus *bus,
+ 				      struct sdw_transport_params *params,
+@@ -1136,37 +1135,67 @@
+ 	return ret;
+ }
+ 
++static int qcom_swrm_clear_idle_formatter(struct qcom_swrm_ctrl *ctrl,
++					  unsigned int port_num)
++{
++	u32 offset = ctrl->reg_layout[SWRM_OFFSET_DP_PORT_CTRL_BANK];
++	u32 reg, val;
++	int bank, ret;
++
++	/* The formatter is unbanked; both channel banks must be idle. */
++	for (bank = 0; bank < 2; bank++) {
++		reg = SWRM_DPn_PORT_CTRL_BANK(offset, port_num, bank);
++		ret = ctrl->reg_read(ctrl, reg, &val);
++		if (ret || (val & SWRM_DP_PORT_CTRL_EN_CHAN_MASK))
++			return ret;
++	}
++
++	ret = ctrl->reg_write(ctrl, SWRM_DOUT_DP_PCM_PORT_CTRL(port_num), 0);
++	if (!ret)
++		ctrl->formatter_ports &= ~BIT(port_num);
++
++	return ret;
++}
++
+ static int qcom_swrm_port_enable(struct sdw_bus *bus,
+ 				 struct sdw_enable_ch *enable_ch,
+ 				 unsigned int bank)
+ {
+-	u32 reg;
+ 	struct qcom_swrm_ctrl *ctrl = to_qcom_sdw(bus);
+-	u32 val;
+ 	u32 offset = ctrl->reg_layout[SWRM_OFFSET_DP_PORT_CTRL_BANK];
++	u32 port = BIT(enable_ch->port_num);
++	u32 reg, val;
++	bool formatted;
++	int ret;
+ 
+ 	reg = SWRM_DPn_PORT_CTRL_BANK(offset, enable_ch->port_num, bank);
+-
+-	ctrl->reg_read(ctrl, reg, &val);
+-
+-	if (enable_ch->enable)
+-		val |= (enable_ch->ch_mask << SWRM_DP_PORT_CTRL_EN_CHAN_SHFT);
+-	else
+-		val &= ~(0xff << SWRM_DP_PORT_CTRL_EN_CHAN_SHFT);
+-
+-	/*
+-	 * Only set, never clear: port_enable also fires for the inactive
+-	 * bank's disable during bank switches and would strip the PCM format
+-	 * mid-stream. The register only affects PCM-mode ports, so a sticky
+-	 * 0x3 is harmless.
+-	 */
+-	if (((ctrl->pcm_ports_mask | pcm_ports_mask) & BIT(enable_ch->port_num)) &&
+-	    enable_ch->enable)
+-		ctrl->reg_write(ctrl,
+-				SWRM_DOUT_DP_PCM_PORT_CTRL(enable_ch->port_num),
+-				0x3);
+-
+-	return ctrl->reg_write(ctrl, reg, val);
++	ret = ctrl->reg_read(ctrl, reg, &val);
++	if (ret)
++		return ret;
++
++	formatted = (ctrl->pcm_ports_mask | READ_ONCE(pcm_ports_mask) |
++		     ctrl->formatter_ports) & port;
++	if (enable_ch->enable) {
++		if (formatted) {
++			ret = ctrl->reg_write(ctrl,
++					     SWRM_DOUT_DP_PCM_PORT_CTRL(enable_ch->port_num), 3);
++			if (ret)
++				return ret;
++			ctrl->formatter_ports |= port;
++		}
++		val |= enable_ch->ch_mask << SWRM_DP_PORT_CTRL_EN_CHAN_SHFT;
++		ret = ctrl->reg_write(ctrl, reg, val);
++		if (ret && formatted)
++			qcom_swrm_clear_idle_formatter(ctrl, enable_ch->port_num);
++		return ret;
++	}
++
++	val &= ~SWRM_DP_PORT_CTRL_EN_CHAN_MASK;
++	ret = ctrl->reg_write(ctrl, reg, val);
++	if (ret || !formatted)
++		return ret;
++
++	return qcom_swrm_clear_idle_formatter(ctrl, enable_ch->port_num);
+ }
+ 
+ static const struct sdw_master_port_ops qcom_swrm_port_ops = {
+@@ -1322,7 +1351,9 @@
+ 				}
+ 				set_bit(pn, port_mask);
+ 				pconfig[nports].num = pn;
+-				pconfig[nports].ch_mask = p_rt->ch_mask;
++				pconfig[nports].ch_mask = ctrl->pconfig[pn].master_channel_mask;
++				if (!pconfig[nports].ch_mask)
++					pconfig[nports].ch_mask = p_rt->ch_mask;
+ 				nports++;
+ 			}
+ 		}
+@@ -1462,6 +1493,7 @@
+ {
+ 	struct device_node *np = ctrl->dev->of_node;
+ 	struct qcom_swrm_port_config *pcfg;
++	bool has_master_channel_mask;
+ 	int i, ret, val;
+ 
+ 	ctrl->reg_read(ctrl, SWRM_COMP_PARAMS, &val);
+@@ -1501,6 +1533,14 @@
+ 
+ 	ctrl->nports = ctrl->num_dout_ports + ctrl->num_din_ports;
+ 
++	has_master_channel_mask = of_property_present(np, "qcom,ports-master-channel-mask");
++	if (has_master_channel_mask) {
++		ret = of_property_count_u8_elems(np, "qcom,ports-master-channel-mask");
++		if (ret != ctrl->nports)
++			return dev_err_probe(ctrl->dev, -EINVAL,
++					     "Master channel mask count must match port count\n");
++	}
++
+ 	ctrl->pconfig = devm_kcalloc(ctrl->dev, ctrl->nports + 1,
+ 					sizeof(*ctrl->pconfig), GFP_KERNEL);
+ 	if (!ctrl->pconfig)
+@@ -1510,6 +1550,13 @@
+ 	/* Valid port numbers are from 1, so mask out port 0 explicitly */
+ 	for (i = 0; i < ctrl->nports; i++) {
+ 		pcfg = &ctrl->pconfig[i + 1];
++
++		if (has_master_channel_mask) {
++			ret = of_property_read_u8_index(np, "qcom,ports-master-channel-mask",
++							i, &pcfg->master_channel_mask);
++			if (ret)
++				return ret;
++		}
+ 
+ 		ret = of_property_read_u8_index(np, "qcom,ports-offset1", i, &pcfg->off1);
+ 		if (ret)
