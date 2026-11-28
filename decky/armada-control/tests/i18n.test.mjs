@@ -61,14 +61,14 @@ assert.equal(translate("en", "power.cpuGovernor"), "CPU Governor");
 assert.equal(translate("zh-CN", "power.cpuGovernor"), "CPU 调频策略");
 assert.equal(translate("zh-CN", "games.appFallback", { id: 123 }), "应用 123");
 assert.equal(translate("en", "power.gpuOverclocked", { mhz: 587 }), "Overclocked, stock maximum is 587 MHz");
-assert.equal(translate("en", "power.cpuCluster", { role: "Little", cpus: "0-3", mhz: 1804 }), "Little (CPU 0-3): 1804 MHz");
+assert.equal(translate("en", "power.cpuCluster", { role: "Little", cpus: "0-3", mhz: 1804, percent: "75%" }), "Little (CPU 0-3): 1804 MHz (75%)");
 assert.equal(translate("zh-CN", "cpu.bigN", { n: 2 }), "大核 2");
 assert.equal(translate("pt-BR", "common.loading"), "Carregando");
 assert.equal(translate("pt-PT", "common.loading"), "A carregar");
 assert.equal(translateLabelForLocale("en", "Balanced"), "Balanced");
 assert.equal(translateLabelForLocale("zh-CN", "Balanced"), "均衡");
 assert.equal(translateLabelForLocale("zh-CN", "Big Cores (4-7)"), "大核心 (4-7)");
-assert.equal(translateLabelForLocale("pt-BR", "Balanced"), "Balanceado");
+assert.equal(translateLabelForLocale("pt-BR", "Balanced"), "Equilibrado");
 assert.equal(translateLabelForLocale("pt-PT", "Balanced"), "Equilibrado");
 assert.equal(translateLabelForLocale("zh-CN", "Untranslated runtime label"), "Untranslated runtime label");
 

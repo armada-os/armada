@@ -4,6 +4,10 @@ set -uo pipefail
 command=${ARMADA_SLEEP_DEBUG_COMMAND:-/usr/bin/armada-sleep-debug}
 run_dir=${ARMADA_SLEEP_DEBUG_RUN_ROOT:-/run}/armada/sleep-debug
 report_dir=${ARMADA_SLEEP_DEBUG_REPORT_DIR:-/var/home/armada/Documents/sleep-logs}
+if [[ ${1:-} == report-directory ]]; then
+    printf '%s\n' "$report_dir"
+    exit 0
+fi
 cycle=${2:-${INVOCATION_ID:-}}
 [[ $cycle =~ ^[a-f0-9]{32}$ ]] || exit 0
 
