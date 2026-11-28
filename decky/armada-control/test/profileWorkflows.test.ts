@@ -72,7 +72,7 @@ function setup() {
       if (id === "react") return react;
       if (id === "@decky/ui") return { ...Object.fromEntries(componentNames.map((name) => [name, name])), DialogButtonPrimary: "DialogButton" };
       if (id === "../backend") return backend;
-      if (id === "../i18n") return { t: (key: string) => key, translateLabel: (label: string) => label };
+      if (id === "../i18n") return { getCurrentLocale: () => "en", t: (key: string) => key, translateLabel: (label: string) => label };
       if (id === "../lib/fanCurve") return fanCurve;
       if (id === "../lib/freq") return freq;
       if (id === "../lib/util") return util;

@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { savePowerProfile } from "../backend";
 import { ArmadaDialogFooter, ArmadaDialogHeader, ArmadaModalRoot } from "../components/ArmadaModalRoot";
-import { t, translateLabel } from "../i18n";
+import { getCurrentLocale, t, translateLabel } from "../i18n";
 import type { TranslationKey } from "../i18n";
 import { clusterRoles, derivedKhz, indexAtMost, isOverclocked, presetKhz } from "../lib/freq";
 import { markConfigFieldChange } from "../lib/configMutation";
@@ -54,6 +54,7 @@ export function PowerProfileEditorModal({ profileId, getLatestConfig, setConfig,
     if (busy.current || !defaults) return;
     setProfile({ ...clone(defaults), gpu_max_mhz: null, gpu_min_mhz: null, ...clearedCpuCaps });
   };
+  const formatPercent = (value: number, max: number) => new Intl.NumberFormat(getCurrentLocale(), { style: "percent", maximumFractionDigits: 0 }).format(max > 0 ? value / max : 0);
   const gpuMhz = initial.freqLimits?.gpuMhz ?? [];
   const gpuStockMaxMhz = initial.freqLimits?.gpuStockMaxMhz ?? 0;
   const gpuIndex = indexAtMost(gpuMhz, profile.gpu_max_mhz ?? defaults?.gpu_max_mhz ?? Infinity);
@@ -104,14 +105,14 @@ export function PowerProfileEditorModal({ profileId, getLatestConfig, setConfig,
         </Field> : null}
         {cpuPolicies.map((policy, i) => {
           const index = indexAtMost(policy.khz, displayKhz(policy, profile));
-          return <SliderField key={policy.id} label={t("power.cpuCluster", { role: cpuRoles[i], cpus: policy.cpus, mhz: policy.mhz[index] })} value={index} min={0} max={policy.khz.length - 1} step={1} showValue={false} disabled={saving} onChange={(index) => setCpuMax(policy, index)} />;
+          return <SliderField key={policy.id} label={t("power.cpuCluster", { role: cpuRoles[i], cpus: policy.cpus, mhz: policy.mhz[index], percent: formatPercent(policy.khz[index], policy.khz[policy.khz.length - 1]) })} value={index} min={0} max={policy.khz.length - 1} step={1} showValue={false} disabled={saving} onChange={(index) => setCpuMax(policy, index)} />;
         })}
       </DialogControlsSection>
       <DialogControlsSection>
         <DialogControlsSectionHeader>{t("profiles.gpuSettings")}</DialogControlsSectionHeader>
         {gpuMhz.length ? <>
-          <SliderField label={t("power.gpuMin", { mhz: gpuMinMhz })} value={gpuMinIndex} min={0} max={gpuMhz.length - 1} step={1} showValue={false} disabled={saving} onChange={(index) => setValue("gpu_min_mhz", Math.min(gpuMhz[index], gpuMaxMhz))} />
-          <SliderField label={t("power.gpuMax", { mhz: gpuMaxMhz })} description={isOverclocked(gpuMaxMhz, gpuStockMaxMhz) ? t("power.gpuOverclocked", { mhz: gpuStockMaxMhz }) : undefined} value={gpuIndex} min={0} max={gpuMhz.length - 1} step={1} showValue={false} disabled={saving} onChange={(index) => setGpuMax(gpuMhz[index])} />
+          <SliderField label={t("power.gpuMin", { mhz: gpuMinMhz, percent: formatPercent(gpuMinMhz, gpuMhz[gpuMhz.length - 1]) })} value={gpuMinIndex} min={0} max={gpuMhz.length - 1} step={1} showValue={false} disabled={saving} onChange={(index) => setValue("gpu_min_mhz", Math.min(gpuMhz[index], gpuMaxMhz))} />
+          <SliderField label={t("power.gpuMax", { mhz: gpuMaxMhz, percent: formatPercent(gpuMaxMhz, gpuMhz[gpuMhz.length - 1]) })} description={isOverclocked(gpuMaxMhz, gpuStockMaxMhz) ? t("power.gpuOverclocked", { mhz: gpuStockMaxMhz }) : undefined} value={gpuIndex} min={0} max={gpuMhz.length - 1} step={1} showValue={false} disabled={saving} onChange={(index) => setGpuMax(gpuMhz[index])} />
         </> : null}
       </DialogControlsSection>
       <DialogControlsSection>
