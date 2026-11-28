@@ -104,38 +104,29 @@ test("rapid modal navigation reveals whole labels and cancels the previous scrol
   assert.deepEqual(outside.calls, []);
 });
 
-test("a nested confirmation scrolls only its own outer position", () => {
+test("nested modal scrolling stays inside the active dialog", () => {
   const { document, outside } = setup();
-  const parentPosition = new TestElement(document, { parent: outside, className: "armada-control-dialog-position", overflow: "auto" });
-  const parent = new TestElement(document, { parent: parentPosition, className: "armada-control-dialog" });
-  const parentBoundary = new TestElement(document, { parent });
-  const position = new TestElement(document, { parent: parentBoundary, className: "armada-control-dialog-position", height: 300, overflow: "auto" });
-  position.scrollHeight = 660;
+  const position = new TestElement(document, { parent: outside, className: "armada-control-dialog-position", height: 300, overflow: "auto" });
   const modal = new TestElement(document, { parent: position, className: "armada-control-dialog" });
   const boundary = new TestElement(document, { parent: modal });
-  const footer = new TestElement(document, { parent: boundary, className: "armada-control-dialog-footer", top: 600, height: 60 });
-  assert.equal(reveal(parentBoundary, footer), false);
-  assert.equal(reveal(boundary, footer), true);
-  assert.equal(position.scrollTop, 360);
-  assert.deepEqual(parentPosition.calls, []);
-  start(parentBoundary);
-  assert.equal(position.scrollTop, 360);
-  assert.deepEqual(parentPosition.calls, [{ top: 0, behavior: "instant" }]);
+  const body = new TestElement(document, { parent: boundary, height: 300, overflow: "auto" });
+  const field = new TestElement(document, { parent: body, className: "native-field", top: 600, height: 60 });
+  assert.equal(reveal(boundary, field), true);
+  assert.ok(body.scrollTop > 0);
+  assert.deepEqual(position.calls, []);
+  assert.equal(start(boundary), true);
+  assert.equal(body.scrollTop, 0);
+  assert.deepEqual(position.calls, []);
 });
 
-test("footer focus reveals the modal end beyond its native padding and margins", () => {
-  const { document, outside } = setup(1.5);
+test("footer focus does not scroll the modal position", () => {
+  const { document, outside } = setup();
   const position = new TestElement(document, { parent: outside, className: "armada-control-dialog-position", height: 400, overflow: "auto" });
-  position.scrollHeight = 832;
-  const modal = new TestElement(document, { parent: position, className: "armada-control-dialog", height: 808 });
+  const modal = new TestElement(document, { parent: position, className: "armada-control-dialog", height: 400 });
   const boundary = new TestElement(document, { parent: modal });
-  const footer = new TestElement(document, { parent: boundary, className: "armada-control-dialog-footer", top: 700, height: 80 });
-  const button = new TestElement(document, { parent: footer, top: 720, height: 40 });
-  assert.equal(reveal(boundary, button), true);
-  assert.equal(position.scrollTop, 432);
-  assert.equal(position.scrollTop, position.scrollHeight - position.clientHeight);
-  assert.ok(footer.getBoundingClientRect().bottom < position.getBoundingClientRect().bottom);
-  assert.deepEqual(outside.calls, []);
+  const footer = new TestElement(document, { parent: boundary, className: "armada-control-dialog-footer", top: 350, height: 40 });
+  assert.equal(reveal(boundary, footer), true);
+  assert.deepEqual(position.calls, []);
 });
 
 test("panel scrolling reveals trailing space without hiding an oversized field's label", () => {

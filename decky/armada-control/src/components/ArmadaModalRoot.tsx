@@ -2,12 +2,10 @@ import { classMap, DialogBody, DialogButton, DialogButtonPrimary, DialogFooter, 
 import type { FocusableProps, ModalRootProps } from "@decky/ui";
 import { useLayoutEffect, useRef } from "react";
 import type { ComponentType, ReactNode, RefAttributes } from "react";
-import { revealModalFocus, revealModalStart } from "../lib/modalScroll";
+import { revealModalFocus } from "../lib/modalScroll";
 import { ArmadaStyles } from "./ArmadaStyles";
 import { useModalReturnFocus } from "./modalFocusView";
 import { registerModalFocusScope } from "../lib/modalFocus";
-
-const FocusableHeading = Focusable as ComponentType<FocusableProps & RefAttributes<HTMLDivElement> & { focusable: boolean }>;
 
 // Steam exposes focus scrolling on Focusable, not the native modal's form.
 const ModalNavigation = Focusable as ComponentType<FocusableProps & RefAttributes<HTMLDivElement> & {
@@ -26,11 +24,7 @@ export function ArmadaDialogFooter({ children }: { children: ReactNode }) {
 }
 
 export function ArmadaDialogHeader({ children }: { children: ReactNode }) {
-  const heading = useRef<HTMLDivElement>(null);
-  const showStart = () => { revealModalStart(heading.current); };
-  return <DialogHeader>
-    <FocusableHeading ref={heading} className="armada-control-dialog-heading" focusable tabIndex={0} preferredFocus onGamepadFocus={showStart} onFocus={showStart}>{children}</FocusableHeading>
-  </DialogHeader>;
+  return <DialogHeader>{children}</DialogHeader>;
 }
 
 export function ArmadaModalRoot({ children, className = "", modalClassName = "", ...props }: ModalRootProps) {
