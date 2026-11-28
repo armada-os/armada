@@ -1,0 +1,5 @@
+[Plugins]
+armadasteamkeyboardEnabled=true
+
+[Wayland]
+VirtualKeyboardMode=0
